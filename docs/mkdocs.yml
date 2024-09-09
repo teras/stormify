@@ -1,0 +1,51 @@
+site_name: Stormify
+site_url: https://stormify.org/docs/
+repo_url: https://github.com/teras/stormify
+docs_dir: src
+site_dir: build/docs
+
+extra:
+  generator: false
+  homepage: https://stormify.org/
+
+markdown_extensions:
+  - pymdownx.highlight:
+      anchor_linenums: true
+      line_spans: __span
+      pygments_lang_class: true
+  - pymdownx.inlinehilite
+  - pymdownx.snippets
+  - pymdownx.superfences
+  - pymdownx.tabbed:
+      alternate_style: true
+
+theme:
+  name: material
+  accent: "light-blue"
+  palette:
+    - scheme: default
+      toggle:
+        icon: material/weather-sunny
+        text: Switch to Dark Mode
+      primary: "blue"
+    - scheme: slate
+      toggle:
+        icon: material/weather-night
+        text: Switch to Light Mode
+      primary: "black"
+  logo: logo.png
+  favicon: logo.png
+  icon:
+    repo: material/github
+  features:
+    - navigation.top
+    - content.tabs.link
+
+nav:
+  - Welcome: README.md
+  - Core: Core_concepts.md
+  - Advanced: Advanced_topics.md
+  - Configuration: Database_Configuration.md
+  - Contributing: Contributing.md
+  - JavaDoc: javadoc/index.html
+  - Kotlin Bindings: kotlin/index.html
