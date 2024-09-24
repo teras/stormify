@@ -1,30 +1,55 @@
 plugins {
-    `java-library`
+    id("maven-publish")
+    kotlin("multiplatform")
+    id("org.jetbrains.kotlinx.atomicfu") version "0.25.0"
 }
 
 group = parent?.group ?: IllegalStateException("Group is not defined")
 version = parent?.version ?: IllegalStateException("Version is not defined")
 description = "Stormify Database Library"
-extra["publishable"] = "true"
 
-java.sourceCompatibility = JavaVersion.VERSION_1_8
-java.targetCompatibility = JavaVersion.VERSION_1_8
+kotlin {
+    jvm()
+    linuxX64 {
+//        binaries {
+//            executable {
+//                entryPoint = "onl.ycode.demo.main"
+//            }
+//        }
+    }
+    jvmToolchain(8)
 
-dependencies {
-    implementation(project(":logger"))
+    sourceSets {
+        val commonMain by getting {
+            dependencies {
+                implementation(project(":logger"))
+            }
+        }
+        val commonTest by getting {
+            dependencies {
+                implementation(kotlin("test"))
+                implementation(kotlin("test-junit"))
+            }
+        }
 
-    testImplementation("org.junit.jupiter:junit-jupiter-api:5.9.3")
-    testImplementation("org.junit.jupiter:junit-jupiter-engine:5.9.3")
-    testImplementation("com.mysql:mysql-connector-j:9.0.0")
-    testImplementation("org.slf4j:slf4j-api:2.0.13")
-    testImplementation("ch.qos.logback:logback-classic:1.5.6")
-    testImplementation("ch.qos.logback:logback-core:1.5.6")
-    testImplementation("com.zaxxer:HikariCP:5.1.0")
+        val jvmMain by getting {
+            dependencies {
+                compileOnly("org.jetbrains.kotlinx:kotlinx-datetime:0.4.1")
+                compileOnly("com.ionspin.kotlin:bignum:0.3.10")
+            }
+        }
 
+        val nativeMain by creating {
+            dependencies {
+                implementation("org.jetbrains.kotlinx:kotlinx-datetime:0.4.1")
+                implementation("com.ionspin.kotlin:bignum:0.3.10")
+            }
+        }
+    }
 }
 
-tasks.test {
-    useJUnitPlatform() // Required for running JUnit 5 tests
-    testLogging.showStandardStreams = true
-    reports.html.required.set(false)
+publishing {
+    repositories {
+        mavenLocal()
+    }
 }
