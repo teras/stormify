@@ -22,6 +22,8 @@ class DateToken extends Token<Date> {
 
     @Override
     protected Date asData(String data) throws TokenizerException {
+        if (data == null || data.trim().isEmpty())
+            return null;
         try {
             return formatter.parse(data.trim());
         } catch (ParseException ex) {

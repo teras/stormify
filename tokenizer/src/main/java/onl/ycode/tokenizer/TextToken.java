@@ -11,7 +11,7 @@ class TextToken extends Token<String> {
 
     @Override
     protected String asData(String data) {
-        return data;
+        return data == null ? null : data.trim();
     }
 
     @Override
