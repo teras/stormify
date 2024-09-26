@@ -3,7 +3,6 @@
 
 package onl.ycode.stormify;
 
-import java.beans.Transient;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.util.*;
@@ -34,11 +33,9 @@ class BeanHelper {
                 name = name.substring(0, name.length() - 9);
             }
             BeanInfo beanInfo = findBeanInfo(name, beanInfos);
-            if (field.isAnnotationPresent(Transient.class)) {
-                if (beanInfo == null)
-                    throw new QueryException("Missing bean methods for Transient field " + field.getName() + " in class " + clazz.getName());
-            } else if (beanInfo != null) {
-                foundInFields.add(beanInfo);
+            if (beanInfo != null) {
+                if (hasAnnotation(field, transientClass))
+                    continue;
                 beanInfo.fieldAnnotation = field.getAnnotation(DbField.class);
                 beanInfo.sequence = beanInfo.fieldAnnotation != null && !beanInfo.fieldAnnotation.primarySequence().trim().isEmpty()
                         ? beanInfo.fieldAnnotation.primarySequence().trim()
@@ -59,6 +56,7 @@ class BeanHelper {
                 if (annName != null)
                     beanInfo.dbName = annName;
                 beanInfo.primaryByIdAnnotation = hasAnnotation(field, idClass);
+                foundInFields.add(beanInfo);
             }
         }
         beanInfos.addAll(foundInFields);

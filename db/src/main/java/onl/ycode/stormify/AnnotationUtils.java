@@ -9,6 +9,7 @@ import java.lang.reflect.Method;
 
 class AnnotationUtils {
     static final Class<? extends Annotation> idClass;
+    static final Class<? extends Annotation> transientClass;
     static final Class<? extends Annotation> tableClass;
     static final Class<? extends Annotation> columnClass;
     static final Class<? extends Annotation> joinColumnClass;
@@ -27,6 +28,7 @@ class AnnotationUtils {
 
     static {
         idClass = findClass("javax.persistence.Id");
+        transientClass = findClass("javax.persistence.Transient");
         tableClass = findClass("javax.persistence.Table");
         columnClass = findClass("javax.persistence.Column");
         joinColumnClass = findClass("javax.persistence.JoinColumn");
