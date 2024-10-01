@@ -17,6 +17,8 @@ target/
 **/gradlew
 **/gradlew.bat
 
+.kotlin/**
+
 ### Eclipse ###
 .apt_generated
 .classpath

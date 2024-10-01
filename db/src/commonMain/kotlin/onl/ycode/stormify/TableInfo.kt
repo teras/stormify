@@ -30,6 +30,12 @@ class TableInfo<T : Any>(
         require(restNames.size == restTypes.size) { "The names and types of the rest columns must have the same size" }
     }
 
+    private val fieldTypeMap = (idNames.map { it.lowercase() }.zip(idTypes) +
+            restNames.map { it.lowercase() }.zip(restTypes)).toMap()
+
+    internal fun getType(name: String): KClass<*> =
+        fieldTypeMap[name.lowercase()] ?: throw QueryException("Unknown field $name in $table")
+
     internal fun setField(entity: T, name: String, value: Any?, stormify: Stormify, errorToLogger: Logger? = null) {
         if (!fields(entity, name, value, stormify)) {
             if (errorToLogger == null) throw QueryException("Unable to set field $name in $table")

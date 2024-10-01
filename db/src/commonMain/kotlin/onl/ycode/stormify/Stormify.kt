@@ -199,7 +199,7 @@ constructor(val dataSource: DataSource) {
             count++
             consumer(
                 if (info != null) populate(info.create(), rs)
-                else castTo(baseClass, rs._getObject(1), this)
+                else castTo(baseClass, rs._getObject(1, baseClass), this)
                     ?: throw QueryException("Expecting type ${baseClass.fullName} but found null")
             )
         }
@@ -284,8 +284,10 @@ constructor(val dataSource: DataSource) {
         if (item is AutoTable && item.`!stormify` == null) item.`!stormify` = this
         val info = retrieve(item::class)
         val columnCount = rs._columnCount
-        for (i in 1..columnCount)
-            info.setField(item, rs._getColumnName(i), rs._getObject(i), this, if (isStrictMode) null else logger)
+        for (i in 1..columnCount) {
+            val col = rs._getColumnName(i)
+            info.setField(item, col, rs._getObject(i, info.getType(col)), this, if (isStrictMode) null else logger)
+        }
         return item
     }
 
@@ -319,7 +321,7 @@ constructor(val dataSource: DataSource) {
                 st._getGeneratedKeys().use { rs ->
                     if (rs._next())
                         if (sqlDialect.generatedKeyRetrieval === GeneratedKeyRetrieval.BY_INDEX)
-                            info.setField(item, info.singleKeyName, rs._getObject(1), this)
+                            info.setField(item, info.singleKeyName, rs._getObject(1, NativeBigInteger::class), this)
                         else populate(item, rs)
                 }
                 affectedRows
@@ -481,7 +483,7 @@ constructor(val dataSource: DataSource) {
                 for (i in params.indices) {
                     val p: SPParam<*> = params[i]
                     if (p.mode === OUT || p.mode === INOUT)
-                        p.result = cs._getObject(i + 1)
+                        p.result = cs._getObject(i + 1, params[i].type)
                 }
             }
             if (shouldClose) connection.close()

@@ -1,5 +1,7 @@
 package onl.ycode.stormify
 
+import kotlin.reflect.KClass
+
 internal actual val DataSource._connection get() = connection
 
 internal actual val Connection._metaData get() = metaData
@@ -35,9 +37,9 @@ internal actual fun PreparedStatement._getGeneratedKeys(): ResultSet = generated
 
 internal actual fun CallableStatement._registerOutParameter(i: Int, sqlType: Int) = registerOutParameter(i, sqlType)
 internal actual fun CallableStatement._execute() = execute()
-internal actual fun CallableStatement._getObject(idx: Int): Any? = getObject(idx)
+internal actual fun CallableStatement._getObject(idx: Int, type: KClass<*>): Any? = getObject(idx)
 
 internal actual fun ResultSet._next() = next()
 internal actual val ResultSet._columnCount get() = metaData.columnCount
 internal actual fun ResultSet._getColumnName(index: Int) = metaData.getColumnName(index)
-internal actual fun ResultSet._getObject(index: Int) = getObject(index)
+internal actual fun ResultSet._getObject(index: Int, type: KClass<*>) = getObject(index)

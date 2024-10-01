@@ -1,5 +1,7 @@
 package onl.ycode.stormify
 
+import kotlin.reflect.KClass
+
 internal actual val DataSource._connection: Connection
     get() = TODO("Not yet implemented")
 internal actual val Connection._metaData: DatabaseMetaData
@@ -55,7 +57,7 @@ internal actual fun ResultSet._getColumnName(index: Int): String {
     TODO("Not yet implemented")
 }
 
-internal actual fun ResultSet._getObject(index: Int): Any? {
+internal actual fun ResultSet._getObject(index: Int, type: KClass<*>): Any? {
     TODO("Not yet implemented")
 }
 
@@ -79,7 +81,7 @@ internal actual fun CallableStatement._registerOutParameter(i: Int, sqlType: Int
     TODO("Not yet implemented")
 }
 
-internal actual fun CallableStatement._getObject(idx: Int): Any? {
+internal actual fun CallableStatement._getObject(idx: Int, type: KClass<*>): Any? {
     TODO("Not yet implemented")
 }
 

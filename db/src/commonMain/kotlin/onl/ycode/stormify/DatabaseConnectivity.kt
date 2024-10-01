@@ -1,5 +1,7 @@
 package onl.ycode.stormify
 
+import kotlin.reflect.KClass
+
 internal expect val DataSource._connection: Connection
 
 internal expect val Connection._metaData: DatabaseMetaData
@@ -22,11 +24,11 @@ internal expect fun PreparedStatement._executeQuery(): ResultSet
 internal expect fun PreparedStatement._setObject(i: Int, any: Any?)
 internal expect fun PreparedStatement._getGeneratedKeys(): ResultSet
 
-internal expect fun CallableStatement._getObject(idx: Int): Any?
+internal expect fun CallableStatement._getObject(idx: Int, type: KClass<*>): Any?
 internal expect fun CallableStatement._registerOutParameter(i: Int, sqlType: Int)
 internal expect fun CallableStatement._execute(): Boolean
 
 internal expect fun ResultSet._next(): Boolean
 internal expect val ResultSet._columnCount: Int
 internal expect fun ResultSet._getColumnName(index: Int): String
-internal expect fun ResultSet._getObject(index: Int): Any?
+internal expect fun ResultSet._getObject(index: Int, type: KClass<*>): Any?
