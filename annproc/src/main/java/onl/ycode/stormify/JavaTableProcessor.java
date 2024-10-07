@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // (C) Panayotis Katsaloulis
 
-package onl.ycode.tmaker;
+package onl.ycode.stormify;
 
 import javax.annotation.processing.AbstractProcessor;
 import javax.annotation.processing.RoundEnvironment;

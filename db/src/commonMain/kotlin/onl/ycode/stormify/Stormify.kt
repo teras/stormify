@@ -149,7 +149,7 @@ constructor(val dataSource: DataSource) {
             if (value is Iterable<*>)
                 return value.map { sqlData(it, false) }
         }
-        val info = retrieve(value::class) as TableInfo<Any>
+        val info = retrieve(value::class)
         return if (info.idNames.size == 1) info.getIdValues(value) else
             throw QueryException("Multiple primary keys found in ${info.table}")
     }
@@ -386,11 +386,11 @@ constructor(val dataSource: DataSource) {
         detailsClass: KClass<D>,
         propertyName: String? = null
     ): List<D> {
-        val parentInfo = retrieve(parent::class) as TableInfo<M>
+        val parentInfo = retrieve(parent::class)
         val parentId = this.getValidIds(parent, parentInfo)
         require(parentId.size == 1) { "Parent class ${parent::class.fullName} should have exactly one primary key" }
 
-        val detailInfo = retrieve(detailsClass) as TableInfo<D>
+        val detailInfo = retrieve(detailsClass)
         val propertyDbName = detailInfo.restDbNames[if (propertyName == null)
             findItemOnce(detailInfo.restTypes, parent::class, detailsClass.fullName)
         else

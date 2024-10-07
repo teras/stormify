@@ -18,7 +18,7 @@ object TypeUtils {
      * @return the converted value
      */
     @Suppress("UNCHECKED_CAST")
-    internal fun <F : Any, T : Any> castTo(targetClass: KClass<T>, value: F?, stormify: Stormify): T? {
+    fun <F : Any, T : Any> castTo(targetClass: KClass<T>, value: F?, stormify: Stormify): T? {
         if (value == null || targetClass.isInstance(value)) return value as T?
         val givenClass = value::class
         if (!isScalarObject(value)) {
@@ -40,6 +40,8 @@ object TypeUtils {
             )
         }
     }
+
+    fun err(name: String, cls: String): Nothing = throw QueryException("$name cannot be null in class $cls")
 
     // first key: target class
     // second key: source class

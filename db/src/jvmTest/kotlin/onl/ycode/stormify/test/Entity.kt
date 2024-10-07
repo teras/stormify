@@ -1,9 +1,9 @@
 package onl.ycode.stormify.test
 
-import onl.ycode.stormify.QueryException
 import onl.ycode.stormify.TableInfo
 import onl.ycode.stormify.TableInfo.Companion.register
 import onl.ycode.stormify.TypeUtils.castTo
+import onl.ycode.stormify.TypeUtils.err
 
 data class Entity(
     var id: Int = 0,
@@ -24,7 +24,6 @@ data class Entity(
 
 
 fun registerAll() {
-    fun err(name: String, cls: String): Nothing = throw QueryException("$name cannot be null in class $cls")
     register(
         TableInfo(
             Entity::class,
