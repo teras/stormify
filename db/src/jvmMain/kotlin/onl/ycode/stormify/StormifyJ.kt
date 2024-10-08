@@ -3,6 +3,8 @@ package onl.ycode.stormify
 class StormifyJ(dataSource: DataSource) {
     private val stormify = Stormify(dataSource)
 
+    val sqlDialect get() = stormify.sqlDialect
+
     fun <T : Any> read(baseClass: Class<T>, query: String, vararg params: Any?) =
         stormify.read(null, baseClass.kotlin, query, params)
 
@@ -32,5 +34,7 @@ class StormifyJ(dataSource: DataSource) {
 
     fun transaction(block: SafeConsumer<TransactionContextJ>) =
         TransactionContextJ(TransactionContext(stormify)).start(block)
+
+    fun getTableInfo(baseClass: Class<*>) = TableInfo.retrieve(baseClass.kotlin)
 }
 

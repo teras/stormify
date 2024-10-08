@@ -18,10 +18,12 @@ object TypeUtils {
      * @return the converted value
      */
     @Suppress("UNCHECKED_CAST")
-    fun <F : Any, T : Any> castTo(targetClass: KClass<T>, value: F?, stormify: Stormify): T? {
+    fun <F : Any, T : Any> castTo(targetClass: KClass<T>, value: F?, stormify: Stormify? = null): T? {
         if (value == null || targetClass.isInstance(value)) return value as T?
         val givenClass = value::class
         if (!isScalarObject(value)) {
+            if (stormify == null)
+                throw QueryException("Unable to convert non-scalar object to " + targetClass.fullName + "; missing database context")
             val info = TableInfo.retrieve(givenClass)
             val item = info.create()
             if (item is AutoTable) item.`!stormify` = stormify
@@ -154,6 +156,9 @@ internal fun isScalarObject(request: Any) =
 
 internal fun isScalarClass(request: KClass<*>) = allPrimitives.contains(request.fullName)
 
+internal fun isTextualClass(request: KClass<*>) = with(request.fullName) {
+    this == "kotlin.String" || this == "kotlin.Char" || this == "kotlin.text.StringBuilder"
+}
 
 internal fun Throwable.throwQuery(reason: String): Nothing =
     if (this is QueryException) throw this else throw QueryException(reason, this)
@@ -169,10 +174,10 @@ private val allPrimitives: Set<String> = (listOf(
     Long::class,
     Float::class,
     Double::class,
-    Char::class,
-    Boolean::class,
     String::class,
-    CharSequence::class,
+    Char::class,
+    StringBuilder::class,
+    Boolean::class,
     Number::class,
 ) + getNativeAllPrimitives()).mapTo(LinkedHashSet()) { it.fullName }
 

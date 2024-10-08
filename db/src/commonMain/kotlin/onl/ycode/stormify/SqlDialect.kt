@@ -75,7 +75,10 @@ enum class SqlDialect(
      *
      * @see QueryFormatter
      */
-    val queryFormatter: (String, String, String, String, Int, Int) -> String,
+    val queryFormatter: (distinct: String, tableName: String, constraints: String, sorting: String, lowBound: Int, upperBound: Int) -> String,
+    /**
+     * The method to create the query, how to retrieve the generated key from the database.
+     */
     val generatedKeyRetrieval: GeneratedKeyRetrieval
 ) {
     /**
