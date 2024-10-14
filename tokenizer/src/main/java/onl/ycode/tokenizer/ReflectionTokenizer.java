@@ -206,7 +206,7 @@ public class ReflectionTokenizer {
             context = MTokenizer.DEFAULT_BASE;
         Tokenizer tokenizer = getTokenizer(obj.getClass(), context);
         if (input.length() != tokenizer.size())
-            throw new TokenizerException("Input size does not match tokenizer size for object " + obj.getClass().getName() + ": " + input.length() + " != " + tokenizer.size());
+            throw new TokenizerException("Input size does not match tokenizer size for object " + obj.getClass().getName() + ": input=" + input.length() + " expecting=" + tokenizer.size());
         for (Token<?> tk : tokenizer.getTokens())
             try {
                 Object val = tk.get(input);
