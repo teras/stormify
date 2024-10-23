@@ -18,6 +18,7 @@ class DateToken extends Token<Date> {
     DateToken(int start, int end, String format, String name, TokenizerIdent indent) {
         super(start, end, name, indent == TokenizerIdent.AUTO ? RIGHT : indent.indent);
         formatter = new SimpleDateFormat(format);
+        formatter.setLenient(false);
     }
 
     @Override
