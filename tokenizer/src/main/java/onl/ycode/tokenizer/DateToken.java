@@ -18,10 +18,13 @@ class DateToken extends Token<Date> {
     DateToken(int start, int end, String format, String name, TokenizerIdent indent) {
         super(start, end, name, indent == TokenizerIdent.AUTO ? RIGHT : indent.indent);
         formatter = new SimpleDateFormat(format);
+        formatter.setLenient(false);
     }
 
     @Override
     protected Date asData(String data) throws TokenizerException {
+        if (data == null || data.trim().isEmpty())
+            return null;
         try {
             return formatter.parse(data.trim());
         } catch (ParseException ex) {

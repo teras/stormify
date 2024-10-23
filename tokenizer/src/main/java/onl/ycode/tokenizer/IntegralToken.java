@@ -13,6 +13,8 @@ class IntegralToken extends Token<BigInteger> {
 
     @Override
     protected BigInteger asData(String data) throws TokenizerException {
+        if (data == null || data.trim().isEmpty())
+            return null;
         try {
             return new BigInteger(data.trim());
         } catch (Exception ex) {

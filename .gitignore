@@ -12,6 +12,8 @@ target/
 *.iml
 *.ipr
 
+.kotlin/
+
 **/.gradle
 **/gradle/wrapper
 **/gradlew

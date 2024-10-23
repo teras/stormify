@@ -56,10 +56,13 @@ public @interface MTokenizer {
 
     /**
      * Number of decimal places. By default, the number of decimal places is 2.
+     * If this number is positive, then the number of decimal places is required to be exactly the value of
+     * the number. If it is negative, then the number of decimal places is the absolute value of the number and is
+     * only used as a reference, not strictly required. This number cannot be zero.
      *
      * @return number of decimal places
      */
-    int decimals() default 2;
+    int decimals() default 1;
 
     /**
      * The context of the field. Sometimes the same target object can be used for different tokenizing purposes.
