@@ -244,7 +244,8 @@ public class StormifyManager {
                     statement.setObject(i + 1, params.params.get(i));
                 return code.execute(statement);
             } catch (Exception e) {
-                throw new QueryException("Unable to execute query '" + params.query + "'", e);
+                String paramValues = params.params.isEmpty() ? "" : " with values " + params.params.toString();
+                throw new QueryException("Unable to execute query '" + params.query + "'" + paramValues, e);
             }
         });
     }
