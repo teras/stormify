@@ -162,8 +162,10 @@ public class FieldInfo {
     @Override
     public String toString() {
         return "{" +
-                (setter == null ? "\uD83D\uDCE4" : "\uD83D\uDD04") +
-                (creatable && updatable ? "" : "\uD83D\uDEB7") +
+                (setter == null ? "\uD83D\uDCE4" : "") +
+                (creatable && updatable ? "" :
+                        creatable ? "\uD83C\uDD95" : (updatable ? "\uD83D\uDD01" : "\uD83D\uDEB7")
+                ) +
                 name +
                 (dbName.equals(name) ? "" : " \uD83D\uDCBE" + dbName) +
                 " : " + type.getSimpleName() +
