@@ -91,7 +91,11 @@ final class Utils {
     static boolean isBaseClass(Class<?> request) {
         if (request == null)
             return true;
-        if (request.isArray() || Iterable.class.isAssignableFrom(request) || Map.class.isAssignableFrom(request))
+        if (request.isArray()) {
+            Class<?> componentType = request.getComponentType();
+            return componentType == byte.class || componentType == char.class;
+        }
+        if (Iterable.class.isAssignableFrom(request) || Map.class.isAssignableFrom(request))
             return false;
         return request.isPrimitive() || request.getName().startsWith("java.") || request.getName().startsWith("javax.");
     }
