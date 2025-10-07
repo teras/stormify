@@ -1,7 +1,7 @@
 plugins {
     id("maven-publish")
     kotlin("multiplatform")
-    id("org.jetbrains.kotlinx.atomicfu") version "0.25.0"
+    id("org.jetbrains.kotlinx.atomicfu") version "0.30.0-beta"
 }
 
 group = parent?.group ?: IllegalStateException("Group is not defined")
@@ -17,7 +17,7 @@ kotlin {
 //            }
 //        }
     }
-    jvmToolchain(8)
+    jvmToolchain(11)
 
     sourceSets {
         val commonMain by getting {
@@ -34,14 +34,14 @@ kotlin {
 
         val jvmMain by getting {
             dependencies {
-                compileOnly("org.jetbrains.kotlinx:kotlinx-datetime:0.4.1")
+                compileOnly("org.jetbrains.kotlinx:kotlinx-datetime:0.7.1")
                 compileOnly("com.ionspin.kotlin:bignum:0.3.10")
             }
         }
 
         val nativeMain by creating {
             dependencies {
-                implementation("org.jetbrains.kotlinx:kotlinx-datetime:0.4.1")
+                implementation("org.jetbrains.kotlinx:kotlinx-datetime:0.7.1")
                 implementation("com.ionspin.kotlin:bignum:0.3.10")
             }
         }

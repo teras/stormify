@@ -9,12 +9,12 @@ import onl.ycode.logger.LogManager
 
 
 /**
- * A common abstract class to support auto-populating of fields.
+ * A common abstract class to support autopopulating of fields.
  *
  *
  * This class supports the method [.autoPopulate] which is able to fetch the data from the database when
  * triggered. It is still important to add the call to [.autoPopulate] before accessing (setting or getting)
- * any of the fields that should be auto-populated.
+ * any of the fields that should be autopopulated.
  *
  *
  * The idea is, to trigger the call to the [.autoPopulate] method early, before accessing any fields, so

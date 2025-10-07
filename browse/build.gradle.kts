@@ -8,8 +8,8 @@ version = parent?.version ?: IllegalStateException("Version is not defined")
 description = "Stormify Fuse"
 extra["publishable"] = "true"
 
-java.sourceCompatibility = JavaVersion.VERSION_1_8
-java.targetCompatibility = JavaVersion.VERSION_1_8
+java.sourceCompatibility = JavaVersion.VERSION_11
+java.targetCompatibility = JavaVersion.VERSION_11
 
 dependencies {
     implementation(project(":db"))
@@ -17,10 +17,10 @@ dependencies {
 
     implementation("com.panayotis:arjs:0.3.1")
 
-    testImplementation("org.junit.jupiter:junit-jupiter:5.10.0")
+    testImplementation("org.junit.jupiter:junit-jupiter:6.0.0")
 
-    implementation("com.zaxxer:HikariCP:5.1.0")
-    implementation("ch.qos.logback:logback-classic:1.2.3")
+    implementation("com.zaxxer:HikariCP:7.0.2")
+    implementation("ch.qos.logback:logback-classic:1.5.19")
 //    implementation("com.mysql:mysql-connector-j:9.0.0")
 
     implementation("com.github.serceman:jnr-fuse:0.5.7")

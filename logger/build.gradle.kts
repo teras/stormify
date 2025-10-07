@@ -10,7 +10,7 @@ description = "Stormify Logger"
 kotlin {
     jvm()
     linuxX64()
-    jvmToolchain(8)
+    jvmToolchain(11)
 
     sourceSets {
         val commonMain by getting {
@@ -26,14 +26,14 @@ kotlin {
         val jvmMain by getting {
 
             dependencies {
-                compileOnly("org.slf4j:slf4j-api:2.0.13")
+                compileOnly("org.slf4j:slf4j-api:2.0.17")
 
                 // Log4j API
-                compileOnly("org.apache.logging.log4j:log4j-api:2.23.1")
-                compileOnly("org.apache.logging.log4j:log4j-1.2-api:2.17.0")
+                compileOnly("org.apache.logging.log4j:log4j-api:2.25.2")
+                compileOnly("org.apache.logging.log4j:log4j-1.2-api:2.25.2")
 
                 // Commons Logging
-                compileOnly("commons-logging:commons-logging:1.2")
+                compileOnly("commons-logging:commons-logging:1.3.5")
             }
         }
     }
