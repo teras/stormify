@@ -40,9 +40,6 @@ internal actual fun getNativeAllPrimitives(): Collection<KClass<*>> =
                 kotlinx.datetime.LocalTime::class
             ) else emptyList())
 
-
-actual typealias ThreadLocal<T> = java.lang.ThreadLocal<T>
-
 actual val Any.isOtherPrimitive: Boolean
     get() = this is java.util.Date ||
             this is java.time.temporal.Temporal
