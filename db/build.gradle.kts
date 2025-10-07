@@ -43,6 +43,7 @@ kotlin {
             dependencies {
                 implementation("org.jetbrains.kotlinx:kotlinx-datetime:0.7.1")
                 implementation("com.ionspin.kotlin:bignum:0.3.10")
+                implementation(project(":kdbc"))
             }
         }
     }

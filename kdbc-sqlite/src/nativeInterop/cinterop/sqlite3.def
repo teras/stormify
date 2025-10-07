@@ -1,0 +1,4 @@
+headers = sqlite3.h
+headerFilter = sqlite3.h
+linkerOpts.linux = -lsqlite3
+compilerOpts.linux = -I/usr/include
