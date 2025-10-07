@@ -1748,30 +1748,31 @@ class Stormify(val dataSource: DataSource) {
      * @see SPParam
      */
     fun procedure(conn: Connection?, name: String, vararg params: SPParam<*>) {
+        val shouldClose = conn == null
+        val connection = conn ?: dataSource._connection
         try {
-            val shouldClose = conn == null
-            val connection = conn ?: dataSource._connection
-            val placeholders: String = nCopies("?", ", ", params.size ?: 0)
+            val placeholders: String = nCopies("?", ", ", params.size)
             val statement = "CALL $name($placeholders)"
             `!dbLog`(statement, params)
             connection._prepareCall("{$statement}").use { cs ->
                 for (i in params.indices) {
                     val p: SPParam<*> = params[i]
+                    if (p.mode === OUT || p.mode === INOUT)
+                        cs._registerOutParameter(i + 1, p.type)
                     if (p.mode === IN || p.mode === INOUT)
                         cs._setObject(i + 1, p.value)
-                    if (p.mode === OUT || p.mode === INOUT)
-                        cs._registerOutParameter(i + 1, convertNativeTypeToSQLType(p.type))
                 }
                 cs._execute()
                 for (i in params.indices) {
                     val p: SPParam<*> = params[i]
                     if (p.mode === OUT || p.mode === INOUT)
-                        p.result = cs._getObject(i + 1, params[i].type)
+                        p.result = TypeUtils.castTo(p.type, cs._getObject(i + 1, p.type), this)
                 }
             }
-            if (shouldClose) connection.close()
         } catch (e: Throwable) {
             e.throwQuery("Unable to execute stored procedure $name")
+        } finally {
+            if (shouldClose) connection.close()
         }
     }
 

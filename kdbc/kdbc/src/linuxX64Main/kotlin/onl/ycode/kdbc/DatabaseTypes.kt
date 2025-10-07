@@ -17,7 +17,7 @@ interface PreparedStatement : Statement {
 }
 
 interface CallableStatement : PreparedStatement {
-    fun registerOutParameter(parameterIndex: Int, sqlType: Int)
+    fun registerOutParameter(parameterIndex: Int, type: KClass<*>)
     fun getObject(parameterIndex: Int, type: KClass<*>): Any?
     fun execute(): Boolean
 }

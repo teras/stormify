@@ -24,7 +24,6 @@ internal actual fun PreparedStatement._executeQuery(): ResultSet = executeQuery(
 internal actual fun PreparedStatement._setObject(i: Int, any: Any?) = setObject(i, any)
 internal actual fun PreparedStatement._getGeneratedKeys(): ResultSet = getGeneratedKeys()
 
-internal actual fun CallableStatement._registerOutParameter(i: Int, sqlType: Int) = registerOutParameter(i, sqlType)
 internal actual fun CallableStatement._execute() = execute()
 internal actual fun CallableStatement._getObject(idx: Int, type: KClass<*>): Any? = getObject(idx, type)
 
@@ -32,3 +31,6 @@ internal actual fun ResultSet._next() = next()
 internal actual val ResultSet._columnCount get() = getMetaData().columnCount
 internal actual fun ResultSet._getColumnName(index: Int) = getMetaData().getColumnName(index)
 internal actual fun ResultSet._getObject(index: Int, type: KClass<*>) = getObject(index, type)
+
+internal actual fun CallableStatement._registerOutParameter(i: Int, type: KClass<*>) =
+    registerOutParameter(i, type)

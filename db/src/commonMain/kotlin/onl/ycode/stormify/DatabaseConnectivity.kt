@@ -25,7 +25,7 @@ internal expect fun PreparedStatement._setObject(i: Int, any: Any?)
 internal expect fun PreparedStatement._getGeneratedKeys(): ResultSet
 
 internal expect fun CallableStatement._getObject(idx: Int, type: KClass<*>): Any?
-internal expect fun CallableStatement._registerOutParameter(i: Int, sqlType: Int)
+internal expect fun CallableStatement._registerOutParameter(i: Int, type: KClass<*>)
 internal expect fun CallableStatement._execute(): Boolean
 
 internal expect fun ResultSet._next(): Boolean

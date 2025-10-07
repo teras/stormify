@@ -294,8 +294,8 @@ class MariadbCallableStatement(
         return EmptyMariadbResultSet()
     }
 
-    override fun registerOutParameter(parameterIndex: Int, sqlType: Int) {
-        // Store for later retrieval
+    override fun registerOutParameter(parameterIndex: Int, type: KClass<*>) {
+        // Store for later retrieval - MariaDB will handle type conversion internally
         outParameters[parameterIndex] = null
     }
 

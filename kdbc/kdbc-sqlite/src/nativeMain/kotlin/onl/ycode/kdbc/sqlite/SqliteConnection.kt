@@ -210,7 +210,7 @@ class SqliteCallableStatement : CallableStatement {
         TODO("SQLite doesn't support callable statements")
     }
 
-    override fun registerOutParameter(parameterIndex: Int, sqlType: Int) {
+    override fun registerOutParameter(parameterIndex: Int, type: KClass<*>) {
         TODO("SQLite doesn't support callable statements")
     }
 

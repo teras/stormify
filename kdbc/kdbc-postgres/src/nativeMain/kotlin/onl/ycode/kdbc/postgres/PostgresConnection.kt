@@ -374,8 +374,8 @@ class PostgresCallableStatement(
         return EmptyPostgresResultSet()
     }
 
-    override fun registerOutParameter(parameterIndex: Int, sqlType: Int) {
-        // Store for later retrieval
+    override fun registerOutParameter(parameterIndex: Int, type: KClass<*>) {
+        // Store for later retrieval - PostgreSQL will handle type conversion internally
         outParameters[parameterIndex] = null
     }
 

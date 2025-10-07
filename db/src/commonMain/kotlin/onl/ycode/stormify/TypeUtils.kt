@@ -160,10 +160,6 @@ internal fun isTextualClass(request: KClass<*>) = with(request.fullName) {
 internal fun Throwable.throwQuery(reason: String): Nothing =
     if (this is QueryException) throw this else throw QueryException(reason, this)
 
-internal fun convertNativeTypeToSQLType(type: KClass<out Any>): Int {
-    TODO("Not yet implemented")
-}
-
 private val allPrimitives: Set<String> = (listOf(
     Byte::class,
     Short::class,
