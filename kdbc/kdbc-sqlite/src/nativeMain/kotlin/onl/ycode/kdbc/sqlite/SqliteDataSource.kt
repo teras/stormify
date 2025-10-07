@@ -7,7 +7,7 @@ import onl.ycode.kdbc.DataSource
  * SQLite DataSource implementation.
  */
 class SqliteDataSource(private val url: String) : DataSource {
-    fun getConnection(): Connection {
+    override fun getConnection(): Connection {
         return SqliteConnection(url)
     }
 }

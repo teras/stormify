@@ -1,0 +1,4 @@
+headers = mysql.h
+headerFilter = mysql.h
+linkerOpts.linux = -lmariadb
+compilerOpts.linux = -I/usr/include/mysql

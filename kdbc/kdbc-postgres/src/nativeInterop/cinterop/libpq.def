@@ -1,0 +1,4 @@
+headers = libpq-fe.h
+headerFilter = libpq-fe.h
+linkerOpts.linux = -lpq
+compilerOpts.linux = -I/usr/include
