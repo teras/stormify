@@ -37,10 +37,7 @@ object TypeUtils {
         return try {
             typeConv(value) as T
         } catch (th: Throwable) {
-            throw QueryException(
-                "Error while trying to convert from " + value::class.fullName + " to " + targetClass.fullName,
-                th
-            )
+            th.throwQuery("Error while trying to convert from " + value::class.fullName + " to " + targetClass.fullName)
         }
     }
 
@@ -188,10 +185,8 @@ internal inline fun <T : AutoCloseable, R> T.useWithException(
     block: (T) -> R
 ) = try {
     use(block)
-} catch (q: QueryException) {
-    throw q
 } catch (e: Throwable) {
-    throw QueryException(message, e)
+    e.throwQuery(message)
 }
 
 internal inline fun <R> tryQuery(
@@ -199,8 +194,6 @@ internal inline fun <R> tryQuery(
     block: () -> R
 ) = try {
     block()
-} catch (q: QueryException) {
-    throw q
 } catch (e: Throwable) {
-    throw QueryException(message, e)
+    e.throwQuery(message)
 }

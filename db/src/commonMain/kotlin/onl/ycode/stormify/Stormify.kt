@@ -78,7 +78,7 @@ class Stormify(val dataSource: DataSource) {
             try {
                 if (shouldClose) connection.close() // close it only if it is created here
             } catch (e: Throwable) {
-                throw QueryException("Unable to close connection", e)
+                e.throwQuery("Unable to close connection")
             }
         }
     }
@@ -114,7 +114,7 @@ class Stormify(val dataSource: DataSource) {
         try {
             SqlDialect.findDialect(dataSource)
         } catch (e: Throwable) {
-            throw QueryException("Unable to find SQL dialect", e)
+            e.throwQuery("Unable to find SQL dialect")
         }
     }
 
@@ -1771,7 +1771,7 @@ class Stormify(val dataSource: DataSource) {
             }
             if (shouldClose) connection.close()
         } catch (e: Throwable) {
-            throw QueryException("Unable to execute stored procedure $name", e)
+            e.throwQuery("Unable to execute stored procedure $name")
         }
     }
 

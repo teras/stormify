@@ -96,7 +96,7 @@ class TransactionContext internal constructor(@PublishedApi internal val stormif
             conn._commit()
         } catch (e: Throwable) {
             conn._rollback()
-            throw QueryException("Unable to execute transaction: ${e.message}", e)
+            e.throwQuery("Unable to execute transaction: ${e.message}")
         } finally {
             conn._enableAutoCommit()
         }
@@ -138,7 +138,7 @@ class TransactionContext internal constructor(@PublishedApi internal val stormif
         } catch (e: Throwable) {
             if (savepoint != null)
                 conn._rollback(savepoint)
-            throw QueryException("Unable to execute transaction: ${e.message}", e)
+            e.throwQuery("Unable to execute transaction: ${e.message}")
         }
     }
 }
