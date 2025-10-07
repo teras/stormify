@@ -9,57 +9,43 @@ import onl.ycode.logger.LogManager
 
 
 /**
- * A common abstract class to support autopopulating of fields.
+ * A common abstract class to support auto-populating of fields.
  *
+ * This class supports the [populate] method which fetches data from the database when triggered.
+ * It is important to call [populate] before accessing any fields that should be auto-populated.
  *
- * This class supports the method [.autoPopulate] which is able to fetch the data from the database when
- * triggered. It is still important to add the call to [.autoPopulate] before accessing (setting or getting)
- * any of the fields that should be autopopulated.
- *
- *
- * The idea is, to trigger the call to the [.autoPopulate] method early, before accessing any fields, so
+ * The idea is to trigger the call to the [populate] method early, before accessing any fields, so
  * when the fields are accessed, they are already populated.
  *
+ * The primary key fields are required to pre-exist when the population action takes place. These properties
+ * should never be used together with the [populate] method.
  *
- * The primary key fields are required to pre-exist, when the population action takes place. These properties
- * should never be used together with the [.autoPopulate] method.
+ * In addition, this class overrides [equals], [hashCode] and [toString]. They use the primary keys
+ * of the table to calculate the hash code and equality, while [toString] prints the primary keys and
+ * their values together with the class name.
  *
+ * ## Example
  *
- * In addition, this class supports the common Object methods [.equals], [.hashCode] and
- * [.toString]. They use the primary keys of the table to calculate the hash code and the equality, while
- * the [.toString] method prints the primary keys and their values together with the class name.
+ * ```kotlin
+ * class MyTable : AutoTable() {
+ *     var id: Int? = null
+ *     var name: String? = null
  *
+ *     fun getName(): String? {
+ *         populate()
+ *         return name
+ *     }
  *
- * An example of a class that extends this class is:
- * <pre>
- * public class MyTable extends AutoTable {
- * private Integer id = null;
- * private String name = null;
- * ...
- *
- * public Integer getId() {
- * return id;
+ *     fun setName(value: String?) {
+ *         populate()
+ *         name = value
+ *     }
  * }
+ * ```
  *
- * public void setId(Integer id) {
- * this.id = id;
- * }
- *
- * public String getName() {
- * autoPopulate();
- * return name;
- * }
- *
- * public void setName(String name) {
- * autoPopulate();
- * this.name = name;
- * }
- * ...
- * }
-</pre> *
- * Note that the [.autoPopulate] method should be called before accessing the fields itself. This method is similar to what JPA
- * does with the lazy loading of an object. The main difference is, this method needs to be defined explicitly by the developer, instead
- * of adding arbitrary code to pojo classes.
+ * Note that the [populate] method should be called before accessing the fields. This method is similar to what JPA
+ * does with lazy loading of an object. The main difference is that this method needs to be called explicitly by the
+ * developer, instead of relying on bytecode manipulation.
  */
 abstract class AutoTable {
     private val lock = SynchronizedObject()

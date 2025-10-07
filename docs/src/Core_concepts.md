@@ -1,17 +1,13 @@
 # Core Concepts
 
-## POJO Mapping and Requirements
+## Entity Mapping and Requirements
 
-Stormify maps Plain Old Java Objects (POJOs) to database tables using field names that match the corresponding database
-column names. This approach minimizes the need for extensive configurations or annotations, allowing you to work
-directly with your Java objects.
+Stormify maps Kotlin classes to database tables using field names that match the corresponding database column names. This approach minimizes the need for extensive configurations or annotations, allowing you to work directly with your Kotlin classes.
 
 ### Field Name Matching
 
-- **Automatic Mapping**: Fields in your Java classes are automatically mapped to database columns with matching names.
-  No annotations are required as long as the field names correspond to the column names.
-- **Optional Annotations**: You can use the `@DbTable` and `@DbField` annotations to provide additional information or
-  to customize the mapping between your Java classes and the database.
+- **Automatic Mapping**: Fields in your Kotlin classes are automatically mapped to database columns with matching names. No annotations are required as long as the field names correspond to the column names.
+- **Optional Annotations**: You can use the `@DbTable` and `@DbField` annotations to provide additional information or to customize the mapping between your classes and the database.
 
 ### Naming Policy
 
@@ -36,8 +32,7 @@ will only affect tables and fields that are not already registered.
 
 ### Custom Primary Key Resolvers
 
-The primary keys in the databases, commonly follow a naming convention. If this is the case, instead of using
-annotations, you can register custom primary key resolvers to help Stormify identify primary keys based on their name.
+Primary keys in databases commonly follow a naming convention. If this is the case, instead of using annotations, you can register custom primary key resolvers to help Stormify identify primary keys based on their name.
 
 #### How It Works
 
@@ -46,22 +41,23 @@ To set up a primary key resolver, use the `registerPrimaryKeyResolver` method. Y
 - **Priority**: Determines which resolver is used first if multiple are registered. Higher values mean higher priority.
 - **Resolver Function**: A simple function that checks the table and field names to decide if a field is a primary key.
 
-#### Simple Example
+#### Example
 
-If your primary keys follow a specific naming pattern, you can register a resolver that uses your own criteria. For
-instance:
+If your primary keys follow a specific naming pattern, you can register a resolver that uses your own criteria:
 
-```java
-    stormifyManager.registerPrimaryKeyResolver(10,(tableName, fieldName) -> fieldName.equalsIgnoreCase("id"));
+```kotlin
+// Register a resolver that identifies fields named "id" as primary keys
+stormify.registerPrimaryKeyResolver(10) { tableName, fieldName ->
+    fieldName.equals("id", ignoreCase = true)
+}
 ```
 
 In this example:
 
-- The resolver simply checks if the field name is `id`, a common but not universal pattern.
+- The resolver checks if the field name is `id`, a common but not universal pattern.
 - The priority is set to `10`, indicating this resolver should be checked early.
 
-By setting up custom primary key resolvers, Stormify can accurately identify primary keys, without relying on
-annotations for every class.
+By setting up custom primary key resolvers, Stormify can accurately identify primary keys without relying on annotations for every class.
 
 ## Annotations
 
@@ -77,19 +73,17 @@ optional and is only needed if the table name differs from the class name.
 
 #### Example
 
-```java
-import onl.ycode.stormify.DbTable;
+```kotlin
+import onl.ycode.stormify.DbTable
 
 @DbTable(name = "custom_table_name")
-public class Test {
-    private int id;
-    private String name;
-
-    // Getters and setters
-}
+data class User(
+    var id: Int = 0,
+    var name: String = ""
+)
 ```
 
-In this example, the `Test` class maps to the `custom_table_name` table in the database.
+In this example, the `User` class maps to the `custom_table_name` table in the database.
 
 ### `@DbField` Annotation
 
@@ -108,18 +102,16 @@ is optional and allows you to customize how fields are mapped to database column
 
 #### Example
 
-```java
-import onl.ycode.stormify.DbField;
+```kotlin
+import onl.ycode.stormify.DbField
 
-public class Test {
+data class User(
     @DbField(name = "custom_id", primaryKey = true, primarySequence = "id_seq")
-    private int id;
+    var id: Int = 0,
 
     @DbField(creatable = false, updatable = true)
-    private String name;
-
-    // Getters and setters
-}
+    var name: String = ""
+)
 ```
 
 In this example:
@@ -127,44 +119,37 @@ In this example:
 - The `id` field is mapped to the `custom_id` column, marked as a primary key, and uses a sequence named `id_seq`.
 - The `name` field is configured to be updatable but not creatable.
 
-### Other supported Annotations
+### Other Supported Annotations
 
-Stormify provides support for several standard annotations from the `javax.persistence` package, making it easy to
-integrate with existing Java applications that use these familiar annotations. The following annotations are supported:
+Stormify provides support for several standard annotations from the `javax.persistence` package (JPA), making it easy to integrate with existing applications. The following annotations are supported:
 
 - **`@Id`**: Marks a field as the primary key of the entity.
 
-- **`@Table`**: Specifies the table in the database that maps to the entity. Stormify uses the table name from
-  this annotation to map your classes to the corresponding database tables.
+- **`@Table`**: Specifies the table in the database that maps to the entity. Stormify uses the table name from this annotation to map your classes to the corresponding database tables.
 
-- **`@Column`**: Maps a field to a specific column in the database table. Stormify retrieves the column name to
-  map fields to the correct database columns, focusing primarily on the name attribute.
+- **`@Column`**: Maps a field to a specific column in the database table. Stormify retrieves the column name to map fields to the correct database columns, focusing primarily on the name attribute.
 
-- **`@JoinColumn`**: Specifies the column used for joining an entity association, typically used with relationships
-  like `@ManyToOne` or `@OneToOne`. Again, Stormify focuses only on the name attribute.
+- **`@JoinColumn`**: Specifies the column used for joining an entity association, typically used with relationships like `@ManyToOne` or `@OneToOne`. Stormify focuses only on the name attribute.
 
-- **`@SequenceGenerator`**: Defines a primary key generator that uses a database sequence, allowing you to control how
-  IDs
-  are generated for new entities.
+- **`@SequenceGenerator`**: Defines a primary key generator that uses a database sequence, allowing you to control how IDs are generated for new entities.
+
+- **`@Transient`**: Marks a field to be ignored during database operations.
 
 ### Note
 
-These annotations help bridge the gap between your Java objects and database schema, enabling a smooth and familiar
-mapping experience with Stormify. By leveraging these standard annotations, Stormify ensures compatibility with existing
-JPA setups while providing additional flexibility.
+These annotations help bridge the gap between your Kotlin classes and database schema, enabling a smooth mapping experience with Stormify. By leveraging these standard JPA annotations, Stormify ensures compatibility with existing JPA setups while providing additional flexibility.
 
 ## Blacklist Management
 
-Stormify includes a feature to manage fields that should be ignored during database interactions. This is useful when
-you want to exclude certain fields from being creatable, updated, or retrieved.
+Stormify includes a feature to manage fields that should be ignored during database interactions. This is useful when you want to exclude certain fields from being creatable, updated, or retrieved.
 
-**Note**: if a fields is marked as @Transient, it will be ignored by default.
+**Note**: If a field is marked as `@Transient`, it will be ignored by default.
 
-- **Add to Blacklist**: Use `addBlacklistField(String fieldName)` to add a field to the blacklist.
-- **Remove from Blacklist**: Use `removeBlacklistField(String fieldName)` to remove a field from the blacklist.
+- **Add to Blacklist**: Use `addBlacklistField(fieldName: String)` to add a field to the blacklist.
+- **Remove from Blacklist**: Use `removeBlacklistField(fieldName: String)` to remove a field from the blacklist.
 
 Example:
 
-```java
-stormify().addBlacklistField("temporaryField");
+```kotlin
+stormify.addBlacklistField("temporaryField")
 ```

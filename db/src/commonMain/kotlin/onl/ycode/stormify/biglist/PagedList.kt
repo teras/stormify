@@ -17,7 +17,9 @@ import kotlin.reflect.KClass
  * fixed size and only the current page is loaded in memory. The list is
  * accessed as if it were a single list.
  *
- * @param <T> The type of elements in the list
+ * @param T The type of elements in the list
+ * @param classType the KClass of the entity type
+ * @param stormify the Stormify instance for database operations
  */
 class PagedList<T : Any>(val classType: KClass<T>, private val stormify: Stormify) : AbstractList<T>() {
     private val info: TableInfo<T> = TableInfo.retrieve(classType)

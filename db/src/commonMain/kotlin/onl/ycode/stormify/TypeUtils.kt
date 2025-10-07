@@ -11,10 +11,11 @@ object TypeUtils {
     /**
      * Convert a value to the target class
      *
+     * @param F the source class type
+     * @param T the target class type
      * @param targetClass the target class
-     * @param value       the value to convert
-     * @param <F>         the source class type
-     * @param <T>         the target class type
+     * @param value the value to convert
+     * @param stormify optional Stormify instance for entity conversion
      * @return the converted value
      */
     @Suppress("UNCHECKED_CAST")
@@ -114,13 +115,12 @@ object TypeUtils {
      * This function will provide custom conversion between classes, when casting objects of
      * different types.
      *
+     * @param F the source class type
+     * @param T the target class type
      * @param sourceClass the source class that needs to be converted
      * @param targetClass the target class that the data should be converted to
-     * @param converter   the function that will convert the data
-     * @param <F>         the source class type
-     * @param <T>         the target class type
-     * @return the previous conversion function if it was already registered
-    </T></F> */
+     * @param converter the function that will convert the data
+     */
     fun <F : Any, T : Any> register(
         sourceClass: KClass<F>,
         targetClass: KClass<T>,

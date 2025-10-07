@@ -6,29 +6,111 @@ Stormify provides support for managing database transactions, allowing you to gr
 
 ### Managing Transactions
 
-To perform operations within a transaction, use the `transaction` method. This method ensures that all included operations are committed if they succeed, or rolled back if any operation fails. Stormify also supports nested transactions, allowing you to manage transactions within transactions seamlessly.
+To perform operations within a transaction, use the `transaction` method. This method ensures that all included operations are committed if they succeed, or rolled back if any operation fails. Stormify also supports nested transactions through savepoints, allowing you to manage transactions within transactions seamlessly.
+
+#### Basic Transaction Example
+
+```kotlin
+val stormify = Stormify(dataSource)
+
+stormify.transaction {
+    val user = create(User(email = "test@example.com"))
+    create(Profile(userId = user.id, name = "Test User"))
+    update(account)
+}
+```
+
+### Nested Transactions
+
+Nested transactions use database savepoints. If an inner transaction fails, only operations within that savepoint are rolled back.
 
 #### Example
 
-```java
-import static onl.ycode.stormify.StormifyManager.stormify;
+```kotlin
+stormify.transaction {
+    create(record1)
 
-stormify().transaction(() -> {
-    Test record1 = new Test();
-    record1.setId(1);
-    record1.setName("Entry 1");
-    stormify().create(record1);
+    transaction {  // Creates a savepoint
+        create(record2)
+        // If this fails, only record2 is rolled back
+    }
 
-    stormify().transaction(() -> {
-        Test record2 = new Test();
-        record2.setId(2);
-        record2.setName("Entry 2");
-        stormify().create(record2);
-    });
-});
+    create(record3)  // This still executes
+}
 ```
 
-In this example, both the outer and inner transactions are managed independently. If any operation fails in the inner transaction, only the inner transaction will be rolled back, while the outer transaction can continue.
+### Extracting Transaction Logic
+
+For complex business logic, you can extract operations into reusable functions using two patterns:
+
+#### Pattern 1: Extension Functions (Recommended)
+
+Extension functions on `TransactionContext` provide the cleanest syntax:
+
+```kotlin
+// Define extension functions for your business logic
+fun TransactionContext.registerUser(email: String, name: String) {
+    val user = create(User(email = email))
+    create(Profile(userId = user.id, name = name))
+    create(AuditLog(action = "User registered", userId = user.id))
+}
+
+fun TransactionContext.transferFunds(from: Account, to: Account, amount: Double) {
+    require(from.balance >= amount) { "Insufficient funds" }
+    update(from.copy(balance = from.balance - amount))
+    update(to.copy(balance = to.balance + amount))
+    create(Transaction(fromId = from.id, toId = to.id, amount = amount))
+}
+
+// Usage - clean and readable
+stormify.transaction {
+    registerUser("alice@example.com", "Alice")
+    transferFunds(accountA, accountB, 100.0)
+}
+```
+
+#### Pattern 2: Service Layer Classes
+
+For more structured applications, encapsulate transaction logic in service classes:
+
+```kotlin
+class UserService(private val tx: TransactionContext) {
+    fun registerUser(email: String, name: String) {
+        val user = tx.create(User(email = email))
+        tx.create(Profile(userId = user.id, name = name))
+        tx.create(AuditLog("User registered", user.id))
+    }
+
+    fun deleteUser(userId: Int) {
+        val user = tx.findById<User>(userId)
+        tx.delete(user)
+        tx.create(AuditLog("User deleted", userId))
+    }
+}
+
+class AccountService(private val tx: TransactionContext) {
+    fun transferFunds(fromId: Int, toId: Int, amount: Double) {
+        val from = tx.findById<Account>(fromId)
+        val to = tx.findById<Account>(toId)
+        require(from.balance >= amount) { "Insufficient funds" }
+
+        tx.update(from.copy(balance = from.balance - amount))
+        tx.update(to.copy(balance = to.balance + amount))
+        tx.create(Transaction(fromId = fromId, toId = toId, amount = amount))
+    }
+}
+
+// Usage - organized service layer
+stormify.transaction {
+    val userService = UserService(this)
+    val accountService = AccountService(this)
+
+    userService.registerUser("alice@example.com", "Alice")
+    accountService.transferFunds(1, 2, 100.0)
+}
+```
+
+Both patterns ensure that all operations share the same database connection and participate in the same transaction.
 
 ## Handling Auto-Increment Fields
 
@@ -40,17 +122,14 @@ If your database uses sequences for generating primary keys, you can specify the
 
 #### Example
 
-```java
-import onl.ycode.stormify.DbField;
+```kotlin
+import onl.ycode.stormify.DbField
 
-public class Test {
+data class User(
     @DbField(name = "custom_id", primaryKey = true, primarySequence = "id_seq")
-    private int id;
-
-    private String name;
-
-    // Getters and setters
-}
+    var id: Int = 0,
+    var name: String = ""
+)
 ```
 
 In this example, the `id` field uses the sequence named `id_seq` to generate its values.
@@ -65,20 +144,18 @@ To define a composite key, simply mark all fields involved in the key as primary
 
 #### Example
 
-```java
-import onl.ycode.stormify.DbField;
+```kotlin
+import onl.ycode.stormify.DbField
 
-public class CompositeKeyExample {
+data class CompositeKeyExample(
     @DbField(name = "key_part1", primaryKey = true)
-    private int part1;
+    var part1: Int = 0,
 
     @DbField(name = "key_part2", primaryKey = true)
-    private int part2;
+    var part2: Int = 0,
 
-    private String data;
-
-    // Getters and setters
-}
+    var data: String = ""
+)
 ```
 
 In this example, both `part1` and `part2` fields form the composite primary key for the `CompositeKeyExample` class.
@@ -87,20 +164,23 @@ In this example, both `part1` and `part2` fields form the composite primary key 
 
 ### Strict Mode
 
-Strict mode enforces strict mapping between Java objects and database tables. When enabled, Stormify throws exceptions if fields are missing or do not match between the Java object and the database schema. This can be useful for ensuring data integrity and preventing accidental discrepancies.
+Strict mode enforces strict mapping between Kotlin classes and database tables. When enabled, Stormify throws exceptions if fields are missing or do not match between the class and the database schema. This is useful for ensuring data integrity and preventing accidental discrepancies.
+
+By default, Stormify operates in strict mode.
 
 #### Enabling Strict Mode
 
-```java
-stormify().setStrictMode(true);
+```kotlin
+val stormify = Stormify(dataSource)
+stormify.isStrictMode = true
 ```
 
 ### Lenient Mode
 
-When strict mode is disabled, Stormify operates in lenient mode, logging warnings instead of throwing exceptions for mismatches between Java objects and database columns. This mode is useful for development or scenarios where flexibility is more important than strict validation.
+When strict mode is disabled, Stormify operates in lenient mode, logging warnings instead of throwing exceptions for mismatches between classes and database columns. This mode is useful for development or scenarios where flexibility is more important than strict validation.
 
 #### Disabling Strict Mode
 
-```java
-stormify().setStrictMode(false);
+```kotlin
+stormify.isStrictMode = false
 ```

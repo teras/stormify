@@ -7,8 +7,8 @@ import kotlin.reflect.KClass
 /**
  * This class is used to pass parameters to stored procedures.
  *
- * @param <T> The type of the parameter.
-</T> */
+ * @param T The type of the parameter.
+ */
 class SPParam<T : Any> internal constructor(
     val type: KClass<T>,
     val value: Any?,
@@ -39,9 +39,9 @@ class SPParam<T : Any> internal constructor(
          *
          * @param type  The type of the parameter.
          * @param value The value of the parameter.
-         * @param <T>   The type of the parameter.
+         * @param T The type of the parameter.
          * @return The new parameter.
-        </T> */
+         */
         fun <T : Any> `in`(type: KClass<T>, value: T): SPParam<T> {
             return SPParam(type, value, Mode.IN)
         }
@@ -50,9 +50,9 @@ class SPParam<T : Any> internal constructor(
          * Create a new OUT parameter.
          *
          * @param type The type of the parameter.
-         * @param <T>  The type of the parameter.
+         * @param T The type of the parameter.
          * @return The new parameter.
-        </T> */
+         */
         fun <T : Any> out(type: KClass<T>): SPParam<T> {
             return SPParam(type, null, Mode.OUT)
         }
@@ -62,9 +62,9 @@ class SPParam<T : Any> internal constructor(
          *
          * @param type  The type of the parameter.
          * @param value The value of the parameter.
-         * @param <T>   The type of the parameter.
+         * @param T The type of the parameter.
          * @return The new parameter.
-        </T> */
+         */
         fun <T : Any> inout(type: KClass<T>, value: T): SPParam<T> {
             return SPParam(type, value, Mode.INOUT)
         }

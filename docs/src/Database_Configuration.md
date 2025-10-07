@@ -12,17 +12,17 @@ Stormify relies on a JDBC-compatible data source to connect to your database. Yo
 
    HikariCP is a high-performance JDBC connection pool. Below is an example of configuring HikariCP as the data source for Stormify.
 
-   ```java
-   import com.zaxxer.hikari.HikariConfig;
-   import com.zaxxer.hikari.HikariDataSource;
-   import static onl.ycode.stormify.StormifyManager.stormify;
+   ```kotlin
+   import com.zaxxer.hikari.HikariConfig
+   import com.zaxxer.hikari.HikariDataSource
+   import onl.ycode.stormify.Stormify
 
    // Configure HikariCP using a properties file
-   HikariConfig config = new HikariConfig("databaseConfig.properties");
-   HikariDataSource dataSource = new HikariDataSource(config);
+   val config = HikariConfig("databaseConfig.properties")
+   val dataSource = HikariDataSource(config)
 
-   // Set the data source for Stormify
-   stormify().setDataSource(dataSource);
+   // Create Stormify instance with the data source
+   val stormify = Stormify(dataSource)
    ```
 
    In this example, replace `"databaseConfig.properties"` with the path to your HikariCP configuration file. You can also configure HikariCP programmatically by setting properties directly on the `HikariConfig` object.
@@ -31,23 +31,24 @@ Stormify relies on a JDBC-compatible data source to connect to your database. Yo
 
    Apache DBCP is another widely-used connection pooling library. Below is an example of configuring Apache DBCP with Stormify.
 
-   ```java
-   import org.apache.commons.dbcp2.BasicDataSource;
-   import static onl.ycode.stormify.StormifyManager.stormify;
+   ```kotlin
+   import org.apache.commons.dbcp2.BasicDataSource
+   import onl.ycode.stormify.Stormify
 
    // Configure Apache DBCP
-   BasicDataSource dataSource = new BasicDataSource();
-   dataSource.setUrl("jdbc:mysql://localhost:3306/yourdb");
-   dataSource.setUsername("username");
-   dataSource.setPassword("password");
+   val dataSource = BasicDataSource().apply {
+       url = "jdbc:mysql://localhost:3306/yourdb"
+       username = "username"
+       password = "password"
+   }
 
-   // Set the data source for Stormify
-   stormify().setDataSource(dataSource);
+   // Create Stormify instance with the data source
+   val stormify = Stormify(dataSource)
    ```
 
 ### Using Different JDBC Data Sources
 
-Stormify is compatible with any JDBC data source. Simply configure the data source according to your requirements and set it using `stormify().setDataSource(dataSource);`.
+Stormify is compatible with any JDBC data source. Simply configure the data source according to your requirements and create a `Stormify` instance with it.
 
 ## Environment Setup
 
@@ -70,14 +71,15 @@ database.pool.size=10
 
 You can also configure Stormify programmatically by setting properties directly in your application code. This approach provides flexibility for dynamic environments.
 
-```java
-HikariConfig config = new HikariConfig();
-config.setJdbcUrl("jdbc:mysql://localhost:3306/yourdb");
-config.setUsername("username");
-config.setPassword("password");
+```kotlin
+val config = HikariConfig().apply {
+    jdbcUrl = "jdbc:mysql://localhost:3306/yourdb"
+    username = "username"
+    password = "password"
+}
 
-HikariDataSource dataSource = new HikariDataSource(config);
-stormify().setDataSource(dataSource);
+val dataSource = HikariDataSource(config)
+val stormify = Stormify(dataSource)
 ```
 
 ## Logging Configuration
@@ -86,9 +88,9 @@ Stormify includes logging capabilities to help monitor SQL queries and diagnose 
 
 ### Enabling SQL Logging
 
-To enable SQL logging, you can adjust the logging settings of your application. Stormify uses the logging framework configured for your application (e.g., SLF4J, Log4j).
+To enable SQL logging, you can adjust the logging settings of your application. Stormify uses the logging framework configured for your application (e.g., SLF4J, Log4j, Logback).
 
-Example SLF4J configuration in `logback.xml`:
+Example Logback configuration in `logback.xml`:
 
 ```xml
 <configuration>
@@ -122,11 +124,12 @@ Tuning connection pool settings such as the maximum pool size, idle connections,
 
 Example HikariCP tuning:
 
-```java
-HikariConfig config = new HikariConfig();
-config.setMaximumPoolSize(20);
-config.setIdleTimeout(30000); // 30 seconds
-config.setConnectionTimeout(10000); // 10 seconds
+```kotlin
+val config = HikariConfig().apply {
+    maximumPoolSize = 20
+    idleTimeout = 30000 // 30 seconds
+    connectionTimeout = 10000 // 10 seconds
+}
 ```
 
 ### Performance Tuning Tips
