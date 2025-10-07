@@ -2,3 +2,63 @@ headers = mysql.h
 headerFilter = mysql.h
 linkerOpts.linux = -lmariadb
 compilerOpts.linux = -I/usr/include/mysql
+---
+
+#include <mysql.h>
+
+// Re-export stmt functions
+static inline MYSQL_STMT* mariadb_stmt_init_wrapper(MYSQL *mysql) {
+    return mysql_stmt_init(mysql);
+}
+
+static inline int mariadb_stmt_prepare_wrapper(MYSQL_STMT *stmt, const char *query, unsigned long length) {
+    return mysql_stmt_prepare(stmt, query, length);
+}
+
+static inline int mariadb_stmt_execute_wrapper(MYSQL_STMT *stmt) {
+    return mysql_stmt_execute(stmt);
+}
+
+static inline int mariadb_stmt_fetch_wrapper(MYSQL_STMT *stmt) {
+    return mysql_stmt_fetch(stmt);
+}
+
+static inline unsigned long mariadb_stmt_param_count_wrapper(MYSQL_STMT *stmt) {
+    return mysql_stmt_param_count(stmt);
+}
+
+static inline my_bool mariadb_stmt_bind_param_wrapper(MYSQL_STMT *stmt, MYSQL_BIND *bind) {
+    return mysql_stmt_bind_param(stmt, bind);
+}
+
+static inline my_bool mariadb_stmt_bind_result_wrapper(MYSQL_STMT *stmt, MYSQL_BIND *bind) {
+    return mysql_stmt_bind_result(stmt, bind);
+}
+
+static inline int mariadb_stmt_store_result_wrapper(MYSQL_STMT *stmt) {
+    return mysql_stmt_store_result(stmt);
+}
+
+static inline MYSQL_RES* mariadb_stmt_result_metadata_wrapper(MYSQL_STMT *stmt) {
+    return mysql_stmt_result_metadata(stmt);
+}
+
+static inline my_bool mariadb_stmt_close_wrapper(MYSQL_STMT *stmt) {
+    return mysql_stmt_close(stmt);
+}
+
+static inline unsigned int mariadb_stmt_errno_wrapper(MYSQL_STMT *stmt) {
+    return mysql_stmt_errno(stmt);
+}
+
+static inline const char* mariadb_stmt_error_wrapper(MYSQL_STMT *stmt) {
+    return mysql_stmt_error(stmt);
+}
+
+static inline unsigned long long mariadb_stmt_affected_rows_wrapper(MYSQL_STMT *stmt) {
+    return mysql_stmt_affected_rows(stmt);
+}
+
+static inline unsigned long long mariadb_stmt_insert_id_wrapper(MYSQL_STMT *stmt) {
+    return mysql_stmt_insert_id(stmt);
+}
