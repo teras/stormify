@@ -62,3 +62,12 @@ static inline unsigned long long mariadb_stmt_affected_rows_wrapper(MYSQL_STMT *
 static inline unsigned long long mariadb_stmt_insert_id_wrapper(MYSQL_STMT *stmt) {
     return mysql_stmt_insert_id(stmt);
 }
+
+// SSL/TLS support
+static inline my_bool mysql_ssl_set_wrapper(MYSQL *mysql, const char *key, const char *cert, const char *ca, const char *capath, const char *cipher) {
+    return mysql_ssl_set(mysql, key, cert, ca, capath, cipher);
+}
+
+static inline const char* mysql_get_ssl_cipher_wrapper(MYSQL *mysql) {
+    return mysql_get_ssl_cipher(mysql);
+}

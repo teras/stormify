@@ -23,6 +23,24 @@ class MariadbConnection(
         // Initialize MySQL library
         val mysqlPtr = mysql_init(null) ?: throw SQLException("Failed to initialize MySQL library")
 
+        // Configure SSL if present in properties
+        if (properties.containsKey("ssl_enabled")) {
+            val sslKey = properties["ssl_key"]
+            val sslCert = properties["ssl_cert"]
+            val sslCa = properties["ssl_ca"]
+            val sslCaPath = properties["ssl_capath"]
+            val sslCipher = properties["ssl_cipher"]
+
+            mysql_ssl_set_wrapper(
+                mysqlPtr,
+                sslKey,
+                sslCert,
+                sslCa,
+                sslCaPath,
+                sslCipher
+            )
+        }
+
         // Parse connection string: host:port/database
         val parts = connectionString.split("/")
         if (parts.size != 2) {
@@ -37,6 +55,12 @@ class MariadbConnection(
         val user = properties["user"] ?: "root"
         val password = properties["password"] ?: ""
 
+        // Determine client flags for SSL
+        var clientFlags = 0uL
+        if (properties.containsKey("ssl_enabled")) {
+            clientFlags = clientFlags or 2048uL // CLIENT_SSL flag
+        }
+
         // Connect to database
         val result = mysql_real_connect(
             mysqlPtr,
@@ -46,7 +70,7 @@ class MariadbConnection(
             database,
             port,
             null,
-            0u
+            clientFlags
         )
 
         if (result == null) {
