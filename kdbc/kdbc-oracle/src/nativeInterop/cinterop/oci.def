@@ -1,0 +1,136 @@
+headers = oci.h
+headerFilter = oci.h ocidfn.h ocidem.h ociap.h
+linkerOpts.linux = -lclntsh
+compilerOpts.linux = -I/usr/include
+
+---
+
+#include <oci.h>
+
+// Ensure types are visible
+typedef struct OCIEnv OCIEnv;
+typedef struct OCIError OCIError;
+typedef struct OCISvcCtx OCISvcCtx;
+typedef struct OCIStmt OCIStmt;
+typedef struct OCIBind OCIBind;
+typedef struct OCIDefine OCIDefine;
+typedef struct OCIParam OCIParam;
+
+// Helper wrappers for Oracle OCI functions
+// OCI uses explicit error handling, so most functions return sword (signed word)
+
+// Environment and context initialization
+static inline sword oci_env_create(OCIEnv **envhpp, ub4 mode, OCIError **errhp) {
+    return OCIEnvCreate(envhpp, mode, NULL, NULL, NULL, NULL, 0, NULL);
+}
+
+// Error handling
+static inline sword oci_error_get(OCIError *errhp, ub4 recordno, text *sqlstate, sb4 *errcodep, text *bufp, ub4 bufsiz) {
+    return OCIErrorGet(errhp, recordno, sqlstate, errcodep, bufp, bufsiz, OCI_HTYPE_ERROR);
+}
+
+// Connection management
+static inline sword oci_logon2(OCIEnv *envhp, OCIError *errhp, OCISvcCtx **svchpp,
+                                const text *username, ub4 uname_len,
+                                const text *password, ub4 passwd_len,
+                                const text *dblink, ub4 dblink_len,
+                                ub4 mode) {
+    return OCILogon2(envhp, errhp, svchpp, username, uname_len, password, passwd_len,
+                     dblink, dblink_len, mode);
+}
+
+static inline sword oci_logoff(OCISvcCtx *svchp, OCIError *errhp) {
+    return OCILogoff(svchp, errhp);
+}
+
+// Statement handling
+static inline sword oci_stmt_prepare2(OCISvcCtx *svchp, OCIStmt **stmthpp, OCIError *errhp,
+                                      const text *stmttext, ub4 stmt_len,
+                                      const text *key, ub4 key_len,
+                                      ub4 language, ub4 mode) {
+    return OCIStmtPrepare2(svchp, stmthpp, errhp, stmttext, stmt_len, key, key_len,
+                          language, mode);
+}
+
+static inline sword oci_stmt_execute(OCISvcCtx *svchp, OCIStmt *stmtp, OCIError *errhp,
+                                     ub4 iters, ub4 rowoff,
+                                     const OCISnapshot *snap_in, OCISnapshot *snap_out,
+                                     ub4 mode) {
+    return OCIStmtExecute(svchp, stmtp, errhp, iters, rowoff, snap_in, snap_out, mode);
+}
+
+static inline sword oci_stmt_release(OCIStmt *stmtp, OCIError *errhp,
+                                     const text *key, ub4 key_len, ub4 mode) {
+    return OCIStmtRelease(stmtp, errhp, key, key_len, mode);
+}
+
+static inline sword oci_stmt_fetch2(OCIStmt *stmthp, OCIError *errhp, ub4 nrows,
+                                    ub2 orientation, sb4 scrollOffset, ub4 mode) {
+    return OCIStmtFetch2(stmthp, errhp, nrows, orientation, scrollOffset, mode);
+}
+
+// Bind and define
+static inline sword oci_bind_by_pos(OCIStmt *stmtp, OCIBind **bindpp, OCIError *errhp,
+                                    ub4 position, void *valuep, sb4 value_sz,
+                                    ub2 dty, void *indp, ub2 *alenp,
+                                    ub2 *rcodep, ub4 maxarr_len, ub4 *curelep,
+                                    ub4 mode) {
+    return OCIBindByPos(stmtp, bindpp, errhp, position, valuep, value_sz, dty,
+                       indp, alenp, rcodep, maxarr_len, curelep, mode);
+}
+
+static inline sword oci_define_by_pos(OCIStmt *stmtp, OCIDefine **defnpp, OCIError *errhp,
+                                      ub4 position, void *valuep, sb4 value_sz,
+                                      ub2 dty, void *indp, ub2 *rlenp,
+                                      ub2 *rcodep, ub4 mode) {
+    return OCIDefineByPos(stmtp, defnpp, errhp, position, valuep, value_sz, dty,
+                         indp, rlenp, rcodep, mode);
+}
+
+// Attribute getting/setting
+static inline sword oci_attr_get(const void *trgthndlp, ub4 trghndltyp,
+                                void *attributep, ub4 *sizep,
+                                ub4 attrtype, OCIError *errhp) {
+    return OCIAttrGet(trgthndlp, trghndltyp, attributep, sizep, attrtype, errhp);
+}
+
+static inline sword oci_attr_set(void *trgthndlp, ub4 trghndltyp,
+                                void *attributep, ub4 size,
+                                ub4 attrtype, OCIError *errhp) {
+    return OCIAttrSet(trgthndlp, trghndltyp, attributep, size, attrtype, errhp);
+}
+
+// Transaction management
+static inline sword oci_trans_commit(OCISvcCtx *svchp, OCIError *errhp, ub4 flags) {
+    return OCITransCommit(svchp, errhp, flags);
+}
+
+static inline sword oci_trans_rollback(OCISvcCtx *svchp, OCIError *errhp, ub4 flags) {
+    return OCITransRollback(svchp, errhp, flags);
+}
+
+// Handle allocation/free
+static inline sword oci_handle_alloc(const void *parenth, void **hndlpp, ub4 type,
+                                    size_t xtramem_sz, void **usrmempp) {
+    return OCIHandleAlloc(parenth, hndlpp, type, xtramem_sz, usrmempp);
+}
+
+static inline sword oci_handle_free(void *hndlp, ub4 type) {
+    return OCIHandleFree(hndlp, type);
+}
+
+// Descriptor allocation/free
+static inline sword oci_descriptor_alloc(const void *parenth, void **descpp, ub4 type,
+                                        size_t xtramem_sz, void **usrmempp) {
+    return OCIDescriptorAlloc(parenth, descpp, type, xtramem_sz, usrmempp);
+}
+
+static inline sword oci_descriptor_free(void *descp, ub4 type) {
+    return OCIDescriptorFree(descp, type);
+}
+
+// Parameter information
+static inline sword oci_param_get(const void *hndlp, ub4 htype, OCIError *errhp,
+                                 void **parmdpp, ub4 pos) {
+    return OCIParamGet(hndlp, htype, errhp, parmdpp, pos);
+}
