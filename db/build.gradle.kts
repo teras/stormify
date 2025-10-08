@@ -25,10 +25,10 @@ kotlin {
                 implementation(project(":logger"))
             }
         }
+
         val commonTest by getting {
             dependencies {
-//                implementation(kotlin("test"))
-//                implementation(kotlin("test-junit"))
+                implementation(kotlin("test"))
             }
         }
 
@@ -39,11 +39,39 @@ kotlin {
             }
         }
 
+        val jvmTest by getting {
+            dependencies {
+                // HikariCP for connection pooling
+                implementation("com.zaxxer:HikariCP:5.0.1")
+                // SQLite JDBC driver
+                implementation("org.xerial:sqlite-jdbc:3.42.0.0")
+                // Optional: MySQL/MariaDB JDBC driver
+                // implementation("com.mysql:mysql-connector-j:8.0.33")
+                // Optional: PostgreSQL JDBC driver
+                // implementation("org.postgresql:postgresql:42.6.0")
+            }
+        }
+
         val nativeMain by creating {
+            dependsOn(commonMain)
             dependencies {
                 implementation("org.jetbrains.kotlinx:kotlinx-datetime:0.7.1")
                 implementation("com.ionspin.kotlin:bignum:0.3.10")
                 implementation(project(":kdbc"))
+            }
+        }
+
+        val linuxX64Main by getting {
+            dependsOn(nativeMain)
+        }
+
+        val linuxX64Test by getting {
+            dependencies {
+                // SQLite native driver
+                implementation(project(":kdbc-sqlite"))
+                // Uncomment when ready to test other databases:
+                // implementation(project(":kdbc-postgres"))
+                // implementation(project(":kdbc-mariadb"))
             }
         }
     }

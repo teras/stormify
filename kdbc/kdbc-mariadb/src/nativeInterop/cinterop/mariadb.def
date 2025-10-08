@@ -1,7 +1,7 @@
 headers = mysql.h
 headerFilter = mysql.h
-linkerOpts.linux = -lmariadb
-compilerOpts.linux = -I/usr/include/mysql
+linkerOpts.linux = -L/usr/lib/x86_64-linux-gnu -lmariadb --allow-shlib-undefined
+compilerOpts.linux = -I/usr/include/mysql -I/usr/include/x86_64-linux-gnu
 ---
 
 #include <mysql.h>

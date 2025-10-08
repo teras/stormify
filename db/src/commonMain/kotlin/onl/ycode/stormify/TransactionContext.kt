@@ -102,16 +102,16 @@ class TransactionContext internal constructor(@PublishedApi internal val stormif
         }
     }
 
-    fun executeUpdate(query: String, vararg params: Any?) = stormify.executeUpdate(conn, query, params)
+    fun executeUpdate(query: String, vararg params: Any?) = stormify.executeUpdate(conn, query, *params)
 
     inline fun <reified T : Any> read(query: String, vararg params: Any?) =
-        stormify.read(conn, T::class, query, params)
+        stormify.read(conn, T::class, query, *params)
 
     inline fun <reified T : Any> readOne(query: String, vararg params: Any?): T? =
-        stormify.readOne(conn, T::class, query, params)
+        stormify.readOne(conn, T::class, query, *params)
 
     inline fun <reified T : Any> readCursor(query: String, vararg params: Any?, noinline consumer: (T) -> Unit) =
-        stormify.readCursor(conn, T::class, query, params, consumer = consumer)
+        stormify.readCursor(conn, T::class, query, *params, consumer = consumer)
 
     fun <T : Any> populate(entity: T): T = stormify.populate(conn, entity)
 
@@ -125,7 +125,7 @@ class TransactionContext internal constructor(@PublishedApi internal val stormif
         stormify.getDetails(conn, parent, detailsClass, propertyName)
 
     fun <T : Any> findAll(kclass: KClass<T>, whereClause: String = "", vararg arguments: Any?): List<T> =
-        stormify.findAll(conn, kclass, whereClause, arguments)
+        stormify.findAll(conn, kclass, whereClause, *arguments)
 
     fun <T : Any> findById(kclass: KClass<T>, id: Any) = stormify.findById(conn, kclass, id)
 

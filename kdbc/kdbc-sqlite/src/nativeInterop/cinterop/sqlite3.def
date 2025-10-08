@@ -1,4 +1,4 @@
 headers = sqlite3.h
 headerFilter = sqlite3.h
-linkerOpts.linux = -lsqlite3
-compilerOpts.linux = -I/usr/include
+linkerOpts.linux = -L/usr/lib/x86_64-linux-gnu -lsqlite3 --allow-shlib-undefined
+compilerOpts.linux = -I/usr/include -I/usr/include/x86_64-linux-gnu

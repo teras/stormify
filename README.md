@@ -133,6 +133,25 @@ val activeUsers: List<User> = stormify.findAll<User>("WHERE status = ?", "active
 val user: User? = stormify.findById<User>(1)
 ```
 
+## Native Builds
+
+**Build**:
+```bash
+gradle buildNativeDistribution
+gradle testNative
+```
+
+Or use script:
+```bash
+./docker/build-native.sh build
+./docker/build-native.sh test
+```
+
+**Requirements**:
+- Build: Docker
+- Runtime: glibc >= 2.31 (Ubuntu 20.04+, Debian 11+, RHEL 9+)
+- Database libraries: `libsqlite3`, `libpq`, `libmariadb`, Oracle Instant Client
+
 ## Contributing
 
 Contributions are welcome! Please check the [Contributing](Contributing.md) guide for instructions on how to get involved, report issues, or submit pull requests.

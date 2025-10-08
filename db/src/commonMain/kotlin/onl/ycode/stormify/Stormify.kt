@@ -335,7 +335,7 @@ class Stormify(val dataSource: DataSource) {
      * @see readOne
      */
     inline fun <reified T : Any> readCursor(query: String, vararg params: Any?, noinline consumer: (T) -> Unit) =
-        readCursor(null, T::class, query, params, consumer = consumer)
+        readCursor(null, T::class, query, *params, consumer = consumer)
 
     @PublishedApi
     internal fun <T : Any> readCursor(
@@ -427,12 +427,12 @@ class Stormify(val dataSource: DataSource) {
      * @see findAll
      */
     inline fun <reified T : Any> read(query: String, vararg params: Any?): List<T> =
-        read(null, T::class, query, params)
+        read(null, T::class, query, *params)
 
     @PublishedApi
     internal fun <T : Any> read(conn: Connection?, baseClass: KClass<T>, query: String, vararg params: Any?): List<T> =
         with(mutableListOf<T>()) {
-            readCursor(conn, baseClass, query, params) { add(it) }
+            readCursor(conn, baseClass, query, *params) { add(it) }
             return this
         }
 
@@ -514,12 +514,12 @@ class Stormify(val dataSource: DataSource) {
      * @see findById
      */
     inline fun <reified T : Any> readOne(query: String, vararg params: Any?): T? =
-        readOne(null, T::class, query, params)
+        readOne(null, T::class, query, *params)
 
     @PublishedApi
     internal fun <T : Any> readOne(conn: Connection?, baseClass: KClass<T>, query: String, vararg params: Any?): T? {
         val result = Reference<T?>()
-        readCursor(conn, baseClass, query, params) {
+        readCursor(conn, baseClass, query, *params) {
             if (result.item != null)
                 throw QueryException("Multiple results found for query '$query'")
             result.item = it

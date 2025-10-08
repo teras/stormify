@@ -1,4 +1,4 @@
 headers = libpq-fe.h
 headerFilter = libpq-fe.h
-linkerOpts.linux = -lpq
-compilerOpts.linux = -I/usr/include
+linkerOpts.linux = -L/usr/lib/x86_64-linux-gnu -lpq --allow-shlib-undefined
+compilerOpts.linux = -I/usr/include/postgresql -I/usr/include/x86_64-linux-gnu
