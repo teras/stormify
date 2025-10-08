@@ -4,8 +4,10 @@ import kotlin.time.Duration
 import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Duration.Companion.seconds
 import kotlin.time.TimeSource
-import kotlinx.cinterop.ExperimentalForeignApi
-import platform.posix.usleep
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.runBlocking
 
 /**
  * Configuration for connection pooling.
@@ -85,7 +87,6 @@ abstract class PoolableDataSource(
  * Internal connection pool implementation.
  * Used by PoolableDataSource to provide transparent connection pooling.
  */
-@OptIn(ExperimentalForeignApi::class)
 internal class ConnectionPool(
     private val connectionFactory: () -> Connection,
     private val config: PoolConfig = PoolConfig()
@@ -93,7 +94,7 @@ internal class ConnectionPool(
     private val pool = mutableListOf<PoolEntry>()
     private var totalConnections = 0
     private val timeSource = TimeSource.Monotonic
-    private val lock = Lock()
+    private val mutex = Mutex()
 
     init {
         // Pre-populate pool with minimum connections
@@ -106,9 +107,12 @@ internal class ConnectionPool(
         }
     }
 
-    fun getConnection(): Connection {
-        lock.lock()
-        try {
+    fun getConnection(): Connection = runBlocking {
+        getConnectionSuspend()
+    }
+
+    private suspend fun getConnectionSuspend(): Connection {
+        mutex.withLock {
             cleanupIdleConnections()
 
             // Try to find an available connection
@@ -117,7 +121,7 @@ internal class ConnectionPool(
                 if (isValid(available.connection)) {
                     available.isInUse = true
                     available.lastUsed = timeSource.markNow()
-                    return PooledConnectionWrapper(available.connection, this, available)
+                    return PooledConnectionWrapper(available.connection, this@ConnectionPool, available)
                 } else {
                     // Connection is invalid, remove and create new one
                     pool.remove(available)
@@ -134,27 +138,22 @@ internal class ConnectionPool(
             if (totalConnections < config.maxConnections) {
                 val newEntry = createPoolEntry()
                 pool.add(newEntry)
-                return PooledConnectionWrapper(newEntry.connection, this, newEntry)
+                return PooledConnectionWrapper(newEntry.connection, this@ConnectionPool, newEntry)
             }
-        } finally {
-            lock.unlock()
         }
 
         // Pool is exhausted, wait for a connection or timeout
         val waitStart = timeSource.markNow()
         while (true) {
-            usleep(100_000u) // Wait 100ms before retry
+            delay(100) // Wait 100ms before retry
 
-            lock.lock()
-            try {
+            mutex.withLock {
                 val nowAvailable = pool.firstOrNull { !it.isInUse }
                 if (nowAvailable != null && isValid(nowAvailable.connection)) {
                     nowAvailable.isInUse = true
                     nowAvailable.lastUsed = timeSource.markNow()
-                    return PooledConnectionWrapper(nowAvailable.connection, this, nowAvailable)
+                    return PooledConnectionWrapper(nowAvailable.connection, this@ConnectionPool, nowAvailable)
                 }
-            } finally {
-                lock.unlock()
             }
 
             if (waitStart.elapsedNow() > config.connectionTimeout) {
@@ -191,13 +190,10 @@ internal class ConnectionPool(
         }
     }
 
-    internal fun releaseConnection(entry: PoolEntry) {
-        lock.lock()
-        try {
+    internal fun releaseConnection(entry: PoolEntry) = runBlocking {
+        mutex.withLock {
             entry.isInUse = false
             entry.lastUsed = timeSource.markNow()
-        } finally {
-            lock.unlock()
         }
     }
 
@@ -216,9 +212,8 @@ internal class ConnectionPool(
         }
     }
 
-    fun shutdown() {
-        lock.lock()
-        try {
+    fun shutdown() = runBlocking {
+        mutex.withLock {
             pool.forEach { entry ->
                 try {
                     entry.connection.actualClose()
@@ -228,23 +223,18 @@ internal class ConnectionPool(
             }
             pool.clear()
             totalConnections = 0
-        } finally {
-            lock.unlock()
         }
     }
 
-    fun getStats(): PoolStats {
-        lock.lock()
-        try {
-            return PoolStats(
+    fun getStats(): PoolStats = runBlocking {
+        mutex.withLock {
+            PoolStats(
                 totalConnections = totalConnections,
                 activeConnections = pool.count { it.isInUse },
                 idleConnections = pool.count { !it.isInUse },
                 maxConnections = config.maxConnections,
                 minConnections = config.minConnections
             )
-        } finally {
-            lock.unlock()
         }
     }
 }
@@ -296,23 +286,5 @@ private fun Connection.actualClose() {
     when (this) {
         is PooledConnectionWrapper -> this.actualClose()
         else -> (this as AutoCloseable).close()
-    }
-}
-
-/**
- * Simple spin-lock implementation for Kotlin Native.
- */
-private class Lock {
-    private var locked = false
-
-    fun lock() {
-        while (locked) {
-            usleep(1000u) // Spin-wait for 1ms
-        }
-        locked = true
-    }
-
-    fun unlock() {
-        locked = false
     }
 }

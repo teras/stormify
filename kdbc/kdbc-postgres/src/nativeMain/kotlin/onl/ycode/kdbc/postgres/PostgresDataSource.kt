@@ -19,7 +19,7 @@ import onl.ycode.kdbc.SslConfig
  *     port = 5432,
  *     database = "production",
  *     user = "app_user",
- *     password = "${YOUR_PASSWORD}",
+ *     password = "secure_pass",
  *     sslConfig = SslConfig.verifyCA("/path/to/ca-cert.pem")
  * )
  *
@@ -29,7 +29,7 @@ import onl.ycode.kdbc.SslConfig
  *     port = 5432,
  *     database = "production",
  *     user = "app_user",
- *     password = "${YOUR_PASSWORD}",
+ *     password = "secure_pass",
  *     sslConfig = SslConfig.verifyFull("/path/to/ca-cert.pem")
  * )
  *
@@ -39,7 +39,7 @@ import onl.ycode.kdbc.SslConfig
  *     port = 5432,
  *     database = "production",
  *     user = "app_user",
- *     password = "${YOUR_PASSWORD}",
+ *     password = "secure_pass",
  *     sslConfig = SslConfig.withClientCert(
  *         clientCertPath = "/path/to/client-cert.pem",
  *         clientKeyPath = "/path/to/client-key.pem",
@@ -53,7 +53,7 @@ import onl.ycode.kdbc.SslConfig
  *     port = 5432,
  *     database = "production",
  *     user = "app_user",
- *     password = "${YOUR_PASSWORD}",
+ *     password = "secure_pass",
  *     poolConfig = PoolConfig(
  *         minConnections = 5,
  *         maxConnections = 20,

@@ -16,8 +16,8 @@ import onl.ycode.kdbc.SQLException
  *     host = "localhost",
  *     port = 1521,
  *     serviceName = "XE",
- *     user = "myuser",
- *     password = "\${YOUR_PASSWORD}"
+ *     user = "system",
+ *     password = "oracle"
  * )
  *
  * // With SSL (Oracle Wallet)
@@ -26,7 +26,7 @@ import onl.ycode.kdbc.SQLException
  *     port = 1522,
  *     serviceName = "mydb_high",
  *     user = "ADMIN",
- *     password = "\${YOUR_PASSWORD}",
+ *     password = "password",
  *     sslConfig = SslConfig(
  *         enabled = true,
  *         caCertPath = "/path/to/wallet_MYDB"
@@ -39,7 +39,7 @@ import onl.ycode.kdbc.SQLException
  *     port = 1521,
  *     serviceName = "PROD",
  *     user = "app_user",
- *     password = "\${YOUR_PASSWORD}",
+ *     password = "password",
  *     poolConfig = PoolConfig(
  *         minConnections = 5,
  *         maxConnections = 20,
