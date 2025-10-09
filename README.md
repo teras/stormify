@@ -19,6 +19,10 @@ Designed for developers seeking a simple yet powerful ORM, Stormify excels in pr
 - **Support for Composite Keys**: Handle tables with composite primary keys effortlessly.
 - **Kotlin Multiplatform**: Multiplatform support with JVM and Native targets.
 
+## About Async APIs
+
+Stormify (and the underlying KDBC drivers) currently expose blocking database calls. This isn’t a design preference so much as a constraint of the drivers we rely on: JDBC on the JVM and the native C clients (SQLite, libpq, MySQL/MariaDB, Oracle, FreeTDS) are all inherently blocking. A suspending wrapper would still have to pin a worker thread for each query, so there is no real non-blocking benefit to surface to consumers. When truly asynchronous database drivers become available for the supported platforms we can revisit the API, but for now keeping the interface synchronous aligns with the capabilities of the ecosystem.
+
 ## Installation
 
 To use Stormify in your Kotlin project, add the library dependency to your build file. Stormify is available through common package managers like Maven and Gradle.
