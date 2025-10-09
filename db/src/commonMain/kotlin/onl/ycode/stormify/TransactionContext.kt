@@ -3,7 +3,8 @@ package onl.ycode.stormify
 import kotlinx.atomicfu.atomic
 import kotlin.reflect.KClass
 
-private val counter = atomic(0)
+private val counter = atomic(0L)
+private const val MAX_COUNTER = 999_999_999_999_999L
 
 /**
  * Context for executing database operations within a transaction.
@@ -132,7 +133,9 @@ class TransactionContext internal constructor(@PublishedApi internal val stormif
     fun transaction(block: () -> Unit) {
         var savepoint: Savepoint? = null
         try {
-            savepoint = conn._setSavepoint("stormify_" + systemMillis() + "_" + counter.getAndIncrement())
+            val count = counter.getAndIncrement()
+            if (count > MAX_COUNTER) counter.value = 0L
+            savepoint = conn._setSavepoint("s" + systemMillis() + "_" + count)
             block()
             conn._releaseSavepoint(savepoint)
         } catch (e: Throwable) {

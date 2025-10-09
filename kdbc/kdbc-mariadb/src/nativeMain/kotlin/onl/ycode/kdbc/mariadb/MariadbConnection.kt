@@ -1,5 +1,7 @@
 package onl.ycode.kdbc.mariadb
 
+import onl.ycode.kdbc.SimpleSavepoint
+
 import kotlinx.cinterop.*
 import kotlinx.datetime.*
 import com.ionspin.kotlin.bignum.decimal.BigDecimal as BDN
@@ -120,7 +122,7 @@ class MariadbConnection(
     override fun setSavepoint(name: String): Savepoint {
         val sql = "SAVEPOINT $name"
         prepareStatement(sql).use { it.executeUpdate() }
-        return MariadbSavepoint(name)
+        return SimpleSavepoint(name)
     }
 
     override fun releaseSavepoint(savepoint: Savepoint) {

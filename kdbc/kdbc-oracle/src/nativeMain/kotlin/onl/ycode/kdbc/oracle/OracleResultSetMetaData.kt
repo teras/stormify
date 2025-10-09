@@ -25,7 +25,7 @@ class OracleResultSetMetaData(
             val paramPtr = alloc<CPointerVar<out CPointed>>()
             oci_param_get(
                 stmtHandle,
-                OCI_HTYPE_STMT.toUInt(),
+                OCI_HTYPE_STMT,
                 errorHandle.reinterpret(),
                 paramPtr.ptr,
                 column.toUInt()
@@ -39,10 +39,10 @@ class OracleResultSetMetaData(
 
             oci_attr_get(
                 param,
-                OCI_DTYPE_PARAM.toUInt(),
+                OCI_DTYPE_PARAM,
                 namePtr.ptr,
                 nameLen.ptr,
-                OCI_ATTR_NAME.toUInt(),
+                OCI_ATTR_NAME,
                 errorHandle.reinterpret()
             )
 

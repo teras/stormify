@@ -1,4 +1,5 @@
 @file:Suppress("EXPECT_ACTUAL_CLASSIFIERS_ARE_IN_BETA_WARNING")
+@file:OptIn(kotlin.time.ExperimentalTime::class)
 
 package onl.ycode.stormify
 
@@ -37,7 +38,8 @@ internal actual fun getNativeAllPrimitives(): Collection<KClass<*>> =
             (if (supportsKotlinxDatetime) listOf(
                 kotlinx.datetime.LocalDate::class,
                 kotlinx.datetime.LocalDateTime::class,
-                kotlinx.datetime.LocalTime::class
+                kotlinx.datetime.LocalTime::class,
+                kotlin.time.Instant::class
             ) else emptyList())
 
 actual val Any.isOtherPrimitive: Boolean

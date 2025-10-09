@@ -11,7 +11,8 @@ import onl.ycode.kdbc.*
 class OracleConnection(
     private val connectString: String,
     private val username: String,
-    private val password: String
+    private val password: String,
+    private val sslConfig: SslConfig? = null
 ) : Connection {
 
     private val envHandle: OCIEnvPtr
@@ -66,7 +67,9 @@ class OracleConnection(
 
             if (logonResult != OCI_SUCCESS) {
                 val errorMsg = getOciError(errorHandle)
+                // Free both handles to prevent memory leak
                 oci_handle_free(errorHandle, OCI_HTYPE_ERROR)
+                oci_handle_free(envHandle, OCI_HTYPE_ENV)
                 throw SQLException("Failed to connect to Oracle: $errorMsg")
             }
 
@@ -78,11 +81,11 @@ class OracleConnection(
         get() = OracleDatabaseMetaData(serviceContext, errorHandle)
 
     override fun prepareStatement(sql: String, returnGeneratedKeys: Boolean): PreparedStatement {
-        return OraclePreparedStatement(serviceContext, errorHandle, sql, returnGeneratedKeys)
+        return OraclePreparedStatement(this, serviceContext, errorHandle, sql, returnGeneratedKeys)
     }
 
     override fun prepareCall(sql: String): CallableStatement {
-        return OracleCallableStatement(serviceContext, errorHandle, sql)
+        return OracleCallableStatement(this, serviceContext, errorHandle, sql)
     }
 
     override fun commit() {
@@ -94,9 +97,11 @@ class OracleConnection(
 
     override fun rollback(savepoint: Savepoint?) {
         if (savepoint != null) {
-            // TODO: Implement savepoint rollback
-            throw SQLException("Savepoint rollback not yet implemented")
+            // Rollback to named savepoint using SQL
+            val sql = "ROLLBACK TO SAVEPOINT ${savepoint.savepointName}"
+            prepareStatement(sql).use { it.executeUpdate() }
         } else {
+            // Full transaction rollback using OCI
             val result = oci_trans_rollback(serviceContext.reinterpret(), errorHandle.reinterpret(), OCI_DEFAULT)
             if (result != OCI_SUCCESS) {
                 throw SQLException("Failed to rollback transaction: ${getOciError(errorHandle)}")
@@ -105,13 +110,17 @@ class OracleConnection(
     }
 
     override fun setSavepoint(name: String): Savepoint {
-        // TODO: Implement savepoint creation
-        throw SQLException("Savepoints not yet implemented")
+        // Create savepoint using SQL
+        val sql = "SAVEPOINT $name"
+        prepareStatement(sql).use { it.executeUpdate() }
+        return SimpleSavepoint(name)
     }
 
     override fun releaseSavepoint(savepoint: Savepoint) {
-        // TODO: Implement savepoint release
-        throw SQLException("Savepoints not yet implemented")
+        // Oracle doesn't have a RELEASE SAVEPOINT command like MySQL
+        // Savepoints are automatically released when the transaction commits or rolls back
+        // We can optionally do nothing here, or remove the savepoint explicitly
+        // For now, do nothing as Oracle auto-manages savepoint lifecycle
     }
 
     override fun setAutoCommit(autoCommit: Boolean) {

@@ -85,7 +85,7 @@ class PostgresConnection(
             inTransaction = true
         }
         prepareStatement("SAVEPOINT $name").use { it.executeUpdate() }
-        return PostgresSavepoint(name)
+        return SimpleSavepoint(name)
     }
 
     override fun releaseSavepoint(savepoint: Savepoint) {

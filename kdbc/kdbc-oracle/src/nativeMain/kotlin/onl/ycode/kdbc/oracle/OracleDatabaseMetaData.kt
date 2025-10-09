@@ -24,10 +24,10 @@ class OracleDatabaseMetaData(
                 val buffer = allocArray<ByteVar>(256)
                 oci_attr_get(
                     serviceContext,
-                    OCI_HTYPE_SVCCTX.toUInt(),
+                    OCI_HTYPE_SVCCTX,
                     buffer,
                     null,
-                    OCI_ATTR_SERVER_VERSION.toUInt(),
+                    OCI_ATTR_SERVER_VERSION,
                     errorHandle.reinterpret()
                 )
                 return buffer.toKString()

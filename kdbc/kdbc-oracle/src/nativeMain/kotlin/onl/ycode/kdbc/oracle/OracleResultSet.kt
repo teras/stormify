@@ -44,8 +44,9 @@ class OracleResultSet(
             columnCount = paramCount.value.toInt()
         }
 
-        // Define output columns
-        for (i in 1..columnCount) {
+        // Define output columns with exception safety
+        try {
+            for (i in 1..columnCount) {
             memScoped {
                 // Get parameter descriptor
                 val paramPtr = alloc<CPointerVar<out CPointed>>()
@@ -173,6 +174,12 @@ class OracleResultSet(
 
                 defineHandles.add(definePtr.value)
             }
+            }
+        } catch (e: Exception) {
+            // Clean up any allocated column data on exception
+            columnData.forEach { it.free() }
+            columnData.clear()
+            throw e
         }
     }
 
@@ -241,21 +248,15 @@ class OracleResultSet(
             }
             SQLT_DAT -> {
                 val buffer = colData.dateBuffer ?: return null
-                val century = buffer[0].toInt() - 100
-                val year = buffer[1].toInt() - 100
-                val month = buffer[2].toInt()
-                val day = buffer[3].toInt()
-                val hour = buffer[4].toInt() - 1  // Oracle uses 1-based
-                val minute = buffer[5].toInt() - 1
-                val second = buffer[6].toInt() - 1
-
-                val fullYear = century * 100 + year
+                val dateTime = OracleParameterHelper.decodeOracleDate(buffer)
 
                 when (type) {
-                    LocalDate::class -> LocalDate(fullYear, month, day)
-                    LocalDateTime::class -> LocalDateTime(fullYear, month, day, hour, minute, second)
-                    String::class -> LocalDate(fullYear, month, day).toString()
-                    else -> LocalDate(fullYear, month, day)
+                    LocalDate::class -> dateTime.date
+                    LocalDateTime::class -> dateTime
+                    LocalTime::class -> dateTime.time
+                    Instant::class -> dateTime.toInstant(TimeZone.UTC)
+                    String::class -> dateTime.date.toString()
+                    else -> dateTime.date
                 }
             }
             else -> {  // SQLT_STR
@@ -278,6 +279,20 @@ class OracleResultSet(
                     LocalDate::class -> {
                         try {
                             LocalDate.parse(stringValue)
+                        } catch (e: Exception) {
+                            null
+                        }
+                    }
+                    LocalTime::class -> {
+                        try {
+                            LocalTime.parse(stringValue)
+                        } catch (e: Exception) {
+                            null
+                        }
+                    }
+                    Instant::class -> {
+                        try {
+                            Instant.parse(stringValue)
                         } catch (e: Exception) {
                             null
                         }

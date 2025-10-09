@@ -92,6 +92,11 @@ internal actual fun registerNativeTargets(registry: MutableMap<KClass<*>, Mutabl
                 kotlin.time.Instant.fromEpochMilliseconds(it).toLocalDateTime(TimeZone.currentSystemDefault()).time
             }, registry
         )
+        registerTimeRelated(
+            kotlin.time.Instant::class, false, supportsKotlinxTime, {
+                kotlin.time.Instant.fromEpochMilliseconds(it)
+            }, registry
+        )
     }
 
     // String related
@@ -189,6 +194,9 @@ private fun <T : Any> registerTimeRelated(
                 LocalDateTime(date, it as LocalTime)
                     .toInstant(TimeZone.currentSystemDefault()).toEpochMilliseconds()
             )
+        }
+        if (destClass != kotlin.time.Instant::class) converters[kotlin.time.Instant::class] = {
+            toNative((it as kotlin.time.Instant).toEpochMilliseconds())
         }
     }
 

@@ -7,6 +7,7 @@ import com.ionspin.kotlin.bignum.integer.BigInteger as BIN
 import onl.ycode.kdbc.*
 import sqlite3.*
 import kotlin.reflect.KClass
+import kotlin.time.Instant as KtInstant
 
 @OptIn(ExperimentalForeignApi::class, kotlin.time.ExperimentalTime::class)
 class SqlitePreparedStatement(
@@ -67,14 +68,14 @@ class SqlitePreparedStatement(
                 }
             }
             // Time-related types - store as epoch milliseconds
-            is LocalDateTime -> sqlite3_bind_int64(stmtPointer, parameterIndex, value.toInstant(TimeZone.currentSystemDefault()).toEpochMilliseconds())
-            is LocalDate -> sqlite3_bind_int64(stmtPointer, parameterIndex,
+            is LocalDateTime -> bindTimestamp(parameterIndex, value.toInstant(TimeZone.currentSystemDefault()).toEpochMilliseconds())
+            is LocalDate -> bindTimestamp(parameterIndex,
                 LocalDateTime(value, LocalTime(0, 0)).toInstant(TimeZone.currentSystemDefault()).toEpochMilliseconds())
             is LocalTime -> {
                 val date = kotlin.time.Clock.System.now().toLocalDateTime(TimeZone.currentSystemDefault()).date
-                sqlite3_bind_int64(stmtPointer, parameterIndex,
-                    LocalDateTime(date, value).toInstant(TimeZone.currentSystemDefault()).toEpochMilliseconds())
+                bindTimestamp(parameterIndex, LocalDateTime(date, value).toInstant(TimeZone.currentSystemDefault()).toEpochMilliseconds())
             }
+            is KtInstant -> bindTimestamp(parameterIndex, value.toEpochMilliseconds())
             else -> throw SQLException("Unsupported parameter type: ${value::class}")
         }
 
@@ -117,5 +118,13 @@ class SqlitePreparedStatement(
 
     override fun close() {
         sqlite3_finalize(stmtPointer)
+    }
+
+    /**
+     * Binds a timestamp value as milliseconds since epoch.
+     * Consolidates duplicate timestamp handling code.
+     */
+    private fun bindTimestamp(parameterIndex: Int, millis: Long): Int {
+        return sqlite3_bind_int64(stmtPointer, parameterIndex, millis)
     }
 }

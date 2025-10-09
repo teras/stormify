@@ -12,7 +12,7 @@ import platform.posix.llround
 import platform.posix.llroundf
 import kotlin.reflect.KClass
 import kotlin.time.Clock
-import kotlin.time.Instant
+import kotlin.time.Instant as KtInstant
 
 private val int = listOf(Byte::class, Short::class, Int::class, Long::class)
 private val dec = listOf(Float::class, Double::class)
@@ -57,21 +57,26 @@ internal actual fun registerNativeTargets(registry: MutableMap<KClass<*>, Mutabl
     registerTimeRelated(Float::class, true, { it / 1000f }, registry)
     registerTimeRelated(
         String::class, true,
-        { Instant.fromEpochMilliseconds(it).toString() }, registry
+        { KtInstant.fromEpochMilliseconds(it).toString() }, registry
     )
     registerTimeRelated(
         LocalDate::class, false, {
-            Instant.fromEpochMilliseconds(it).toLocalDateTime(TimeZone.currentSystemDefault()).date
+            KtInstant.fromEpochMilliseconds(it).toLocalDateTime(TimeZone.currentSystemDefault()).date
         }, registry
     )
     registerTimeRelated(
         LocalDateTime::class, false, {
-            Instant.fromEpochMilliseconds(it).toLocalDateTime(TimeZone.currentSystemDefault())
+            KtInstant.fromEpochMilliseconds(it).toLocalDateTime(TimeZone.currentSystemDefault())
         }, registry
     )
     registerTimeRelated(
         LocalTime::class, false, {
-            Instant.fromEpochMilliseconds(it).toLocalDateTime(TimeZone.currentSystemDefault()).time
+            KtInstant.fromEpochMilliseconds(it).toLocalDateTime(TimeZone.currentSystemDefault()).time
+        }, registry
+    )
+    registerTimeRelated(
+        KtInstant::class, false, {
+            KtInstant.fromEpochMilliseconds(it)
         }, registry
     )
 }
@@ -103,11 +108,14 @@ private fun <T : Any> registerTimeRelated(
                 .toInstant(TimeZone.currentSystemDefault()).toEpochMilliseconds()
         )
     }
+    if (destClass != KtInstant::class) converters[KtInstant::class] = {
+        toNative((it as KtInstant).toEpochMilliseconds())
+    }
 
     if (!isCore) {
         converters[Long::class] = { toNative((it as Long)) }
         converters[Double::class] = { toNative(llround((it as Double) * 1000.0)) }
         converters[Float::class] = { toNative(llroundf((it as Float) * 1000.0f)) }
-        converters[String::class] = { toNative(Instant.parse(it as String).toEpochMilliseconds()) }
+        converters[String::class] = { toNative(KtInstant.parse(it as String).toEpochMilliseconds()) }
     }
 }

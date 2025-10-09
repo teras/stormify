@@ -7,6 +7,7 @@ import com.ionspin.kotlin.bignum.integer.BigInteger as BIN
 import onl.ycode.kdbc.*
 import sqlite3.*
 import kotlin.reflect.KClass
+import kotlin.time.Instant as KtInstant
 
 @OptIn(ExperimentalForeignApi::class, kotlin.time.ExperimentalTime::class)
 class SqliteResultSet(
@@ -76,15 +77,19 @@ class SqliteResultSet(
             // Time-related types - stored as epoch milliseconds
             LocalDateTime::class -> {
                 val millis = sqlite3_column_int64(stmtPointer, index)
-                kotlinx.datetime.Instant.fromEpochMilliseconds(millis).toLocalDateTime(TimeZone.currentSystemDefault())
+                KtInstant.fromEpochMilliseconds(millis).toLocalDateTime(TimeZone.currentSystemDefault())
             }
             LocalDate::class -> {
                 val millis = sqlite3_column_int64(stmtPointer, index)
-                kotlinx.datetime.Instant.fromEpochMilliseconds(millis).toLocalDateTime(TimeZone.currentSystemDefault()).date
+                KtInstant.fromEpochMilliseconds(millis).toLocalDateTime(TimeZone.currentSystemDefault()).date
             }
             LocalTime::class -> {
                 val millis = sqlite3_column_int64(stmtPointer, index)
-                kotlinx.datetime.Instant.fromEpochMilliseconds(millis).toLocalDateTime(TimeZone.currentSystemDefault()).time
+                KtInstant.fromEpochMilliseconds(millis).toLocalDateTime(TimeZone.currentSystemDefault()).time
+            }
+            kotlin.time.Instant::class -> {
+                val millis = sqlite3_column_int64(stmtPointer, index)
+                KtInstant.fromEpochMilliseconds(millis)
             }
             else -> {
                 // Default: try to return as string

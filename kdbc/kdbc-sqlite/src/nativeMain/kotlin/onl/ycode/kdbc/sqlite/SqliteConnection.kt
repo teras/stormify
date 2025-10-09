@@ -65,7 +65,7 @@ class SqliteConnection(private val url: String) : Connection {
 
     override fun setSavepoint(name: String): Savepoint {
         prepareStatement("SAVEPOINT $name").use { it.executeUpdate() }
-        return SqliteSavepoint(name)
+        return SimpleSavepoint(name)
     }
 
     override fun releaseSavepoint(savepoint: Savepoint) {

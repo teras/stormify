@@ -68,14 +68,47 @@ class OracleDataSource(
     private val connectString: String = buildConnectString()
 
     private fun buildConnectString(): String {
-        return when {
+        // Use TCPS protocol for SSL connections, TCP for regular connections
+        val protocol = if (sslConfig?.enabled == true) "tcps" else ""
+        val baseString = when {
             serviceName != null -> "$host:$port/$serviceName"
             sid != null -> "$host:$port:$sid"
             else -> throw SQLException("Either serviceName or sid must be specified")
         }
+
+        // For SSL connections, build TNS-style connection string with SSL parameters
+        return if (sslConfig?.enabled == true) {
+            buildTnsConnectString(baseString)
+        } else {
+            baseString
+        }
+    }
+
+    private fun buildTnsConnectString(baseString: String): String {
+        // Build Oracle TNS-style connection string for SSL
+        // Format: (DESCRIPTION=(ADDRESS=(PROTOCOL=TCPS)(HOST=host)(PORT=port))(CONNECT_DATA=(SERVICE_NAME=service)))
+        val addressProtocol = "TCPS"
+        val connectData = when {
+            serviceName != null -> "(SERVICE_NAME=$serviceName)"
+            sid != null -> "(SID=$sid)"
+            else -> throw SQLException("Either serviceName or sid must be specified")
+        }
+
+        val sslParams = buildString {
+            // Add SSL_SERVER_DN_MATCH if hostname verification is required
+            if (sslConfig?.mode == "verify-full") {
+                append("(SSL_SERVER_DN_MATCH=ON)")
+            }
+            // Add wallet location if CA cert path is provided (Oracle Wallet)
+            if (sslConfig?.caCertPath != null) {
+                append("(WALLET_LOCATION=(SOURCE=(METHOD=FILE)(METHOD_DATA=(DIRECTORY=${sslConfig.caCertPath}))))")
+            }
+        }
+
+        return "(DESCRIPTION=(ADDRESS=(PROTOCOL=$addressProtocol)(HOST=$host)(PORT=$port))$sslParams(CONNECT_DATA=$connectData))"
     }
 
     override fun createNewConnection(): Connection {
-        return OracleConnection(connectString, user, password)
+        return OracleConnection(connectString, user, password, sslConfig)
     }
 }

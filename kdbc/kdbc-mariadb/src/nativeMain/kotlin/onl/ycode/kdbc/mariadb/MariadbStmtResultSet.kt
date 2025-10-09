@@ -33,21 +33,6 @@ class MariadbStmtResultSet(private val stmt: CPointer<MYSQL_STMT>) : ResultSet {
                 val field = fields!![i]
                 val data = ColumnData(field.type)
                 columnData.add(data)
-
-                val bind = bindResults[i]
-                bind.buffer_type = field.type
-                bind.buffer = data.buffer
-                bind.buffer_length = data.bufferLength
-                bind.is_null = data.isNull.ptr
-                bind.length = data.length.ptr
-                bind.is_unsigned = ((field.flags and 32u).toByte())
-            }
-
-            val bindResult = mariadb_stmt_bind_result_wrapper(stmt, bindResults)
-            if (bindResult.toInt() != 0) {
-                cleanup()
-                val error = mariadb_stmt_error_wrapper(stmt)?.toKString() ?: "Unknown error"
-                throw SQLException("Failed to bind result: $error")
             }
 
             mariadb_stmt_store_result_wrapper(stmt)
@@ -55,8 +40,150 @@ class MariadbStmtResultSet(private val stmt: CPointer<MYSQL_STMT>) : ResultSet {
     }
 
     override fun next(): Boolean {
-        val fetchResult = mariadb_stmt_fetch_wrapper(stmt)
-        hasRow = fetchResult == 0
+        if (columnCount == 0) {
+            hasRow = false
+            return false
+        }
+
+        memScoped {
+            // Allocate temporary buffers for this fetch only
+            val tempByteBuffers = mutableListOf<ByteVar>()
+            val tempShortBuffers = mutableListOf<ShortVar>()
+            val tempIntBuffers = mutableListOf<IntVar>()
+            val tempLongBuffers = mutableListOf<LongVar>()
+            val tempFloatBuffers = mutableListOf<FloatVar>()
+            val tempDoubleBuffers = mutableListOf<DoubleVar>()
+            val tempStringBuffers = mutableListOf<CArrayPointer<ByteVar>>()
+            val tempIsNullBuffers = mutableListOf<ByteVar>()
+            val tempLengthBuffers = mutableListOf<ULongVar>()
+
+            // Bind temporary buffers based on column types
+            val fields = mysql_fetch_fields(metadata!!)
+            for (i in 0 until columnCount) {
+                val field = fields!![i]
+                val bind = bindResults[i]
+                bind.buffer_type = field.type
+                bind.is_unsigned = ((field.flags and 32u).toByte())
+
+                val isNull = alloc<ByteVar>()
+                val length = alloc<ULongVar>()
+                tempIsNullBuffers.add(isNull)
+                tempLengthBuffers.add(length)
+                bind.is_null = isNull.ptr
+                bind.length = length.ptr
+
+                when (columnData[i].mysqlType) {
+                    MYSQL_TYPE_TINY -> {
+                        val buf = alloc<ByteVar>()
+                        tempByteBuffers.add(buf)
+                        bind.buffer = buf.ptr
+                        bind.buffer_length = 1u
+                    }
+                    MYSQL_TYPE_SHORT -> {
+                        val buf = alloc<ShortVar>()
+                        tempShortBuffers.add(buf)
+                        bind.buffer = buf.ptr
+                        bind.buffer_length = 2u
+                    }
+                    MYSQL_TYPE_LONG -> {
+                        val buf = alloc<IntVar>()
+                        tempIntBuffers.add(buf)
+                        bind.buffer = buf.ptr
+                        bind.buffer_length = 4u
+                    }
+                    MYSQL_TYPE_LONGLONG -> {
+                        val buf = alloc<LongVar>()
+                        tempLongBuffers.add(buf)
+                        bind.buffer = buf.ptr
+                        bind.buffer_length = 8u
+                    }
+                    MYSQL_TYPE_FLOAT -> {
+                        val buf = alloc<FloatVar>()
+                        tempFloatBuffers.add(buf)
+                        bind.buffer = buf.ptr
+                        bind.buffer_length = 4u
+                    }
+                    MYSQL_TYPE_DOUBLE -> {
+                        val buf = alloc<DoubleVar>()
+                        tempDoubleBuffers.add(buf)
+                        bind.buffer = buf.ptr
+                        bind.buffer_length = 8u
+                    }
+                    else -> {
+                        val buf = allocArray<ByteVar>(4096)
+                        tempStringBuffers.add(buf)
+                        bind.buffer = buf
+                        bind.buffer_length = 4096u
+                    }
+                }
+            }
+
+            // Bind all buffers
+            val bindResult = mariadb_stmt_bind_result_wrapper(stmt, bindResults)
+            if (bindResult.toInt() != 0) {
+                val error = mariadb_stmt_error_wrapper(stmt)?.toKString() ?: "Unknown error"
+                throw SQLException("Failed to bind result: $error")
+            }
+
+            // Fetch the row
+            val fetchResult = mariadb_stmt_fetch_wrapper(stmt)
+            hasRow = fetchResult == 0
+
+            if (hasRow) {
+                // COPY values from temporary buffers to ColumnData
+                var byteIdx = 0
+                var shortIdx = 0
+                var intIdx = 0
+                var longIdx = 0
+                var floatIdx = 0
+                var doubleIdx = 0
+                var stringIdx = 0
+
+                for (i in 0 until columnCount) {
+                    val data = columnData[i]
+                    data.isNullValue = tempIsNullBuffers[i].value.toInt() == 1
+
+                    if (!data.isNullValue) {
+                        when (data.mysqlType) {
+                            MYSQL_TYPE_TINY -> {
+                                data.byteValue = tempByteBuffers[byteIdx].value
+                                byteIdx++
+                            }
+                            MYSQL_TYPE_SHORT -> {
+                                data.shortValue = tempShortBuffers[shortIdx].value
+                                shortIdx++
+                            }
+                            MYSQL_TYPE_LONG -> {
+                                data.intValue = tempIntBuffers[intIdx].value
+                                intIdx++
+                            }
+                            MYSQL_TYPE_LONGLONG -> {
+                                data.longValue = tempLongBuffers[longIdx].value
+                                longIdx++
+                            }
+                            MYSQL_TYPE_FLOAT -> {
+                                data.floatValue = tempFloatBuffers[floatIdx].value
+                                floatIdx++
+                            }
+                            MYSQL_TYPE_DOUBLE -> {
+                                data.doubleValue = tempDoubleBuffers[doubleIdx].value
+                                doubleIdx++
+                            }
+                            else -> {
+                                val len = tempLengthBuffers[i].value.toInt()
+                                val stringBuf = tempStringBuffers[stringIdx]
+                                data.stringValue = if (len > 0) stringBuf.toKString().take(len) else ""
+                                data.byteArrayValue = if (len > 0) ByteArray(len) { idx -> stringBuf[idx] } else ByteArray(0)
+                                stringIdx++
+                            }
+                        }
+                    }
+                }
+            }
+
+            // All temporary buffers auto-freed here!
+        }
+
         return hasRow
     }
 
@@ -67,40 +194,40 @@ class MariadbStmtResultSet(private val stmt: CPointer<MYSQL_STMT>) : ResultSet {
         val index = columnIndex - 1
         val data = columnData[index]
 
-        if (data.isNull.value.toInt() == 1) return null
+        if (data.isNullValue) return null
 
         return when (type) {
             Byte::class -> when (data.mysqlType) {
-                MYSQL_TYPE_TINY -> data.byteValue.value
+                MYSQL_TYPE_TINY -> data.byteValue
                 else -> data.getString()?.toByteOrNull()
             }
             Short::class -> when (data.mysqlType) {
-                MYSQL_TYPE_SHORT -> data.shortValue.value
-                MYSQL_TYPE_TINY -> data.byteValue.value.toShort()
+                MYSQL_TYPE_SHORT -> data.shortValue
+                MYSQL_TYPE_TINY -> data.byteValue.toShort()
                 else -> data.getString()?.toShortOrNull()
             }
             Int::class -> when (data.mysqlType) {
-                MYSQL_TYPE_LONG -> data.intValue.value
-                MYSQL_TYPE_SHORT -> data.shortValue.value.toInt()
-                MYSQL_TYPE_TINY -> data.byteValue.value.toInt()
+                MYSQL_TYPE_LONG -> data.intValue
+                MYSQL_TYPE_SHORT -> data.shortValue.toInt()
+                MYSQL_TYPE_TINY -> data.byteValue.toInt()
                 else -> data.getString()?.toIntOrNull()
             }
             Long::class -> when (data.mysqlType) {
-                MYSQL_TYPE_LONGLONG -> data.longValue.value
-                MYSQL_TYPE_LONG -> data.intValue.value.toLong()
+                MYSQL_TYPE_LONGLONG -> data.longValue
+                MYSQL_TYPE_LONG -> data.intValue.toLong()
                 else -> data.getString()?.toLongOrNull()
             }
             Float::class -> when (data.mysqlType) {
-                MYSQL_TYPE_FLOAT -> data.floatValue.value
+                MYSQL_TYPE_FLOAT -> data.floatValue
                 else -> data.getString()?.toFloatOrNull()
             }
             Double::class -> when (data.mysqlType) {
-                MYSQL_TYPE_DOUBLE -> data.doubleValue.value
-                MYSQL_TYPE_FLOAT -> data.floatValue.value.toDouble()
+                MYSQL_TYPE_DOUBLE -> data.doubleValue
+                MYSQL_TYPE_FLOAT -> data.floatValue.toDouble()
                 else -> data.getString()?.toDoubleOrNull()
             }
             Boolean::class -> when (data.mysqlType) {
-                MYSQL_TYPE_TINY -> data.byteValue.value != 0.toByte()
+                MYSQL_TYPE_TINY -> data.byteValue != 0.toByte()
                 else -> data.getString()?.toIntOrNull() != 0
             }
             String::class -> data.getString()
@@ -109,24 +236,31 @@ class MariadbStmtResultSet(private val stmt: CPointer<MYSQL_STMT>) : ResultSet {
             BIN::class -> data.getString()?.let { BIN.parseString(it) }
             LocalDateTime::class -> {
                 val millis = when (data.mysqlType) {
-                    MYSQL_TYPE_LONGLONG -> data.longValue.value
+                    MYSQL_TYPE_LONGLONG -> data.longValue
                     else -> data.getString()?.toLongOrNull() ?: return null
                 }
                 kotlinx.datetime.Instant.fromEpochMilliseconds(millis).toLocalDateTime(TimeZone.currentSystemDefault())
             }
             LocalDate::class -> {
                 val millis = when (data.mysqlType) {
-                    MYSQL_TYPE_LONGLONG -> data.longValue.value
+                    MYSQL_TYPE_LONGLONG -> data.longValue
                     else -> data.getString()?.toLongOrNull() ?: return null
                 }
                 kotlinx.datetime.Instant.fromEpochMilliseconds(millis).toLocalDateTime(TimeZone.currentSystemDefault()).date
             }
             LocalTime::class -> {
                 val millis = when (data.mysqlType) {
-                    MYSQL_TYPE_LONGLONG -> data.longValue.value
+                    MYSQL_TYPE_LONGLONG -> data.longValue
                     else -> data.getString()?.toLongOrNull() ?: return null
                 }
                 kotlinx.datetime.Instant.fromEpochMilliseconds(millis).toLocalDateTime(TimeZone.currentSystemDefault()).time
+            }
+            kotlinx.datetime.Instant::class -> {
+                val millis = when (data.mysqlType) {
+                    MYSQL_TYPE_LONGLONG -> data.longValue
+                    else -> data.getString()?.toLongOrNull() ?: return null
+                }
+                kotlinx.datetime.Instant.fromEpochMilliseconds(millis)
             }
             else -> data.getString()
         }
@@ -147,59 +281,42 @@ class MariadbStmtResultSet(private val stmt: CPointer<MYSQL_STMT>) : ResultSet {
     }
 
     private fun cleanup() {
-        columnData.forEach { it.cleanup() }
+        // Column data has no heap allocations, just clear values
+        columnData.forEach { it.clear() }
         nativeHeap.free(bindResults)
         metadata?.let { mysql_free_result(it) }
     }
 
+    /**
+     * Column data holder that stores values instead of buffers.
+     * Buffers are allocated temporarily during fetch and values are copied immediately.
+     */
     private class ColumnData(val mysqlType: enum_field_types) {
-        val byteValue = nativeHeap.alloc<ByteVar>()
-        val shortValue = nativeHeap.alloc<ShortVar>()
-        val intValue = nativeHeap.alloc<IntVar>()
-        val longValue = nativeHeap.alloc<LongVar>()
-        val floatValue = nativeHeap.alloc<FloatVar>()
-        val doubleValue = nativeHeap.alloc<DoubleVar>()
-        val stringBuffer = nativeHeap.allocArray<ByteVar>(4096)
-        val isNull = nativeHeap.alloc<ByteVar>()
-        val length = nativeHeap.alloc<ULongVar>()
+        // Stored values (no heap allocations!)
+        var byteValue: Byte = 0
+        var shortValue: Short = 0
+        var intValue: Int = 0
+        var longValue: Long = 0
+        var floatValue: Float = 0f
+        var doubleValue: Double = 0.0
+        var stringValue: String? = null
+        var byteArrayValue: ByteArray? = null
+        var isNullValue: Boolean = false
 
-        val buffer: CPointer<*>?
-        val bufferLength: ULong
+        fun getString(): String? = if (isNullValue) null else stringValue
 
-        init {
-            when (mysqlType) {
-                MYSQL_TYPE_TINY -> { buffer = byteValue.ptr; bufferLength = 1u }
-                MYSQL_TYPE_SHORT -> { buffer = shortValue.ptr; bufferLength = 2u }
-                MYSQL_TYPE_LONG -> { buffer = intValue.ptr; bufferLength = 4u }
-                MYSQL_TYPE_LONGLONG -> { buffer = longValue.ptr; bufferLength = 8u }
-                MYSQL_TYPE_FLOAT -> { buffer = floatValue.ptr; bufferLength = 4u }
-                MYSQL_TYPE_DOUBLE -> { buffer = doubleValue.ptr; bufferLength = 8u }
-                else -> { buffer = stringBuffer; bufferLength = 4096u }
-            }
-        }
+        fun getByteArray(): ByteArray? = if (isNullValue) null else byteArrayValue
 
-        fun getString(): String? {
-            if (isNull.value.toInt() == 1) return null
-            val len = length.value.toInt()
-            return if (len > 0) stringBuffer.toKString().take(len) else ""
-        }
-
-        fun getByteArray(): ByteArray? {
-            if (isNull.value.toInt() == 1) return null
-            val len = length.value.toInt()
-            return ByteArray(len) { i -> stringBuffer[i] }
-        }
-
-        fun cleanup() {
-            nativeHeap.free(byteValue)
-            nativeHeap.free(shortValue)
-            nativeHeap.free(intValue)
-            nativeHeap.free(longValue)
-            nativeHeap.free(floatValue)
-            nativeHeap.free(doubleValue)
-            nativeHeap.free(stringBuffer)
-            nativeHeap.free(isNull)
-            nativeHeap.free(length)
+        fun clear() {
+            byteValue = 0
+            shortValue = 0
+            intValue = 0
+            longValue = 0
+            floatValue = 0f
+            doubleValue = 0.0
+            stringValue = null
+            byteArrayValue = null
+            isNullValue = false
         }
     }
 }

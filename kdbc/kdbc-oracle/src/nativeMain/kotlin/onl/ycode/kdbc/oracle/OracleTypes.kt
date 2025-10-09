@@ -28,6 +28,7 @@ const val OCI_NO_DATA = 100
 
 const val OCI_DEFAULT = 0x00000000u
 const val OCI_THREADED = 0x00000001u
+const val OCI_COMMIT_ON_SUCCESS = 0x00000020u  // Commit after successful execution (autocommit)
 
 // Handle types
 const val OCI_HTYPE_ENV = 1u
@@ -62,7 +63,7 @@ const val OCI_ATTR_DATA_SIZE = 1u
 const val OCI_ATTR_DATA_TYPE = 2u
 const val OCI_ATTR_PRECISION = 5u
 const val OCI_ATTR_SCALE = 6u
-const val OCI_ATTR_SERVER_VERSION = 18u
+const val OCI_ATTR_SERVER_VERSION = 12u  // Corrected: was 18u (conflicted with OCI_ATTR_PARAM_COUNT)
 
 // Fetch orientation
 const val OCI_FETCH_NEXT: UShort = 0x02u
