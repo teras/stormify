@@ -137,4 +137,51 @@ object MariadbParameterHelper {
     fun MemScope.allocateParameter(data: ParameterData): AllocatedParameter {
         return allocateParameterBuffer(data)
     }
+
+    /**
+     * Parses a string value into the requested type.
+     * Used for OUT parameter retrieval.
+     */
+    fun parseValue(valueStr: String, type: kotlin.reflect.KClass<*>): Any? {
+        return when (type) {
+            Byte::class -> valueStr.toByteOrNull()
+            Short::class -> valueStr.toShortOrNull()
+            Int::class -> valueStr.toIntOrNull()
+            Long::class -> valueStr.toLongOrNull()
+            Float::class -> valueStr.toFloatOrNull()
+            Double::class -> valueStr.toDoubleOrNull()
+            Boolean::class -> {
+                when {
+                    valueStr == "1" || valueStr.equals("true", ignoreCase = true) -> true
+                    valueStr == "0" || valueStr.equals("false", ignoreCase = true) -> false
+                    else -> valueStr.toIntOrNull() != 0
+                }
+            }
+            String::class -> valueStr
+            ByteArray::class -> valueStr.encodeToByteArray()
+            BDN::class -> BDN.parseString(valueStr)
+            BIN::class -> BIN.parseString(valueStr)
+            LocalDateTime::class -> {
+                // MariaDB returns epoch milliseconds
+                val millis = valueStr.toLongOrNull() ?: return null
+                kotlinx.datetime.Instant.fromEpochMilliseconds(millis)
+                    .toLocalDateTime(TimeZone.currentSystemDefault())
+            }
+            LocalDate::class -> {
+                val millis = valueStr.toLongOrNull() ?: return null
+                kotlinx.datetime.Instant.fromEpochMilliseconds(millis)
+                    .toLocalDateTime(TimeZone.currentSystemDefault()).date
+            }
+            LocalTime::class -> {
+                val millis = valueStr.toLongOrNull() ?: return null
+                kotlinx.datetime.Instant.fromEpochMilliseconds(millis)
+                    .toLocalDateTime(TimeZone.currentSystemDefault()).time
+            }
+            kotlinx.datetime.Instant::class -> {
+                val millis = valueStr.toLongOrNull() ?: return null
+                kotlinx.datetime.Instant.fromEpochMilliseconds(millis)
+            }
+            else -> valueStr
+        }
+    }
 }

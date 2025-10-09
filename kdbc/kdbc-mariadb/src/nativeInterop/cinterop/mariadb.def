@@ -71,3 +71,13 @@ static inline my_bool mysql_ssl_set_wrapper(MYSQL *mysql, const char *key, const
 static inline const char* mysql_get_ssl_cipher_wrapper(MYSQL *mysql) {
     return mysql_get_ssl_cipher(mysql);
 }
+
+// Stored procedure support
+static inline int mariadb_stmt_next_result_wrapper(MYSQL_STMT *stmt) {
+    return mysql_stmt_next_result(stmt);
+}
+
+// Access to server status flags
+static inline unsigned int mariadb_get_server_status_wrapper(MYSQL *mysql) {
+    return mysql->server_status;
+}
