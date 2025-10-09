@@ -1,0 +1,4 @@
+headers = dpi.h
+headerFilter = dpi.h
+linkerOpts.linux = -lodpic
+compilerOpts.linux = -I/usr/include

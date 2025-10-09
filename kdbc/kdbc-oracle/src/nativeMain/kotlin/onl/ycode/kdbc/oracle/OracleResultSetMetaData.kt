@@ -1,18 +1,20 @@
 package onl.ycode.kdbc.oracle
 
 import kotlinx.cinterop.*
-import oci.*
+import odpi.*
+import cnames.structs.*
 import onl.ycode.kdbc.ResultSetMetaData
 import onl.ycode.kdbc.SQLException
 
 /**
- * Oracle ResultSetMetaData implementation.
+ * Oracle ResultSetMetaData implementation using ODPI-C.
+ * Uses dpiQueryInfo which is already fetched by OracleResultSet.
  */
 @OptIn(ExperimentalForeignApi::class)
 class OracleResultSetMetaData(
-    private val stmtHandle: OCIStmtPtr,
-    private val errorHandle: OCIErrorPtr,
-    override val columnCount: Int
+    private val stmt: CPointer<dpiStmt>,
+    override val columnCount: Int,
+    private val queryInfo: List<dpiQueryInfo>
 ) : ResultSetMetaData {
 
     override fun getColumnName(column: Int): String {
@@ -20,33 +22,7 @@ class OracleResultSetMetaData(
             throw SQLException("Invalid column index: $column")
         }
 
-        memScoped {
-            // Get parameter descriptor
-            val paramPtr = alloc<CPointerVar<out CPointed>>()
-            oci_param_get(
-                stmtHandle,
-                OCI_HTYPE_STMT,
-                errorHandle.reinterpret(),
-                paramPtr.ptr,
-                column.toUInt()
-            )
-
-            val param = paramPtr.value ?: throw SQLException("Failed to get parameter")
-
-            // Get column name
-            val namePtr = alloc<CPointerVar<ByteVar>>()
-            val nameLen = alloc<UIntVar>()
-
-            oci_attr_get(
-                param,
-                OCI_DTYPE_PARAM,
-                namePtr.ptr,
-                nameLen.ptr,
-                OCI_ATTR_NAME,
-                errorHandle.reinterpret()
-            )
-
-            return namePtr.value?.toKString() ?: "Column_$column"
-        }
+        val info = queryInfo[column - 1]
+        return info.name?.toKString() ?: "Column_$column"
     }
 }

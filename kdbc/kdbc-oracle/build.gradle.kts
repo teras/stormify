@@ -11,8 +11,8 @@ kotlin {
     linuxX64 {
         compilations.getByName("main") {
             cinterops {
-                val oci by creating {
-                    definitionFile.set(project.file("src/nativeInterop/cinterop/oci.def"))
+                val odpi by creating {
+                    definitionFile.set(project.file("src/nativeInterop/cinterop/odpi.def"))
                 }
             }
         }

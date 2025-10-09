@@ -1,11 +1,18 @@
 package onl.ycode.kdbc.oracle
 
 import kotlinx.cinterop.*
-import oci.*
+import odpi.*
+import cnames.structs.*
 import onl.ycode.kdbc.*
 
 /**
- * Oracle Database Connection implementation using OCI (Oracle Call Interface).
+ * Oracle Database Connection implementation using ODPI-C.
+ *
+ * ODPI-C provides a cleaner, higher-level API over raw OCI with:
+ * - Simplified connection management
+ * - Automatic resource cleanup
+ * - Better error handling
+ * - Version compatibility across Oracle Client versions
  */
 @OptIn(ExperimentalForeignApi::class)
 class OracleConnection(
@@ -15,83 +22,91 @@ class OracleConnection(
     private val sslConfig: SslConfig? = null
 ) : Connection {
 
-    private val envHandle: OCIEnvPtr
-    private val errorHandle: OCIErrorPtr
-    private val serviceContext: OCISvcCtxPtr
+    private val context: CPointer<dpiContext>
+    private val connection: CPointer<dpiConn>
     private var autoCommit = true
 
+    companion object {
+        // Global context initialization (thread-safe, done once)
+        private val globalContext: CPointer<dpiContext> by lazy {
+            memScoped {
+                val ctxPtr = alloc<CPointerVar<dpiContext>>()
+                val errorInfo = alloc<dpiErrorInfo>()
+
+                // Create ODPI-C context with default parameters
+                val result = dpiContext_createWithParams(
+                    DPI_MAJOR_VERSION.toUInt(),
+                    DPI_MINOR_VERSION.toUInt(),
+                    null,  // Use default params
+                    ctxPtr.ptr,
+                    errorInfo.ptr
+                )
+
+                if (result != DPI_SUCCESS) {
+                    throw SQLException("Failed to create ODPI-C context: ${getErrorMessage(errorInfo)}")
+                }
+
+                ctxPtr.value ?: throw SQLException("Context pointer is null")
+            }
+        }
+    }
+
     init {
+        context = globalContext
+
         memScoped {
-            // Allocate environment handle
-            val envPtr = alloc<CPointerVar<out CPointed>>()
-            val errPtr = alloc<CPointerVar<out CPointed>>()
+            val connPtr = alloc<CPointerVar<dpiConn>>()
+            val errorInfo = alloc<dpiErrorInfo>()
 
-            // Create OCI environment (OCI_THREADED for thread safety)
-            val envResult = oci_env_create(
-                envPtr.ptr.reinterpret(),
-                (OCI_DEFAULT or OCI_THREADED),
-                errPtr.ptr.reinterpret()
-            )
+            // Initialize connection creation parameters
+            val createParams = alloc<dpiConnCreateParams>()
+            dpiContext_initConnCreateParams(context, createParams.ptr)
 
-            if (envResult != OCI_SUCCESS) {
-                throw SQLException("Failed to create OCI environment")
+            // Configure SSL if provided
+            if (sslConfig?.enabled == true) {
+                // ODPI-C handles SSL through Oracle Wallet or connection string
+                // The connection string should be pre-configured in TNS format
+                // (already handled in OracleDataSource)
             }
 
-            envHandle = envPtr.value ?: throw SQLException("Environment handle is null")
-
-            // Allocate error handle
-            val errHandlePtr = alloc<CPointerVar<out CPointed>>()
-            oci_handle_alloc(
-                envHandle,
-                errHandlePtr.ptr.reinterpret(),
-                OCI_HTYPE_ERROR,
-                0u,
-                null
-            )
-            errorHandle = errHandlePtr.value ?: throw SQLException("Error handle is null")
-
-            // Logon to Oracle database
-            val svcPtr = alloc<CPointerVar<out CPointed>>()
-            val logonResult = oci_logon2(
-                envHandle.reinterpret(),
-                errorHandle.reinterpret(),
-                svcPtr.ptr.reinterpret(),
-                username.cstr.ptr.reinterpret(),
+            // Create connection
+            val result = dpiConn_create(
+                context,
+                username,
                 username.length.toUInt(),
-                password.cstr.ptr.reinterpret(),
+                password,
                 password.length.toUInt(),
-                connectString.cstr.ptr.reinterpret(),
+                connectString,
                 connectString.length.toUInt(),
-                OCI_DEFAULT
+                null,  // Use default common params
+                createParams.ptr,
+                connPtr.ptr
             )
 
-            if (logonResult != OCI_SUCCESS) {
-                val errorMsg = getOciError(errorHandle)
-                // Free both handles to prevent memory leak
-                oci_handle_free(errorHandle, OCI_HTYPE_ERROR)
-                oci_handle_free(envHandle, OCI_HTYPE_ENV)
-                throw SQLException("Failed to connect to Oracle: $errorMsg")
+            if (result != DPI_SUCCESS) {
+                dpiContext_getError(context, errorInfo.ptr)
+                throw SQLException("Failed to connect to Oracle: ${getErrorMessage(errorInfo)}")
             }
 
-            serviceContext = svcPtr.value ?: throw SQLException("Service context is null")
+            connection = connPtr.value ?: throw SQLException("Connection pointer is null")
         }
     }
 
     override val metaData: DatabaseMetaData
-        get() = OracleDatabaseMetaData(serviceContext, errorHandle)
+        get() = OracleDatabaseMetaData(connection, context)
 
     override fun prepareStatement(sql: String, returnGeneratedKeys: Boolean): PreparedStatement {
-        return OraclePreparedStatement(this, serviceContext, errorHandle, sql, returnGeneratedKeys)
+        return OraclePreparedStatement(this, connection, context, sql, returnGeneratedKeys)
     }
 
     override fun prepareCall(sql: String): CallableStatement {
-        return OracleCallableStatement(this, serviceContext, errorHandle, sql)
+        return OracleCallableStatement(this, connection, context, sql)
     }
 
     override fun commit() {
-        val result = oci_trans_commit(serviceContext.reinterpret(), errorHandle.reinterpret(), OCI_DEFAULT)
-        if (result != OCI_SUCCESS) {
-            throw SQLException("Failed to commit transaction: ${getOciError(errorHandle)}")
+        val result = dpiConn_commit(connection)
+        if (result != DPI_SUCCESS) {
+            throw SQLException("Failed to commit transaction: ${getLastError()}")
         }
     }
 
@@ -101,10 +116,10 @@ class OracleConnection(
             val sql = "ROLLBACK TO SAVEPOINT ${savepoint.savepointName}"
             prepareStatement(sql).use { it.executeUpdate() }
         } else {
-            // Full transaction rollback using OCI
-            val result = oci_trans_rollback(serviceContext.reinterpret(), errorHandle.reinterpret(), OCI_DEFAULT)
-            if (result != OCI_SUCCESS) {
-                throw SQLException("Failed to rollback transaction: ${getOciError(errorHandle)}")
+            // Full transaction rollback
+            val result = dpiConn_rollback(connection)
+            if (result != DPI_SUCCESS) {
+                throw SQLException("Failed to rollback transaction: ${getLastError()}")
             }
         }
     }
@@ -117,48 +132,55 @@ class OracleConnection(
     }
 
     override fun releaseSavepoint(savepoint: Savepoint) {
-        // Oracle doesn't have a RELEASE SAVEPOINT command like MySQL
+        // Oracle doesn't have a RELEASE SAVEPOINT command
         // Savepoints are automatically released when the transaction commits or rolls back
-        // We can optionally do nothing here, or remove the savepoint explicitly
-        // For now, do nothing as Oracle auto-manages savepoint lifecycle
     }
 
     override fun setAutoCommit(autoCommit: Boolean) {
         this.autoCommit = autoCommit
-        // In OCI, autocommit is controlled by execution flags
-        // We'll handle this in statement execution
+        // ODPI-C doesn't have explicit autocommit setting
+        // We handle it by calling commit() after each statement if autoCommit is true
     }
 
     override fun close() {
-        // Logoff
-        oci_logoff(serviceContext.reinterpret(), errorHandle.reinterpret())
-
-        // Free handles
-        oci_handle_free(errorHandle, OCI_HTYPE_ERROR)
-        oci_handle_free(envHandle, OCI_HTYPE_ENV)
+        dpiConn_close(connection, DPI_MODE_CONN_CLOSE_DEFAULT, null, 0u)
+        // Context is shared and managed globally, don't destroy it here
     }
 
     internal fun isAutoCommit(): Boolean = autoCommit
+
+    internal fun getConnection(): CPointer<dpiConn> = connection
+
+    /**
+     * Get the last error message from this connection.
+     */
+    internal fun getLastError(): String {
+        return memScoped {
+            val errorInfo = alloc<dpiErrorInfo>()
+            dpiContext_getError(context, errorInfo.ptr)
+            getErrorMessage(errorInfo)
+        }
+    }
 }
 
 /**
- * Helper function to get OCI error message.
+ * Helper function to extract error message from dpiErrorInfo.
  */
 @OptIn(ExperimentalForeignApi::class)
-internal fun getOciError(errorHandle: OCIErrorPtr): String {
-    memScoped {
-        val errcode = alloc<IntVar>()
-        val buffer = allocArray<ByteVar>(512)
-
-        oci_error_get(
-            errorHandle.reinterpret(),
-            1u,
-            null,
-            errcode.ptr,
-            buffer.reinterpret(),
-            512u
-        )
-
-        return buffer.toKString()
+internal fun getErrorMessage(errorInfo: dpiErrorInfo): String {
+    return buildString {
+        append("ORA-${errorInfo.code}: ")
+        append(errorInfo.message?.toKString() ?: "Unknown error")
+        if (errorInfo.offset > 0u) {
+            append(" (at offset ${errorInfo.offset})")
+        }
     }
+}
+
+/**
+ * Helper to get error message from a dpiErrorInfo pointer.
+ */
+@OptIn(ExperimentalForeignApi::class)
+internal fun getErrorMessage(errorInfoPtr: CPointer<dpiErrorInfo>): String {
+    return getErrorMessage(errorInfoPtr.pointed)
 }
