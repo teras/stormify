@@ -4,17 +4,18 @@ import kotlinx.cinterop.*
 import kotlinx.datetime.*
 import oci.*
 import onl.ycode.kdbc.SQLException
-import onl.ycode.kdbc.ParameterStorage
 import onl.ycode.kdbc.ParameterType
+import onl.ycode.kdbc.AllocatedParameter
+import onl.ycode.kdbc.allocateParameterBuffer
 import kotlin.reflect.KClass
 import com.ionspin.kotlin.bignum.decimal.BigDecimal as BDN
 import com.ionspin.kotlin.bignum.integer.BigInteger as BIN
 
 /**
- * Common parameter binding helper for Oracle PreparedStatement and CallableStatement.
+ * Oracle-specific parameter binding helper for PreparedStatement and CallableStatement.
  *
- * Uses unified ParameterStorage for IN parameters with Oracle-specific encoding.
- * OUT parameters use separate heap-allocated buffers (copy-on-execute pattern).
+ * Handles Oracle OCI protocol with proper type encoding for Oracle-specific formats
+ * (7-byte DATE, base-100 NUMBER).
  *
  * Supports 13 data types: String, Int, Long, Double, Float, Boolean, ByteArray,
  * LocalDate, LocalDateTime, LocalTime, Instant, BigDecimal, BigInteger
@@ -23,12 +24,23 @@ import com.ionspin.kotlin.bignum.integer.BigInteger as BIN
 object OracleParameterHelper {
 
     /**
-     * IN parameter data - extends unified ParameterStorage.
-     * Oracle-specific: stores encoded Oracle NUMBER and DATE formats.
+     * Oracle-specific IN parameter data for binding values to prepared statements.
      */
-    class InParameterData : ParameterStorage() {
-        // Oracle-specific encoded data (stored as ByteArray in base class)
+    class InParameterData : onl.ycode.kdbc.ParameterData {
+        override var type: ParameterType = ParameterType.NULL
+        override var value: Any? = null
+
         var oracleDataType: UShort = SQLT_STR
+
+        // For complex types that need pre-encoding (BigDecimal, DATE)
+        var encodedData: ByteArray? = null
+
+        fun clear() {
+            type = ParameterType.NULL
+            oracleDataType = SQLT_STR
+            value = null
+            encodedData = null
+        }
     }
 
     /**
@@ -78,75 +90,122 @@ object OracleParameterHelper {
     }
 
     /**
-     * Stores IN parameter value in InParameterData for later allocation during execution.
-     * Uses unified ParameterStorage, applies Oracle-specific encoding for DATE and NUMBER types.
+     * Binds an IN parameter value to InParameterData.
+     * Handles Oracle-specific encoding for DATE (7-byte format) and NUMBER (base-100 format).
      */
     fun bindInParameter(value: Any?, data: InParameterData) {
-        // Try unified storage first
-        if (data.store(value)) {
-            // Oracle-specific handling for primitives
-            when (value) {
-                is Boolean -> {
-                    data.type = ParameterType.INT
-                    data.intValue = if (value) 1 else 0
-                    data.oracleDataType = SQLT_INT
-                }
-                is Int -> data.oracleDataType = SQLT_INT
-                is Long -> data.oracleDataType = SQLT_INT
-                is Float -> data.oracleDataType = SQLT_BFLOAT
-                is Double -> data.oracleDataType = SQLT_BDOUBLE
-                is String -> data.oracleDataType = SQLT_STR
-                is ByteArray -> data.oracleDataType = SQLT_BIN
-                null -> data.oracleDataType = SQLT_STR
-            }
-            return
-        }
+        data.clear()
 
-        // Handle Oracle-specific complex types with encoding
         when (value) {
-            is LocalDateTime -> {
+            null -> {
+                data.type = ParameterType.NULL
+                data.oracleDataType = SQLT_STR
+                data.value = null
+            }
+            is Boolean -> {
+                // Oracle stores Boolean as INT (1 or 0)
+                data.type = ParameterType.INT
+                data.value = if (value) 1 else 0
+                data.oracleDataType = SQLT_INT
+            }
+            is Byte -> {
+                data.type = ParameterType.BYTE
+                data.value = value
+                data.oracleDataType = SQLT_INT
+            }
+            is Short -> {
+                data.type = ParameterType.SHORT
+                data.value = value
+                data.oracleDataType = SQLT_INT
+            }
+            is Int -> {
+                data.type = ParameterType.INT
+                data.value = value
+                data.oracleDataType = SQLT_INT
+            }
+            is Long -> {
+                data.type = ParameterType.LONG
+                data.value = value
+                data.oracleDataType = SQLT_INT
+            }
+            is Float -> {
+                data.type = ParameterType.FLOAT
+                data.value = value
+                data.oracleDataType = SQLT_BFLOAT
+            }
+            is Double -> {
+                data.type = ParameterType.DOUBLE
+                data.value = value
+                data.oracleDataType = SQLT_BDOUBLE
+            }
+            is String -> {
+                data.type = ParameterType.STRING
+                data.value = value
+                data.oracleDataType = SQLT_STR
+            }
+            is ByteArray -> {
                 data.type = ParameterType.BYTE_ARRAY
-                data.byteArrayValue = encodeOracleDateToByteArray(value)
+                data.value = value
+                data.oracleDataType = SQLT_BIN
+            }
+            is LocalDateTime -> {
+                // Encode to Oracle's 7-byte DATE format
+                data.type = ParameterType.BYTE_ARRAY
+                data.encodedData = encodeOracleDateToByteArray(value)
+                data.value = data.encodedData
                 data.oracleDataType = SQLT_DAT
             }
             is LocalDate -> {
                 data.type = ParameterType.BYTE_ARRAY
-                data.byteArrayValue = encodeOracleDateToByteArray(LocalDateTime(value, LocalTime(0, 0)))
+                data.encodedData = encodeOracleDateToByteArray(LocalDateTime(value, LocalTime(0, 0)))
+                data.value = data.encodedData
                 data.oracleDataType = SQLT_DAT
             }
             is LocalTime -> {
-                data.type = ParameterType.BYTE_ARRAY
                 val epochDate = LocalDate(1970, 1, 1)
-                data.byteArrayValue = encodeOracleDateToByteArray(LocalDateTime(epochDate, value))
+                data.type = ParameterType.BYTE_ARRAY
+                data.encodedData = encodeOracleDateToByteArray(LocalDateTime(epochDate, value))
+                data.value = data.encodedData
                 data.oracleDataType = SQLT_DAT
             }
             is Instant -> {
-                data.type = ParameterType.BYTE_ARRAY
                 val dateTime = value.toLocalDateTime(TimeZone.UTC)
-                data.byteArrayValue = encodeOracleDateToByteArray(dateTime)
+                data.type = ParameterType.BYTE_ARRAY
+                data.encodedData = encodeOracleDateToByteArray(dateTime)
+                data.value = data.encodedData
                 data.oracleDataType = SQLT_DAT
             }
             is BDN -> {
                 // Use Oracle NUMBER format (SQLT_VNU) for full precision
                 data.type = ParameterType.BYTE_ARRAY
-                data.byteArrayValue = encodeOracleNumber(value)
+                data.encodedData = encodeOracleNumber(value)
+                data.value = data.encodedData
                 data.oracleDataType = SQLT_VNU
             }
             is BIN -> {
                 // Try Long if it fits
                 if (value >= BIN.fromLong(Long.MIN_VALUE) && value <= BIN.fromLong(Long.MAX_VALUE)) {
                     data.type = ParameterType.LONG
-                    data.longValue = value.longValue(false)
+                    data.value = value.longValue(false)
                     data.oracleDataType = SQLT_INT
                 } else {
                     // Use Oracle NUMBER format (SQLT_VNU) for large integers
                     data.type = ParameterType.BYTE_ARRAY
-                    data.byteArrayValue = encodeOracleNumber(BDN.fromBigInteger(value))
+                    data.encodedData = encodeOracleNumber(BDN.fromBigInteger(value))
+                    data.value = data.encodedData
                     data.oracleDataType = SQLT_VNU
                 }
             }
-            else -> throw SQLException("Unsupported parameter type: ${value!!::class}")
+            else -> throw SQLException("Unsupported parameter type: ${value::class}")
         }
+    }
+
+    /**
+     * Allocates a buffer for the IN parameter in memScoped.
+     * Must be called within a memScoped block.
+     */
+    fun MemScope.allocateInParameter(data: InParameterData): AllocatedParameter {
+        return allocateParameterBuffer(data)
     }
 
     /**
@@ -268,8 +327,7 @@ object OracleParameterHelper {
     }
 
     /**
-     * Allocates an Int buffer for OUT parameters.
-     * Consolidates duplicate Int allocation code for Int and Boolean types.
+     * Allocates an Int buffer for OUT parameters (used for both Int and Boolean types).
      */
     private fun allocateIntBuffer(data: OutParameterData): BindInfo {
         data.intBuffer = nativeHeap.alloc<IntVar>()
@@ -283,8 +341,8 @@ object OracleParameterHelper {
      *
      * Oracle NUMBER format:
      * - Byte 0: Sign + Exponent
-     *   - Positive: (exponent/2 - 1) + 193, where exponent is power of 100
-     *   - Negative: 62 - (exponent/2 - 1), where exponent is power of 100
+     *   - Positive: (exponent + 65) | 0x80, where exponent is power of 100
+     *   - Negative: 62 - exponent, where exponent is power of 100
      * - Bytes 1-20: Mantissa in base-100
      *   - Positive: digit + 1 (values 1-100)
      *   - Negative: 101 - digit (values 1-100)
@@ -302,23 +360,37 @@ object OracleParameterHelper {
         val isNegative = value < BDN.ZERO
         val absValue = if (isNegative) value.negate() else value
 
-        // Convert to string and remove decimal point
+        // Get string representation and split into parts
         val str = absValue.toStringExpanded()
-        val digits = str.replace(".", "").replace("-", "")
+        val parts = str.split('.')
+        val integerPart = parts[0]
+        val fractionalPart = if (parts.size > 1) parts[1] else ""
 
-        // Find first non-zero digit
-        val firstNonZero = digits.indexOfFirst { it != '0' }
-        if (firstNonZero == -1) {
-            return byteArrayOf(128.toByte())
+        // Calculate exponent based on Oracle NUMBER specification
+        // Exponent = number of base-100 digit pairs to the left of decimal point - 1
+        val significantInteger = integerPart.trimStart('0')
+        val exponent = if (significantInteger.isNotEmpty()) {
+            // For numbers >= 1: exponent = (length + 1) / 2 - 1
+            (significantInteger.length + 1) / 2 - 1
+        } else {
+            // For numbers < 1: find first non-zero in fractional part
+            val firstNonZeroFrac = fractionalPart.indexOfFirst { it != '0' }
+            if (firstNonZeroFrac == -1) {
+                return byteArrayOf(128.toByte())  // All zeros
+            }
+            // Exponent is negative: -(position_of_first_nonzero + 2) / 2
+            -((firstNonZeroFrac + 2) / 2)
         }
 
-        // Calculate exponent (power of 100, so we work with digit pairs)
-        val decimalPos = str.indexOf('.')
-        val exponent = if (decimalPos == -1) {
-            digits.length - firstNonZero
+        // Combine all significant digits (no decimal point, no leading zeros)
+        val allDigits = if (significantInteger.isEmpty()) {
+            fractionalPart.trimStart('0')
         } else {
-            val adjustedPos = if (decimalPos > firstNonZero) decimalPos - 1 else decimalPos
-            adjustedPos - firstNonZero
+            significantInteger + fractionalPart
+        }
+
+        if (allDigits.isEmpty() || allDigits.all { it == '0' }) {
+            return byteArrayOf(128.toByte())
         }
 
         // Prepare result buffer (max 21 bytes)
@@ -326,14 +398,14 @@ object OracleParameterHelper {
 
         // Encode exponent byte
         val expByte = if (isNegative) {
-            (62 - (exponent / 2 - 1)).toByte()
+            (62 - exponent).toByte()
         } else {
-            ((exponent / 2 - 1) + 193).toByte()
+            ((exponent + 65) or 0x80).toByte()
         }
         result.add(expByte)
 
-        // Extract significant digits and encode mantissa in base-100
-        val significantDigits = digits.substring(firstNonZero).take(38)  // Oracle max 38 digits
+        // Take first 38 significant digits (Oracle max precision)
+        val significantDigits = allDigits.take(38)
 
         // Pad to even length for base-100 encoding
         val paddedDigits = if (significantDigits.length % 2 == 1) {

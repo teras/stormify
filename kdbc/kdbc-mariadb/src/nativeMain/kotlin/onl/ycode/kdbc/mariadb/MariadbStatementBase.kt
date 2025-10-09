@@ -3,7 +3,6 @@ package onl.ycode.kdbc.mariadb
 import kotlinx.cinterop.*
 import mariadb.*
 import onl.ycode.kdbc.SQLException
-import onl.ycode.kdbc.allocateParameter
 
 /**
  * Base class for MariaDB statement implementations, providing common functionality
@@ -88,8 +87,8 @@ abstract class MariadbStatementBase(
                 paramData.forEachIndexed { index, data ->
                     val bind = bindParams[index]
 
-                    // Use unified allocation helper
-                    val allocated = allocateParameter(data)
+                    // Use MariaDB-specific allocation helper (extension on MemScope)
+                    val allocated = MariadbParameterHelper.run { allocateParameter(data) }
 
                     when (data.type) {
                         onl.ycode.kdbc.ParameterType.NULL -> {

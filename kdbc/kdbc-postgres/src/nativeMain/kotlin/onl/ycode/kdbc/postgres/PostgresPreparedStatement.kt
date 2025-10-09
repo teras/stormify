@@ -141,8 +141,8 @@ class PostgresPreparedStatement(
             val paramFormatsArray = allocArray<IntVar>(paramCount)
 
             paramData.forEachIndexed { index, data ->
-                // Use unified allocation helper
-                val allocated = allocateParameter(data)
+                // Use PostgreSQL-specific allocation helper (extension on MemScope)
+                val allocated = PostgresTypeHelper.run { allocateParameter(data) }
 
                 // Set pointer and length from allocated result
                 paramValuesArray[index] = allocated.buffer?.reinterpret()

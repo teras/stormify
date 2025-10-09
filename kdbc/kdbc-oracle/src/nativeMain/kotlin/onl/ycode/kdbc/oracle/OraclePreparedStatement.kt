@@ -87,8 +87,8 @@ class OraclePreparedStatement(
                 val bindPtr = alloc<CPointerVar<out CPointed>>()
                 val indicator = alloc<ShortVar>()
 
-                // Use unified allocation helper
-                val allocated = allocateParameter(data)
+                // Use Oracle-specific allocation helper (extension on MemScope)
+                val allocated = OracleParameterHelper.run { allocateInParameter(data) }
                 indicator.value = if (data.type == ParameterType.NULL) -1 else 0
 
                 val result = oci_bind_by_pos(

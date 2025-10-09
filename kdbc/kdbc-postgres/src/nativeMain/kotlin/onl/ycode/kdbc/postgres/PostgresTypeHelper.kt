@@ -6,62 +6,46 @@ import kotlin.reflect.KClass
 import kotlin.time.Instant
 import com.ionspin.kotlin.bignum.decimal.BigDecimal as BDN
 import com.ionspin.kotlin.bignum.integer.BigInteger as BIN
-import onl.ycode.kdbc.ParameterStorage
 import onl.ycode.kdbc.ParameterType
+import onl.ycode.kdbc.AllocatedParameter
+import onl.ycode.kdbc.SQLException
+import onl.ycode.kdbc.allocateParameterBuffer
+import onl.ycode.kdbc.reverseBytes
 
 /**
- * Helper object for PostgreSQL type conversion, providing unified type reading
- * and parameter binding logic.
+ * PostgreSQL-specific type helper for parameter binding and result reading.
  *
- * PostgreSQL can return data in two formats:
- * - Binary format: Numeric types as raw bytes with network byte order (big endian)
- * - Text format: All types as strings that need parsing
+ * This driver-specific implementation eliminates the overengineered ParameterStorage
+ * abstraction, providing clear, explicit PostgreSQL libpq parameter handling.
  *
- * This helper supports both formats and handles byte-order conversion for binary data.
+ * PostgreSQL specifics:
+ * - Network byte order (big endian) for all numeric types
+ * - NUMERIC binary format (base-10000 encoding)
+ * - Binary and text format support
  */
 @OptIn(ExperimentalForeignApi::class, kotlin.time.ExperimentalTime::class)
 object PostgresTypeHelper {
 
     /**
-     * PostgreSQL parameter data - extends unified ParameterStorage.
-     * No additional fields needed.
+     * PostgreSQL-specific parameter data.
+     * Implements ParameterData interface for shared allocation logic.
      */
-    class ParamData : ParameterStorage()
+    class ParamData : onl.ycode.kdbc.ParameterData {
+        override var type: ParameterType = ParameterType.NULL
+        override var value: Any? = null
 
-    /**
-     * Byte order conversion utilities for PostgreSQL binary protocol.
-     * PostgreSQL uses network byte order (big endian), so we need to reverse bytes
-     * on little-endian systems.
-     */
-    fun Short.reverseBytes(): Short {
-        return ((this.toInt() and 0xFF) shl 8 or ((this.toInt() shr 8) and 0xFF)).toShort()
-    }
+        // For complex types that need pre-encoding (NUMERIC)
+        var encodedData: ByteArray? = null
 
-    fun Int.reverseBytes(): Int {
-        return ((this and 0xFF) shl 24) or
-               ((this and 0xFF00) shl 8) or
-               ((this shr 8) and 0xFF00) or
-               ((this shr 24) and 0xFF)
-    }
-
-    fun Long.reverseBytes(): Long {
-        return ((this and 0xFF) shl 56) or
-               ((this and 0xFF00) shl 40) or
-               ((this and 0xFF0000) shl 24) or
-               ((this and 0xFF000000) shl 8) or
-               ((this shr 8) and 0xFF000000) or
-               ((this shr 24) and 0xFF0000) or
-               ((this shr 40) and 0xFF00) or
-               ((this shr 56) and 0xFF)
+        fun clear() {
+            type = ParameterType.NULL
+            value = null
+            encodedData = null
+        }
     }
 
     /**
      * Reads a typed value from a PostgreSQL binary result.
-     *
-     * @param valuePtr Pointer to the binary data
-     * @param valueLength Length of the data in bytes
-     * @param type The Kotlin class to convert to
-     * @return The converted value, or null if the data cannot be converted
      */
     fun readBinaryValue(valuePtr: CPointer<ByteVar>, valueLength: Int, type: KClass<*>): Any? {
         return when (type) {
@@ -142,11 +126,6 @@ object PostgresTypeHelper {
 
     /**
      * Reads a typed value from a PostgreSQL text result.
-     * This is used when PostgreSQL returns data in text format instead of binary.
-     *
-     * @param valueStr The string value to parse
-     * @param type The Kotlin class to convert to
-     * @return The converted value, or null if the data cannot be converted
      */
     fun readTextValue(valueStr: String, type: KClass<*>): Any? {
         return when (type) {
@@ -183,63 +162,105 @@ object PostgresTypeHelper {
     }
 
     /**
-     * Stores a parameter value in ParamData for later allocation during execution.
-     * Uses unified ParameterStorage, applies PostgreSQL-specific byte-order conversion.
+     * Binds a parameter value to ParamData.
+     * PostgreSQL-specific encoding with byte-order conversion (big endian).
+     * Clear, explicit handling - no inherited store() calls.
      */
     fun bindParameter(value: Any?, data: ParamData) {
-        // Try unified storage first
-        if (data.store(value)) {
-            // PostgreSQL needs byte-order conversion (network byte order = big endian)
-            when (value) {
-                is Boolean -> data.byteValue = if (value) 1 else 0
-                is Short -> data.shortValue = value.reverseBytes()
-                is Int -> data.intValue = value.reverseBytes()
-                is Long -> data.longValue = value.reverseBytes()
-                is Float -> data.intValue = value.toBits().reverseBytes()
-                is Double -> data.longValue = value.toBits().reverseBytes()
-            }
-            return
-        }
+        data.clear()
 
-        // Handle PostgreSQL-specific complex types (with byte reversal)
         when (value) {
-            is BDN -> {
-                // Use PostgreSQL NUMERIC binary format for full precision
-                data.type = ParameterType.BYTE_ARRAY
-                data.byteArrayValue = encodePostgresNumeric(value)
+            null -> {
+                data.type = ParameterType.NULL
+                data.value = null
             }
-            is BIN -> {
-                // Try to convert to Long if it fits in Long range
-                if (value >= BIN.fromLong(Long.MIN_VALUE) && value <= BIN.fromLong(Long.MAX_VALUE)) {
-                    data.type = ParameterType.LONG
-                    data.longValue = value.longValue(false).reverseBytes()
-                } else {
-                    // Fall back to text for large numbers outside Long range
-                    data.type = ParameterType.STRING
-                    data.stringValue = value.toString()
-                }
+            is Boolean -> {
+                // PostgreSQL stores Boolean as byte (1 or 0)
+                data.type = ParameterType.BYTE
+                data.value = if (value) 1.toByte() else 0.toByte()
+            }
+            is Byte -> {
+                data.type = ParameterType.BYTE
+                data.value = value
+            }
+            is Short -> {
+                // PostgreSQL needs big endian (network byte order)
+                data.type = ParameterType.SHORT
+                data.value = value.reverseBytes()
+            }
+            is Int -> {
+                data.type = ParameterType.INT
+                data.value = value.reverseBytes()
+            }
+            is Long -> {
+                data.type = ParameterType.LONG
+                data.value = value.reverseBytes()
+            }
+            is Float -> {
+                // Float sent as int bits (big endian)
+                data.type = ParameterType.INT
+                data.value = value.toBits().reverseBytes()
+            }
+            is Double -> {
+                // Double sent as long bits (big endian)
+                data.type = ParameterType.LONG
+                data.value = value.toBits().reverseBytes()
+            }
+            is String -> {
+                data.type = ParameterType.STRING
+                data.value = value
+            }
+            is ByteArray -> {
+                data.type = ParameterType.BYTE_ARRAY
+                data.value = value
             }
             is kotlinx.datetime.LocalDateTime -> {
                 data.type = ParameterType.LONG
-                data.longValue = value.toInstant(TimeZone.currentSystemDefault()).toEpochMilliseconds().reverseBytes()
+                data.value = value.toInstant(TimeZone.currentSystemDefault()).toEpochMilliseconds().reverseBytes()
             }
             is kotlinx.datetime.LocalDate -> {
                 data.type = ParameterType.LONG
-                data.longValue = kotlinx.datetime.LocalDateTime(value, kotlinx.datetime.LocalTime(0, 0))
+                data.value = kotlinx.datetime.LocalDateTime(value, kotlinx.datetime.LocalTime(0, 0))
                     .toInstant(TimeZone.currentSystemDefault()).toEpochMilliseconds().reverseBytes()
             }
             is kotlinx.datetime.LocalTime -> {
-                data.type = ParameterType.LONG
                 val date = kotlin.time.Clock.System.now().toLocalDateTime(TimeZone.currentSystemDefault()).date
-                data.longValue = kotlinx.datetime.LocalDateTime(date, value)
+                data.type = ParameterType.LONG
+                data.value = kotlinx.datetime.LocalDateTime(date, value)
                     .toInstant(TimeZone.currentSystemDefault()).toEpochMilliseconds().reverseBytes()
             }
             is Instant -> {
                 data.type = ParameterType.LONG
-                data.longValue = value.toEpochMilliseconds().reverseBytes()
+                data.value = value.toEpochMilliseconds().reverseBytes()
             }
-            else -> throw onl.ycode.kdbc.SQLException("Unsupported parameter type: ${value!!::class}")
+            is BDN -> {
+                // Use PostgreSQL NUMERIC binary format for full precision
+                data.type = ParameterType.BYTE_ARRAY
+                data.encodedData = encodePostgresNumeric(value)
+                data.value = data.encodedData
+            }
+            is BIN -> {
+                // Try Long if it fits
+                if (value >= BIN.fromLong(Long.MIN_VALUE) && value <= BIN.fromLong(Long.MAX_VALUE)) {
+                    data.type = ParameterType.LONG
+                    data.value = value.longValue(false).reverseBytes()
+                } else {
+                    // Fall back to text for large numbers
+                    data.type = ParameterType.STRING
+                    data.value = value.toString()
+                }
+            }
+            else -> throw SQLException("Unsupported parameter type: ${value::class}")
         }
+    }
+
+    /**
+     * Allocates a buffer for the parameter in memScoped.
+     * Delegates to shared allocation logic.
+     * Must be called within a memScoped block.
+     */
+    fun MemScope.allocateParameter(data: ParamData): AllocatedParameter {
+        return allocateParameterBuffer(data)
     }
 
     /**
@@ -289,7 +310,6 @@ object PostgresTypeHelper {
         }
 
         // Calculate weight (position of first base-10000 digit group)
-        // weight = (number of decimal digits before decimal point - 1) / 4
         val digitsBeforeDecimal = if (integerPart.isEmpty()) 0 else integerPart.length
         val weight = if (digitsBeforeDecimal == 0) {
             // For numbers < 1, weight is negative
