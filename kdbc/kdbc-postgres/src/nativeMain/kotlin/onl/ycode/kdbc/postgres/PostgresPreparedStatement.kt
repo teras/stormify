@@ -118,10 +118,10 @@ class PostgresPreparedStatement(
     }
 
     override fun getGeneratedKeys(): ResultSet {
-        if (!returnGeneratedKeys || lastInsertId == null) {
+        val insertId = lastInsertId
+        if (!returnGeneratedKeys || insertId == null)
             return EmptyResultSet()
-        }
-        return GeneratedKeysResultSet(lastInsertId!!)
+        return GeneratedKeysResultSet(insertId)
     }
 
     override fun close() {

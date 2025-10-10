@@ -9,13 +9,15 @@ version = parent?.version ?: IllegalStateException("Version is not defined")
 description = "Stormify Database Library"
 
 kotlin {
+    applyDefaultHierarchyTemplate()
     jvm()
-    linuxX64 {
-//        binaries {
-//            executable {
-//                entryPoint = "onl.ycode.demo.main"
-//            }
-//        }
+    linuxX64()
+    targets.all {
+        compilations.all {
+            compilerOptions.configure {
+                freeCompilerArgs.add("-Xannotation-default-target=param-property")
+            }
+        }
     }
     jvmToolchain(11)
 
@@ -53,17 +55,14 @@ kotlin {
             }
         }
 
-        val nativeMain by creating {
-            dependsOn(commonMain)
+        val nativeMain by getting {
             dependencies {
                 implementation("org.jetbrains.kotlinx:kotlinx-datetime:0.7.1")
                 implementation("com.ionspin.kotlin:bignum:0.3.10")
             }
         }
 
-        val linuxX64Main by getting {
-            dependsOn(nativeMain)
-        }
+        val linuxX64Main by getting
 
         val linuxX64Test by getting {
             dependencies {

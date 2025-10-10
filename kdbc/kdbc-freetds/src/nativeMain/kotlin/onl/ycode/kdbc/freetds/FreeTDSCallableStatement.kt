@@ -113,7 +113,7 @@ class FreeTDSCallableStatement(
                 // Note: SQL Server returns OUT parameters in order
                 val paramIndex = findOutParameterIndex(i)
                 if (paramIndex != null && data != null && dataLen > 0) {
-                    val param = parameters[paramIndex]!!
+                    val param = parameters[paramIndex] ?: throw SQLException("Parameter at index $paramIndex is null")
                     val valueStr = data.reinterpret<ByteVar>().toKString()
                     param.outValue = param.outType?.let { FreeTDSTypeHelper.readValue(valueStr, it) }
                 }

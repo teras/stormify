@@ -1,7 +1,12 @@
 package onl.ycode.kdbc.mariadb
 
 import kotlinx.cinterop.*
-import kotlinx.datetime.*
+import kotlinx.datetime.LocalDate
+import kotlinx.datetime.LocalDateTime
+import kotlinx.datetime.LocalTime
+import kotlinx.datetime.TimeZone
+import kotlinx.datetime.toLocalDateTime
+import kotlin.time.Instant as KtInstant
 import com.ionspin.kotlin.bignum.decimal.BigDecimal as BDN
 import com.ionspin.kotlin.bignum.integer.BigInteger as BIN
 import mariadb.*
@@ -28,9 +33,9 @@ class MariadbStmtResultSet(private val stmt: CPointer<MYSQL_STMT>) : ResultSet {
         bindResults = nativeHeap.allocArray<MYSQL_BIND>(columnCount)
 
         if (metadata != null) {
-            val fields = mysql_fetch_fields(metadata)
+            val fields = mysql_fetch_fields(metadata) ?: throw SQLException("Failed to fetch fields")
             for (i in 0 until columnCount) {
-                val field = fields!![i]
+                val field = fields[i]
                 val data = ColumnData(field.type)
                 columnData.add(data)
             }
@@ -58,9 +63,9 @@ class MariadbStmtResultSet(private val stmt: CPointer<MYSQL_STMT>) : ResultSet {
             val tempLengthBuffers = mutableListOf<ULongVar>()
 
             // Bind temporary buffers based on column types
-            val fields = mysql_fetch_fields(metadata!!)
+            val fields = mysql_fetch_fields(metadata ?: throw SQLException("Metadata is null")) ?: throw SQLException("Failed to fetch fields")
             for (i in 0 until columnCount) {
-                val field = fields!![i]
+                val field = fields[i]
                 val bind = bindResults[i]
                 bind.buffer_type = field.type
                 bind.is_unsigned = ((field.flags and 32u).toByte())
@@ -239,28 +244,28 @@ class MariadbStmtResultSet(private val stmt: CPointer<MYSQL_STMT>) : ResultSet {
                     MYSQL_TYPE_LONGLONG -> data.longValue
                     else -> data.getString()?.toLongOrNull() ?: return null
                 }
-                kotlinx.datetime.Instant.fromEpochMilliseconds(millis).toLocalDateTime(TimeZone.currentSystemDefault())
+                KtInstant.fromEpochMilliseconds(millis).toLocalDateTime(TimeZone.currentSystemDefault())
             }
             LocalDate::class -> {
                 val millis = when (data.mysqlType) {
                     MYSQL_TYPE_LONGLONG -> data.longValue
                     else -> data.getString()?.toLongOrNull() ?: return null
                 }
-                kotlinx.datetime.Instant.fromEpochMilliseconds(millis).toLocalDateTime(TimeZone.currentSystemDefault()).date
+                KtInstant.fromEpochMilliseconds(millis).toLocalDateTime(TimeZone.currentSystemDefault()).date
             }
             LocalTime::class -> {
                 val millis = when (data.mysqlType) {
                     MYSQL_TYPE_LONGLONG -> data.longValue
                     else -> data.getString()?.toLongOrNull() ?: return null
                 }
-                kotlinx.datetime.Instant.fromEpochMilliseconds(millis).toLocalDateTime(TimeZone.currentSystemDefault()).time
+                KtInstant.fromEpochMilliseconds(millis).toLocalDateTime(TimeZone.currentSystemDefault()).time
             }
-            kotlinx.datetime.Instant::class -> {
+            KtInstant::class -> {
                 val millis = when (data.mysqlType) {
                     MYSQL_TYPE_LONGLONG -> data.longValue
                     else -> data.getString()?.toLongOrNull() ?: return null
                 }
-                kotlinx.datetime.Instant.fromEpochMilliseconds(millis)
+                KtInstant.fromEpochMilliseconds(millis)
             }
             else -> data.getString()
         }

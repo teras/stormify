@@ -8,6 +8,7 @@ version = parent?.version ?: IllegalStateException("Version is not defined")
 description = "Kotlin Database Connectivity API"
 
 kotlin {
+    applyDefaultHierarchyTemplate()
     jvm()
     linuxX64()
     jvmToolchain(11)
@@ -15,16 +16,13 @@ kotlin {
     sourceSets {
         val commonMain by getting
 
-        val nativeMain by creating {
-            dependsOn(commonMain)
+        val nativeMain by getting {
             dependencies {
                 implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.9.0")
             }
         }
 
-        val linuxX64Main by getting {
-            dependsOn(nativeMain)
-        }
+        val linuxX64Main by getting
     }
 }
 

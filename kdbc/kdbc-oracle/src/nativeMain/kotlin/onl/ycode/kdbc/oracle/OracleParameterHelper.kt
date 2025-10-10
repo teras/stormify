@@ -138,8 +138,9 @@ object OracleParameterHelper {
             }
             DPI_NATIVE_TYPE_BYTES -> {
                 val bytes = data.pointed.value.asBytes
+                val ptr = bytes.ptr ?: throw SQLException("Unexpected null pointer in bytes data")
                 val byteArray = ByteArray(bytes.length.toInt()) { i ->
-                    bytes.ptr!![i]
+                    ptr[i]
                 }
                 when (targetType) {
                     String::class -> byteArray.decodeToString()

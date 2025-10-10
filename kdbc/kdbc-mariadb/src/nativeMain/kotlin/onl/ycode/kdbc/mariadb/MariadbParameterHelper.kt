@@ -1,7 +1,13 @@
 package onl.ycode.kdbc.mariadb
 
 import kotlinx.cinterop.*
-import kotlinx.datetime.*
+import kotlinx.datetime.LocalDate
+import kotlinx.datetime.LocalDateTime
+import kotlinx.datetime.LocalTime
+import kotlinx.datetime.TimeZone
+import kotlinx.datetime.toInstant
+import kotlinx.datetime.toLocalDateTime
+import kotlin.time.Instant as KtInstant
 import com.ionspin.kotlin.bignum.decimal.BigDecimal as BDN
 import com.ionspin.kotlin.bignum.integer.BigInteger as BIN
 import mariadb.*
@@ -105,7 +111,7 @@ object MariadbParameterHelper {
                 data.value = LocalDateTime(date, value)
                     .toInstant(TimeZone.currentSystemDefault()).toEpochMilliseconds()
             }
-            is kotlinx.datetime.Instant -> {
+            is KtInstant -> {
                 data.type = ParameterType.LONG
                 data.value = value.toEpochMilliseconds()
             }
@@ -164,22 +170,22 @@ object MariadbParameterHelper {
             LocalDateTime::class -> {
                 // MariaDB returns epoch milliseconds
                 val millis = valueStr.toLongOrNull() ?: return null
-                kotlinx.datetime.Instant.fromEpochMilliseconds(millis)
+                KtInstant.fromEpochMilliseconds(millis)
                     .toLocalDateTime(TimeZone.currentSystemDefault())
             }
             LocalDate::class -> {
                 val millis = valueStr.toLongOrNull() ?: return null
-                kotlinx.datetime.Instant.fromEpochMilliseconds(millis)
+                KtInstant.fromEpochMilliseconds(millis)
                     .toLocalDateTime(TimeZone.currentSystemDefault()).date
             }
             LocalTime::class -> {
                 val millis = valueStr.toLongOrNull() ?: return null
-                kotlinx.datetime.Instant.fromEpochMilliseconds(millis)
+                KtInstant.fromEpochMilliseconds(millis)
                     .toLocalDateTime(TimeZone.currentSystemDefault()).time
             }
-            kotlinx.datetime.Instant::class -> {
+            KtInstant::class -> {
                 val millis = valueStr.toLongOrNull() ?: return null
-                kotlinx.datetime.Instant.fromEpochMilliseconds(millis)
+                KtInstant.fromEpochMilliseconds(millis)
             }
             else -> valueStr
         }

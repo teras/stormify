@@ -638,7 +638,12 @@ class Stormify(val dataSource: DataSource) {
         val columnCount = metaData.columnCount
         for (i in 1..columnCount) {
             val col = metaData.getColumnName(i)
-            info.setField(item, col, rs.getObject(i, info.getType(col)), this, if (isStrictMode) null else logger)
+            val value = rs.getObject(i, info.getType(col))
+            try {
+                info.setField(item, col, value, this, if (isStrictMode) null else logger)
+            } catch (e: NullPointerException) {
+                throw SQLException("Null value for non-null field '$col' in ${item::class.simpleName}", e)
+            }
         }
         return item
     }
