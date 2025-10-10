@@ -97,32 +97,14 @@ fun Long.reverseBytes(): Long {
 fun MemScope.allocateParameterBuffer(data: ParameterData): AllocatedParameter {
     return when (data.type) {
         ParameterType.NULL -> AllocatedParameter(null, 0)
-        ParameterType.BYTE -> {
-            val byteVar = alloc<ByteVar>().apply { value = data.value as Byte }
-            AllocatedParameter(byteVar.ptr, 1)
-        }
-        ParameterType.SHORT -> {
-            val shortVar = alloc<ShortVar>().apply { value = data.value as Short }
-            AllocatedParameter(shortVar.ptr, sizeOf<ShortVar>().toInt())
-        }
-        ParameterType.INT -> {
-            val intVar = alloc<IntVar>().apply { value = data.value as Int }
-            AllocatedParameter(intVar.ptr, sizeOf<IntVar>().toInt())
-        }
-        ParameterType.LONG -> {
-            val longVar = alloc<LongVar>().apply { value = data.value as Long }
-            AllocatedParameter(longVar.ptr, sizeOf<LongVar>().toInt())
-        }
-        ParameterType.FLOAT -> {
-            val floatVar = alloc<FloatVar>().apply { value = data.value as Float }
-            AllocatedParameter(floatVar.ptr, sizeOf<FloatVar>().toInt())
-        }
-        ParameterType.DOUBLE -> {
-            val doubleVar = alloc<DoubleVar>().apply { value = data.value as Double }
-            AllocatedParameter(doubleVar.ptr, sizeOf<DoubleVar>().toInt())
-        }
+        ParameterType.BYTE -> alloc<ByteVar>().run { value = data.value.safeCast<Byte>(); AllocatedParameter(ptr, 1) }
+        ParameterType.SHORT -> alloc<ShortVar>().run { value = data.value.safeCast<Short>(); AllocatedParameter(ptr, sizeOf<ShortVar>().toInt()) }
+        ParameterType.INT -> alloc<IntVar>().run { value = data.value.safeCast<Int>(); AllocatedParameter(ptr, sizeOf<IntVar>().toInt()) }
+        ParameterType.LONG -> alloc<LongVar>().run { value = data.value.safeCast<Long>(); AllocatedParameter(ptr, sizeOf<LongVar>().toInt()) }
+        ParameterType.FLOAT -> alloc<FloatVar>().run { value = data.value.safeCast<Float>(); AllocatedParameter(ptr, sizeOf<FloatVar>().toInt()) }
+        ParameterType.DOUBLE -> alloc<DoubleVar>().run { value = data.value.safeCast<Double>(); AllocatedParameter(ptr, sizeOf<DoubleVar>().toInt()) }
         ParameterType.STRING -> {
-            val str = data.value as String
+            val str = data.value.safeCast<String>()
             val bytes = str.encodeToByteArray()
             val buffer = allocArray<ByteVar>(bytes.size + 1)
             bytes.usePinned { pinned ->
@@ -132,7 +114,7 @@ fun MemScope.allocateParameterBuffer(data: ParameterData): AllocatedParameter {
             AllocatedParameter(buffer, bytes.size + 1)
         }
         ParameterType.BYTE_ARRAY -> {
-            val bytes = data.value as ByteArray
+            val bytes = data.value.safeCast<ByteArray>()
             val buffer = allocArray<ByteVar>(bytes.size)
             bytes.usePinned { pinned ->
                 platform.posix.memcpy(buffer, pinned.addressOf(0), bytes.size.toULong())

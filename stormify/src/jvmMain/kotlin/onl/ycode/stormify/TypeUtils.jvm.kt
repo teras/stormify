@@ -201,9 +201,9 @@ private fun <T : Any> registerTimeRelated(
     }
 
     if (!isCore) {
-        converters[Long::class] = { toNative((it as Long?)!!) }
+        converters[Long::class] = { toNative((it as Long)) }
         converters[Double::class] = { toNative(((it as Double) * 1000.0).toLong()) }
         converters[Float::class] = { toNative(((it as Float) * 1000.0).toLong()) }
         converters[String::class] = { toNative(Instant.parse(it as String).toEpochMilli()) }
     }
-}
+    }

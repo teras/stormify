@@ -191,12 +191,12 @@ class FreeTDSPreparedStatement(
             onl.ycode.kdbc.ParameterType.BOOLEAN -> data.value.toString()
             onl.ycode.kdbc.ParameterType.STRING -> {
                 // Escape single quotes
-                val str = data.value as String
+                val str = data.value.safeCast<String>()
                 "'${str.replace("'", "''")}'"
             }
             onl.ycode.kdbc.ParameterType.BYTE_ARRAY -> {
                 // Convert to hex string for binary data
-                val bytes = data.value as ByteArray
+                val bytes = data.value.safeCast<ByteArray>()
                 "0x${bytes.joinToString("") { byte -> byte.toString(16).padStart(2, '0') }}"
             }
             onl.ycode.kdbc.ParameterType.COMPLEX -> throw SQLException("COMPLEX type not supported")

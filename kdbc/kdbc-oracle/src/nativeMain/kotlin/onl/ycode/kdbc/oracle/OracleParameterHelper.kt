@@ -4,7 +4,7 @@ import kotlinx.cinterop.*
 import kotlinx.datetime.*
 import odpi.*
 import cnames.structs.*
-import onl.ycode.kdbc.SQLException
+import onl.ycode.kdbc.*
 import kotlin.reflect.KClass
 import com.ionspin.kotlin.bignum.decimal.BigDecimal as BDN
 import com.ionspin.kotlin.bignum.integer.BigInteger as BIN
@@ -30,7 +30,7 @@ object OracleParameterHelper {
             }
             is Byte, is Short, is Int -> {
                 data.pointed.isNull = 0
-                data.pointed.value.asInt64 = (value as Number).toLong()
+                data.pointed.value.asInt64 = value.safeCast<Number>().toLong()
             }
             is Long -> {
                 data.pointed.isNull = 0

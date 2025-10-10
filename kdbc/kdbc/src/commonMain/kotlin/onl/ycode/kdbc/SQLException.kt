@@ -31,3 +31,16 @@ class SQLException : RuntimeException {
      */
     constructor(message: String?, cause: Throwable?) : super(message, cause)
 }
+
+/**
+ * Safe cast helper for parameter validation.
+ *
+ * Performs a safe cast with descriptive error messages for type mismatches.
+ * Used throughout KDBC for validating parameter types before use.
+ *
+ * @param T The target type to cast to (automatically derived from reified type)
+ * @return The safely cast value
+ * @throws SQLException if the cast fails
+ */
+inline fun <reified T> Any?.safeCast(): T =
+    this as? T ?: throw SQLException("Expected ${T::class.simpleName} but got ${this?.let { it::class.simpleName } ?: "null"}")

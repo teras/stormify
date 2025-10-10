@@ -187,23 +187,23 @@ class FreeTDSCallableStatement(
                     dbrpcparam(dbContext, null, status, SYBVARCHAR, -1, 0, null)
                 }
                 onl.ycode.kdbc.ParameterType.INT -> {
-                    val intVar = alloc<IntVar>().apply { value = data.value as Int }
+                    val intVar = alloc<IntVar>().apply { value = data.value.safeCast<Int>() }
                     dbrpcparam(dbContext, null, status, SYBINT4, -1, sizeOf<IntVar>().toInt(), intVar.ptr.reinterpret())
                 }
                 onl.ycode.kdbc.ParameterType.LONG -> {
-                    val longVar = alloc<LongVar>().apply { value = data.value as Long }
+                    val longVar = alloc<LongVar>().apply { value = data.value.safeCast<Long>() }
                     dbrpcparam(dbContext, null, status, SYBINT8, -1, sizeOf<LongVar>().toInt(), longVar.ptr.reinterpret())
                 }
                 onl.ycode.kdbc.ParameterType.DOUBLE -> {
-                    val doubleVar = alloc<DoubleVar>().apply { value = data.value as Double }
+                    val doubleVar = alloc<DoubleVar>().apply { value = data.value.safeCast<Double>() }
                     dbrpcparam(dbContext, null, status, SYBFLT8, -1, sizeOf<DoubleVar>().toInt(), doubleVar.ptr.reinterpret())
                 }
                 onl.ycode.kdbc.ParameterType.FLOAT -> {
-                    val floatVar = alloc<FloatVar>().apply { value = data.value as Float }
+                    val floatVar = alloc<FloatVar>().apply { value = data.value.safeCast<Float>() }
                     dbrpcparam(dbContext, null, status, SYBREAL, -1, sizeOf<FloatVar>().toInt(), floatVar.ptr.reinterpret())
                 }
                 onl.ycode.kdbc.ParameterType.STRING -> {
-                    val str = data.value as String
+                    val str = data.value.safeCast<String>()
                     val bytes = str.encodeToByteArray()
                     val buffer = allocArray<ByteVar>(bytes.size + 1)
                     bytes.usePinned { pinned ->
