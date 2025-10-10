@@ -15,7 +15,7 @@ import com.ionspin.kotlin.bignum.decimal.BigDecimal as BDN
  *
  * TODO: Enable when integration testing is set up.
  */
-@Ignore("Oracle NUMBER encoding tests - requires kdbc-oracle access and Oracle DB")
+@Ignore
 class OracleNumberEncodingTest {
 
     /**

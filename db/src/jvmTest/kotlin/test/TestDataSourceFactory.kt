@@ -4,6 +4,7 @@ package test
 
 import com.zaxxer.hikari.HikariConfig
 import com.zaxxer.hikari.HikariDataSource
+import onl.ycode.kdbc.toKdbcDataSource
 
 /**
  * JVM implementation providing JDBC-based DataSources for testing.
@@ -22,7 +23,7 @@ actual fun createTestDatabases(): List<TestDatabase> {
     databases.add(
         TestDatabase(
             name = "SQLite JDBC (in-memory)",
-            dataSource = createSqliteDataSource()
+            dataSource = createSqliteDataSource().toKdbcDataSource()
         )
     )
 

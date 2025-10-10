@@ -4,7 +4,13 @@
 
 package onl.ycode.stormify
 
-
+import onl.ycode.kdbc.CallableStatement
+import onl.ycode.kdbc.Connection
+import onl.ycode.kdbc.DataSource
+import onl.ycode.kdbc.PreparedStatement
+import onl.ycode.kdbc.ResultSet
+import onl.ycode.kdbc.ResultSetMetaData
+import onl.ycode.kdbc.SQLException
 import onl.ycode.logger.LogManager
 import onl.ycode.stormify.SPParam.Mode.*
 import onl.ycode.stormify.SqlDialect.GeneratedKeyRetrieval
@@ -72,7 +78,7 @@ private class FixedParams(val query: String, val params: List<Any?>)
 class Stormify(val dataSource: DataSource) {
 
     private inner class ConnectionMaker(connection: Connection?) : AutoCloseable {
-        val connection by lazy { connection ?: dataSource._connection }
+        val connection by lazy { connection ?: dataSource.getConnection() }
         val shouldClose = connection == null
         override fun close() {
             try {
@@ -121,7 +127,7 @@ class Stormify(val dataSource: DataSource) {
     /**
      * Controls strict mode for object-to-database mapping.
      *
-     * When **enabled** (default): Stormify throws a [QueryException] if:
+     * When **enabled** (default): Stormify throws a [SQLException] if:
      * - A database column doesn't have a corresponding property in the Kotlin class
      * - A class property doesn't have a corresponding database column
      * - Field types don't match between class and database
@@ -166,7 +172,7 @@ class Stormify(val dataSource: DataSource) {
         for (i in givenQuery.indices) {
             // Have to parse the whole query in case Iterables are used as parameters
             if (givenQuery[i] == '?') {
-                if (countQuestionMarks >= args.size) throw QueryException(
+                if (countQuestionMarks >= args.size) throw SQLException(
                     ("The number of placeholders (" + count(
                         givenQuery,
                         '?'
@@ -182,7 +188,7 @@ class Stormify(val dataSource: DataSource) {
                 }
             } else query.append(givenQuery[i])
         }
-        if (countQuestionMarks != args.size) throw QueryException(
+        if (countQuestionMarks != args.size) throw SQLException(
             ("The number of placeholders (" + count(
                 givenQuery,
                 '?'
@@ -201,12 +207,12 @@ class Stormify(val dataSource: DataSource) {
         val params = fixParams(givenQuery, givenParams)
         `!dbLog`(params.query, params.params.toTypedArray())
         return ConnectionMaker(conn).useWithException("Unable to execute query '${params.query}'") { maker ->
-            maker.connection._prepareStatement(
+            maker.connection.prepareStatement(
                 params.query,
                 generatedKeys
             ).use { statement ->
                 for (i in params.params.indices)
-                    statement._setObject(i + 1, params.params[i])
+                    statement.setObject(i + 1, params.params[i])
                 code(statement)
             }
         }
@@ -222,7 +228,7 @@ class Stormify(val dataSource: DataSource) {
         }
         val info = retrieve(value::class)
         return if (info.idNames.size == 1) info.getIdValues(value) else
-            throw QueryException("Multiple primary keys found in ${info.table}")
+            throw SQLException("Multiple primary keys found in ${info.table}")
     }
 
     /**
@@ -265,7 +271,7 @@ class Stormify(val dataSource: DataSource) {
      * @param query the SQL statement to execute. Use `?` as placeholders for parameters.
      * @param params the parameter values to bind to the query. Collections are automatically expanded.
      * @return the number of rows affected by the statement
-     * @throws QueryException if the query execution fails or parameter count doesn't match placeholders
+     * @throws SQLException if the query execution fails or parameter count doesn't match placeholders
      *
      * @see create
      * @see update
@@ -275,7 +281,7 @@ class Stormify(val dataSource: DataSource) {
         executeUpdate(null, query, params)
 
     internal fun executeUpdate(conn: Connection?, query: String, vararg params: Any?): Int {
-        return performQuery(conn, query, params.toList(), false, { it._executeUpdate() })
+        return performQuery(conn, query, params.toList(), false, { it.executeUpdate() })
     }
 
     /**
@@ -329,7 +335,7 @@ class Stormify(val dataSource: DataSource) {
      * @param params the parameter values to bind to the query.
      * @param consumer the function called for each result row. Receives one mapped object per row.
      * @return the total number of rows processed
-     * @throws QueryException if the query execution fails or type mapping fails
+     * @throws SQLException if the query execution fails or type mapping fails
      *
      * @see read
      * @see readOne
@@ -346,14 +352,14 @@ class Stormify(val dataSource: DataSource) {
         consumer: (T) -> Unit
     ) = performQuery(conn, query, params.toList(), false, { statement ->
         val info = if (isScalarClass(baseClass)) null else retrieve(baseClass)
-        val rs: ResultSet = statement._executeQuery()
+        val rs: ResultSet = statement.executeQuery()
         var count = 0
-        while (rs._next()) {
+        while (rs.next()) {
             count++
             consumer(
                 if (info != null) populate(info.create(), rs)
-                else castTo(baseClass, rs._getObject(1, baseClass), this)
-                    ?: throw QueryException("Expecting type ${baseClass.fullName} but found null")
+                else castTo(baseClass, rs.getObject(1, baseClass), this)
+                    ?: throw SQLException("Expecting type ${baseClass.fullName} but found null")
             )
         }
         count
@@ -420,7 +426,7 @@ class Stormify(val dataSource: DataSource) {
      * @param query the SQL SELECT statement. Use `?` for parameter placeholders.
      * @param params the parameter values to bind to the query in order.
      * @return a list of mapped objects. Returns empty list if no results found (never null).
-     * @throws QueryException if query execution fails, type mapping fails, or parameters don't match
+     * @throws SQLException if query execution fails, type mapping fails, or parameters don't match
      *
      * @see readOne
      * @see readCursor
@@ -446,7 +452,7 @@ class Stormify(val dataSource: DataSource) {
      * ## Behavior
      * - **0 rows**: Returns `null`
      * - **1 row**: Returns the mapped object
-     * - **2+ rows**: Throws [QueryException] to prevent ambiguous results
+     * - **2+ rows**: Throws [SQLException] to prevent ambiguous results
      *
      * ## Common Use Cases
      * - Looking up entities by unique identifier (ID, email, username)
@@ -487,7 +493,7 @@ class Stormify(val dataSource: DataSource) {
      * try {
      *     // This will throw if multiple users have the same name
      *     val user = stormify.readOne<User>("SELECT * FROM users WHERE name = ?", "John")
-     * } catch (e: QueryException) {
+     * } catch (e: SQLException) {
      *     // Handle multiple results case
      *     println("Multiple users found with name John")
      * }
@@ -507,7 +513,7 @@ class Stormify(val dataSource: DataSource) {
      * @param query the SQL SELECT statement. Use `?` for parameter placeholders.
      * @param params the parameter values to bind to the query.
      * @return the single mapped object, or null if no results found
-     * @throws QueryException if multiple rows are returned, or if query execution fails
+     * @throws SQLException if multiple rows are returned, or if query execution fails
      *
      * @see read
      * @see readCursor
@@ -521,7 +527,7 @@ class Stormify(val dataSource: DataSource) {
         val result = Reference<T?>()
         readCursor(conn, baseClass, query, *params) {
             if (result.item != null)
-                throw QueryException("Multiple results found for query '$query'")
+                throw SQLException("Multiple results found for query '$query'")
             result.item = it
         }
         return result.item
@@ -530,10 +536,10 @@ class Stormify(val dataSource: DataSource) {
     private fun <T : Any> getValidIds(entity: T, info: TableInfo<T>): List<Any?> {
         val idValues = info.getIdValues(entity)
         if (idValues.isEmpty())
-            throw QueryException("No primary key found for object " + info.type)
+            throw SQLException("No primary key found for object " + info.type)
         idValues.forEachIndexed { i, value ->
             if (value == null)
-                throw QueryException("Value of primary key ${info.idNames[i]} is null of entity ${entity::class.fullName}")
+                throw SQLException("Value of primary key ${info.idNames[i]} is null of entity ${entity::class.fullName}")
         }
         return idValues
     }
@@ -593,7 +599,7 @@ class Stormify(val dataSource: DataSource) {
      * try {
      *     val user = User(id = 999) // Non-existent ID
      *     stormify.populate(user)
-     * } catch (e: QueryException) {
+     * } catch (e: SQLException) {
      *     println("User not found: ${e.message}")
      * }
      * ```
@@ -606,7 +612,7 @@ class Stormify(val dataSource: DataSource) {
      * @param T the type of the entity to populate
      * @param entity the entity instance with primary key(s) set. All other properties will be overwritten.
      * @return the same entity instance, now populated with database values
-     * @throws QueryException if no data found for the given primary key, or if primary key is not set
+     * @throws SQLException if no data found for the given primary key, or if primary key is not set
      *
      * @see findById
      * @see read
@@ -618,9 +624,9 @@ class Stormify(val dataSource: DataSource) {
     internal fun <T : Any> populate(conn: Connection?, entity: T): T {
         val info = retrieve(entity::class)
         performQuery<Any>(conn, info.populateQuery, getValidIds(entity, info), false, { statement ->
-            val rs: ResultSet = statement._executeQuery()
-            if (rs._next()) return@performQuery populate<T>(entity, rs)
-            else throw QueryException("No data found for " + entity.toString(info))
+            val rs: ResultSet = statement.executeQuery()
+            if (rs.next()) return@performQuery populate<T>(entity, rs)
+            else throw SQLException("No data found for " + entity.toString(info))
         })
         return entity
     }
@@ -628,10 +634,11 @@ class Stormify(val dataSource: DataSource) {
     private fun <T : Any> populate(item: T, rs: ResultSet): T {
         if (item is AutoTable && item.`!stormify` == null) item.`!stormify` = this
         val info = retrieve(item::class)
-        val columnCount = rs._columnCount
+        val metaData = rs.getMetaData()
+        val columnCount = metaData.columnCount
         for (i in 1..columnCount) {
-            val col = rs._getColumnName(i)
-            info.setField(item, col, rs._getObject(i, info.getType(col)), this, if (isStrictMode) null else logger)
+            val col = metaData.getColumnName(i)
+            info.setField(item, col, rs.getObject(i, info.getType(col)), this, if (isStrictMode) null else logger)
         }
         return item
     }
@@ -729,7 +736,7 @@ class Stormify(val dataSource: DataSource) {
      * try {
      *     stormify.create(User(name = "Alice", email = "alice@example.com"))
      *     stormify.create(User(name = "Bob", email = "alice@example.com")) // Duplicate!
-     * } catch (e: QueryException) {
+     * } catch (e: SQLException) {
      *     println("Insert failed: ${e.message}")
      *     // Handle constraint violation, unique key, etc.
      * }
@@ -743,7 +750,7 @@ class Stormify(val dataSource: DataSource) {
      * @param T the type of the entity to create
      * @param item the entity instance to insert. Properties map to column values.
      * @return the same entity instance with any generated keys populated
-     * @throws QueryException if insert fails due to constraints, missing required fields, or database errors
+     * @throws SQLException if insert fails due to constraints, missing required fields, or database errors
      *
      * @see update
      * @see delete
@@ -763,12 +770,12 @@ class Stormify(val dataSource: DataSource) {
             val hasGK = sqlDialect.generatedKeyRetrieval !== GeneratedKeyRetrieval.NONE
             val givenParams = info.getIdValues(item) + info.getRestValues(item)
             performQuery<Any>(maker.connection, info.createQuery, givenParams, hasGK) { st ->
-                val affectedRows: Int = st._executeUpdate()
+                val affectedRows: Int = st.executeUpdate()
                 if (!hasGK || affectedRows <= 0) return@performQuery affectedRows
-                st._getGeneratedKeys().use { rs ->
-                    if (rs._next())
+                st.getGeneratedKeys().use { rs ->
+                    if (rs.next())
                         if (sqlDialect.generatedKeyRetrieval === GeneratedKeyRetrieval.BY_INDEX)
-                            info.setField(item, info.singleKeyName, rs._getObject(1, NativeBigInteger::class), this)
+                            info.setField(item, info.singleKeyName, rs.getObject(1, NativeBigInteger::class), this)
                         else populate(item, rs)
                 }
                 affectedRows
@@ -857,7 +864,7 @@ class Stormify(val dataSource: DataSource) {
      *     val user = User(id = 999, name = "Ghost") // Non-existent
      *     stormify.update(user)
      *     // Succeeds but affects 0 rows
-     * } catch (e: QueryException) {
+     * } catch (e: SQLException) {
      *     println("Update failed: ${e.message}")
      * }
      * ```
@@ -876,7 +883,7 @@ class Stormify(val dataSource: DataSource) {
      * @param T the type of the entity to update
      * @param updatedItem the entity with updated values and primary key set
      * @return the same entity instance (unchanged)
-     * @throws QueryException if update fails due to constraints or database errors
+     * @throws SQLException if update fails due to constraints or database errors
      *
      * @see create
      * @see delete
@@ -887,7 +894,7 @@ class Stormify(val dataSource: DataSource) {
     internal fun <T : Any> update(conn: Connection?, updatedItem: T): T {
         val info = retrieve(updatedItem::class)
         val params = info.getRestValues(updatedItem) + getValidIds(updatedItem, info)
-        performQuery<Any>(conn, info.updateQuery, params, false, PreparedStatement::_executeUpdate)
+        performQuery<Any>(conn, info.updateQuery, params, false, PreparedStatement::executeUpdate)
         return updatedItem
     }
 
@@ -952,7 +959,7 @@ class Stormify(val dataSource: DataSource) {
      *     val user = User(id = 999) // Non-existent
      *     stormify.delete(user)
      *     // Succeeds but affects 0 rows
-     * } catch (e: QueryException) {
+     * } catch (e: SQLException) {
      *     // Only throws on actual database errors, not when entity doesn't exist
      *     println("Delete failed: ${e.message}")
      * }
@@ -990,7 +997,7 @@ class Stormify(val dataSource: DataSource) {
      *
      * @param T the type of the entity to delete
      * @param deletedItem the entity with primary key(s) set. Other fields are ignored.
-     * @throws QueryException if delete fails due to foreign key constraints or database errors
+     * @throws SQLException if delete fails due to foreign key constraints or database errors
      *
      * @see create
      * @see update
@@ -1005,7 +1012,7 @@ class Stormify(val dataSource: DataSource) {
             info.deleteQuery,
             getValidIds(deletedItem, info),
             false,
-            PreparedStatement::_executeUpdate
+            PreparedStatement::executeUpdate
         )
     }
 
@@ -1126,7 +1133,7 @@ class Stormify(val dataSource: DataSource) {
      * ```kotlin
      * try {
      *     val details = stormify.getDetails<Order>(user, "wrongProperty")
-     * } catch (e: QueryException) {
+     * } catch (e: SQLException) {
      *     // Property not found or wrong type
      *     println("Invalid property: ${e.message}")
      * }
@@ -1137,7 +1144,7 @@ class Stormify(val dataSource: DataSource) {
      * @param propertyName optional name of the foreign key property in the detail class.
      *                     If null, auto-detects by matching parent's type.
      * @return list of detail entities with parent reference populated. Empty list if none found.
-     * @throws QueryException if parent has composite key, property not found, or multiple properties match parent type
+     * @throws SQLException if parent has composite key, property not found, or multiple properties match parent type
      *
      * @see findAll
      * @see read
@@ -1162,7 +1169,7 @@ class Stormify(val dataSource: DataSource) {
         else
             findItemOnce(detailInfo.restNames, propertyName, detailsClass.fullName).also {
                 if (detailInfo.restTypes[it] != parent::class)
-                    throw QueryException("Field $propertyName is not of type ${parent::class.fullName} in class ${detailsClass.fullName}")
+                    throw SQLException("Field $propertyName is not of type ${parent::class.fullName} in class ${detailsClass.fullName}")
             }]
         val details = read(
             conn,
@@ -1304,7 +1311,7 @@ class Stormify(val dataSource: DataSource) {
      * @param whereClause optional SQL WHERE clause (must include "WHERE" keyword). Can include ORDER BY, LIMIT, etc.
      * @param arguments parameter values for placeholders in the WHERE clause
      * @return list of entities matching the criteria. Empty list if none found (never null).
-     * @throws QueryException if query execution fails or arguments don't match placeholders
+     * @throws SQLException if query execution fails or arguments don't match placeholders
      *
      * @see read
      * @see findById
@@ -1415,7 +1422,7 @@ class Stormify(val dataSource: DataSource) {
      * @param T the type of the entity to find. Must have a single primary key.
      * @param id the primary key value to search for. Type must match the entity's primary key type.
      * @return the entity if found, or null if not found
-     * @throws QueryException if entity has composite keys (multiple primary key fields)
+     * @throws SQLException if entity has composite keys (multiple primary key fields)
      *
      * @see findAll
      * @see readOne
@@ -1597,7 +1604,7 @@ class Stormify(val dataSource: DataSource) {
      *
      * @param block the transaction block with [TransactionContext] as receiver. All CRUD methods
      *              are available directly within this block.
-     * @throws QueryException if any database operation fails, wrapped with transaction context
+     * @throws SQLException if any database operation fails, wrapped with transaction context
      *
      * @see TransactionContext
      */
@@ -1711,7 +1718,7 @@ class Stormify(val dataSource: DataSource) {
      *     val param = SPParam.out(Int::class)
      *     stormify.procedure(null, "risky_procedure", param)
      *     println("Result: ${param.result}")
-     * } catch (e: QueryException) {
+     * } catch (e: SQLException) {
      *     println("Procedure failed: ${e.message}")
      *     // Handle database errors, invalid parameters, etc.
      * }
@@ -1743,30 +1750,30 @@ class Stormify(val dataSource: DataSource) {
      * @param conn optional connection to use. If null, creates a new connection.
      * @param name the name of the stored procedure to execute
      * @param params the parameters for the stored procedure. Use [SPParam.in], [SPParam.out], or [SPParam.inout].
-     * @throws QueryException if procedure execution fails or parameters are invalid
+     * @throws SQLException if procedure execution fails or parameters are invalid
      *
      * @see SPParam
      */
     fun procedure(conn: Connection?, name: String, vararg params: SPParam<*>) {
         val shouldClose = conn == null
-        val connection = conn ?: dataSource._connection
+        val connection = conn ?: dataSource.getConnection()
         try {
             val placeholders: String = nCopies("?", ", ", params.size)
             val statement = "CALL $name($placeholders)"
             `!dbLog`(statement, params)
-            connection._prepareCall("{$statement}").use { cs ->
+            connection.prepareCall("{$statement}").use { cs ->
                 for (i in params.indices) {
                     val p: SPParam<*> = params[i]
                     if (p.mode === OUT || p.mode === INOUT)
-                        cs._registerOutParameter(i + 1, p.type)
+                        cs.registerOutParameter(i + 1, p.type)
                     if (p.mode === IN || p.mode === INOUT)
-                        cs._setObject(i + 1, p.value)
+                        cs.setObject(i + 1, p.value)
                 }
-                cs._execute()
+                cs.execute()
                 for (i in params.indices) {
                     val p: SPParam<*> = params[i]
                     if (p.mode === OUT || p.mode === INOUT)
-                        p.result = TypeUtils.castTo(p.type, cs._getObject(i + 1, p.type), this)
+                        p.result = TypeUtils.castTo(p.type, cs.getObject(i + 1, p.type), this)
                 }
             }
         } catch (e: Throwable) {

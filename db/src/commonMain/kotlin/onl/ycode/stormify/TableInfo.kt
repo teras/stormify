@@ -1,5 +1,6 @@
 package onl.ycode.stormify
 
+import onl.ycode.kdbc.SQLException
 import onl.ycode.logger.Logger
 import kotlin.reflect.KClass
 
@@ -34,17 +35,17 @@ class TableInfo<T : Any>(
             restNames.map { it.lowercase() }.zip(restTypes)).toMap()
 
     internal fun getType(name: String): KClass<*> =
-        fieldTypeMap[name.lowercase()] ?: throw QueryException("Unknown field $name in $table")
+        fieldTypeMap[name.lowercase()] ?: throw SQLException("Unknown field $name in $table")
 
     internal fun setField(entity: T, name: String, value: Any?, stormify: Stormify, errorToLogger: Logger? = null) {
         if (!fields(entity, name, value, stormify)) {
-            if (errorToLogger == null) throw QueryException("Unable to set field $name in $table")
+            if (errorToLogger == null) throw SQLException("Unable to set field $name in $table")
             else errorToLogger.error("Unable to set field $name in $table")
         }
     }
 
     internal val singleKeyName =
-        if (idNames.size == 1) idNames[0] else throw QueryException("Multiple primary keys found in $table")
+        if (idNames.size == 1) idNames[0] else throw SQLException("Multiple primary keys found in $table")
 
     companion object {
         private val registry = mutableMapOf<KClass<*>, TableInfo<*>>()

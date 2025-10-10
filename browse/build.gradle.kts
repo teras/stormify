@@ -13,6 +13,7 @@ java.targetCompatibility = JavaVersion.VERSION_11
 
 dependencies {
     implementation(project(":db"))
+    implementation(project(":kdbc"))
     implementation(project(":logger"))
 
     implementation("com.panayotis:arjs:0.3.1")

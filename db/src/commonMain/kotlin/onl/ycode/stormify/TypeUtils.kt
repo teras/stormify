@@ -2,6 +2,7 @@
 // (C) Panayotis Katsaloulis
 package onl.ycode.stormify
 
+import onl.ycode.kdbc.SQLException
 import kotlin.reflect.KClass
 
 /**
@@ -24,7 +25,7 @@ object TypeUtils {
         val givenClass = value::class
         if (!isScalarObject(value)) {
             if (stormify == null)
-                throw QueryException("Unable to convert non-scalar object to " + targetClass.fullName + "; missing database context")
+                throw SQLException("Unable to convert non-scalar object to " + targetClass.fullName + "; missing database context")
             val info = TableInfo.retrieve(givenClass)
             val item = info.create()
             if (item is AutoTable) item.`!stormify` = stormify
@@ -32,8 +33,8 @@ object TypeUtils {
             return item as T
         }
         val typeConv = (registry[targetClass]
-            ?: throw QueryException("Target class " + targetClass.fullName + " is not convertible"))[givenClass]
-            ?: throw QueryException("Unable to convert " + givenClass.fullName + " to " + targetClass.fullName)
+            ?: throw SQLException("Target class " + targetClass.fullName + " is not convertible"))[givenClass]
+            ?: throw SQLException("Unable to convert " + givenClass.fullName + " to " + targetClass.fullName)
         return try {
             typeConv(value) as T
         } catch (th: Throwable) {
@@ -41,7 +42,7 @@ object TypeUtils {
         }
     }
 
-    fun err(name: String, cls: String): Nothing = throw QueryException("$name cannot be null in class $cls")
+    fun err(name: String, cls: String): Nothing = throw SQLException("$name cannot be null in class $cls")
 
     // first key: target class
     // second key: source class
@@ -142,9 +143,9 @@ internal fun <T> findItemOnce(data: List<T>, key: T, spaceName: String): Int {
     for (i in data.indices)
         if (key == data[i])
             if (found < 0) found = i
-            else throw QueryException("Multiple instances of '$key' found in $spaceName")
+            else throw SQLException("Multiple instances of '$key' found in $spaceName")
     if (found < 0)
-        throw QueryException("Unable to find any instances of '$key' in $spaceName")
+        throw SQLException("Unable to find any instances of '$key' in $spaceName")
     return found
 }
 
@@ -158,7 +159,7 @@ internal fun isTextualClass(request: KClass<*>) = with(request.fullName) {
 }
 
 internal fun Throwable.throwQuery(reason: String): Nothing =
-    if (this is QueryException) throw this else throw QueryException(reason, this)
+    if (this is SQLException) throw this else throw SQLException(reason, this)
 
 private val allPrimitives: Set<String> = (listOf(
     Byte::class,
@@ -174,7 +175,7 @@ private val allPrimitives: Set<String> = (listOf(
     Number::class,
 ) + getNativeAllPrimitives()).mapTo(LinkedHashSet()) { it.fullName }
 
-internal val KClass<*>.fullName get() = qualifiedName ?: throw QueryException("Unknown class name of class $this")
+internal val KClass<*>.fullName get() = qualifiedName ?: throw SQLException("Unknown class name of class $this")
 
 internal inline fun <T : AutoCloseable, R> T.useWithException(
     message: String,

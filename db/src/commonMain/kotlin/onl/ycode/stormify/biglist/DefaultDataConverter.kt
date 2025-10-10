@@ -2,7 +2,7 @@
 // (C) Panayotis Katsaloulis
 package onl.ycode.stormify.biglist
 
-import onl.ycode.stormify.QueryException
+import onl.ycode.kdbc.SQLException
 import onl.ycode.stormify.TypeUtils.castTo
 import onl.ycode.stormify.isTextualClass
 import kotlin.reflect.KClass
@@ -24,7 +24,7 @@ internal object DefaultDataConverter {
             }
         else { column: String, input: String, args: (Any) -> Unit ->
             runCatching { breakdownParts(column, input, { part -> args(castTo(type, part) ?: "") }) }
-                .getOrElse { throw QueryException("Unable to convert '$input' to number", it) }
+                .getOrElse { throw SQLException("Unable to convert '$input' to number", it) }
         }
 
     private fun breakdownParts(column: String, userInput: String, args: (String) -> Unit): String {
@@ -34,7 +34,7 @@ internal object DefaultDataConverter {
         val bigger = !biggerOrEqual && input.startsWith(">")
         val smaller = !smallerOrEqual && input.startsWith("<")
         val dots = input.indexOf("...")
-        if ((bigger || smaller || biggerOrEqual || smallerOrEqual) && dots >= 0) throw QueryException("Cannot use '...' together with '<' or '>'")
+        if ((bigger || smaller || biggerOrEqual || smallerOrEqual) && dots >= 0) throw SQLException("Cannot use '...' together with '<' or '>'")
         return when {
             bigger || smaller -> {
                 args(part(input.substring(1), userInput))
@@ -48,7 +48,7 @@ internal object DefaultDataConverter {
 
             dots >= 0 -> {
                 val parts = input.split("\\.\\.\\.".toRegex()).dropLastWhile { it.isEmpty() }.toTypedArray()
-                if (parts.size != 2) throw QueryException("Invalid range format")
+                if (parts.size != 2) throw SQLException("Invalid range format")
                 args(part(parts[0], userInput))
                 args(part(parts[1], userInput))
                 "$column BETWEEN ? AND ?"
@@ -64,7 +64,7 @@ internal object DefaultDataConverter {
     private fun part(input: String, fullData: String): String {
         var input = input
         input = input.trim { it <= ' ' }
-        if (input.isEmpty()) throw QueryException("Invalid syntax, a required part was not found: '$fullData'")
+        if (input.isEmpty()) throw SQLException("Invalid syntax, a required part was not found: '$fullData'")
         return input
     }
 }

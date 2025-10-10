@@ -24,7 +24,7 @@ import com.ionspin.kotlin.bignum.integer.BigInteger as BIN
  *
  * TODO: Enable when integration testing is set up.
  */
-@Ignore("BigDecimal precision tests - requires database instances and Stormify setup")
+@Ignore
 class BigDecimalPrecisionTest {
 
     /**

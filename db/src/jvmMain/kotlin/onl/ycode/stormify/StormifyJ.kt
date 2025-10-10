@@ -1,6 +1,11 @@
 package onl.ycode.stormify
 
+import onl.ycode.kdbc.DataSource
+import onl.ycode.kdbc.toKdbcDataSource
+
 class StormifyJ(dataSource: DataSource) {
+    constructor(jdbcDataSource: javax.sql.DataSource) : this(jdbcDataSource.toKdbcDataSource())
+
     private val stormify = Stormify(dataSource)
 
     val sqlDialect get() = stormify.sqlDialect

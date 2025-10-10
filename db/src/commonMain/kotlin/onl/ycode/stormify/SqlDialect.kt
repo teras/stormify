@@ -1,5 +1,9 @@
 package onl.ycode.stormify
 
+import onl.ycode.kdbc.Connection
+import onl.ycode.kdbc.DatabaseMetaData
+import onl.ycode.kdbc.DataSource
+
 /********************************************************************
  * This part defines the sequence dialects for different databases. *
  ********************************************************************/
@@ -278,12 +282,12 @@ enum class SqlDialect(
 
     companion object {
         fun findDialect(dataSource: DataSource): SqlDialect {
-            dataSource._connection.use { conn ->
-                val metadata: DatabaseMetaData = conn._metaData
-                val productName: String = metadata._databaseProductName.lowercase()
-                val productVersion: String = metadata._databaseProductVersion.lowercase()
-                val majorVersion: Int = metadata._databaseMajorVersion
-                val minorVersion: Int = metadata._databaseMinorVersion
+            dataSource.getConnection().use { conn ->
+                val metadata: DatabaseMetaData = conn.metaData
+                val productName: String = metadata.databaseProductName.lowercase()
+                val productVersion: String = metadata.databaseProductVersion.lowercase()
+                val majorVersion: Int = metadata.databaseMajorVersion
+                val minorVersion: Int = metadata.databaseMinorVersion
                 return when {
                     productName.contains("oracle") -> if (majorVersion >= 12) ORACLE_NEW else ORACLE_OLD
                     productName.contains("sqlserver") || productName.contains("sql server") -> if (majorVersion >= 11) SQL_SERVER_NEW else SQL_SERVER_OLD

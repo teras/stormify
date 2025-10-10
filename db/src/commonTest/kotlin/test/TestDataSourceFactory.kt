@@ -2,7 +2,7 @@
 // (C) Panayotis Katsaloulis
 package test
 
-import onl.ycode.stormify.DataSource
+import onl.ycode.kdbc.DataSource
 
 /**
  * Represents a test database configuration with its name and DataSource.

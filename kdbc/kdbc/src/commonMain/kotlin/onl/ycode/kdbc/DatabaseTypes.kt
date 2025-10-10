@@ -3,13 +3,14 @@ package onl.ycode.kdbc
 import kotlin.reflect.KClass
 
 /**
- * Kotlin Database Connectivity (KDBC) interfaces for native platforms.
- * Minimal API designed specifically for basic implementations and easier extensibility.
+ * Kotlin Database Connectivity (KDBC) type definitions.
+ *
+ * These interfaces provide a unified, multiplatform-compatible API for database operations:
+ * - JVM: Wraps JDBC types (java.sql.*)
+ * - Native: Implements native database drivers (Oracle ODPI, PostgreSQL libpq, MariaDB/MySQL, FreeTDS)
  */
 
-interface Statement : AutoCloseable
-
-interface PreparedStatement : Statement {
+interface PreparedStatement : AutoCloseable {
     fun setObject(parameterIndex: Int, value: Any?)
     fun executeUpdate(): Int
     fun executeQuery(): ResultSet

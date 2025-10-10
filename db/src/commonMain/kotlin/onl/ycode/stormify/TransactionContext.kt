@@ -1,6 +1,8 @@
 package onl.ycode.stormify
 
 import kotlinx.atomicfu.atomic
+import onl.ycode.kdbc.Connection
+import onl.ycode.kdbc.Savepoint
 import kotlin.reflect.KClass
 
 private val counter = atomic(0L)
@@ -88,18 +90,18 @@ private const val MAX_COUNTER = 999_999_999_999_999L
  */
 class TransactionContext internal constructor(@PublishedApi internal val stormify: Stormify) {
     @PublishedApi
-    internal val conn = tryQuery("Unable to get connection") { stormify.dataSource._connection }
+    internal val conn = tryQuery("Unable to get connection") { stormify.dataSource.getConnection() }
 
     internal fun start(block: TransactionContext.() -> Unit) = conn.use {
         try {
-            conn._disableAutoCommit()
+            conn.setAutoCommit(false)
             block()
-            conn._commit()
+            conn.commit()
         } catch (e: Throwable) {
-            conn._rollback()
+            conn.rollback()
             e.throwQuery("Unable to execute transaction: ${e.message}")
         } finally {
-            conn._enableAutoCommit()
+            conn.setAutoCommit(true)
         }
     }
 
@@ -135,12 +137,12 @@ class TransactionContext internal constructor(@PublishedApi internal val stormif
         try {
             val count = counter.getAndIncrement()
             if (count > MAX_COUNTER) counter.value = 0L
-            savepoint = conn._setSavepoint("s" + systemMillis() + "_" + count)
+            savepoint = conn.setSavepoint("s" + systemMillis() + "_" + count)
             block()
-            conn._releaseSavepoint(savepoint)
+            conn.releaseSavepoint(savepoint)
         } catch (e: Throwable) {
             if (savepoint != null)
-                conn._rollback(savepoint)
+                conn.rollback(savepoint)
             e.throwQuery("Unable to execute transaction: ${e.message}")
         }
     }
