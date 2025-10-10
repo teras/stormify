@@ -75,7 +75,7 @@ private class FixedParams(val query: String, val params: List<Any?>)
  * @see TableInfo
  * @see SqlDialect
  */
-class Stormify(val dataSource: DataSource) {
+open class Stormify(val dataSource: DataSource) {
 
     private inner class ConnectionMaker(connection: Connection?) : AutoCloseable {
         val connection by lazy { connection ?: dataSource.getConnection() }

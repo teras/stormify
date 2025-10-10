@@ -1,7 +1,7 @@
 @file:JvmName("StormifyExtKt")
 package onl.ycode.stormify
 
-import onl.ycode.kdbc.toKdbcDataSource
+import onl.ycode.kdbc.JdbcDataSource
 
 /**
  * Creates a Stormify instance from a JDBC DataSource.
@@ -17,4 +17,4 @@ import onl.ycode.kdbc.toKdbcDataSource
  */
 @JvmName("fromJdbcDataSource")
 fun Stormify(jdbcDataSource: javax.sql.DataSource): Stormify =
-    Stormify(jdbcDataSource.toKdbcDataSource())
+    Stormify(JdbcDataSource(jdbcDataSource))

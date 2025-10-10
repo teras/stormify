@@ -21,13 +21,13 @@ import onl.ycode.kdbc.sqlite.SqliteDataSource
 actual fun createTestDatabases(): List<TestDatabase> {
     val databases = mutableListOf<TestDatabase>()
 
-    // SQLite in-memory database
+    // SQLite shared in-memory database (persists across connections)
     databases.add(
         TestDatabase(
-            name = "SQLite Native (in-memory)",
+            name = "SQLite Native (shared memory)",
             dataSource = SqliteDataSource(
-                url = ":memory:",
-                poolConfig = PoolConfig(enabled = false)
+                url = "file::memory:?cache=shared",
+                poolConfig = PoolConfig(enabled = true, minConnections = 1, maxConnections = 5)
             )
         )
     )

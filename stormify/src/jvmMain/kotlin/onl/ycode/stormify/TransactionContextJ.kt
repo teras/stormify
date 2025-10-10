@@ -1,5 +1,7 @@
 package onl.ycode.stormify
 
+import java.util.function.Consumer
+
 class TransactionContextJ(private val ctx: TransactionContext) {
     private val connection = ctx.conn
     private val stormify = ctx.stormify
@@ -10,7 +12,7 @@ class TransactionContextJ(private val ctx: TransactionContext) {
     fun <T : Any> readOne(baseClass: Class<T>, query: String, vararg params: Any?) =
         stormify.readOne(connection, baseClass.kotlin, query, params)
 
-    fun <T : Any> readCursor(baseClass: Class<T>, query: String, consumer: SafeConsumer<T>, vararg params: Any?) =
+    fun <T : Any> readCursor(baseClass: Class<T>, query: String, consumer: Consumer<T>, vararg params: Any?) =
         stormify.readCursor(connection, baseClass.kotlin, query, params, consumer = { consumer.accept(it) })
 
     fun executeUpdate(query: String, vararg params: Any?) = stormify.executeUpdate(connection, query, params)
@@ -32,8 +34,8 @@ class TransactionContextJ(private val ctx: TransactionContext) {
     fun <T : Any> findById(baseClass: Class<T>, id: Any) = stormify.findById(connection, baseClass.kotlin, id)
 
 
-    internal fun start(block: SafeConsumer<TransactionContextJ>) = ctx.start { block.accept(this@TransactionContextJ) }
+    internal fun start(block: Consumer<TransactionContextJ>) = ctx.start { block.accept(this@TransactionContextJ) }
 
-    fun transaction(block: SafeRunnable) =
+    fun transaction(block: Runnable) =
         ctx.transaction { block.run() }
 }

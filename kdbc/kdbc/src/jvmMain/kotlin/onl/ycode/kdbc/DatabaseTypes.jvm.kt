@@ -63,15 +63,20 @@ private class JdbcCallableStatement(private val jdbc: java.sql.CallableStatement
     override fun execute(): Boolean = jdbc.execute()
 }
 
-// Wrapper class for DataSource
-private class JdbcDataSource(private val jdbc: javax.sql.DataSource) : DataSource {
+/**
+ * JDBC DataSource wrapper that implements KDBC DataSource interface.
+ * 
+ * Usage:
+ * ```kotlin
+ * val hikariDS = HikariDataSource(config)
+ * val stormify = Stormify(hikariDS)  // Uses convenience function
+ * // or
+ * val stormify = Stormify(JdbcDataSource(hikariDS))  // Direct wrapper
+ * ```
+ */
+class JdbcDataSource(private val jdbc: javax.sql.DataSource) : DataSource {
     override fun getConnection(): Connection = JdbcConnection(jdbc.connection)
 }
-
-/**
- * Wraps a JDBC DataSource to implement the KDBC DataSource interface.
- */
-fun javax.sql.DataSource.toKdbcDataSource(): DataSource = JdbcDataSource(this)
 
 // Wrapper class for Connection
 private class JdbcConnection(private val jdbc: java.sql.Connection) : Connection {

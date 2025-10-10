@@ -1,5 +1,6 @@
 allprojects {
     repositories {
+        google()
         mavenCentral()
         mavenLocal()
     }
@@ -11,6 +12,7 @@ version = "1.0.0"
 plugins {
     (kotlin("multiplatform") version "2.2.20").apply(false)
     (kotlin("jvm") version "2.2.20").apply(false)
+    (id("com.android.library") version "8.7.3").apply(false)
 }
 
 // Apply native build tasks for Docker-based distribution builds

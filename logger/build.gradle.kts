@@ -1,6 +1,7 @@
 plugins {
     id("maven-publish")
     kotlin("multiplatform")
+    id("com.android.library")
 }
 
 group = parent?.group ?: IllegalStateException("Group is not defined")
@@ -8,21 +9,29 @@ version = parent?.version ?: IllegalStateException("Version is not defined")
 description = "Stormify Logger"
 
 kotlin {
+    applyDefaultHierarchyTemplate()
     jvm()
+    androidTarget {
+        publishLibraryVariants("release", "debug")
+    }
     linuxX64()
+    
+    // Apple targets - build enabled on macOS only
+    if (org.gradle.internal.os.OperatingSystem.current().isMacOsX) {
+        // iOS
+        iosArm64()
+        iosX64()
+        iosSimulatorArm64()
+        
+        // macOS
+        macosArm64()
+        macosX64()
+    }
+    
     jvmToolchain(11)
 
     sourceSets {
-        val commonMain by getting {
-            dependencies {
-                //put your multiplatform dependencies here
-            }
-        }
-        val commonTest by getting {
-            dependencies {
-//                implementation(libs.kotlin.test)
-            }
-        }
+
         val jvmMain by getting {
 
             dependencies {
@@ -39,11 +48,19 @@ kotlin {
     }
 }
 
-//java.sourceCompatibility = JavaVersion.VERSION_1_8
-//java.targetCompatibility = JavaVersion.VERSION_1_8
-//
-//dependencies {
-//}
+android {
+    namespace = "onl.ycode.logger"
+    compileSdk = 34
+    
+    defaultConfig {
+        minSdk = 21
+    }
+    
+    compileOptions {
+        sourceCompatibility = JavaVersion.VERSION_11
+        targetCompatibility = JavaVersion.VERSION_11
+    }
+}
 
 publishing {
     repositories {
