@@ -18,7 +18,7 @@ val buildNativeDistribution by tasks.registering(Exec::class) {
 
     doLast {
         println("\n✅ Native distribution binaries built successfully!")
-        println("Location: db/build/bin/linuxX64/")
+        println("Location: stormify/build/bin/linuxX64/")
         println("Compatible with: glibc 2.31+ (Ubuntu 20.04+, Debian 11+, RHEL 9+)")
     }
 }

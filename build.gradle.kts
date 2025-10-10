@@ -5,7 +5,7 @@ allprojects {
     }
 }
 
-group = "onl.ycode.stormify"
+group = "onl.ycode"
 version = "1.0.0"
 
 plugins {
@@ -14,4 +14,4 @@ plugins {
 }
 
 // Apply native build tasks for Docker-based distribution builds
-apply(from = "gradle/native-build.gradle.kts")
+apply(from = "native-build.gradle.kts")

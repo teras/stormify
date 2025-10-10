@@ -31,8 +31,8 @@ To use Stormify in your Kotlin project, add the library dependency to your build
 
 ```xml
 <dependency>
-    <groupId>onl.ycode.stormify</groupId>
-    <artifactId>db-jvm</artifactId>
+    <groupId>onl.ycode</groupId>
+    <artifactId>stormify-jvm</artifactId>
     <version>1.0.0</version>
 </dependency>
 ```
@@ -40,7 +40,7 @@ To use Stormify in your Kotlin project, add the library dependency to your build
 ### Gradle
 
 ```kotlin
-implementation("onl.ycode.stormify:db-jvm:1.0.0")
+implementation("onl.ycode:stormify-jvm:1.0.0")
 ```
 
 ## Basic Usage
