@@ -1,3 +1,9 @@
+plugins {
+    kotlin("jvm") apply false
+    id("com.vanniktech.maven.publish") apply false
+    id("org.jetbrains.dokka") apply false
+}
+
 allprojects {
     repositories {
         mavenCentral()
@@ -5,9 +11,20 @@ allprojects {
     }
 }
 
-
 group = "onl.ycode.stormify"
 version = "1.0.0"
+
+// Common POM metadata for all publishable subprojects
+extra["pomUrl"] = "https://github.com/teras/stormify"
+extra["pomInceptionYear"] = "2024"
+extra["pomLicenseName"] = "Apache License, Version 2.0"
+extra["pomLicenseUrl"] = "https://www.apache.org/licenses/LICENSE-2.0.txt"
+extra["pomDeveloperId"] = "teras"
+extra["pomDeveloperName"] = "Panayotis Katsaloulis"
+extra["pomDeveloperEmail"] = "panayotis@panayotis.com"
+extra["pomScmUrl"] = "https://github.com/teras/stormify"
+extra["pomScmConnection"] = "scm:git:git://github.com/teras/stormify.git"
+extra["pomScmDevConnection"] = "scm:git:ssh://github.com/teras/stormify.git"
 
 subprojects {
 
@@ -19,27 +36,11 @@ subprojects {
         useJUnitPlatform()
     }
 
-    afterEvaluate {
-        // Check if the project should be publishable
-        if (project.hasProperty("publishable") && project.property("publishable") == "true") {
-            apply(plugin = "maven-publish")
-
-            // Ensure 'publishing' extension is correctly accessed
-            extensions.configure<PublishingExtension>("publishing") {
-                publications {
-                    create<MavenPublication>("mavenJava") {
-                        from(components["java"])
-                        groupId = project.group.toString()
-                        artifactId = project.name
-                        version = project.version.toString()
-                    }
-                }
-
-                repositories {
-                    mavenLocal()
-                    // Add other repositories as needed, e.g., Maven Central or a private repository
-                }
-            }
+    // Configure signing for all subprojects that have the maven-publish plugin
+    pluginManager.withPlugin("com.vanniktech.maven.publish") {
+        apply(plugin = "signing")
+        extensions.configure<SigningExtension> {
+            useGpgCmd()
         }
     }
 }

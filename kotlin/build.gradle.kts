@@ -1,14 +1,30 @@
 import org.jetbrains.dokka.gradle.DokkaTask
+import com.vanniktech.maven.publish.SonatypeHost
 
 plugins {
-    kotlin("jvm") version "2.0.0"
-    id("org.jetbrains.dokka") version "1.9.20"
+    kotlin("jvm")
+    id("org.jetbrains.dokka")
+    id("com.vanniktech.maven.publish")
 }
 
 group = parent?.group ?: IllegalStateException("Group is not defined")
 version = parent?.version ?: IllegalStateException("Version is not defined")
 description = "Kotlin API for Stormify Framework"
-extra["publishable"] = "true"
+
+mavenPublishing {
+    publishToMavenCentral(SonatypeHost.CENTRAL_PORTAL)
+    signAllPublications()
+    coordinates(group.toString(), "stormify-kotlin", version.toString())
+    pom {
+        name.set("Stormify Kotlin API")
+        description.set(project.description)
+        url.set(rootProject.extra["pomUrl"] as String)
+        inceptionYear.set(rootProject.extra["pomInceptionYear"] as String)
+        licenses { license { name.set(rootProject.extra["pomLicenseName"] as String); url.set(rootProject.extra["pomLicenseUrl"] as String) } }
+        developers { developer { id.set(rootProject.extra["pomDeveloperId"] as String); name.set(rootProject.extra["pomDeveloperName"] as String); email.set(rootProject.extra["pomDeveloperEmail"] as String) } }
+        scm { url.set(rootProject.extra["pomScmUrl"] as String); connection.set(rootProject.extra["pomScmConnection"] as String); developerConnection.set(rootProject.extra["pomScmDevConnection"] as String) }
+    }
+}
 
 dependencies {
     implementation(project(":db"))
