@@ -402,12 +402,13 @@ public class StormifyManager {
         return sqlDialect;
     }
 
-    private Object getNextSequence(String sequence) {
-        String sqlStatement = getSqlDialect().sequenceDialect.apply(sequence);
-        BigInteger seq = sqlStatement == null ? null : readOne(BigInteger.class, sqlStatement);
-        if (seq != null)
-            dbLog("Sequence " + sequence + " incremented to " + seq, null);
-        return seq;
+    private List<BigInteger> getNextSequences(String sequence, int count) {
+        String sqlStatement = getSqlDialect().sequenceDialect.apply(sequence, count);
+        if (sqlStatement == null) return emptyList();
+        List<BigInteger> seqs = read(BigInteger.class, sqlStatement);
+        if (!seqs.isEmpty())
+            dbLog("Sequence " + sequence + " incremented by " + seqs.size() + " to " + seqs.get(seqs.size() - 1), null);
+        return seqs;
     }
 
     /**
@@ -419,36 +420,106 @@ public class StormifyManager {
      */
     public <T> T create(T createdItem) {
         requireNonNull(createdItem, "Created item cannot be null");
-        EntityData<T> info = new EntityData<>(createdItem, registry);
-        if (info.status == NULL_ID_FIELDS)
-            for (int i = 0; i < info.idFields.size(); i++)
-                if (info.idValues.get(i) == null && info.idFields.get(i).getSequence() != null)
-                    info.idFields.get(i).setValue(createdItem, getNextSequence(info.idFields.get(i).getSequence()), registry);
-        String fieldNames = info.tableInfo.createFieldNames.get();
-        String placeholders = info.tableInfo.createPlaceholders.get();
-        Object[] params = mapToArray(info.tableInfo.getFields(FieldContext.CREATE), it -> it.getValue(createdItem), null);
-        String query = "INSERT INTO " + info.table + " (" + fieldNames + ") " + "VALUES (" + placeholders + ")";
+        return create(java.util.Collections.singletonList(createdItem)).get(0);
+    }
+
+    /**
+     * Creates multiple entities in the database using batch insert.
+     * <p>
+     * Note: When inserting multiple entities without pre-assigned IDs (relying on auto-generated keys),
+     * the generated IDs will NOT be populated back to the entities. This is because JDBC does not guarantee
+     * the order of returned generated keys for batch inserts. If you need the generated IDs, either:
+     * <ul>
+     *     <li>Use database sequences (configured via {@code @DbField(primarySequence = "seq_name")}), which
+     *         are fetched in bulk before the insert and assigned to entities reliably.</li>
+     *     <li>Insert entities one by one using {@link #create(Object)}.</li>
+     * </ul>
+     *
+     * @param createdItems the entities to be created.
+     * @param <T>          the type of the entities.
+     * @return the list of created entities.
+     */
+    @SuppressWarnings("unchecked")
+    public <T> List<T> create(Collection<T> createdItems) {
+        requireNonNull(createdItems, "Created items cannot be null");
+        if (createdItems.isEmpty()) return new ArrayList<>();
+
+        // Cast if already a List, otherwise copy
+        List<T> items = createdItems instanceof List
+                ? (List<T>) createdItems
+                : new ArrayList<>(createdItems);
+
+        // Get TableInfo from first item
+        T first = items.get(0);
+        EntityData<T> firstInfo = new EntityData<>(first, registry);
+        TableInfo tableInfo = firstInfo.tableInfo;
+        FieldInfo pkField = tableInfo.getPrimaryKey();
+        boolean hasSequence = pkField != null && pkField.getSequence() != null;
+
+        // Collect indices of items that need ID
+        List<Integer> needsId = new ArrayList<>();
+        for (int i = 0; i < items.size(); i++) {
+            if (pkField.getValue(items.get(i)) == null) {
+                needsId.add(i);
+            }
+        }
+
+        // If we have sequences, fill them in bulk
+        if (!needsId.isEmpty() && hasSequence) {
+            List<BigInteger> seqs = getNextSequences(pkField.getSequence(), needsId.size());
+            for (int i = 0; i < needsId.size(); i++) {
+                pkField.setValue(items.get(needsId.get(i)), seqs.get(i), registry);
+            }
+            needsId.clear();
+        }
+
+        // Build query
+        String fieldNames = tableInfo.createFieldNames.get();
+        String placeholders = tableInfo.createPlaceholders.get();
+        String query = "INSERT INTO " + firstInfo.table + " (" + fieldNames + ") VALUES (" + placeholders + ")";
+
         boolean supportsGeneratedKeys = getSqlDialect().generatedKeyRetrieval != GeneratedKeyRetrieval.NONE;
-        performQuery(query, params, supportsGeneratedKeys, statement -> {
-            int affectedRows = statement.executeUpdate();
-            if (supportsGeneratedKeys && affectedRows > 0) try (ResultSet rs = statement.getGeneratedKeys()) {
-                if (rs.next()) {
-                    if (getSqlDialect().generatedKeyRetrieval == GeneratedKeyRetrieval.BY_INDEX)
-                        info.tableInfo.getPrimaryKey().setValue(createdItem, rs.getObject(1), registry);
-                    else {
-                        ResultSetMetaData metaData = rs.getMetaData();
-                        int columnCount = metaData.getColumnCount();
-                        for (int i = 1; i <= columnCount; i++) {
-                            String columnName = metaData.getColumnName(i);
-                            for (FieldInfo fieldInfo : info.tableInfo.getDbField(columnName))
-                                fieldInfo.setValue(createdItem, rs.getObject(columnName), registry);
+        // Generated keys only reliable for single item
+        boolean fetchGeneratedKeys = supportsGeneratedKeys && needsId.size() == 1;
+
+        initConnection(connection -> {
+            dbLog(query + " [batch: " + items.size() + "]", null);
+            try (PreparedStatement stmt = fetchGeneratedKeys
+                    ? connection.prepareStatement(query, Statement.RETURN_GENERATED_KEYS)
+                    : connection.prepareStatement(query)) {
+
+                // Add all items to batch
+                for (T item : items) {
+                    int idx = 1;
+                    for (FieldInfo field : tableInfo.getFields(FieldContext.CREATE))
+                        stmt.setObject(idx++, sqlData(field.getValue(item), false));
+                    stmt.addBatch();
+                }
+
+                stmt.executeBatch();
+
+                // Fetch generated key only for single item (no order guarantee for batch)
+                if (fetchGeneratedKeys) {
+                    try (ResultSet rs = stmt.getGeneratedKeys()) {
+                        if (rs.next()) {
+                            if (getSqlDialect().generatedKeyRetrieval == GeneratedKeyRetrieval.BY_INDEX)
+                                pkField.setValue(items.get(needsId.get(0)), rs.getObject(1), registry);
+                            else {
+                                ResultSetMetaData metaData = rs.getMetaData();
+                                int columnCount = metaData.getColumnCount();
+                                for (int i = 1; i <= columnCount; i++) {
+                                    String columnName = metaData.getColumnName(i);
+                                    for (FieldInfo fieldInfo : tableInfo.getDbField(columnName))
+                                        fieldInfo.setValue(items.get(needsId.get(0)), rs.getObject(columnName), registry);
+                                }
+                            }
                         }
                     }
                 }
+                return null;
             }
-            return affectedRows;
         });
-        return createdItem;
+        return items;
     }
 
     /**

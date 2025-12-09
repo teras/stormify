@@ -7,7 +7,6 @@ import java.math.BigDecimal;
 import java.sql.Connection;
 import java.sql.DatabaseMetaData;
 import java.util.function.BiFunction;
-import java.util.function.UnaryOperator;
 
 import static onl.ycode.stormify.SqlDialect.GeneratedKeyRetrieval.*;
 import static onl.ycode.stormify.StormifyManager.stormify;
@@ -24,15 +23,15 @@ public enum SqlDialect {
     /**
      * The MariaDB dialect for versions older than 10.3.
      */
-    MARIA_DB_OLD(s -> null, getOrderById(), getFormatterLimitOffset(), BY_INDEX),
+    MARIA_DB_OLD((s, n) -> null, getOrderById(), getFormatterLimitOffset(), BY_INDEX),
     /**
      * The MariaDB dialect for versions 10.3 and newer.
      */
-    MARIA_DB_NEW(getSequenceNextValueFor(), getOrderById(), getFormatterLimitOffset(), BY_INDEX),
+    MARIA_DB_NEW(getSequenceMariaDb(), getOrderById(), getFormatterLimitOffset(), BY_INDEX),
     /**
      * The MySQL dialect for versions older than 8.
      */
-    MYSQL_OLD(s -> null, getOrderById(), getFormatterLimitOffset(), BY_INDEX),
+    MYSQL_OLD((s, n) -> null, getOrderById(), getFormatterLimitOffset(), BY_INDEX),
     /**
      * The MySQL dialect for versions 8 and newer.
      */
@@ -60,15 +59,15 @@ public enum SqlDialect {
     /**
      * The SQLite dialect.
      */
-    SQLITE(s -> null, getOrderById(), getFormatterLimitOffset(), BY_INDEX),
+    SQLITE((s, n) -> null, getOrderById(), getFormatterLimitOffset(), BY_INDEX),
     /**
      * The dialect that is used when the database product name cannot be determined.
      */
-    UNKNOWN(s -> null, getOrderByCase(), getFormatterLimitOffset(), NONE),
+    UNKNOWN((s, n) -> null, getOrderByCase(), getFormatterLimitOffset(), NONE),
     /**
      * A failsafe dialect, mostly in case of an error.
      */
-    FAILSAFE(s -> null, getOrderByCase(), getFormatterLimitOffset(), NONE);
+    FAILSAFE((s, n) -> null, getOrderByCase(), getFormatterLimitOffset(), NONE);
 
     /**
      * A query builder for various SQL dialects. The main purpose of this interface is to be able
@@ -95,9 +94,9 @@ public enum SqlDialect {
 
     /**
      * A helper method to ask for sequences on different databases. As input is the name of the
-     * sequence and as output the query to get the next value from the sequence.
+     * sequence and the number of values to retrieve. As output the query to get the next values from the sequence.
      */
-    public final UnaryOperator<String> sequenceDialect;
+    public final BiFunction<String, Integer, String> sequenceDialect;
     /**
      * A helper method to ask for order by id on different databases. This is used to create a query that,
      * before any other sorting, fetches a specific entity first.
@@ -116,7 +115,7 @@ public enum SqlDialect {
 
     final GeneratedKeyRetrieval generatedKeyRetrieval;
 
-    SqlDialect(UnaryOperator<String> sequenceDialect,
+    SqlDialect(BiFunction<String, Integer, String> sequenceDialect,
                BiFunction<String, BigDecimal, String> orderByIdDialect,
                QueryFormatter queryFormatter,
                GeneratedKeyRetrieval generatedKeyRetrieval
@@ -165,16 +164,20 @@ public enum SqlDialect {
     /********************************************************************
      * This part defines the sequence dialects for different databases. *
      ********************************************************************/
-    private static UnaryOperator<String> getSequenceFromDual() {
-        return sequenceName -> "SELECT " + sequenceName + ".NEXTVAL FROM dual";
+    private static BiFunction<String, Integer, String> getSequenceFromDual() {
+        return (sequenceName, count) -> "SELECT " + sequenceName + ".NEXTVAL FROM dual CONNECT BY level <= " + count;
     }
 
-    private static UnaryOperator<String> getSequenceNextValueFor() {
-        return sequenceName -> "SELECT NEXT VALUE FOR " + sequenceName;
+    private static BiFunction<String, Integer, String> getSequenceNextValueFor() {
+        return (sequenceName, count) -> "SELECT NEXT VALUE FOR " + sequenceName + " FROM (SELECT TOP " + count + " 1 x FROM sys.objects) t";
     }
 
-    private static UnaryOperator<String> getSequenceNextval() {
-        return sequenceName -> "SELECT nextval('" + sequenceName + "')";
+    private static BiFunction<String, Integer, String> getSequenceNextval() {
+        return (sequenceName, count) -> "SELECT nextval('" + sequenceName + "') FROM generate_series(1, " + count + ")";
+    }
+
+    private static BiFunction<String, Integer, String> getSequenceMariaDb() {
+        return (sequenceName, count) -> "SELECT NEXTVAL(" + sequenceName + ") FROM seq_1_to_" + count;
     }
 
     /**********************************************************************
