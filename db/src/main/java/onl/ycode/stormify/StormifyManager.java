@@ -550,14 +550,47 @@ public class StormifyManager {
      * @param <T>         the type of the entity.
      */
     public <T> void delete(T deletedItem) {
-        EntityData<T> info = new EntityData<>(deletedItem, registry);
-        if (info.status == NO_ID_FIELDS)
-            throw new QueryException("No primary key found when deleting object " + info.itemClass);
-        else if (info.status == NULL_ID_FIELDS)
-            throw new QueryException("Primary key value is null when deleting object " + info.itemClass);
-        Object[] params = info.idValues.toArray();
-        String query = "DELETE FROM " + info.table + " WHERE " + listOfIds(info.idFields);
-        performQuery(query, params, false, PreparedStatement::executeUpdate);
+        requireNonNull(deletedItem, "Deleted item cannot be null");
+        delete(java.util.Collections.singletonList(deletedItem));
+    }
+
+    /**
+     * Deletes multiple entities from the database.
+     *
+     * @param deletedItems the entities to be deleted.
+     * @param <T>          the type of the entities.
+     */
+    @SuppressWarnings("unchecked")
+    public <T> void delete(Collection<T> deletedItems) {
+        requireNonNull(deletedItems, "Deleted items cannot be null");
+        if (deletedItems.isEmpty()) return;
+
+        // Cast if already a List, otherwise copy
+        List<T> items = deletedItems instanceof List
+                ? (List<T>) deletedItems
+                : new ArrayList<>(deletedItems);
+
+        // Get TableInfo from first item
+        T first = items.get(0);
+        EntityData<T> firstInfo = new EntityData<>(first, registry);
+        if (firstInfo.status == NO_ID_FIELDS)
+            throw new QueryException("No primary key found when deleting object " + firstInfo.itemClass);
+
+        // Collect all parameters and build OR conditions
+        List<Object> allParams = new ArrayList<>();
+        List<String> conditions = new ArrayList<>();
+        String idCondition = listOfIds(firstInfo.idFields);
+
+        for (T item : items) {
+            EntityData<T> info = new EntityData<>(item, registry);
+            if (info.status == NULL_ID_FIELDS)
+                throw new QueryException("Primary key value is null when deleting object " + info.itemClass);
+            allParams.addAll(info.idValues);
+            conditions.add("(" + idCondition + ")");
+        }
+
+        String query = "DELETE FROM " + firstInfo.table + " WHERE " + String.join(" OR ", conditions);
+        performQuery(query, allParams.toArray(), false, PreparedStatement::executeUpdate);
     }
 
     <T> T forcePopulate(T item, ResultSet resultSet) throws SQLException {
