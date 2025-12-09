@@ -531,16 +531,61 @@ public class StormifyManager {
      */
     public <T> T update(T updatedItem) {
         requireNonNull(updatedItem, "Updated item cannot be null");
-        EntityData<T> info = new EntityData<>(updatedItem, registry);
-        if (info.status == NO_ID_FIELDS)
-            throw new QueryException("No primary key found when updating object " + info.itemClass);
-        else if (info.status == NULL_ID_FIELDS)
-            throw new QueryException("Primary key value is null when updating object " + info.itemClass);
-        String fields = info.tableInfo.updateFieldNames.get();
-        Object[] params = mapToArray(info.tableInfo.getFields(FieldContext.UPDATE), it -> it.getValue(updatedItem), info.idValues);
-        String query = "UPDATE " + info.table + " SET " + fields + " WHERE " + listOfIds(info.idFields);
-        performQuery(query, params, false, PreparedStatement::executeUpdate);
-        return updatedItem;
+        return update(java.util.Collections.singletonList(updatedItem)).get(0);
+    }
+
+    /**
+     * Updates multiple entities in the database using batch update.
+     *
+     * @param updatedItems the entities to be updated.
+     * @param <T>          the type of the entities.
+     * @return the list of updated entities.
+     */
+    @SuppressWarnings("unchecked")
+    public <T> List<T> update(Collection<T> updatedItems) {
+        requireNonNull(updatedItems, "Updated items cannot be null");
+        if (updatedItems.isEmpty()) return new ArrayList<>();
+
+        // Cast if already a List, otherwise copy
+        List<T> items = updatedItems instanceof List
+                ? (List<T>) updatedItems
+                : new ArrayList<>(updatedItems);
+
+        // Get TableInfo from first item
+        T first = items.get(0);
+        EntityData<T> firstInfo = new EntityData<>(first, registry);
+        if (firstInfo.status == NO_ID_FIELDS)
+            throw new QueryException("No primary key found when updating object " + firstInfo.itemClass);
+
+        TableInfo tableInfo = firstInfo.tableInfo;
+        String fields = tableInfo.updateFieldNames.get();
+        String query = "UPDATE " + firstInfo.table + " SET " + fields + " WHERE " + listOfIds(firstInfo.idFields);
+
+        initConnection(connection -> {
+            dbLog(query + " [batch: " + items.size() + "]", null);
+            try (PreparedStatement stmt = connection.prepareStatement(query)) {
+
+                for (T item : items) {
+                    EntityData<T> info = new EntityData<>(item, registry);
+                    if (info.status == NULL_ID_FIELDS)
+                        throw new QueryException("Primary key value is null when updating object " + info.itemClass);
+
+                    int idx = 1;
+                    // First the update fields
+                    for (FieldInfo field : tableInfo.getFields(FieldContext.UPDATE))
+                        stmt.setObject(idx++, sqlData(field.getValue(item), false));
+                    // Then the ID fields for WHERE clause
+                    for (Object idValue : info.idValues)
+                        stmt.setObject(idx++, idValue);
+
+                    stmt.addBatch();
+                }
+
+                stmt.executeBatch();
+                return null;
+            }
+        });
+        return items;
     }
 
     /**
