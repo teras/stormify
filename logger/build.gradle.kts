@@ -12,7 +12,7 @@ description = "Stormify Logger"
 mavenPublishing {
     publishToMavenCentral(SonatypeHost.CENTRAL_PORTAL)
     signAllPublications()
-    coordinates(group.toString(), "stormify-logger", version.toString())
+    coordinates(group.toString(), "logger", version.toString())
     pom {
         name.set("Stormify Logger")
         description.set(project.description)

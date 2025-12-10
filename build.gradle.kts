@@ -12,7 +12,7 @@ allprojects {
 }
 
 group = "onl.ycode.stormify"
-version = "1.0.0"
+version = "1.1.0"
 
 // Common POM metadata for all publishable subprojects
 extra["pomUrl"] = "https://github.com/teras/stormify"
@@ -41,6 +41,15 @@ subprojects {
         apply(plugin = "signing")
         extensions.configure<SigningExtension> {
             useGpgCmd()
+        }
+        // Only sign when publishing to Maven Central, not for local installs
+        afterEvaluate {
+            tasks.withType<Sign>().configureEach {
+                onlyIf {
+                    !gradle.taskGraph.hasTask(":${project.name}:publishToMavenLocal") &&
+                    !gradle.startParameter.taskNames.any { it.contains("MavenLocal") }
+                }
+            }
         }
     }
 }

@@ -13,7 +13,7 @@ description = "Stormify Annotation Processor"
 mavenPublishing {
     publishToMavenCentral(SonatypeHost.CENTRAL_PORTAL)
     signAllPublications()
-    coordinates(group.toString(), "stormify-annproc", version.toString())
+    coordinates(group.toString(), "annproc", version.toString())
     pom {
         name.set("Stormify Annotation Processor")
         description.set(project.description)

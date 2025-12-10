@@ -14,7 +14,7 @@ description = "Kotlin API for Stormify Framework"
 mavenPublishing {
     publishToMavenCentral(SonatypeHost.CENTRAL_PORTAL)
     signAllPublications()
-    coordinates(group.toString(), "stormify-kotlin", version.toString())
+    coordinates(group.toString(), "kotlin", version.toString())
     pom {
         name.set("Stormify Kotlin API")
         description.set(project.description)

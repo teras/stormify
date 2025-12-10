@@ -12,7 +12,7 @@ description = "Stormify Database Library"
 mavenPublishing {
     publishToMavenCentral(SonatypeHost.CENTRAL_PORTAL)
     signAllPublications()
-    coordinates(group.toString(), "stormify-db", version.toString())
+    coordinates(group.toString(), "db", version.toString())
     pom {
         name.set("Stormify Database Library")
         description.set(project.description)

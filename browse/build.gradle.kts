@@ -13,7 +13,7 @@ description = "Stormify Fuse - Database Browser"
 mavenPublishing {
     publishToMavenCentral(SonatypeHost.CENTRAL_PORTAL)
     signAllPublications()
-    coordinates(group.toString(), "stormify-browse", version.toString())
+    coordinates(group.toString(), "browse", version.toString())
     pom {
         name.set("Stormify Browse")
         description.set(project.description)

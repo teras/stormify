@@ -37,7 +37,7 @@ through common package managers like Maven and Gradle.
     <dependency>
         <groupId>onl.ycode.stormify</groupId>
         <artifactId>db</artifactId>
-        <version>1.0.0</version>
+        <version>1.1.0</version>
     </dependency>
     ```
 
@@ -48,12 +48,12 @@ through common package managers like Maven and Gradle.
         <dependency>
             <groupId>onl.ycode.stormify</groupId>
             <artifactId>db</artifactId>
-            <version>1.0.0</version>
+            <version>1.1.0</version>
         </dependency>
         <dependency>
             <groupId>onl.ycode.stormify</groupId>
             <artifactId>kotlin</artifactId>
-            <version>1.0.0</version>
+            <version>1.1.0</version>
         </dependency>
     </dependencies>
     ```
@@ -63,14 +63,14 @@ through common package managers like Maven and Gradle.
 === "Java"
 
     ```groovy
-    implementation 'onl.ycode.stormify:db:1.0.0'
+    implementation 'onl.ycode.stormify:db:1.1.0'
     ```
 
 === "Kotlin"
 
     ```kotlin
-    implementation("onl.ycode.stormify:db:1.0.0")
-    implementation("onl.ycode.stormify:kotlin:1.0.0")
+    implementation("onl.ycode.stormify:db:1.1.0")
+    implementation("onl.ycode.stormify:kotlin:1.1.0")
     ```
 
 ## Basic Usage
