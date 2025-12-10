@@ -453,14 +453,17 @@ public class StormifyManager {
         T first = items.get(0);
         EntityData<T> firstInfo = new EntityData<>(first, registry);
         TableInfo tableInfo = firstInfo.tableInfo;
-        FieldInfo pkField = tableInfo.getPrimaryKey();
+        List<FieldInfo> primaryKeys = tableInfo.getPrimaryKeys();
+        FieldInfo pkField = primaryKeys.size() == 1 ? primaryKeys.get(0) : null;
         boolean hasSequence = pkField != null && pkField.getSequence() != null;
 
-        // Collect indices of items that need ID
+        // Collect indices of items that need ID (only if single primary key exists)
         List<Integer> needsId = new ArrayList<>();
-        for (int i = 0; i < items.size(); i++) {
-            if (pkField.getValue(items.get(i)) == null) {
-                needsId.add(i);
+        if (pkField != null) {
+            for (int i = 0; i < items.size(); i++) {
+                if (pkField.getValue(items.get(i)) == null) {
+                    needsId.add(i);
+                }
             }
         }
 
