@@ -38,7 +38,7 @@ dependencies {
     testImplementation("ch.qos.logback:logback-classic:1.5.6")
     testImplementation("ch.qos.logback:logback-core:1.5.6")
 
-    implementation("com.zaxxer:HikariCP:5.1.0")
+    testImplementation("com.zaxxer:HikariCP:5.1.0")
 
     testImplementation("org.junit.jupiter:junit-jupiter-engine:5.9.3")
 
