@@ -1,4 +1,4 @@
-import com.vanniktech.maven.publish.SonatypeHost
+
 
 plugins {
     `java-library`
@@ -10,7 +10,7 @@ version = parent?.version ?: IllegalStateException("Version is not defined")
 description = "Stormify Tokenizer"
 
 mavenPublishing {
-    publishToMavenCentral(SonatypeHost.CENTRAL_PORTAL)
+    publishToMavenCentral()
     signAllPublications()
     coordinates(group.toString(), "tokenizer", version.toString())
     pom {

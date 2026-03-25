@@ -1,4 +1,4 @@
-import com.vanniktech.maven.publish.SonatypeHost
+
 
 plugins {
     `java-library`
@@ -10,7 +10,7 @@ version = parent?.version ?: IllegalStateException("Version is not defined")
 description = "Stormify Big List"
 
 mavenPublishing {
-    publishToMavenCentral(SonatypeHost.CENTRAL_PORTAL)
+    publishToMavenCentral()
     signAllPublications()
     coordinates(group.toString(), "biglist", version.toString())
     pom {
@@ -31,7 +31,8 @@ dependencies {
     implementation(project(":db"))
     implementation(project(":logger"))
     compileOnly(project(":annproc"))
-    testImplementation("org.junit.jupiter:junit-jupiter:5.10.0")
+    testImplementation("org.junit.jupiter:junit-jupiter:5.12.2")
+    testImplementation("org.junit.platform:junit-platform-launcher")
 }
 
 tasks.withType<JavaCompile> {

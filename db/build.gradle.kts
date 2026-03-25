@@ -1,4 +1,4 @@
-import com.vanniktech.maven.publish.SonatypeHost
+
 
 plugins {
     `java-library`
@@ -10,7 +10,7 @@ version = parent?.version ?: IllegalStateException("Version is not defined")
 description = "Stormify Database Library"
 
 mavenPublishing {
-    publishToMavenCentral(SonatypeHost.CENTRAL_PORTAL)
+    publishToMavenCentral()
     signAllPublications()
     coordinates(group.toString(), "db", version.toString())
     pom {
@@ -30,13 +30,14 @@ java.targetCompatibility = JavaVersion.VERSION_1_8
 dependencies {
     implementation(project(":logger"))
 
-    testImplementation("org.junit.jupiter:junit-jupiter-api:5.9.3")
-    testImplementation("org.junit.jupiter:junit-jupiter-engine:5.9.3")
-    testImplementation("com.mysql:mysql-connector-j:9.0.0")
-    testImplementation("org.slf4j:slf4j-api:2.0.13")
-    testImplementation("ch.qos.logback:logback-classic:1.5.6")
-    testImplementation("ch.qos.logback:logback-core:1.5.6")
-    testImplementation("com.zaxxer:HikariCP:5.1.0")
+    testImplementation("org.junit.jupiter:junit-jupiter-api:5.12.2")
+    testImplementation("org.junit.jupiter:junit-jupiter-engine:5.12.2")
+    testImplementation("org.junit.platform:junit-platform-launcher")
+    testImplementation("com.mysql:mysql-connector-j:9.2.0")
+    testImplementation("org.slf4j:slf4j-api:2.0.17")
+    testImplementation("ch.qos.logback:logback-classic:1.5.18")
+    testImplementation("ch.qos.logback:logback-core:1.5.18")
+    testImplementation("com.zaxxer:HikariCP:6.3.0")
 
 }
 

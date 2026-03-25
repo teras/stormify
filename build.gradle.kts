@@ -93,21 +93,16 @@ tasks.register("createDocs") {
         subprojects.flatMap { subproject ->
             listOfNotNull(
                 subproject.tasks.findByName("javadoc"),
-                subproject.tasks.findByName("dokkaHtml")
+                subproject.tasks.findByName("dokkaGeneratePublicationHtml")
             )
         }
     )
 
     doLast {
-        exec {
-            commandLine("mkdocs", "build")
-            workingDir = file("docs")
-        }
+        ProcessBuilder("mkdocs", "build").directory(file("docs")).inheritIO().start().waitFor()
         file("db/build/docs/javadoc").copyRecursively(file("docs/build/docs/javadoc"))
         file("kotlin/build/dokka/html").copyRecursively(file("docs/build/docs/kotlin"))
         file("docs/static").copyRecursively(file("docs/build"))
-        exec {
-            commandLine("rsync", "-ravz", "-e", "ssh -p 1971", "--delete", "docs/build/", "teras@yot.is:~/web/stormify.org/")
-        }
+        ProcessBuilder("rsync", "-ravz", "-e", "ssh -p 1971", "--delete", "docs/build/", "teras@yot.is:~/web/stormify.org/").inheritIO().start().waitFor()
     }
 }

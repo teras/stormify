@@ -1,4 +1,4 @@
-import com.vanniktech.maven.publish.SonatypeHost
+
 
 plugins {
     `java-library`
@@ -10,7 +10,7 @@ version = parent?.version ?: IllegalStateException("Version is not defined")
 description = "Stormify Logger"
 
 mavenPublishing {
-    publishToMavenCentral(SonatypeHost.CENTRAL_PORTAL)
+    publishToMavenCentral()
     signAllPublications()
     coordinates(group.toString(), "logger", version.toString())
     pom {
@@ -29,14 +29,14 @@ java.targetCompatibility = JavaVersion.VERSION_1_8
 
 dependencies {
     // SLF4J API
-    compileOnly("org.slf4j:slf4j-api:2.0.13")
+    compileOnly("org.slf4j:slf4j-api:2.0.17")
 
     // Log4j API
-    compileOnly("org.apache.logging.log4j:log4j-api:2.23.1")
-    compileOnly("org.apache.logging.log4j:log4j-1.2-api:2.17.0")
+    compileOnly("org.apache.logging.log4j:log4j-api:2.24.3")
+    compileOnly("org.apache.logging.log4j:log4j-1.2-api:2.24.3")
 
     // Commons Logging
-    compileOnly("commons-logging:commons-logging:1.2")
+    compileOnly("commons-logging:commons-logging:1.3.5")
 }
 
 extra["publishable"] = "true"

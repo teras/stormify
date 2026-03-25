@@ -1,8 +1,8 @@
-import com.vanniktech.maven.publish.SonatypeHost
+
 
 plugins {
     `java-library`
-    id("com.github.johnrengelman.shadow") version "7.1.2"
+    id("com.gradleup.shadow") version "9.4.0"
     id("com.vanniktech.maven.publish")
 }
 
@@ -11,7 +11,7 @@ version = parent?.version ?: IllegalStateException("Version is not defined")
 description = "Stormify Fuse - Database Browser"
 
 mavenPublishing {
-    publishToMavenCentral(SonatypeHost.CENTRAL_PORTAL)
+    publishToMavenCentral()
     signAllPublications()
     coordinates(group.toString(), "browse", version.toString())
     pom {
@@ -34,10 +34,11 @@ dependencies {
 
     implementation("com.panayotis:arjs:0.3.1")
 
-    testImplementation("org.junit.jupiter:junit-jupiter:5.10.0")
+    testImplementation("org.junit.jupiter:junit-jupiter:5.12.2")
+    testImplementation("org.junit.platform:junit-platform-launcher")
 
-    implementation("com.zaxxer:HikariCP:5.1.0")
-    implementation("ch.qos.logback:logback-classic:1.2.3")
+    implementation("com.zaxxer:HikariCP:6.3.0")
+    implementation("ch.qos.logback:logback-classic:1.5.18")
 //    implementation("com.mysql:mysql-connector-j:9.0.0")
 
     implementation("com.github.serceman:jnr-fuse:0.5.7")

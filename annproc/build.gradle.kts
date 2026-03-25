@@ -1,4 +1,4 @@
-import com.vanniktech.maven.publish.SonatypeHost
+
 
 plugins {
     kotlin("jvm")
@@ -11,7 +11,7 @@ version = parent?.version ?: IllegalStateException("Version is not defined")
 description = "Stormify Annotation Processor"
 
 mavenPublishing {
-    publishToMavenCentral(SonatypeHost.CENTRAL_PORTAL)
+    publishToMavenCentral()
     signAllPublications()
     coordinates(group.toString(), "annproc", version.toString())
     pom {
@@ -29,7 +29,7 @@ java.sourceCompatibility = JavaVersion.VERSION_1_8
 java.targetCompatibility = JavaVersion.VERSION_1_8
 
 dependencies {
-    implementation("com.google.devtools.ksp:symbol-processing-api:2.0.0-1.0.23")
+    implementation("com.google.devtools.ksp:symbol-processing-api:2.2.21-2.0.5")
 }
 
 kotlin {
