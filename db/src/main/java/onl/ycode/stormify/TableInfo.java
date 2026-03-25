@@ -49,7 +49,7 @@ public class TableInfo {
         this.updateFields = new LazyProperty<>(() -> filter(fields, FieldInfo::isUpdatable));
         this.createFieldNames = new LazyProperty<>(() -> String.join(", ", map(createFields.get(), FieldInfo::getDbName)));
         this.updateFieldNames = new LazyProperty<>(() -> String.join(", ", map(updateFields.get(), fieldInfo -> fieldInfo.getDbName() + " = ?")));
-        this.createPlaceholders = new LazyProperty<>(() -> nCopies("?", ", ", updateFields.get().size()));
+        this.createPlaceholders = new LazyProperty<>(() -> nCopies("?", ", ", createFields.get().size()));
     }
 
     /**

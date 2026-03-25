@@ -149,9 +149,9 @@ public enum SqlDialect {
                         return MARIA_DB_OLD;
                 } else {
                     if (majorVersion >= 8)
-                        return MYSQL_OLD;
-                    else
                         return MYSQL_NEW;
+                    else
+                        return MYSQL_OLD;
                 }
             } else
                 return UNKNOWN;
