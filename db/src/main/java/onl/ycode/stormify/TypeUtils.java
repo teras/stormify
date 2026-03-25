@@ -113,6 +113,9 @@ public final class TypeUtils {
         registerTimeRelated(java.sql.Date.class, java.sql.Date::new);
         registerTimeRelated(Timestamp.class, Timestamp::new);
         registerTimeRelated(Time.class, Time::new);
+        registerTimeRelated(Instant.class, Instant::ofEpochMilli);
+        registerTimeRelated(ZonedDateTime.class, time -> Instant.ofEpochMilli(time).atZone(ZoneId.systemDefault()));
+        registerTimeRelated(OffsetDateTime.class, time -> Instant.ofEpochMilli(time).atOffset(ZoneId.systemDefault().getRules().getOffset(Instant.ofEpochMilli(time))));
         registerTimeRelated(LocalDateTime.class, time -> Instant.ofEpochMilli(time).atZone(ZoneId.systemDefault()).toLocalDateTime());
         registerTimeRelated(LocalDate.class, time -> Instant.ofEpochMilli(time).atZone(ZoneId.systemDefault()).toLocalDate());
         registerTimeRelated(LocalTime.class, time -> Instant.ofEpochMilli(time).atZone(ZoneId.systemDefault()).toLocalTime());
@@ -202,6 +205,12 @@ public final class TypeUtils {
         if (destClass != Timestamp.class)
             converters.put(Timestamp.class, d -> toNative.apply(((Timestamp) d).getTime()));
         if (destClass != Time.class) converters.put(Time.class, d -> toNative.apply(((Time) d).getTime()));
+        if (destClass != Instant.class)
+            converters.put(Instant.class, d -> toNative.apply(((Instant) d).toEpochMilli()));
+        if (destClass != ZonedDateTime.class)
+            converters.put(ZonedDateTime.class, d -> toNative.apply(((ZonedDateTime) d).toInstant().toEpochMilli()));
+        if (destClass != OffsetDateTime.class)
+            converters.put(OffsetDateTime.class, d -> toNative.apply(((OffsetDateTime) d).toInstant().toEpochMilli()));
         if (destClass != LocalDateTime.class)
             converters.put(LocalDateTime.class, d -> toNative.apply(((LocalDateTime) d).atZone(ZoneId.systemDefault()).toInstant().toEpochMilli()));
         if (destClass != LocalDate.class)
@@ -276,7 +285,7 @@ public final class TypeUtils {
             return Types.VARCHAR;
         } else if (javaType == byte[].class) {
             return Types.BLOB;
-        } else if (javaType == java.util.Date.class || javaType == java.sql.Timestamp.class || javaType == java.time.LocalDateTime.class || javaType == java.util.Calendar.class) {
+        } else if (javaType == java.util.Date.class || javaType == java.sql.Timestamp.class || javaType == java.time.LocalDateTime.class || javaType == java.time.Instant.class || javaType == java.time.ZonedDateTime.class || javaType == java.time.OffsetDateTime.class || javaType == java.util.Calendar.class) {
             return Types.TIMESTAMP;
         } else if (javaType == java.sql.Date.class || javaType == java.time.LocalDate.class) {
             return Types.DATE;
