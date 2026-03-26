@@ -14,10 +14,7 @@ import java.io.Closeable;
 import java.lang.reflect.Constructor;
 import java.math.BigInteger;
 import java.sql.*;
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.Collection;
-import java.util.List;
+import java.util.*;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.BiPredicate;
 import java.util.function.Consumer;
@@ -244,7 +241,7 @@ public class StormifyManager {
                     statement.setObject(i + 1, params.params.get(i));
                 return code.execute(statement);
             } catch (Exception e) {
-                String paramValues = params.params.isEmpty() ? "" : " with values " + params.params.toString();
+                String paramValues = params.params.isEmpty() ? "" : " with values " + params.params;
                 throw new QueryException("Unable to execute query '" + params.query + "'" + paramValues, e);
             }
         });
@@ -306,10 +303,11 @@ public class StormifyManager {
         return performQuery(query, params, false, statement -> {
             Constructor<T> constructor = isBaseClass ? null : baseClass.getDeclaredConstructor();
             ResultSet rs = statement.executeQuery();
+            PopulationContext context = isBaseClass ? null : new PopulationContext();
             int count = 0;
             while (rs.next()) {
                 count++;
-                consumer.accept(isBaseClass ? castTo(baseClass, rs.getObject(1)) : forcePopulate(constructor.newInstance(), rs));
+                consumer.accept(isBaseClass ? castTo(baseClass, rs.getObject(1)) : forcePopulate(constructor.newInstance(), rs, context));
             }
             return count;
         });
@@ -354,6 +352,48 @@ public class StormifyManager {
         return result.item;
     }
 
+    void batchPopulate(List<AutoTable> members) {
+        if (members.isEmpty()) return;
+        TableInfo tableInfo = registry.getTableInfo(members.get(0).getClass());
+        FieldInfo pk = tableInfo.getPrimaryKey();
+
+        // Collect unique IDs and map members by string key (avoids Integer/Long mismatch)
+        Map<String, List<AutoTable>> byId = new LinkedHashMap<>();
+        List<Object> uniqueIds = new ArrayList<>();
+        for (AutoTable member : members) {
+            Object id = pk.getValue(member);
+            String key = String.valueOf(id);
+            if (byId.containsKey(key))
+                byId.get(key).add(member);
+            else {
+                List<AutoTable> list = new ArrayList<>();
+                list.add(member);
+                byId.put(key, list);
+                uniqueIds.add(id);
+            }
+        }
+
+        String placeholders = String.join(", ", Collections.nCopies(uniqueIds.size(), "?"));
+        String query = "SELECT * FROM " + tableInfo.getTableName() + " WHERE " + pk.getDbName() + " IN (" + placeholders + ")";
+
+        PopulationContext nestedContext = new PopulationContext();
+        performQuery(query, uniqueIds.toArray(), false, statement -> {
+            ResultSet rs = statement.executeQuery();
+            while (rs.next()) {
+                String key = String.valueOf(rs.getObject(pk.getDbName()));
+                List<AutoTable> targets = byId.remove(key);
+                if (targets != null)
+                    for (AutoTable target : targets)
+                        forcePopulate(target, rs, nestedContext);
+            }
+            return null;
+        });
+
+        // Remaining members not found in DB — log warning and skip
+        for (Map.Entry<String, List<AutoTable>> entry : byId.entrySet())
+            logger.warn("Batch populate: no data found for {} with id {}", tableInfo.getTableName(), entry.getKey());
+    }
+
     <T> void forcePopulate(T entity) {
         EntityData<T> info = new EntityData<>(entity, registry);
         if (info.status == EntityData.NO_ID_FIELDS)
@@ -365,7 +405,7 @@ public class StormifyManager {
         performQuery(query, params, false, statement -> {
             ResultSet rs = statement.executeQuery();
             if (rs.next())
-                return forcePopulate(entity, rs);
+                return forcePopulate(entity, rs, new PopulationContext());
             else
                 throw new QueryException("No data found for " + info.table + " with id" + (params.length == 1 ? "" : "s") + " "
                         + (info.idFields.size() == 1 ? params[0] : Arrays.toString(params)));
@@ -373,7 +413,8 @@ public class StormifyManager {
     }
 
     /**
-     * Populates the entity with the data from the database.
+     * Populates the entity individually. For {@link AutoTable} entities, this detaches from any sibling
+     * batch group, loading only this entity.
      *
      * @param entity the entity to be populated.
      * @param <T>    the type of the entity.
@@ -381,9 +422,10 @@ public class StormifyManager {
      */
     public <T> T populate(T entity) {
         requireNonNull(entity, "Entity cannot be null");
-        if (entity instanceof AutoTable)
+        if (entity instanceof AutoTable) {
+            ((AutoTable) entity).siblingGroup = null;
             ((AutoTable) entity).autoPopulate();
-        else
+        } else
             forcePopulate(entity);
         return entity;
     }
@@ -439,7 +481,6 @@ public class StormifyManager {
      * @param <T>          the type of the entities.
      * @return the list of created entities.
      */
-    @SuppressWarnings("unchecked")
     public <T> List<T> create(Collection<T> createdItems) {
         requireNonNull(createdItems, "Created items cannot be null");
         if (createdItems.isEmpty()) return new ArrayList<>();
@@ -471,7 +512,7 @@ public class StormifyManager {
         if (!needsId.isEmpty() && hasSequence) {
             List<BigInteger> seqs = getNextSequences(pkField.getSequence(), needsId.size());
             for (int i = 0; i < needsId.size(); i++) {
-                pkField.setValue(items.get(needsId.get(i)), seqs.get(i), registry);
+                pkField.setValue(items.get(needsId.get(i)), seqs.get(i), registry, null);
             }
             needsId.clear();
         }
@@ -506,14 +547,14 @@ public class StormifyManager {
                     try (ResultSet rs = stmt.getGeneratedKeys()) {
                         if (rs.next()) {
                             if (getSqlDialect().generatedKeyRetrieval == GeneratedKeyRetrieval.BY_INDEX)
-                                pkField.setValue(items.get(needsId.get(0)), rs.getObject(1), registry);
+                                pkField.setValue(items.get(needsId.get(0)), rs.getObject(1), registry, null);
                             else {
                                 ResultSetMetaData metaData = rs.getMetaData();
                                 int columnCount = metaData.getColumnCount();
                                 for (int i = 1; i <= columnCount; i++) {
                                     String columnName = metaData.getColumnName(i);
                                     for (FieldInfo fieldInfo : tableInfo.getDbField(columnName))
-                                        fieldInfo.setValue(items.get(needsId.get(0)), rs.getObject(columnName), registry);
+                                        fieldInfo.setValue(items.get(needsId.get(0)), rs.getObject(columnName), registry, null);
                                 }
                             }
                         }
@@ -544,7 +585,6 @@ public class StormifyManager {
      * @param <T>          the type of the entities.
      * @return the list of updated entities.
      */
-    @SuppressWarnings("unchecked")
     public <T> List<T> update(Collection<T> updatedItems) {
         requireNonNull(updatedItems, "Updated items cannot be null");
         if (updatedItems.isEmpty()) return new ArrayList<>();
@@ -608,7 +648,6 @@ public class StormifyManager {
      * @param deletedItems the entities to be deleted.
      * @param <T>          the type of the entities.
      */
-    @SuppressWarnings("unchecked")
     public <T> void delete(Collection<T> deletedItems) {
         requireNonNull(deletedItems, "Deleted items cannot be null");
         if (deletedItems.isEmpty()) return;
@@ -641,7 +680,7 @@ public class StormifyManager {
         performQuery(query, allParams.toArray(), false, PreparedStatement::executeUpdate);
     }
 
-    <T> T forcePopulate(T item, ResultSet resultSet) throws SQLException {
+    <T> T forcePopulate(T item, ResultSet resultSet, PopulationContext context) throws SQLException {
         TableInfo tableInfo = registry.getTableInfo(item.getClass());
         ResultSetMetaData metaData = resultSet.getMetaData();
         int columnCount = metaData.getColumnCount();
@@ -665,7 +704,7 @@ public class StormifyManager {
                     value = ((Blob) value).getBytes(1, (int) ((Blob) value).length());
             }
             for (FieldInfo field : fields)
-                field.setValue(item, value, registry);
+                field.setValue(item, value, registry, context);
         }
         return item;
     }
@@ -758,7 +797,7 @@ public class StormifyManager {
                 parentPrimaryKeyValue
         );
         for (D detail : details)
-            field.setValue(detail, parent, registry);
+            field.setValue(detail, parent, registry, null);
         return details;
     }
 

@@ -60,6 +60,7 @@ import static onl.ycode.stormify.StormifyManager.stormify;
 public abstract class AutoTable {
 
     private volatile boolean isDirty = true;
+    volatile SiblingGroup siblingGroup;
     private final TableInfo tableInfo = stormify().getTableInfo(getClass());
 
     @Override
@@ -95,21 +96,30 @@ public abstract class AutoTable {
 
     /**
      * Automatically populates the fields of this object. The ID field should already have been set.
+     * When this entity belongs to a sibling group (created during batch reads), all siblings are
+     * populated together in a single query.
      */
     protected void autoPopulate() {
         if (isDirty)
             synchronized (this) {
                 if (isDirty) {
                     isDirty = false;
-                    stormify().forcePopulate(this);
+                    if (siblingGroup != null)
+                        siblingGroup.batchPopulate(this);
+                    else
+                        stormify().forcePopulate(this);
                 }
             }
+    }
+
+    boolean isDirty() {
+        return isDirty;
     }
 
     /**
      * Marks this object as already populated, so no further population needs to be done.
      */
-    protected synchronized void markPopulated() {
+    protected void markPopulated() {
         isDirty = false;
     }
 }

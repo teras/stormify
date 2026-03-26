@@ -69,10 +69,10 @@ public class FieldInfo {
      * @param value The value to set.
      */
     public void setValue(Object item, Object value) {
-        setValue(item, value, null);
+        setValue(item, value, null, null);
     }
 
-    void setValue(Object item, Object value, ClassRegistry registry) {
+    void setValue(Object item, Object value, ClassRegistry registry, PopulationContext context) {
         if (setter != null) {
             try {
                 if (value == null && type.isPrimitive())
@@ -82,9 +82,13 @@ public class FieldInfo {
                     return;
                 }
                 if (isReference && registry != null) {
-                    Object wrapper = type.getDeclaredConstructor().newInstance();
-                    registry.getTableInfo(type).getPrimaryKey().setValue(wrapper, value, registry);
-                    value = wrapper;
+                    if (context != null && type != item.getClass() && AutoTable.class.isAssignableFrom(type))
+                        value = context.getOrCreateReference(type, value, registry);
+                    else {
+                        Object wrapper = type.getDeclaredConstructor().newInstance();
+                        registry.getTableInfo(type).getPrimaryKey().setValue(wrapper, value, registry, null);
+                        value = wrapper;
+                    }
                 }
                 setter.invoke(item, castTo(type, value));
             } catch (Exception e) {
