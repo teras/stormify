@@ -110,7 +110,6 @@ public class FieldInfo {
 
     /**
      * Get the name of the field in the class. This name is used to perform queries based on field name.
-     * static
      *
      * @return The name of the field in the class.
      */

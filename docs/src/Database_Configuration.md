@@ -1,76 +1,24 @@
 # Database Configuration
 
-Proper configuration of Stormify ensures optimal performance and seamless integration with your application. This section covers the essential configuration steps, including setting up the data source, configuring the environment, and adjusting logging and other settings.
-
 ## Data Source Configuration
 
-Stormify relies on a JDBC-compatible data source to connect to your database. You can use popular connection pooling libraries such as HikariCP, Apache DBCP, or any other JDBC data source.
+Stormify relies on a JDBC-compatible `javax.sql.DataSource` to connect to your database. You can use any connection
+pooling library such as HikariCP, Apache DBCP, or any other JDBC data source.
+
+The data source must be set before any database operations can be performed, and it can only be set once. To release
+it, use `closeDataSource()`.
 
 ### Setting Up the Data Source
 
-1. **Using HikariCP**
+**Using HikariCP**
 
-   HikariCP is a high-performance JDBC connection pool. Below is an example of configuring HikariCP as the data source for Stormify.
-
-   ```java
-   import com.zaxxer.hikari.HikariConfig;
-   import com.zaxxer.hikari.HikariDataSource;
-   import static onl.ycode.stormify.StormifyManager.stormify;
-
-   // Configure HikariCP using a properties file
-   HikariConfig config = new HikariConfig("databaseConfig.properties");
-   HikariDataSource dataSource = new HikariDataSource(config);
-
-   // Set the data source for Stormify
-   stormify().setDataSource(dataSource);
-   ```
-
-   In this example, replace `"databaseConfig.properties"` with the path to your HikariCP configuration file. You can also configure HikariCP programmatically by setting properties directly on the `HikariConfig` object.
-
-2. **Using Apache DBCP**
-
-   Apache DBCP is another widely-used connection pooling library. Below is an example of configuring Apache DBCP with Stormify.
-
-   ```java
-   import org.apache.commons.dbcp2.BasicDataSource;
-   import static onl.ycode.stormify.StormifyManager.stormify;
-
-   // Configure Apache DBCP
-   BasicDataSource dataSource = new BasicDataSource();
-   dataSource.setUrl("jdbc:mysql://localhost:3306/yourdb");
-   dataSource.setUsername("username");
-   dataSource.setPassword("password");
-
-   // Set the data source for Stormify
-   stormify().setDataSource(dataSource);
-   ```
-
-### Using Different JDBC Data Sources
-
-Stormify is compatible with any JDBC data source. Simply configure the data source according to your requirements and set it using `stormify().setDataSource(dataSource);`.
-
-## Environment Setup
-
-Stormify can be configured through environment variables, configuration files, or programmatically within your application code.
-
-### Configuration Files
-
-You can store configuration settings in files such as `application.properties` or `application.yml`. Common configuration options include database URL, username, password, and connection pool settings.
-
-Example `application.properties`:
-
-```properties
-database.url=jdbc:mysql://localhost:3306/yourdb
-database.username=username
-database.password=password
-database.pool.size=10
-```
-
-### Programmatic Configuration
-
-You can also configure Stormify programmatically by setting properties directly in your application code. This approach provides flexibility for dynamic environments.
+HikariCP is a high-performance JDBC connection pool:
 
 ```java
+import com.zaxxer.hikari.HikariConfig;
+import com.zaxxer.hikari.HikariDataSource;
+import static onl.ycode.stormify.StormifyManager.stormify;
+
 HikariConfig config = new HikariConfig();
 config.setJdbcUrl("jdbc:mysql://localhost:3306/yourdb");
 config.setUsername("username");
@@ -80,13 +28,79 @@ HikariDataSource dataSource = new HikariDataSource(config);
 stormify().setDataSource(dataSource);
 ```
 
+You can also configure HikariCP from a properties file:
+
+```java
+HikariConfig config = new HikariConfig("databaseConfig.properties");
+HikariDataSource dataSource = new HikariDataSource(config);
+stormify().setDataSource(dataSource);
+```
+
+**Using Apache DBCP**
+
+```java
+import org.apache.commons.dbcp2.BasicDataSource;
+import static onl.ycode.stormify.StormifyManager.stormify;
+
+BasicDataSource dataSource = new BasicDataSource();
+dataSource.setUrl("jdbc:mysql://localhost:3306/yourdb");
+dataSource.setUsername("username");
+dataSource.setPassword("password");
+
+stormify().setDataSource(dataSource);
+```
+
+Stormify is compatible with any `javax.sql.DataSource` implementation.
+
+### Configuration
+
+Naming policies and primary key resolvers can be set at any time before the first query:
+
+```java
+stormify().setNamingPolicy(NamingPolicy.camelCase);
+stormify().registerPrimaryKeyResolver(10, (table, field) -> field.equals("id"));
+stormify().setDataSource(dataSource);
+```
+
+### Deferred Initialization
+
+Use `onInit` to register callbacks that run when the data source is first accessed. This is useful when a framework
+manages the data source lifecycle and you need to run initialization code at startup:
+
+```java
+stormify().onInit(() -> {
+    // Runs once, on first getDataSource() call
+    System.out.println("Stormify initialized with dialect: " + stormify().getSqlDialect());
+});
+```
+
+### Closing the Data Source
+
+When the application shuts down, close the data source to release connections:
+
+```java
+stormify().closeDataSource();
+```
+
+If the data source implements `Closeable` or `AutoCloseable`, it will be closed automatically.
+
 ## Logging Configuration
 
-Stormify includes logging capabilities to help monitor SQL queries and diagnose issues.
+Stormify uses a built-in logging abstraction that auto-detects the logging framework available at runtime. The
+detection order is:
+
+1. **SLF4J** (if a non-NOP implementation is present)
+2. **Log4J** (legacy v1)
+3. **Log4J2**
+4. **Apache Commons Logging**
+5. **System.out** (fallback)
+
+By default, Stormify creates a logger named `"Stormify"`. All SQL queries are logged at DEBUG level.
 
 ### Enabling SQL Logging
 
-To enable SQL logging, you can adjust the logging settings of your application. Stormify uses the logging framework configured for your application (e.g., SLF4J, Log4j).
+To see the SQL statements Stormify executes, configure your logging framework to enable DEBUG for the `Stormify`
+logger.
 
 Example SLF4J configuration in `logback.xml`:
 
@@ -98,7 +112,7 @@ Example SLF4J configuration in `logback.xml`:
         </encoder>
     </appender>
 
-    <logger name="onl.ycode.stormify" level="DEBUG" additivity="false">
+    <logger name="Stormify" level="DEBUG" additivity="false">
         <appender-ref ref="STDOUT" />
     </logger>
 
@@ -108,31 +122,26 @@ Example SLF4J configuration in `logback.xml`:
 </configuration>
 ```
 
-This configuration sets Stormify to log SQL statements at the DEBUG level.
+### Custom Logger
 
-### Debugging and Monitoring
-
-Enable DEBUG logging for Stormify to trace query execution and inspect the parameters passed to each query. This can be helpful for troubleshooting and optimizing your database interactions.
-
-## Other Configuration Options
-
-### Adjusting Connection Pooling Settings
-
-Tuning connection pool settings such as the maximum pool size, idle connections, and connection timeout can greatly affect the performance of your application.
-
-Example HikariCP tuning:
+You can replace the default logger with your own:
 
 ```java
-HikariConfig config = new HikariConfig();
-config.setMaximumPoolSize(20);
-config.setIdleTimeout(30000); // 30 seconds
-config.setConnectionTimeout(10000); // 10 seconds
+import onl.ycode.logger.LogManager;
+
+stormify().setLogger(LogManager.getLogger(MyApp.class));
 ```
 
-### Performance Tuning Tips
+Or use a `SilentLogger` to suppress all Stormify logging:
 
-- **Optimize SQL Queries**: Ensure your queries are efficient and indexed properly.
-- **Adjust Pool Sizes**: Balance pool sizes to match your application's workload and database capacity.
-- **Monitor Connection Usage**: Use monitoring tools to keep an eye on connection usage and database performance.
+```java
+stormify().setLogger(new SilentLogger());
+```
 
-Proper configuration of Stormify will help ensure that your application performs optimally and integrates smoothly with your database environment.
+Or use a `WatchLogger` to intercept log messages:
+
+```java
+stormify().setLogger(new WatchLogger(existingLogger, (level, message, throwable) -> {
+    // Custom handling of log messages
+}));
+```

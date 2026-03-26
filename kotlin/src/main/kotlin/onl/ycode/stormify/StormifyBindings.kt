@@ -16,7 +16,7 @@ import kotlin.reflect.KProperty
 fun String.executeUpdate(vararg arguments: Any?) = stormify().executeUpdate(this, *arguments)
 
 /**
- * Exevute a read operation and return the result as a single object. If no object is found, null is returned. If more
+ * Execute a read operation and return the result as a single object. If no object is found, null is returned. If more
  * than one object is found, an exception is thrown.
  * @param arguments The arguments to pass to the query.
  * @return The object found, or null if no object is found.
@@ -101,7 +101,6 @@ fun transaction(block: () -> Unit) = stormify().transaction(block)
 /**
  * Execute a stored procedure.
  * @param params The parameters to pass to the stored procedure.
- * @return The number of rows affected.
  */
 fun String.storedProcedure(vararg params: SPParam<*>) = stormify().storedProcedure(this, *params)
 
@@ -113,7 +112,7 @@ fun String.storedProcedure(vararg params: SPParam<*>) = stormify().storedProcedu
 inline fun <reified T : Any> IN(value: T?): SPParam<T> = SPParam.`in`(T::class.java, value)
 
 /**
- * Define the OUT parameter of a stored procedure.'
+ * Define the OUT parameter of a stored procedure.
  * @return The parameter.
  */
 inline fun <reified T : Any> OUT(): SPParam<T> = SPParam.out(T::class.java)

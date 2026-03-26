@@ -4,25 +4,27 @@
 
 # Stormify
 
-Stormify is a flexible ORM library for Java and Kotlin that simplifies database interactions with minimal configuration.
-It operates and performs CRUD operations on plain Java objects (POJOs) without requiring extensive annotations or XML
-setups, as long as field names match database columns. This makes Stormify ideal for both small and large projects.
-
-Designed for developers seeking a simple yet powerful ORM, Stormify excels in projects that favor convention over
-configuration, allowing for minimal setup and clean, straightforward code.
+Stormify is a flexible ORM library for Java and Kotlin that performs CRUD operations on plain Java objects (POJOs)
+without requiring extensive annotations or XML setups, as long as property names match database columns.
+Convention over configuration, minimal setup, clean code.
 
 ## Features
 
-- **CRUD Operations**: Easily create, read, update, and delete records.
+- **CRUD Operations**: Easily create, read, update, and delete records, including batch operations.
 - **Annotation-Free POJOs**: Perform operations with plain Java objects without the need for extensive annotations or
   XML files.
 - **Fine or coarse grain definitions**: Define naming policies and primary key resolvers, if there is a standard naming
   pattern, or annotations to handle special cases.
 - **JPA Compatibility**: Support common JPA annotations to maintain compatibility and simplify integration.
 - **Flexible Query Execution**: Execute custom and complex SQL queries and map results to Java objects.
-- **Transaction Management**: Support for nested transactions with rollback and commit capabilities.
+- **Transaction Management**: Support for nested transactions with automatic savepoint-based rollback.
 - **Support for Composite Keys**: Handle tables with composite primary keys effortlessly.
-- **Kotlin Compatibility**: Fully compatible with Kotlin, allowing seamless integration in Kotlin-based projects.
+- **Auto-Population**: Lazy-load entity fields on demand using `AutoTable`, with batch optimization for related entities.
+- **Stored Procedures**: Execute stored procedures with IN, OUT, and INOUT parameters.
+- **Cursor-Based Reading**: Stream large result sets row by row to minimize memory usage.
+- **Parent-Child Queries**: Retrieve child records of a parent entity with a single call.
+- **Custom Type Conversions**: Register custom converters between Java types and database types.
+- **Kotlin Compatibility**: Fully compatible with Kotlin, with dedicated extension functions and property delegates.
 
 ## Installation
 
@@ -77,9 +79,7 @@ through common package managers like Maven and Gradle.
 
 ### Configure Your Database
 
-Ensure that your database is set up and accessible. Stormify supports any
-JDBC-compatible data source. For this example, to use HikariCP, create a `databaseConfig.properties` file with the
-configuration parameters, add Hikari to your classpath and use the following code to initialize Stormify:
+Stormify works with any JDBC `DataSource`. Here's an example using HikariCP:
 
 === "Java"
 
@@ -89,7 +89,6 @@ configuration parameters, add Hikari to your classpath and use the following cod
 
     import static onl.ycode.stormify.StormifyManager.stormify;
 
-    ...
     HikariConfig config = new HikariConfig("databaseConfig.properties");
     HikariDataSource dataSource = new HikariDataSource(config);
 
@@ -104,7 +103,6 @@ configuration parameters, add Hikari to your classpath and use the following cod
 
     import onl.ycode.stormify.StormifyManager.stormify
 
-    ...
     val config = HikariConfig("databaseConfig.properties")
     val dataSource = HikariDataSource(config)
 
@@ -113,8 +111,7 @@ configuration parameters, add Hikari to your classpath and use the following cod
 
 ### Creating a POJO
 
-To interact with the database, define a simple POJO that does not need to extend any specific class. The library
-automatically maps fields based on their names. For example, for a table creates as
+Define a POJO with getter/setter pairs matching your database columns. For a table created as
 `CREATE TABLE test (id INT PRIMARY KEY, name VARCHAR(255));`,
 the corresponding POJO would be:
 
@@ -132,10 +129,10 @@ the corresponding POJO would be:
 === "Kotlin"
 
     ```kotlin
-    class Test(
-        var id: Int,
-        var name: String
-    )
+    class Test {
+        var id: Int = 0
+        var name: String = ""
+    }
     ```
 
 ### Performing CRUD Operations
@@ -154,9 +151,10 @@ the corresponding POJO would be:
 === "Kotlin"
 
     ```kotlin
-    val newRecord = Test()
-    newRecord.id = 1
-    newRecord.name = "Test Entry"
+    val newRecord = Test().apply {
+        id = 1
+        name = "Test Entry"
+    }
     newRecord.create()
     ```
 
@@ -172,7 +170,7 @@ the corresponding POJO would be:
 === "Kotlin"
 
     ```kotlin
-    val results = "SELECT * FROM test".read<Test>()  
+    val results = "SELECT * FROM test".read<Test>()
     println(results)
     ```
 

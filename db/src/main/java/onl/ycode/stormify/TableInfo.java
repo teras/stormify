@@ -11,7 +11,8 @@ import static onl.ycode.stormify.StormifyManager.stormify;
 import static onl.ycode.stormify.Utils.*;
 
 /**
- * Parse a class and handle it as a database table.
+ * Metadata container for a database table, holding the class-to-table mapping,
+ * field information, and primary key definitions.
  */
 public class TableInfo {
     private final Class<?> classType;
@@ -93,7 +94,7 @@ public class TableInfo {
     }
 
     /**
-     * Get a reference of the fields of the table.
+     * Get all the fields of the table.
      *
      * @return The fields of the table.
      */

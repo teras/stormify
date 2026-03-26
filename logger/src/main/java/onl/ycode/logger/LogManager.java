@@ -8,6 +8,9 @@ package onl.ycode.logger;
  */
 public class LogManager {
 
+    private LogManager() {
+    }
+
     /**
      * Create a new Logger instance for the given class.
      *

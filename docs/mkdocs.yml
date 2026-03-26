@@ -43,9 +43,10 @@ theme:
 
 nav:
   - Welcome: README.md
-  - Core: Core_concepts.md
+  - Core Concepts: Core_concepts.md
+  - Usage: Usage.md
   - Advanced: Advanced_topics.md
+  - Kotlin: Kotlin.md
   - Configuration: Database_Configuration.md
   - Contributing: Contributing.md
   - JavaDoc: javadoc/index.html
-  - Kotlin Bindings: kotlin/index.html

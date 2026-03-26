@@ -2,41 +2,57 @@
 
 ## POJO Mapping and Requirements
 
-Stormify maps Plain Old Java Objects (POJOs) to database tables using field names that match the corresponding database
-column names. This approach minimizes the need for extensive configurations or annotations, allowing you to work
-directly with your Java objects.
+Stormify maps Plain Old Java Objects (POJOs) to database tables using property names that match database column names,
+minimizing the need for configuration or annotations.
 
-### Field Name Matching
+### Bean Property Matching
 
-- **Automatic Mapping**: Fields in your Java classes are automatically mapped to database columns with matching names.
-  No annotations are required as long as the field names correspond to the column names.
-- **Optional Annotations**: You can use the `@DbTable` and `@DbField` annotations to provide additional information or
-  to customize the mapping between your Java classes and the database.
+Stormify discovers entity properties by scanning for **getter/setter method pairs** following JavaBean conventions
+(e.g., `getName()`/`setName()` or `isActive()`/`setActive()` for booleans). A matching getter and setter define a
+property that is mapped to a database column. Read-only properties (getter without setter) are also supported but
+cannot be written to.
+
+**Important**: Raw public fields without getters/setters are **not** mapped. Your POJOs must follow the JavaBean
+convention, or use Kotlin `var` properties (which generate getters/setters automatically).
+
+- **Automatic Mapping**: Properties are automatically mapped to database columns with matching names (after applying
+  the naming policy). No annotations are required.
+- **Optional Annotations**: You can use the `@DbTable` and `@DbField` annotations to customize the mapping.
 
 ### Naming Policy
 
 Stormify provides flexible naming policies to convert class names to table names and field names to column names,
 ensuring consistency across your database schema. You can set the naming policy using the `setNamingPolicy` method in
-the Stormify manager. By default, the naming policy is set to `LOWER_CASE_WITH_UNDERSCORES` (snake_case). This policy
+the Stormify manager. By default, the naming policy is set to `lowerCaseWithUnderscores` (snake_case). This policy
 will only affect tables and fields that are not already registered.
 
-#### NamingPolicy Enum Options
+`NamingPolicy` is an interface with three predefined implementations. You can also create custom implementations.
 
-1. **CAMEL_CASE**
-    - **Description**: Uses class and field names as they are, preserving camel case.
-    - **Example**: A class named `UserAccount` remains `UserAccount`, and a field named `userName` remains `userName`.
+#### Predefined Naming Policies
 
-2. **LOWER_CASE_WITH_UNDERSCORES**
-    - **Description**: Converts class and field names to lower case with underscores (snake_case).
-    - **Example**: A class named `UserAccount` becomes `user_account`, and a field named `userName` becomes `user_name`.
+1. **`NamingPolicy.camelCase`**
+    - Uses class and field names as they are, preserving camel case.
+    - Example: A class named `UserAccount` remains `UserAccount`, and a field named `userName` remains `userName`.
 
-3. **UPPER_CASE_WITH_UNDERSCORES**
-    - **Description**: Converts class and field names to upper case with underscores (SCREAMING_SNAKE_CASE).
-    - **Example**: A class named `UserAccount` becomes `USER_ACCOUNT`, and a field named `userName` becomes `USER_NAME`.
+2. **`NamingPolicy.lowerCaseWithUnderscores`** (default)
+    - Converts class and field names to lower case with underscores (snake_case).
+    - Example: A class named `UserAccount` becomes `user_account`, and a field named `userName` becomes `user_name`.
+
+3. **`NamingPolicy.upperCaseWithUnderscores`**
+    - Converts class and field names to upper case with underscores (SCREAMING_SNAKE_CASE).
+    - Example: A class named `UserAccount` becomes `USER_ACCOUNT`, and a field named `userName` becomes `USER_NAME`.
+
+#### Custom Naming Policy
+
+You can create a custom naming policy by implementing the `NamingPolicy` interface:
+
+```java
+stormify().setNamingPolicy(name -> "tbl_" + name.toLowerCase());
+```
 
 ### Custom Primary Key Resolvers
 
-The primary keys in the databases, commonly follow a naming convention. If this is the case, instead of using
+The primary keys in databases commonly follow a naming convention. If this is the case, instead of using
 annotations, you can register custom primary key resolvers to help Stormify identify primary keys based on their name.
 
 #### How It Works
@@ -44,7 +60,7 @@ annotations, you can register custom primary key resolvers to help Stormify iden
 To set up a primary key resolver, use the `registerPrimaryKeyResolver` method. You provide:
 
 - **Priority**: Determines which resolver is used first if multiple are registered. Higher values mean higher priority.
-- **Resolver Function**: A simple function that checks the table and field names to decide if a field is a primary key.
+- **Resolver Function**: A function that takes the table name and field name, and returns true if the field is a primary key.
 
 #### Simple Example
 
@@ -52,16 +68,8 @@ If your primary keys follow a specific naming pattern, you can register a resolv
 instance:
 
 ```java
-    stormifyManager.registerPrimaryKeyResolver(10,(tableName, fieldName) -> fieldName.equalsIgnoreCase("id"));
+stormify().registerPrimaryKeyResolver(10, (tableName, fieldName) -> fieldName.equalsIgnoreCase("id"));
 ```
-
-In this example:
-
-- The resolver simply checks if the field name is `id`, a common but not universal pattern.
-- The priority is set to `10`, indicating this resolver should be checked early.
-
-By setting up custom primary key resolvers, Stormify can accurately identify primary keys, without relying on
-annotations for every class.
 
 ## Annotations
 
@@ -72,7 +80,7 @@ optional and is only needed if the table name differs from the class name.
 
 #### Attributes
 
-- **`name`**: Specifies the name of the table in the database. If not provided, the class name will be used, converted
+- **`name`**: Specifies the name of the table in the database. If not provided, the class name will be converted
   using the current naming policy.
 
 #### Example
@@ -89,8 +97,6 @@ public class Test {
 }
 ```
 
-In this example, the `Test` class maps to the `custom_table_name` table in the database.
-
 ### `@DbField` Annotation
 
 The `@DbField` annotation is used to provide additional information about a specific field in a class. This annotation
@@ -99,12 +105,12 @@ is optional and allows you to customize how fields are mapped to database column
 #### Attributes
 
 - **`name`**: Specifies the name of the field in the database. If not provided, the field name in the class will be
-  used, converted using the current naming policy.
+  converted using the current naming policy.
 - **`primaryKey`**: Indicates whether the field is a primary key. Defaults to `false`.
 - **`primarySequence`**: Specifies the name of the primary key sequence in the database. If not provided, the primary
   key value generation relies on the database.
-- **`creatable`**: Determines whether the field can be used when creating a new record. Defaults to `true`.
-- **`updatable`**: Determines whether the field can be used when updating a record. Defaults to `true`.
+- **`creatable`**: Determines whether the field is included in INSERT statements. Defaults to `true`.
+- **`updatable`**: Determines whether the field is included in UPDATE statements. Defaults to `true`.
 
 #### Example
 
@@ -122,49 +128,71 @@ public class Test {
 }
 ```
 
-In this example:
-
-- The `id` field is mapped to the `custom_id` column, marked as a primary key, and uses a sequence named `id_seq`.
-- The `name` field is configured to be updatable but not creatable.
-
-### Other supported Annotations
+### JPA-Compatible Annotations
 
 Stormify provides support for several standard annotations from the `javax.persistence` package, making it easy to
-integrate with existing Java applications that use these familiar annotations. The following annotations are supported:
+integrate with existing Java applications. The following annotations are supported:
 
 - **`@Id`**: Marks a field as the primary key of the entity.
 
-- **`@Table`**: Specifies the table in the database that maps to the entity. Stormify uses the table name from
-  this annotation to map your classes to the corresponding database tables.
+- **`@Table`**: Specifies the table in the database that maps to the entity, using the `name` attribute.
 
-- **`@Column`**: Maps a field to a specific column in the database table. Stormify retrieves the column name to
-  map fields to the correct database columns, focusing primarily on the name attribute.
+- **`@Column`**: Maps a field to a specific column in the database table. Stormify reads the `name`, `insertable`,
+  and `updatable` attributes.
 
-- **`@JoinColumn`**: Specifies the column used for joining an entity association, typically used with relationships
-  like `@ManyToOne` or `@OneToOne`. Again, Stormify focuses only on the name attribute.
+- **`@JoinColumn`**: Specifies the column used for joining an entity association. Stormify reads the `name`,
+  `insertable`, and `updatable` attributes.
 
-- **`@SequenceGenerator`**: Defines a primary key generator that uses a database sequence, allowing you to control how
-  IDs
-  are generated for new entities.
+- **`@SequenceGenerator`**: Defines a primary key generator that uses a database sequence, using the `name` attribute
+  to specify the sequence name.
 
-### Note
+- **`@Transient`**: Marks a field to be excluded from entity mapping entirely.
 
-These annotations help bridge the gap between your Java objects and database schema, enabling a smooth and familiar
-mapping experience with Stormify. By leveraging these standard annotations, Stormify ensures compatibility with existing
-JPA setups while providing additional flexibility.
+## Reference Fields (Foreign Keys)
+
+When a property's type is another POJO (not a primitive, String, date, etc.), Stormify treats it as a **reference
+field** (foreign key). The database column stores the primary key value of the referenced entity.
+
+```java
+public class Order {
+    @DbField(primaryKey = true)
+    private Integer id;
+    private Customer customer;  // Reference field — DB column stores customer's primary key
+    // Getters and setters
+}
+```
+
+When reading an `Order` from the database, Stormify creates a `Customer` instance with only its primary key set.
+If `Customer` extends `AutoTable`, its remaining fields are lazy-loaded on first access (see
+[AutoTable](Advanced_topics.md#autotable-lazy-loading)).
 
 ## Blacklist Management
 
-Stormify includes a feature to manage fields that should be ignored during database interactions. This is useful when
-you want to exclude certain fields from being creatable, updated, or retrieved.
+Stormify includes a feature to manage fields that should be excluded from entity mapping entirely. Blacklisted fields
+are completely ignored during all database interactions (reads, creates, and updates).
 
-**Note**: if a fields is marked as @Transient, it will be ignored by default.
+**Note**: Fields marked as `@Transient` are also ignored automatically.
 
 - **Add to Blacklist**: Use `addBlacklistField(String fieldName)` to add a field to the blacklist.
 - **Remove from Blacklist**: Use `removeBlacklistField(String fieldName)` to remove a field from the blacklist.
+
+The following fields are blacklisted by default: `serialVersionUID`, `idFieldValue`, `transientId`.
 
 Example:
 
 ```java
 stormify().addBlacklistField("temporaryField");
+```
+
+## Strict Mode
+
+Strict mode controls how Stormify handles database columns that have no matching field in the Java entity.
+
+- **Strict mode enabled**: A `QueryException` is thrown when a database column returned by a query has no corresponding
+  field in the entity class.
+- **Strict mode disabled** (default): A warning is logged and the unmatched column is skipped.
+
+```java
+stormify().setStrictMode(true);  // Enable strict mode
+stormify().setStrictMode(false); // Disable strict mode (default)
 ```

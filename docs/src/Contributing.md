@@ -72,7 +72,7 @@ Describe what you expected to happen.
 - Stormify version:
 - Database type and version:
 - JVM version:
-  ```
+```
 
 ## Submitting Pull Requests
 

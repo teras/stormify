@@ -4,7 +4,7 @@
 package onl.ycode.logger;
 
 /**
- * A logger based on Log4J2.
+ * A logger based on legacy Log4J (v1).
  */
 public class Log4JLogger implements GenericLogger {
     private final org.apache.log4j.Logger logger;

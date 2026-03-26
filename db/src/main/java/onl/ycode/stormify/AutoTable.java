@@ -59,6 +59,14 @@ import static onl.ycode.stormify.StormifyManager.stormify;
  */
 public abstract class AutoTable {
 
+    /**
+     * Creates a new AutoTable instance. Subclasses should call this constructor
+     * implicitly. The {@link StormifyManager} must have a data source configured
+     * before any AutoTable subclass is instantiated.
+     */
+    protected AutoTable() {
+    }
+
     private volatile boolean isDirty = true;
     volatile SiblingGroup siblingGroup;
     private final TableInfo tableInfo = stormify().getTableInfo(getClass());

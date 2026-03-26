@@ -12,7 +12,8 @@ import java.lang.annotation.Target;
  * An annotation to mark a class as a database table. This annotation is not required.
  * It is only used to provide additional information to Stormify.
  * <p>
- * If the name of the class is camel case, it will be converted to snake case.
+ * If no name is provided, the class name will be converted according to the active {@link NamingPolicy}
+ * (by default, snake_case).
  */
 @Retention(RetentionPolicy.RUNTIME)
 @Target(ElementType.TYPE)

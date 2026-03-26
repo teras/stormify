@@ -8,6 +8,12 @@ package onl.ycode.logger;
  */
 public class SilentLogger implements Logger {
 
+    /**
+     * Creates a new silent logger that discards all messages.
+     */
+    public SilentLogger() {
+    }
+
     @Override
     public void debug(String message) {
     }

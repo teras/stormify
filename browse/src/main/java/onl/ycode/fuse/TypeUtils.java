@@ -10,6 +10,10 @@ import java.sql.*;
  * Utility class for handling Java types.
  */
 public class TypeUtils {
+
+    private TypeUtils() {
+    }
+
     /**
      * Get the Java type for a given SQL type.
      *
@@ -100,7 +104,7 @@ public class TypeUtils {
     }
 
     /**
-     * Conert a boxed Java type to its primitive type.
+     * Convert a boxed Java type to its primitive type.
      *
      * @param clazz The boxed Java type.
      * @return The primitive Java type.

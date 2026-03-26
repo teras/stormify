@@ -2,8 +2,8 @@
 // (C) Panayotis Katsaloulis
 
 /**
- * A pluggable logger framework, which utilizes existing logging frameworks
- * installed.
+ * A pluggable logging abstraction that auto-detects and delegates to available
+ * logging frameworks at runtime.
  * <p>
  * The main class and entry point is {@link onl.ycode.logger.LogManager}.
  */

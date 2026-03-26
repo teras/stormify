@@ -6,7 +6,7 @@ package onl.ycode.logger;
 import java.text.MessageFormat;
 
 /**
- * The is a helper interface, to provide common alternatives to some logging methods.
+ * This is a helper interface, to provide common alternatives to some logging methods.
  */
 interface GenericLogger extends Logger {
 

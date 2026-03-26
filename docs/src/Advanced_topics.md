@@ -1,106 +1,225 @@
 # Advanced Topics
 
-## Transaction Management
+## AutoTable: Lazy Loading
 
-Stormify provides support for managing database transactions, allowing you to group multiple operations into a single transaction. This is useful for ensuring data consistency and integrity, especially when dealing with complex operations that must all succeed or fail together.
+`AutoTable` is an abstract base class that provides automatic lazy-loading of entity fields. When you read a list of
+entities whose reference fields point to `AutoTable` subclasses, those references are created with only their primary
+key set. When you access any non-key field, the full entity is loaded from the database on demand.
 
-### Managing Transactions
+### How It Works
 
-To perform operations within a transaction, use the `transaction` method. This method ensures that all included operations are committed if they succeed, or rolled back if any operation fails. Stormify also supports nested transactions, allowing you to manage transactions within transactions seamlessly.
-
-#### Example
+Subclasses must call `autoPopulate()` in every getter/setter of non-primary-key fields:
 
 ```java
-import static onl.ycode.stormify.StormifyManager.stormify;
+public class User extends AutoTable {
+    private Integer id;
+    private String name;
 
-stormify().transaction(() -> {
-    Test record1 = new Test();
-    record1.setId(1);
-    record1.setName("Entry 1");
-    stormify().create(record1);
+    public Integer getId() {
+        return id;
+    }
 
-    stormify().transaction(() -> {
-        Test record2 = new Test();
-        record2.setId(2);
-        record2.setName("Entry 2");
-        stormify().create(record2);
-    });
-});
+    public void setId(Integer id) {
+        this.id = id;
+    }
+
+    public String getName() {
+        autoPopulate();  // Triggers lazy load if needed
+        return name;
+    }
+
+    public void setName(String name) {
+        autoPopulate();  // Triggers lazy load if needed
+        this.name = name;
+    }
+}
 ```
 
-In this example, both the outer and inner transactions are managed independently. If any operation fails in the inner transaction, only the inner transaction will be rolled back, while the outer transaction can continue.
+`AutoTable` also provides implementations of `equals()`, `hashCode()`, and `toString()` based on primary key values.
+
+### Sibling Batch Optimization
+
+When multiple `AutoTable` references of the same type are created during a single read operation (e.g., many `Order`
+rows each referencing a `Customer`), those references are grouped into a **sibling group**. When any one of them
+triggers `autoPopulate()`, all siblings in the group are loaded in a single `SELECT ... WHERE id IN (...)` query
+instead of individual queries per entity. Duplicate references (same type and ID) are also deduplicated automatically.
+
+### populate() vs autoPopulate()
+
+- **`autoPopulate()`** (called from within the entity): Uses sibling batch loading when available. This is the normal
+  lazy-loading path.
+- **`populate()`** (called from outside via `stormify().populate(entity)`): **Detaches** the entity from its sibling
+  group and loads it individually. Use this when you want to force a fresh load of a specific entity.
+
+### markPopulated()
+
+Call `markPopulated()` from a subclass constructor or initialization code to signal that the entity already has its
+data and does not need to be loaded from the database.
+
+## CRUDTable Interface
+
+`CRUDTable` is a convenience interface that adds CRUD methods directly to entity objects, reducing the need to call
+`stormify()` explicitly:
+
+```java
+public class Test implements CRUDTable {
+    private int id;
+    private String name;
+    // Getters and setters
+}
+
+Test record = new Test();
+record.setId(1);
+record.setName("Entry");
+record.create();       // INSERT
+record.update();       // UPDATE
+record.delete();       // DELETE
+record.populate();     // Load from DB by ID
+record.tableName();    // Get the mapped table name
+
+// Parent-child:
+List<Detail> details = record.getDetails(Detail.class);
+List<Detail> byField = record.getDetails(Detail.class, "propertyName");
+```
+
+`CRUDTable` can be combined with `AutoTable`:
+
+```java
+public class User extends AutoTable implements CRUDTable {
+    // Gets both lazy loading and direct CRUD methods
+}
+```
 
 ## Handling Auto-Increment Fields
 
-Stormify can manage auto-increment fields automatically by leveraging database sequences or letting the database handle the generation of primary key values. You can specify this behavior using the `@DbField` annotation's `primaryKey` and `primarySequence` attributes.
-
 ### Using Sequences
 
-If your database uses sequences for generating primary keys, you can specify the sequence name using the `primarySequence` attribute in the `@DbField` annotation.
-
-#### Example
+If your database uses sequences for generating primary keys, specify the sequence name. The primary key field must
+use a **boxed type** (e.g., `Integer` instead of `int`) so it can be `null` before the sequence value is assigned:
 
 ```java
-import onl.ycode.stormify.DbField;
-
 public class Test {
-    @DbField(name = "custom_id", primaryKey = true, primarySequence = "id_seq")
-    private int id;
+    @DbField(primaryKey = true, primarySequence = "id_seq")
+    private Integer id;  // Boxed type — null triggers sequence fetch
 
     private String name;
-
     // Getters and setters
 }
 ```
 
-In this example, the `id` field uses the sequence named `id_seq` to generate its values.
+When creating a new entity, if the primary key is `null`, Stormify fetches the next value from the sequence before
+inserting. For batch inserts, all sequence values are fetched in a single query.
+
+### Database Auto-Increment
+
+If no sequence is specified and the primary key is `null`, Stormify relies on the database's auto-increment mechanism.
+The generated key is populated back to the entity after a single insert (not available for batch inserts).
 
 ## Working with Composite Keys
 
-Stormify supports tables with composite primary keys, allowing you to define multiple fields as part of the primary key.
-
-### Defining Composite Keys
-
-To define a composite key, simply mark all fields involved in the key as primary keys using any method of your choice (e.g., annotations, resolver function, etc.).
-
-#### Example
+Stormify supports tables with composite primary keys. Mark all fields involved in the key as primary keys:
 
 ```java
-import onl.ycode.stormify.DbField;
-
 public class CompositeKeyExample {
-    @DbField(name = "key_part1", primaryKey = true)
+    @DbField(primaryKey = true)
     private int part1;
 
-    @DbField(name = "key_part2", primaryKey = true)
+    @DbField(primaryKey = true)
     private int part2;
 
     private String data;
-
     // Getters and setters
 }
 ```
 
-In this example, both `part1` and `part2` fields form the composite primary key for the `CompositeKeyExample` class.
+**Note**: `findById` and sequence-based ID generation require a single primary key and are not available for composite
+keys. Use `read` or `findAll` with a WHERE clause instead.
 
-## Strict Mode vs. Lenient Mode
+## Stored Procedures
 
-### Strict Mode
+Stormify supports calling stored procedures with IN, OUT, and INOUT parameters:
 
-Strict mode enforces strict mapping between Java objects and database tables. When enabled, Stormify throws exceptions if fields are missing or do not match between the Java object and the database schema. This can be useful for ensuring data integrity and preventing accidental discrepancies.
+=== "Java"
 
-#### Enabling Strict Mode
+    ```java
+    import static onl.ycode.stormify.SPParam.*;
+
+    SPParam<String> output = out(String.class);
+    stormify().storedProcedure("my_procedure",
+        in(Integer.class, 42),
+        output,
+        inout(String.class, "input_value")
+    );
+    String result = output.getResult();
+    ```
+
+=== "Kotlin"
+
+    ```kotlin
+    import onl.ycode.stormify.*
+
+    val output = OUT<String>()
+    "my_procedure".storedProcedure(
+        IN(42),
+        output,
+        INOUT("input_value")
+    )
+    val result = output.result
+    ```
+
+## Supported Data Types
+
+Stormify automatically converts between the following types when reading from or writing to the database:
+
+| Category | Types |
+|----------|-------|
+| **Numeric** | `byte`, `short`, `int`, `long`, `float`, `double`, `BigInteger`, `BigDecimal` (and their boxed equivalents) |
+| **Boolean** | `boolean` / `Boolean` (also converts from numeric: 0=false, non-zero=true) |
+| **String** | `String`, `char` / `Character` |
+| **Binary** | `byte[]` (maps to BLOB), `char[]` |
+| **Date/Time** | `java.util.Date`, `java.sql.Date`, `Timestamp`, `Time`, `Instant`, `LocalDateTime`, `LocalDate`, `LocalTime`, `ZonedDateTime`, `OffsetDateTime` |
+| **LOB** | `CLOB` → automatically converted to `String`, `BLOB` → automatically converted to `byte[]` |
+
+All date/time types are interconvertible. For example, a `Timestamp` column can be read into a `LocalDateTime` field
+and vice versa.
+
+### Custom Type Conversions
+
+To register additional conversions between types:
 
 ```java
-stormify().setStrictMode(true);
+TypeUtils.registerConversion(MyType.class, String.class, obj -> obj.serialize());
+TypeUtils.registerConversion(String.class, MyType.class, str -> MyType.parse(str));
 ```
 
-### Lenient Mode
+The first argument is the source type, the second is the target type, and the third is the conversion function.
 
-When strict mode is disabled, Stormify operates in lenient mode, logging warnings instead of throwing exceptions for mismatches between Java objects and database columns. This mode is useful for development or scenarios where flexibility is more important than strict validation.
+## TableInfo Introspection
 
-#### Disabling Strict Mode
+You can inspect the metadata Stormify generates for any entity class:
 
 ```java
-stormify().setStrictMode(false);
+TableInfo info = stormify().getTableInfo(Test.class);
+
+// Table name
+String tableName = info.getTableName();
+
+// All fields
+for (FieldInfo field : info.getFields()) {
+    String javaName = field.getName();       // Java property name
+    String dbName = field.getDbName();       // Database column name
+    Class<?> type = field.getType();         // Field type
+    boolean pk = field.isPrimaryKey();       // Is primary key?
+    boolean ref = field.isReference();       // Is foreign key reference?
+    String seq = field.getSequence();        // Sequence name (or null)
+    boolean ins = field.isInsertable();      // Included in INSERT?
+    boolean upd = field.isUpdatable();       // Included in UPDATE?
+}
+
+// Primary key(s)
+List<FieldInfo> pks = info.getPrimaryKeys();
+FieldInfo singlePk = info.getPrimaryKey();  // Throws if not exactly one
+
+// Validate consistency (no duplicate insertable/updatable columns)
+boolean valid = info.checkConsistency();
 ```

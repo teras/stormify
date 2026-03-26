@@ -31,7 +31,7 @@ import static onl.ycode.stormify.Utils.*;
 /**
  * The main controller for the Stormify system. It is the entrance point for all the operations on the database.
  * <p>
- * It is a singleton and r requires a data source to be set before any operations can be performed.
+ * It is a singleton and requires a data source to be set before any operations can be performed.
  * The data source is required to be a generic JDBC data source.
  * <p>
  * The controller provides methods to perform queries, create, update, and delete entities, and execute stored procedures.
@@ -69,6 +69,7 @@ public class StormifyManager {
      * Returns the data source used by the controller. See {@link #setDataSource(DataSource)}.
      *
      * @return the data source used by the controller.
+     * @throws QueryException if no data source has been set.
      */
     public DataSource getDataSource() {
         if (!isInitialized.get() && isInitialized.compareAndSet(false, true))
@@ -82,7 +83,7 @@ public class StormifyManager {
     /**
      * Runs the given code block when the controller is initialized.
      *
-     * @param runnable the code block to be run when the controller is initialized. More than one code blocks could be added.
+     * @param runnable the code block to be run when the controller is initialized. More than one code block can be added.
      */
     public void onInit(Runnable runnable) {
         if (runnable != null)
@@ -92,7 +93,7 @@ public class StormifyManager {
     /**
      * Checks if the data source is present in the controller.
      *
-     * @return the data source used by the controller, or null if no data source is set.
+     * @return true if a data source has been set, false otherwise.
      */
     public boolean isDataSourcePresent() {
         return dataSource != null;
@@ -103,12 +104,11 @@ public class StormifyManager {
      * You need to provide a generic JDBC data source, by any means necessary.
      * <p>
      * The data source is required to be set before any operations can be performed.
-     * <p>
-     * The data source cannot be null. To detach the data source from the controller,
-     * use {@link #closeDataSource()} instead.
+     * It can only be set once; calling this method again will throw a {@link QueryException}.
+     * To detach the data source from the controller, use {@link #closeDataSource()} instead.
      *
-     * @param dataSource the data source to be used by the controller. Can be null to detach
-     *                   the data source from StormifyManager.
+     * @param dataSource the data source to be used by the controller. Cannot be null.
+     * @throws QueryException if a data source has already been set.
      */
     public void setDataSource(DataSource dataSource) {
         requireNonNull(dataSource, "Data source cannot be null");
@@ -284,16 +284,16 @@ public class StormifyManager {
     }
 
     /**
-     * Executes a read operation and returns the number of rows affected. Use this method when the strategy of parsing
+     * Executes a read operation and returns the number of rows read. Use this method when the strategy of parsing
      * the result row by row is preferred, instead of fetching all the results at once. Thus, data are consumed as they are
      * fetched from the database, making it ideal for large data sets.
      *
      * @param <T>       the type of the results.
      * @param baseClass the base class of the results.
      * @param query     the query to be executed.
-     * @param consumer  the consumer to be used to process the results. Evey new row is passed to this consumer.
+     * @param consumer  the consumer to be used to process the results. Every new row is passed to this consumer.
      * @param params    the parameters to be used in the query.
-     * @return the number of rows affected.
+     * @return the number of rows read.
      */
     public <T> int readCursor(Class<T> baseClass, String query, Consumer<T> consumer, Object... params) {
         requireNonNull(baseClass, "Base class cannot be null");
@@ -710,9 +710,15 @@ public class StormifyManager {
     }
 
     /**
-     * Executes a transaction with the given block of code.
+     * Executes a transaction with the given block of code. If the block completes
+     * successfully, the transaction is committed. If an exception is thrown, the
+     * transaction is rolled back.
+     * <p>
+     * Nested calls to this method are supported. Inner transactions use database
+     * savepoints, so a failure in an inner transaction only rolls back to the savepoint,
+     * not the entire outer transaction.
      *
-     * @param block the block of code to be executed.
+     * @param block the block of code to be executed within the transaction.
      */
     public void transaction(SafeRunnable block) {
         TransactionContext context = null;
@@ -750,7 +756,7 @@ public class StormifyManager {
     /**
      * Returns the details of the parent object. This method assumes that the details object has only
      * one property field that references the parent object. If more than one field references the parent object,
-     * or no
+     * or no field references it, a {@link QueryException} is thrown.
      *
      * @param parent       the parent object.
      * @param detailsClass the class of the details.
@@ -768,8 +774,8 @@ public class StormifyManager {
      * @param parent       the parent object.
      * @param detailsClass the class of the details.
      * @param propertyName the name of the reference property in the details class (i.e. the foreign key property name).
-     *                     If empty, the first field of the parent class that matches the details class will be used. If
-     *                     more than one field matches, an exception will be thrown.
+     *                     If null or empty, the first field of the details class whose type matches the parent class will
+     *                     be used. If more than one field matches, or none matches, a {@link QueryException} is thrown.
      * @param <M>          the type of the parent object.
      * @param <D>          the type of the details.
      * @return the details of the parent object as a list.
@@ -898,24 +904,24 @@ public class StormifyManager {
     }
 
     /**
-     * Set the object mapping to strict mode. In strict mode, the system will throw an exception if a field is not found in the entity.
-     * Otherwise, it will log a warning and continue.
+     * Returns whether the object mapping is in strict mode. In strict mode, the system will throw an exception if a
+     * database column is not found in the entity. Otherwise, it will log a warning and continue.
      * <p>
-     * By default, the system is in strict mode.
+     * By default, strict mode is disabled.
      *
-     * @return the current strict mode setting.
+     * @return true if strict mode is enabled, false otherwise.
      */
     public boolean isStrictMode() {
         return strictMode;
     }
 
     /**
-     * Set the object mapping to strict mode. In strict mode, the system will throw an exception if a field is not found in the entity.
-     * Otherwise, it will log a warning and continue.
+     * Sets the object mapping to strict mode. In strict mode, the system will throw an exception if a
+     * database column is not found in the entity. Otherwise, it will log a warning and continue.
      * <p>
-     * By default, the system is in strict mode.
+     * By default, strict mode is disabled.
      *
-     * @param strictMode the strict mode setting.
+     * @param strictMode true to enable strict mode, false to disable it.
      */
     public void setStrictMode(boolean strictMode) {
         this.strictMode = strictMode;

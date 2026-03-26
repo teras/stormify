@@ -10,7 +10,8 @@ import java.lang.annotation.RetentionPolicy;
  * An annotation to mark a field as a database field. This annotation is not required.
  * It is only used to provide additional information to Stormify.
  * <p>
- * If the name of the field is camel case, it will be converted to snake case.
+ * If no name is provided, the field name will be converted according to the active {@link NamingPolicy}
+ * (by default, snake_case).
  */
 @Retention(RetentionPolicy.RUNTIME)
 public @interface DbField {
