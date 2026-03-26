@@ -4,81 +4,78 @@
 
 # Stormify
 
-Stormify is a flexible ORM library for Java and Kotlin that simplifies database interactions with minimal configuration.
-It operates and performs CRUD operations on plain Java objects (POJOs) without requiring extensive annotations or XML
-setups, as long as field names match database columns. This makes Stormify ideal for both small and large projects.
+Stormify is a flexible ORM library for Java and Kotlin that performs CRUD operations on plain Java objects (POJOs)
+without requiring extensive annotations or XML setups, as long as property names match database columns.
+Convention over configuration, minimal setup, clean code.
 
-Designed for developers seeking a simple yet powerful ORM, Stormify excels in projects that favor convention over
-configuration, allowing for minimal setup and clean, straightforward code.
-
-📖 [Documentation](https://https://stormify.org/docs/index.html)
-
-🏠 [Homepage](https://stormify.org)
+[Documentation](https://stormify.org/docs/) | [Homepage](https://stormify.org)
 
 ## Features
 
-- **CRUD Operations**: Easily create, read, update, and delete records.
-- **Annotation-Free POJOs**: Perform operations with plain Java objects without the need for extensive annotations or
-  XML files.
-- **Fine or coarse grain definitions**: Define naming policies and primary key resolvers, if there is a standard naming
-  pattern, or annotations to handle special cases.
-- **JPA Compatibility**: Support common JPA annotations to maintain compatibility and simplify integration.
-- **Flexible Query Execution**: Execute custom and complex SQL queries and map results to Java objects.
-- **Transaction Management**: Support for nested transactions with rollback and commit capabilities.
-- **Support for Composite Keys**: Handle tables with composite primary keys effortlessly.
-- **Kotlin Compatibility**: Fully compatible with Kotlin, allowing seamless integration in Kotlin-based projects.
+- **CRUD Operations**: Create, read, update, and delete records, including batch operations.
+- **Annotation-Free POJOs**: Work with plain Java objects without annotations or XML files.
+- **Flexible Naming**: Define naming policies and primary key resolvers, or use annotations for special cases.
+- **JPA Compatibility**: Support common JPA annotations for seamless integration.
+- **Raw SQL**: Execute custom SQL queries and map results to Java objects.
+- **Transactions**: Nested transactions with automatic savepoint-based rollback.
+- **Composite Keys**: Handle tables with composite primary keys.
+- **Auto-Population**: Lazy-load entity fields on demand using `AutoTable`, with batch optimization.
+- **Stored Procedures**: Execute stored procedures with IN, OUT, and INOUT parameters.
+- **Cursor-Based Reading**: Stream large result sets row by row.
+- **Parent-Child Queries**: Retrieve child records of a parent entity with a single call.
+- **Custom Type Conversions**: Register custom converters between Java and database types.
+- **Kotlin Support**: Dedicated extension functions and property delegates.
 
 ## Installation
 
-To use Stormify in your Java or Kotlin project, add the library dependency to your build file. Stormify is available
-through common package managers like Maven and Gradle.
-
-Add the following dependency to your `pom.xml`:
+### Maven
 
 ```xml
 <dependency>
-    <groupId>onl.ycode</groupId>
-    <artifactId>stormify</artifactId>
-    <version>1.1.0</version>
+    <groupId>onl.ycode.stormify</groupId>
+    <artifactId>db</artifactId>
+    <version>1.2.0</version>
 </dependency>
 ```
 
-For Kotlin, also add the following:
+For Kotlin, also add:
 
 ```xml
 <dependency>
-    <groupId>onl.ycode</groupId>
-    <artifactId>stormify-kotlin</artifactId>
-    <version>1.1.0</version>
+    <groupId>onl.ycode.stormify</groupId>
+    <artifactId>kotlin</artifactId>
+    <version>1.2.0</version>
 </dependency>
 ```
 
-## Basic Usage
+### Gradle
+
+```groovy
+implementation 'onl.ycode.stormify:db:1.2.0'
+implementation 'onl.ycode.stormify:kotlin:1.2.0'  // Kotlin only
+```
+
+## Quick Start
 
 ### Configure Your Database
 
-Ensure that your database is set up and accessible. Stormify supports any
-JDBC-compatible data source. For this example, to use HikariCP, create a `databaseConfig.properties` file with the
-configuration parameters, add Hikari to your classpath and use the following code to initialize Stormify:
+Stormify works with any JDBC `DataSource`. Here's an example using HikariCP:
 
 ```java
 import com.zaxxer.hikari.HikariConfig;
 import com.zaxxer.hikari.HikariDataSource;
 import static onl.ycode.stormify.StormifyManager.stormify;
 
-...
 HikariConfig config = new HikariConfig("databaseConfig.properties");
 HikariDataSource dataSource = new HikariDataSource(config);
 
 stormify().setDataSource(dataSource);
 ```
 
-### Creating a POJO
+### Define a POJO
 
-To interact with the database, define a simple POJO that does not need to extend any specific class. The library
-automatically maps fields based on their names. For example, for a table creates as
-`CREATE TABLE test (id INT PRIMARY KEY, name VARCHAR(255));`,
-the corresponding POJO would be:
+Define a POJO with getter/setter pairs matching your database columns. For a table created as
+`CREATE TABLE test (id INT PRIMARY KEY, name VARCHAR(255));`:
 
 ```java
 public class Test {
@@ -89,47 +86,33 @@ public class Test {
 }
 ```
 
-### Performing CRUD Operations
-
-**Create a Record**:
+### CRUD Operations
 
 ```java
-Test newRecord = new Test();
-newRecord.setId(1);
-newRecord.setName("Test Entry");
-stormify().create(newRecord);
-```
+// Create
+Test record = new Test();
+record.setId(1);
+record.setName("Test Entry");
+stormify().create(record);
 
-**Read Records**:
-
-```java
+// Read
 List<Test> results = stormify().read(Test.class, "SELECT * FROM test");
-System.out.println(results);
+
+// Update
+record.setName("Updated Entry");
+stormify().update(record);
+
+// Delete
+stormify().delete(record);
 ```
 
-**Update a Record**:
-
-```java
-newRecord.setName("Updated Entry");
-stormify().update(newRecord);
-```
-
-**Delete a Record**:
-
-```java
-stormify().delete(newRecord);
-```
+See the [full documentation](https://stormify.org/docs/) for Kotlin examples, transactions, batch operations,
+lazy loading, stored procedures, and more.
 
 ## Contributing
 
-Contributions are welcome! Please check the [Contributing](docs/Contributing.md) guide for instructions on how to get
-involved, report issues, or submit pull requests.
+Contributions are welcome! See the [Contributing](docs/src/Contributing.md) guide.
 
 ## License
 
-Stormify is licensed under the [Apache License 2.0](https://www.apache.org/licenses/LICENSE-2.0). You are free to use,
-modify, and distribute this library in accordance with the terms of the license.
-
----
-
-Enjoy using Stormify? Please star this repository to show your support!
+[Apache License 2.0](https://www.apache.org/licenses/LICENSE-2.0)
