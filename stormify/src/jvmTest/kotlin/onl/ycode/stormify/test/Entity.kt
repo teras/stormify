@@ -1,9 +1,10 @@
 package onl.ycode.stormify.test
 
-import onl.ycode.stormify.TableInfo
-import onl.ycode.stormify.TableInfo.Companion.register
+import kotlinx.atomicfu.atomic
+import onl.ycode.stormify.EntityMeta
+import onl.ycode.stormify.EntityRegistrar
+import onl.ycode.stormify.PropertyMeta
 import onl.ycode.stormify.TypeUtils.castTo
-import onl.ycode.stormify.TypeUtils.err
 
 data class Entity(
     var id: Int = 0,
@@ -22,156 +23,32 @@ data class Entity(
     var spouse: String? = null,
 )
 
+object TestEntities : EntityRegistrar {
+    private val initialized = atomic(false)
 
-fun registerAll() {
-    register(
-        TableInfo(
+    override fun register() {
+        if (!initialized.compareAndSet(false, true)) return
+
+        EntityMeta.register(EntityMeta(
             Entity::class,
-            "ENTITY",
             { Entity() },
-            { entity, name, value, stormify ->
-                when (name.lowercase()) {
-                    "id" -> {
-                        entity.id = castTo(Int::class, value, stormify) ?: err("id", "Entity")
-                        true
-                    }
-
-                    "name" -> {
-                        entity.name = castTo(String::class, value, stormify) ?: err("name", "Entity")
-                        true
-                    }
-
-                    "family" -> {
-                        entity.family = castTo(String::class, value, stormify) ?: err("family", "Entity")
-                        true
-                    }
-
-                    "age" -> {
-                        entity.age = castTo(Int::class, value, stormify)
-                        true
-                    }
-
-                    "street" -> {
-                        entity.street = castTo(String::class, value, stormify) ?: err("street", "Entity")
-                        true
-                    }
-
-                    "city" -> {
-                        entity.city = castTo(String::class, value, stormify) ?: err("city", "Entity")
-                        true
-                    }
-
-                    "state" -> {
-                        entity.state = castTo(String::class, value, stormify) ?: err("state", "Entity")
-                        true
-                    }
-
-                    "zip" -> {
-                        entity.zip = castTo(String::class, value, stormify) ?: err("zip", "Entity")
-                        true
-                    }
-
-                    "country" -> {
-                        entity.country = castTo(String::class, value, stormify) ?: err("country", "Entity")
-                        true
-                    }
-
-                    "phone" -> {
-                        entity.phone = castTo(String::class, value, stormify) ?: err("phone", "Entity")
-                        true
-                    }
-
-                    "email" -> {
-                        entity.email = castTo(String::class, value, stormify) ?: err("email", "Entity")
-                        true
-                    }
-
-                    "website" -> {
-                        entity.website = castTo(String::class, value, stormify)
-                        true
-                    }
-
-                    "notes" -> {
-                        entity.notes = castTo(String::class, value, stormify)
-                        true
-                    }
-
-                    "spouse" -> {
-                        entity.spouse = castTo(String::class, value, stormify)
-                        true
-                    }
-
-                    else -> false
-                }
-            },
-            listOf("id"),
-            listOf("ID"),
-            listOf(Int::class),
-            listOf(""),
-            { listOf(it.id) },
             listOf(
-                "name",
-                "age",
-                "street",
-                "city",
-                "state",
-                "zip",
-                "country",
-                "phone",
-                "email",
-                "website",
-                "notes",
-                "spouse"
+                PropertyMeta("id", Int::class, false, { it.id }, { e, v, s -> e.id = castTo(Int::class, v, s) ?: throw IllegalArgumentException("id cannot be null") }, null, true, null, true, true, false),
+                PropertyMeta("name", String::class, false, { it.name }, { e, v, s -> e.name = castTo(String::class, v, s) ?: throw IllegalArgumentException("name cannot be null") }, null, false, null, true, true, false),
+                PropertyMeta("family", String::class, false, { it.family }, { e, v, s -> e.family = castTo(String::class, v, s) ?: throw IllegalArgumentException("family cannot be null") }, null, false, null, true, true, false),
+                PropertyMeta("age", Int::class, false, { it.age }, { e, v, s -> e.age = castTo(Int::class, v, s) }, null, false, null, true, true, false),
+                PropertyMeta("street", String::class, false, { it.street }, { e, v, s -> e.street = castTo(String::class, v, s) ?: throw IllegalArgumentException("street cannot be null") }, null, false, null, true, true, false),
+                PropertyMeta("city", String::class, false, { it.city }, { e, v, s -> e.city = castTo(String::class, v, s) ?: throw IllegalArgumentException("city cannot be null") }, null, false, null, true, true, false),
+                PropertyMeta("state", String::class, false, { it.state }, { e, v, s -> e.state = castTo(String::class, v, s) ?: throw IllegalArgumentException("state cannot be null") }, null, false, null, true, true, false),
+                PropertyMeta("zip", String::class, false, { it.zip }, { e, v, s -> e.zip = castTo(String::class, v, s) ?: throw IllegalArgumentException("zip cannot be null") }, null, false, null, true, true, false),
+                PropertyMeta("country", String::class, false, { it.country }, { e, v, s -> e.country = castTo(String::class, v, s) ?: throw IllegalArgumentException("country cannot be null") }, null, false, null, true, true, false),
+                PropertyMeta("phone", String::class, false, { it.phone }, { e, v, s -> e.phone = castTo(String::class, v, s) ?: throw IllegalArgumentException("phone cannot be null") }, null, false, null, true, true, false),
+                PropertyMeta("email", String::class, false, { it.email }, { e, v, s -> e.email = castTo(String::class, v, s) ?: throw IllegalArgumentException("email cannot be null") }, null, false, null, true, true, false),
+                PropertyMeta("website", String::class, false, { it.website }, { e, v, s -> e.website = castTo(String::class, v, s) }, null, false, null, true, true, false),
+                PropertyMeta("notes", String::class, false, { it.notes }, { e, v, s -> e.notes = castTo(String::class, v, s) }, null, false, null, true, true, false),
+                PropertyMeta("spouse", String::class, false, { it.spouse }, { e, v, s -> e.spouse = castTo(String::class, v, s) }, null, false, null, true, true, false),
             ),
-            listOf(
-                "NAME",
-                "AGE",
-                "STREET",
-                "CITY",
-                "STATE",
-                "ZIP",
-                "COUNTRY",
-                "PHONE",
-                "EMAIL",
-                "WEBSITE",
-                "NOTES",
-                "SPOUSE"
-            ),
-            listOf(
-                String::class,
-                String::class,
-                Int::class,
-                String::class,
-                String::class,
-                String::class,
-                String::class,
-                String::class,
-                String::class,
-                String::class,
-                String::class,
-                String::class
-            ),
-            {
-                listOf(
-                    it.name,
-                    it.age,
-                    it.street,
-                    it.city,
-                    it.state,
-                    it.zip,
-                    it.country,
-                    it.phone,
-                    it.email,
-                    it.website,
-                    it.notes,
-                    it.spouse
-                )
-            },
-            "SELECT * FROM ENTITY WHERE ID = ?",
-            "",
-            "",
-            ""
-        )
-    )
+            "ENTITY"
+        ))
+    }
 }
-

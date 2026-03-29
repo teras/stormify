@@ -62,9 +62,26 @@ private class AndroidPreparedStatement(
     private val returnGeneratedKeys: Boolean
 ) : PreparedStatement {
     private val bindings = mutableMapOf<Int, Any?>()
-    
+    private val batches = mutableListOf<Map<Int, Any?>>()
+
     override fun setObject(parameterIndex: Int, value: Any?) {
         bindings[parameterIndex] = value
+    }
+
+    override fun addBatch() {
+        batches.add(bindings.toMap())
+        bindings.clear()
+    }
+
+    override fun executeBatch(): IntArray {
+        val results = IntArray(batches.size)
+        for ((i, params) in batches.withIndex()) {
+            bindings.clear()
+            bindings.putAll(params)
+            results[i] = executeUpdate()
+        }
+        batches.clear()
+        return results
     }
     
     override fun executeUpdate(): Int {

@@ -25,6 +25,8 @@ abstract class MariadbStatementBase(
     protected val paramCount: Int
     protected val bindParams: CArrayPointer<MYSQL_BIND>?
     protected val paramData = mutableListOf<MariadbParameterHelper.ParameterData>()
+    protected val currentParams = mutableMapOf<Int, Any?>()
+    protected val batches = mutableListOf<Map<Int, Any?>>()
 
     init {
         stmt = mariadb_stmt_init_wrapper(mysql) ?: throw SQLException("Failed to initialize $statementType")
@@ -63,6 +65,8 @@ abstract class MariadbStatementBase(
             throw SQLException("Invalid parameter index: $parameterIndex")
         }
 
+        currentParams[parameterIndex] = value
+
         val index = parameterIndex - 1
         val data = paramData[index]
 
@@ -73,6 +77,23 @@ abstract class MariadbStatementBase(
             data.clear()
             throw e
         }
+    }
+
+    open fun addBatch() {
+        batches.add(currentParams.toMap())
+        currentParams.clear()
+    }
+
+    open fun executeBatch(): IntArray {
+        val results = IntArray(batches.size)
+        for ((i, params) in batches.withIndex()) {
+            for ((index, value) in params) {
+                setObject(index, value)
+            }
+            results[i] = doExecuteUpdate()
+        }
+        batches.clear()
+        return results
     }
 
     /**

@@ -7,11 +7,8 @@ import com.google.devtools.ksp.KspExperimental
 import com.google.devtools.ksp.processing.*
 import com.google.devtools.ksp.symbol.KSAnnotated
 import com.google.devtools.ksp.symbol.KSClassDeclaration
-import java.io.BufferedWriter
-import java.io.OutputStream
 import java.io.Writer
 
-private const val AUTO_TABLE = "onl.ycode.stormify.AutoTable"
 private const val DB_TABLE = "onl.ycode.stormify.DbTable"
 private const val ENTITY = "javax.persistence.Entity"
 
@@ -24,208 +21,67 @@ class KotlinTableProcessor(private val env: SymbolProcessorEnvironment) : Symbol
     override fun process(resolver: Resolver): List<KSAnnotated> {
         val entities = resolver.getSymbolsWithAnnotation(DB_TABLE).filterIsInstance<KSClassDeclaration>().toSet() +
                 resolver.getSymbolsWithAnnotation(ENTITY).filterIsInstance<KSClassDeclaration>().toSet()
-        if (entities.isNotEmpty()) {
-            parseDbTableAnnotations(entities)
-            parseAutoTableAnnotations(entities)
-        }
+        if (entities.isNotEmpty())
+            generateRegistrar(entities)
         return emptyList()
     }
 
-    private fun parseDbTableAnnotations(entities: Collection<KSClassDeclaration>) {
+    private fun generateRegistrar(entities: Collection<KSClassDeclaration>) {
         env.codeGenerator.createNewFile(Dependencies(false), "db.stormify", "Registrar").bufferedWriter().use { w ->
-            startWriting(w, entities)
-            entities.forEach {
-                writeEntity(
-                    w,
-                    it.simpleName.asString(),
-                    it.simpleName.asString().uppercase(),
-                    it.getAllProperties().map { EntityProperty(it) }
-                )
+            w.write("package db.stormify\n\n")
+            w.write("import kotlinx.atomicfu.atomic\n")
+            w.write("import onl.ycode.stormify.EntityMeta\n")
+            w.write("import onl.ycode.stormify.EntityRegistrar\n")
+            w.write("import onl.ycode.stormify.PropertyMeta\n")
+            w.write("import onl.ycode.stormify.Stormify\n")
+            w.write("import onl.ycode.stormify.TypeUtils.castTo\n\n")
+            entities.forEach { w.write("import ${it.qualifiedName?.asString()}\n") }
+
+            w.write("\nobject GeneratedEntities : EntityRegistrar {\n")
+            w.write("    private val initialized = atomic(false)\n\n")
+            w.write("    override fun register() {\n")
+            w.write("        if (!initialized.compareAndSet(false, true)) return\n\n")
+
+            entities.forEach { entity ->
+                val className = entity.simpleName.asString()
+                val tableName = EntityProperty.findTableName(entity)
+                val props = EntityProperty.find(entity)
+                writeEntityMeta(w, className, tableName, props)
             }
-            finalizeWriting(w)
+
+            w.write("    }\n")
+            w.write("}\n")
         }
     }
 
-    private fun startWriting(w: Writer, entities: Collection<KSClassDeclaration>) {
-        w.write(
-            """
-package db.stormify
-
-import onl.ycode.stormify.TableInfo
-import onl.ycode.stormify.TableInfo.Companion.register
-import onl.ycode.stormify.TypeUtils.castTo
-import onl.ycode.stormify.TypeUtils.err
-"""
-        )
-        entities.forEach { w.write("import ${it.qualifiedName?.asString()}\n") }
-        w.write(
-            """
-fun registerAll() {
-"""
-        )
-    }
-
-    private fun finalizeWriting(w: Writer) {
-        w.write("}\n")
-        w.flush()
-        w.close()
-    }
-
-    private fun writeEntity(
-        w: BufferedWriter,
+    private fun writeEntityMeta(
+        w: Writer,
         className: String,
-        dbName: String,
-        properties: Sequence<EntityProperty>
+        tableName: String,
+        properties: Collection<EntityProperty>
     ) {
-        w.write(
-            """
-    register(
-         TableInfo(
-            $className::class,
-            "$dbName",
-            { $className() },
-            { entity, name, value, stormify ->
-                when (name.lowercase()) {
-            """
-        )
-        properties.forEach {
-            w.write(
-                """
-                    "${it.name.lowercase()}" -> {
-                        entity.${it.name} = castTo(${it.type}::class, value, stormify)${if (it.nullable) "" else " ?: err(name, \"$className\")"}
-                        true
-                    }
-                """
-            )
-        }
-        w.write("\n                    else -> false\n                }\n            },\n")
-        w.write(
-            """
-            listOf("id"),
-            listOf("ID"),
-            listOf(Int::class),
-            listOf(""),
-            { listOf() },
-            listOf(
-"""
-        )
-        w.write(
-            properties.joinToString(",\n") {
-                "                \"${it.name}\""
-            }
-        )
-        w.write(
-            """
-            ),
-            listOf(
-"""
-        )
-        w.write(
-            properties.joinToString(",\n") {
-                "                \"${it.name.uppercase()}\""
-            }
-        )
-        w.write(
-            """
-            ),
-            listOf(
-"""
-        )
-        w.write(
-            properties.joinToString(",\n") {
-                "                ${it.type}::class"
-            }
-        )
-        w.write(
-            """
-            ),
-            {listOf(
-"""
-        )
-        w.write(
-            properties.joinToString(",\n") {
-                "                it.${it.name}"
-            }
-        )
-        w.write(
-            """)},
-            "",
-            "",
-            "",
-            "",
-        )
-    )
-   """
-        )
+        w.write("        EntityMeta.register(EntityMeta(\n")
+        w.write("            ${className}::class,\n")
+        w.write("            { ${className}() },\n")
+        w.write("            listOf(\n")
 
-    }
-
-
-    @OptIn(KspExperimental::class)
-    private fun parseAutoTableAnnotations(entities: Collection<KSClassDeclaration>) {
-        val className = env.options.getOrDefault("stormify.meta.class", "tables.T")
-        val dot = className.lastIndexOf('.')
-        require(dot != -1) { "Invalid class name: $className" }
-        val reqPackage = className.substring(0, dot)
-        val reqClass = className.substring(dot + 1)
-
-        val fileOut = try {
-            env.codeGenerator.createNewFile(Dependencies(false), reqPackage, reqClass)
-        } catch (e: Exception) {
-            return
+        properties.forEachIndexed { i, prop ->
+            val comma = if (i < properties.size - 1) "," else ""
+            w.write("                PropertyMeta(\n")
+            w.write("                    \"${prop.name}\", ${prop.type}::class, ${prop.isReference},\n")
+            w.write("                    { it.${prop.name} },\n")
+            w.write("                    { e, v, s -> e.${prop.name} = castTo(${prop.type}::class, v, s)")
+            if (!prop.nullable) w.write(" ?: throw IllegalArgumentException(\"${prop.name} cannot be null in $className\")")
+            w.write(" },\n")
+            w.write("                    ${if (prop.dbname != prop.name) "\"${prop.dbname}\"" else "null"},\n")
+            w.write("                    ${prop.primary},\n")
+            w.write("                    ${if (prop.sequence.isNotBlank()) "\"${prop.sequence}\"" else "null"},\n")
+            w.write("                    ${prop.insertable}, ${prop.updatable}, false\n")
+            w.write("                )$comma\n")
         }
 
-//        val allPackages = resolver.getAllFiles().map { it.packageName.asString() }.toSet()
-//        val collectedClasses = mutableListOf<KSClassDeclaration>()
-//        allPackages.forEach { packageName ->
-//            val declarations = resolver.getDeclarationsFromPackage(packageName)
-//            declarations.forEach { decl ->
-//                if (decl is KSClassDeclaration && isSubclassOf(decl, AUTO_TABLE)) {
-//                    collectedClasses += decl
-//                }
-//            }
-//        }
-//        val properties = collectedClasses.map {
-//            val name = "${it.packageName.asString()}.${it.simpleName.asString()}"
-//            val props = it.getAllProperties().map { it.simpleName.asString() }.toList()
-//            name to props
-//        }.toMap()
-//
-//        writeToSharedLocation(properties, reqPackage, reqClass, fileOut)
-        fileOut.close()
-    }
-
-    private fun isSubclassOf(classDeclaration: KSClassDeclaration, superclassName: String): Boolean {
-        // Check all the super types of this class
-        return classDeclaration.superTypes.any {
-            val resolvedType = it.resolve()
-            resolvedType.declaration.qualifiedName?.asString() == superclassName
-        }
-    }
-
-    private fun writeToSharedLocation(
-        methods: Map<String, Collection<String>>,
-        reqPackage: String,
-        reqClass: String,
-        fileOut: OutputStream
-    ) {
-        if (methods.isEmpty()) return
-        fileOut.bufferedWriter().use { writer ->
-            writer.appendLine("package $reqPackage")
-            writer.appendLine()
-            writer.appendLine("object $reqClass {")
-            var firstEntry = true
-            for ((key, value) in methods) {
-                if (firstEntry) firstEntry = false
-                else writer.appendLine()
-                writer.appendLine("    object " + key.substring(key.lastIndexOf('.') + 1) + " {")
-                writer.appendLine("        // val __classname = \"$key\"")
-                for (property in value)
-                    writer.appendLine("        val $property = \"$property\"")
-                writer.appendLine("    }")
-            }
-            writer.appendLine("}")
-        }
+        w.write("            ),\n")
+        w.write("            ${if (tableName.isNotBlank()) "\"$tableName\"" else "null"}\n")
+        w.write("        ))\n\n")
     }
 }
-

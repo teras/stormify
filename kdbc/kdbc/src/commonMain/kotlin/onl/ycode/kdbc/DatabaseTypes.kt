@@ -15,6 +15,8 @@ interface PreparedStatement : AutoCloseable {
     fun executeUpdate(): Int
     fun executeQuery(): ResultSet
     fun getGeneratedKeys(): ResultSet
+    fun addBatch()
+    fun executeBatch(): IntArray
 }
 
 interface CallableStatement : PreparedStatement {

@@ -38,4 +38,8 @@ class MariadbPreparedStatement(
         }
         return GeneratedKeysResultSet(lastInsertId.toLong())
     }
+
+    override fun addBatch() = super.addBatch()
+
+    override fun executeBatch(): IntArray = super.executeBatch()
 }

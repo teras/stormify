@@ -19,6 +19,8 @@ class FreeTDSPreparedStatement(
     private val paramData = mutableListOf<FreeTDSTypeHelper.ParamData>()
     private var lastInsertId: Long? = null
     private var closed = false
+    private val currentParams = mutableMapOf<Int, Any?>()
+    private val batches = mutableListOf<Map<Int, Any?>>()
 
     init {
         // Count parameters (? placeholders)
@@ -43,6 +45,8 @@ class FreeTDSPreparedStatement(
             throw SQLException("Invalid parameter index: $parameterIndex")
         }
 
+        currentParams[parameterIndex] = value
+
         val index = parameterIndex - 1
         val data = paramData[index]
 
@@ -52,6 +56,23 @@ class FreeTDSPreparedStatement(
             data.clear()
             throw e
         }
+    }
+
+    override fun addBatch() {
+        batches.add(currentParams.toMap())
+        currentParams.clear()
+    }
+
+    override fun executeBatch(): IntArray {
+        val results = IntArray(batches.size)
+        for ((i, params) in batches.withIndex()) {
+            for ((index, value) in params) {
+                setObject(index, value)
+            }
+            results[i] = executeUpdate()
+        }
+        batches.clear()
+        return results
     }
 
     override fun executeUpdate(): Int {

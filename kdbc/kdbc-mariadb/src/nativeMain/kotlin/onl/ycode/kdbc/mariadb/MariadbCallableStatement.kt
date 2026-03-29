@@ -43,6 +43,20 @@ class MariadbCallableStatement(
         return EmptyResultSet()
     }
 
+    override fun addBatch() = super.addBatch()
+
+    override fun executeBatch(): IntArray {
+        val results = IntArray(batches.size)
+        for ((i, params) in batches.withIndex()) {
+            for ((index, value) in params) {
+                setObject(index, value)
+            }
+            results[i] = executeUpdate()
+        }
+        batches.clear()
+        return results
+    }
+
     override fun registerOutParameter(parameterIndex: Int, type: KClass<*>) {
         outParameters[parameterIndex] = type
     }

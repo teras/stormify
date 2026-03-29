@@ -18,6 +18,8 @@ private class JdbcPreparedStatement(private val jdbc: java.sql.PreparedStatement
     override fun executeUpdate(): Int = jdbc.executeUpdate()
     override fun executeQuery(): ResultSet = JdbcResultSet(jdbc.executeQuery())
     override fun getGeneratedKeys(): ResultSet = JdbcResultSet(jdbc.generatedKeys)
+    override fun addBatch() = jdbc.addBatch()
+    override fun executeBatch(): IntArray = jdbc.executeBatch()
     override fun close() = jdbc.close()
 }
 
@@ -27,6 +29,8 @@ private class JdbcCallableStatement(private val jdbc: java.sql.CallableStatement
     override fun executeUpdate(): Int = jdbc.executeUpdate()
     override fun executeQuery(): ResultSet = JdbcResultSet(jdbc.executeQuery())
     override fun getGeneratedKeys(): ResultSet = JdbcResultSet(jdbc.generatedKeys)
+    override fun addBatch() = jdbc.addBatch()
+    override fun executeBatch(): IntArray = jdbc.executeBatch()
     override fun close() = jdbc.close()
 
     override fun registerOutParameter(parameterIndex: Int, type: KClass<*>) {

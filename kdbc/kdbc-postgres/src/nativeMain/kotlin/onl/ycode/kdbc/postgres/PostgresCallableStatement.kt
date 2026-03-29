@@ -48,9 +48,29 @@ class PostgresCallableStatement(
 ) : CallableStatement {
     private val outParameters = mutableMapOf<Int, KClass<*>>()
     private var outParameterResult: CPointer<PGresult>? = null
+    private val currentParams = mutableMapOf<Int, Any?>()
+    private val batches = mutableListOf<Map<Int, Any?>>()
 
     override fun setObject(parameterIndex: Int, value: Any?) {
+        currentParams[parameterIndex] = value
         // For callable statements, we'll use simple query execution
+    }
+
+    override fun addBatch() {
+        batches.add(currentParams.toMap())
+        currentParams.clear()
+    }
+
+    override fun executeBatch(): IntArray {
+        val results = IntArray(batches.size)
+        for ((i, params) in batches.withIndex()) {
+            for ((index, value) in params) {
+                setObject(index, value)
+            }
+            results[i] = executeUpdate()
+        }
+        batches.clear()
+        return results
     }
 
     override fun executeUpdate(): Int {

@@ -120,17 +120,33 @@ class TransactionContext internal constructor(@PublishedApi internal val stormif
 
     fun <T : Any> create(item: T): T = stormify.create(conn, item)
 
+    fun <T : Any> create(items: Collection<T>): List<T> = stormify.create(conn, items)
+
     fun <T : Any> update(updatedItem: T): T = stormify.update(conn, updatedItem)
 
+    fun <T : Any> update(items: Collection<T>): List<T> = stormify.update(conn, items)
+
     fun <T : Any> delete(deletedItem: T) = stormify.delete(conn, deletedItem)
+
+    fun <T : Any> delete(items: Collection<T>) = stormify.delete(conn, items)
+
+    inline fun <reified D : Any> getDetails(parent: Any, propertyName: String? = null): List<D> =
+        stormify.getDetails(conn, parent, D::class, propertyName)
 
     fun <M : Any, D : Any> getDetails(parent: M, detailsClass: KClass<D>, propertyName: String? = null): List<D> =
         stormify.getDetails(conn, parent, detailsClass, propertyName)
 
+    inline fun <reified T : Any> findAll(whereClause: String = "", vararg arguments: Any?): List<T> =
+        stormify.findAll(conn, T::class, whereClause, *arguments)
+
     fun <T : Any> findAll(kclass: KClass<T>, whereClause: String = "", vararg arguments: Any?): List<T> =
         stormify.findAll(conn, kclass, whereClause, *arguments)
 
+    inline fun <reified T : Any> findById(id: Any) = stormify.findById(conn, T::class, id)
+
     fun <T : Any> findById(kclass: KClass<T>, id: Any) = stormify.findById(conn, kclass, id)
+
+    fun procedure(name: String, vararg params: SPParam<*>) = stormify.procedure(conn, name, *params)
 
     fun transaction(block: () -> Unit) {
         var savepoint: Savepoint? = null

@@ -37,6 +37,14 @@ class SqliteCallableStatement : CallableStatement {
         TODO("SQLite doesn't support callable statements")
     }
 
+    override fun addBatch() {
+        TODO("SQLite doesn't support callable statements")
+    }
+
+    override fun executeBatch(): IntArray {
+        TODO("SQLite doesn't support callable statements")
+    }
+
     override fun close() {
         // No-op
     }

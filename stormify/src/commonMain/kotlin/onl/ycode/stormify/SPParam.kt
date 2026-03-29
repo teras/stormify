@@ -68,5 +68,9 @@ class SPParam<T : Any> internal constructor(
         fun <T : Any> inout(type: KClass<T>, value: T): SPParam<T> {
             return SPParam(type, value, Mode.INOUT)
         }
+
+        inline fun <reified T : Any> IN(value: T): SPParam<T> = `in`(T::class, value)
+        inline fun <reified T : Any> OUT(): SPParam<T> = out(T::class)
+        inline fun <reified T : Any> INOUT(value: T): SPParam<T> = inout(T::class, value)
     }
 }

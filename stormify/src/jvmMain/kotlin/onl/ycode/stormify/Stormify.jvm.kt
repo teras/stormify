@@ -16,5 +16,5 @@ import onl.ycode.kdbc.JdbcDataSource
  * ```
  */
 @JvmName("fromJdbcDataSource")
-fun Stormify(jdbcDataSource: javax.sql.DataSource): Stormify =
-    Stormify(JdbcDataSource(jdbcDataSource))
+fun Stormify(jdbcDataSource: javax.sql.DataSource, vararg registrars: EntityRegistrar): Stormify =
+    Stormify(JdbcDataSource(jdbcDataSource), *registrars)

@@ -14,6 +14,15 @@ private const val COLUMN = "javax.persistence.Column"
 private const val JOIN_COLUMN = "javax.persistence.JoinColumn"
 private const val SEQUENCE = "javax.persistence.SequenceGenerator"
 
+private const val AUTO_TABLE = "onl.ycode.stormify.AutoTable"
+
+private val KOTLIN_BUILTINS = mapOf(
+    "kotlin.Int" to "Int", "kotlin.Long" to "Long", "kotlin.Short" to "Short",
+    "kotlin.Byte" to "Byte", "kotlin.Float" to "Float", "kotlin.Double" to "Double",
+    "kotlin.Boolean" to "Boolean", "kotlin.Char" to "Char", "kotlin.String" to "String",
+    "kotlin.ByteArray" to "ByteArray", "kotlin.CharArray" to "CharArray",
+)
+
 class EntityProperty(declaration: KSPropertyDeclaration) {
     val name = declaration.simpleName.getShortName()
     val type = declaration.type.resolve().declaration.qualifiedName?.asString().cname
@@ -23,6 +32,7 @@ class EntityProperty(declaration: KSPropertyDeclaration) {
     val updatable: Boolean
     val insertable: Boolean
     val primary: Boolean
+    val isReference: Boolean
 
     init {
         var _dbname = ""
@@ -33,10 +43,9 @@ class EntityProperty(declaration: KSPropertyDeclaration) {
         declaration.annotations.forEach { ann ->
             when (ann.annotationType.resolve().declaration.qualifiedName?.asString()) {
                 DB_FIELD -> {
-                    _dbname = ann.arguments.first { it.name?.asString() == "name" }.value.toString()
+                    _dbname = ann.arguments.firstOrNull { it.name?.asString() == "name" }?.value?.toString() ?: ""
                     _primary = ann.arguments.firstOrNull { it.name?.asString() == "primaryKey" }?.value?.toString()
-                        ?.toBoolean()
-                        ?: false
+                        ?.toBoolean() ?: false
                     _sequence =
                         ann.arguments.firstOrNull { it.name?.asString() == "primarySequence" }?.value?.toString() ?: ""
                     _updt =
@@ -47,7 +56,7 @@ class EntityProperty(declaration: KSPropertyDeclaration) {
                 }
 
                 COLUMN, JOIN_COLUMN -> {
-                    _dbname = ann.arguments.first { it.name?.asString() == "name" }.value.toString()
+                    _dbname = ann.arguments.firstOrNull { it.name?.asString() == "name" }?.value?.toString() ?: ""
                     _updt =
                         ann.arguments.firstOrNull { it.name?.asString() == "updatable" }?.value?.toString()?.toBoolean()
                             ?: true
@@ -55,7 +64,7 @@ class EntityProperty(declaration: KSPropertyDeclaration) {
                         ?.toBoolean() ?: true
                 }
 
-                SEQUENCE -> _sequence = ann.arguments.first { it.name?.asString() == "name" }.value.toString()
+                SEQUENCE -> _sequence = ann.arguments.firstOrNull { it.name?.asString() == "name" }?.value?.toString() ?: ""
                 ID -> _primary = true
             }
         }
@@ -64,6 +73,14 @@ class EntityProperty(declaration: KSPropertyDeclaration) {
         updatable = _updt
         insertable = _insertable
         primary = _primary
+
+        val typeDecl = declaration.type.resolve().declaration
+        isReference = typeDecl is KSClassDeclaration && (
+                typeDecl.annotations.any { ann ->
+                    ann.annotationType.resolve().declaration.qualifiedName?.asString() in setOf(DB_TABLE, ENTITY)
+                } || typeDecl.superTypes.any { sup ->
+                    sup.resolve().declaration.qualifiedName?.asString() == AUTO_TABLE
+                })
     }
 
     companion object {
@@ -80,13 +97,13 @@ class EntityProperty(declaration: KSPropertyDeclaration) {
             declaration.annotations.forEach { ann ->
                 when (ann.annotationType.resolve().declaration.qualifiedName?.asString()) {
                     DB_TABLE, ENTITY, TABLE ->
-                        name = ann.arguments.first { it.name?.asString() == "name" }.value.toString()
+                        name = ann.arguments.firstOrNull { it.name?.asString() == "name" }?.value?.toString() ?: ""
                 }
             }
             return name
         }
     }
 
-    private val String?.cname get() = if (this?.startsWith("kotlin.") == true) this.substring(7) else this
-
+    private val String?.cname: String?
+        get() = if (this == null) null else KOTLIN_BUILTINS[this] ?: this
 }

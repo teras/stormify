@@ -26,10 +26,10 @@ object TypeUtils {
         if (!isScalarObject(value)) {
             if (stormify == null)
                 throw SQLException("Unable to convert non-scalar object to " + targetClass.fullName + "; missing database context")
-            val info = TableInfo.retrieve(givenClass)
+            val info = stormify.resolveTableInfo(givenClass)
             val item = info.create()
             if (item is AutoTable) item.`!stormify` = stormify
-            info.setField(item, info.singleKeyName, value, stormify)
+            info.setField(item, info.singleKeyDbName, value, stormify)
             return item as T
         }
         val typeConv = (registry[targetClass]
@@ -47,7 +47,8 @@ object TypeUtils {
     // first key: target class
     // second key: source class
     // function: converter from source class to target class
-    val registry: MutableMap<KClass<*>, MutableMap<KClass<*>, (Any) -> Any>> = HashMap()
+    @PublishedApi
+    internal val registry: MutableMap<KClass<*>, MutableMap<KClass<*>, (Any) -> Any>> = HashMap()
 
     init {
         val toBoolean = mutableMapOf<KClass<*>, (Any) -> Any>()
@@ -96,7 +97,7 @@ object TypeUtils {
             }
             // from/to boolean
             fromGroup[Boolean::class] = { converter(if ((it as Boolean)) 1 else 0) }
-            toBoolean[target] = { (it as Number) == 0 }
+            toBoolean[target] = { (it as Number).toInt() != 0 }
             // from/to String
             if (target != Double::class && target != Float::class)
                 fromGroup[String::class] = { converter((it as String).toLong()) }
@@ -119,15 +120,14 @@ object TypeUtils {
      * @param targetClass the target class that the data should be converted to
      * @param converter the function that will convert the data
      */
+    private val registryLock = kotlinx.atomicfu.locks.SynchronizedObject()
+
     fun <F : Any, T : Any> register(
         sourceClass: KClass<F>,
         targetClass: KClass<T>,
         converter: (Any) -> Any
-    ) {
-        val group = registry[targetClass] ?: mutableMapOf()
-        if (group.isEmpty())
-            registry[targetClass] = group
-        group[sourceClass] = converter
+    ) = kotlinx.atomicfu.locks.synchronized(registryLock) {
+        registry.getOrPut(targetClass) { mutableMapOf() }[sourceClass] = converter
     }
 }
 

@@ -1,63 +1,156 @@
+// SPDX-License-Identifier: Apache-2.0
+// (C) Panayotis Katsaloulis
 package onl.ycode.stormify
 
 import onl.ycode.kdbc.SQLException
 import onl.ycode.logger.Logger
 import kotlin.reflect.KClass
 
-class TableInfo<T : Any>(
-    internal val type: KClass<T>,
-    internal val table: String,
-    internal val create: () -> T,
-    private val fields: (T, String, Any?, Stormify) -> Boolean,
-    internal val idNames: List<String>,
-    internal val idDbNames: List<String>,
-    internal val idTypes: List<KClass<*>>,
-    internal val idSequences: List<String>,
-    internal val getIdValues: (T) -> List<Any?>,
-    internal val restNames: List<String>,
-    internal val restDbNames: List<String>,
-    internal val restTypes: List<KClass<*>>,
-    internal val getRestValues: (T) -> List<Any?>,
-    internal val populateQuery: String,
-    internal val createQuery: String,
-    internal val updateQuery: String,
-    internal val deleteQuery: String,
+data class FieldInfo(
+    val name: String,
+    val dbName: String,
+    val type: KClass<*>,
+    val isPrimaryKey: Boolean,
+    val isReference: Boolean,
+    val sequence: String?,
+    val isInsertable: Boolean,
+    val isUpdatable: Boolean,
+)
+
+class TableInfo<T : Any> internal constructor(
+    private val meta: EntityMeta<T>,
+    private val resolved: List<ResolvedProperty<T>>,
+    val tableName: String,
 ) {
-    init {
-        require(idNames.size == idDbNames.size) { "The names and db names of the id columns must have the same size" }
-        require(idNames.size == idTypes.size) { "The names and types of the id columns must have the same size" }
-        require(idNames.size == idSequences.size) { "The names and sequences of the id columns must have the same size" }
-        require(restNames.size == restDbNames.size) { "The names and db names of the rest columns must have the same size" }
-        require(restNames.size == restTypes.size) { "The names and types of the rest columns must have the same size" }
+    val classType: KClass<T> get() = meta.type
+
+    internal fun create(): T = meta.constructor()
+
+    // Resolved property lists
+    private val idProps = resolved.filter { it.isPrimaryKey }
+    private val restProps = resolved.filter { !it.isPrimaryKey }
+    private val insertableProps = resolved.filter { it.isInsertable }
+    private val updatableProps = resolved.filter { it.isUpdatable && !it.isPrimaryKey }
+
+    // DB name lookups
+    private val fieldTypeMap = resolved.associate { it.dbName.lowercase() to it.type }
+    private val fieldByDbName = resolved.groupBy { it.dbName.lowercase() }
+    private val referenceFieldMap = resolved.filter { it.isReference }.associate { it.dbName.lowercase() to it.type }
+
+    internal fun getType(dbName: String): KClass<*> =
+        fieldTypeMap[dbName.lowercase()] ?: throw SQLException("Unknown field $dbName in $tableName")
+
+    internal fun isReferenceField(dbName: String): Boolean =
+        referenceFieldMap.containsKey(dbName.lowercase())
+
+    internal fun getReferenceType(dbName: String): KClass<*>? =
+        referenceFieldMap[dbName.lowercase()]
+
+    internal fun setField(entity: T, dbName: String, value: Any?, stormify: Stormify, errorToLogger: Logger? = null) {
+        val props = fieldByDbName[dbName.lowercase()]
+        if (props.isNullOrEmpty()) {
+            if (errorToLogger == null) throw SQLException("Column $dbName has no matching field in ${meta.type.simpleName}")
+            else errorToLogger.warn("Column $dbName has no matching field in ${meta.type.simpleName}")
+            return
+        }
+        for (prop in props) prop.setter(entity, value, stormify)
     }
 
-    private val fieldTypeMap = (idNames.map { it.lowercase() }.zip(idTypes) +
-            restNames.map { it.lowercase() }.zip(restTypes)).toMap()
+    // ID operations (cached lists — avoid allocation on every call)
+    internal val idNames = idProps.map { it.name }
+    internal val idDbNames = idProps.map { it.dbName }
+    internal val idTypes = idProps.map { it.type }
+    internal val idSequences = idProps.map { it.sequence ?: "" }
 
-    internal fun getType(name: String): KClass<*> =
-        fieldTypeMap[name.lowercase()] ?: throw SQLException("Unknown field $name in $table")
+    internal val singleKeyDbName: String =
+        if (idProps.size == 1) idProps[0].dbName
+        else throw SQLException("Expected exactly one primary key in $tableName, found ${idProps.size}")
 
-    internal fun setField(entity: T, name: String, value: Any?, stormify: Stormify, errorToLogger: Logger? = null) {
-        if (!fields(entity, name, value, stormify)) {
-            if (errorToLogger == null) throw SQLException("Unable to set field $name in $table")
-            else errorToLogger.error("Unable to set field $name in $table")
+    internal fun getIdValues(entity: T): List<Any?> = idProps.map { it.getter(entity) }
+
+    // SQL queries (lazy)
+    internal val selectFieldNames by lazy {
+        resolved.map { it.dbName }.toSet().joinToString(", ")
+    }
+    internal val populateQuery by lazy {
+        "SELECT $selectFieldNames FROM $tableName WHERE ${idProps.joinToString(" AND ") { "${it.dbName} = ?" }}"
+    }
+    internal val createQuery by lazy {
+        val fields = insertableProps.joinToString(", ") { it.dbName }
+        val placeholders = insertableProps.joinToString(", ") { "?" }
+        "INSERT INTO $tableName ($fields) VALUES ($placeholders)"
+    }
+    internal val updateQuery by lazy {
+        val setClause = updatableProps.joinToString(", ") { "${it.dbName} = ?" }
+        val whereClause = idProps.joinToString(" AND ") { "${it.dbName} = ?" }
+        "UPDATE $tableName SET $setClause WHERE $whereClause"
+    }
+    // Values for create/update queries (in query parameter order)
+    internal fun getCreateValues(entity: T): List<Any?> = insertableProps.map { it.getter(entity) }
+    internal fun getUpdateValues(entity: T): List<Any?> =
+        updatableProps.map { it.getter(entity) } + getIdValues(entity)
+
+    // Public introspection API
+    val fieldInfos: List<FieldInfo> by lazy {
+        resolved.map {
+            FieldInfo(it.name, it.dbName, it.type, it.isPrimaryKey, it.isReference,
+                it.sequence, it.isInsertable, it.isUpdatable)
         }
     }
 
-    internal val singleKeyName =
-        if (idNames.size == 1) idNames[0] else throw SQLException("Multiple primary keys found in $table")
+    val primaryKeys: List<FieldInfo> get() = fieldInfos.filter { it.isPrimaryKey }
+
+    val primaryKey: FieldInfo
+        get() = primaryKeys.singleOrNull()
+            ?: throw SQLException("Expected exactly one primary key in $tableName, found ${primaryKeys.size}")
+
+    fun getField(name: String): FieldInfo? =
+        fieldInfos.find { it.name.equals(name, ignoreCase = true) }
 
     companion object {
-        private val registry = mutableMapOf<KClass<*>, TableInfo<*>>()
-
-        fun register(tableInfo: TableInfo<*>) {
-            registry[tableInfo.type] = tableInfo
-        }
-
         @Suppress("UNCHECKED_CAST")
-        internal fun <T : Any> retrieve(type: KClass<out T>): TableInfo<T> =
-            registry[type] as? TableInfo<T>
-                ?: throw IllegalArgumentException("Unknown entity: ${type.simpleName}")
+        internal fun <T : Any> build(
+            meta: EntityMeta<T>,
+            namingPolicy: NamingPolicy,
+            blacklist: Set<String>,
+            pkResolvers: Collection<(String, String) -> Boolean>
+        ): TableInfo<T> {
+            val tableName = meta.tableNameOverride?.takeIf { it.isNotBlank() }
+                ?: namingPolicy.convert(meta.type.simpleName ?: meta.type.toString())
+
+            val activeProps = meta.properties
+                .filter { !it.isTransient && it.name !in blacklist }
+
+            val hasPkAnnotation = activeProps.any { it.isPrimaryKey }
+
+            val resolved = activeProps.map { prop ->
+                val dbName = prop.dbNameOverride?.takeIf { it.isNotBlank() }
+                    ?: namingPolicy.convert(prop.name)
+                val isPk = if (hasPkAnnotation) prop.isPrimaryKey
+                else pkResolvers.any { resolver -> resolver(tableName, prop.name) }
+                ResolvedProperty(
+                    name = prop.name, dbName = dbName, type = prop.type,
+                    isReference = prop.isReference, isPrimaryKey = isPk,
+                    sequence = prop.sequence, isInsertable = prop.isCreatable,
+                    isUpdatable = prop.isUpdatable,
+                    getter = prop.getter, setter = prop.setter
+                )
+            }
+
+            return TableInfo(meta, resolved, tableName)
+        }
     }
 }
 
+internal class ResolvedProperty<T : Any>(
+    val name: String,
+    val dbName: String,
+    val type: KClass<*>,
+    val isReference: Boolean,
+    val isPrimaryKey: Boolean,
+    val sequence: String?,
+    val isInsertable: Boolean,
+    val isUpdatable: Boolean,
+    val getter: (T) -> Any?,
+    val setter: (T, Any?, Stormify) -> Unit,
+)

@@ -2,7 +2,7 @@
 // (C) Panayotis Katsaloulis
 package onl.ycode.stormify.biglist
 
-import onl.ycode.stormify.TableInfo
+import onl.ycode.stormify.Stormify
 import onl.ycode.stormify.isScalarClass
 import kotlin.reflect.KClass
 
@@ -47,21 +47,22 @@ internal class NodeTable(
     private val parentReference: String,
     type: KClass<*>,
     invalidate: () -> Unit,
-    parent: Node?
+    parent: Node?,
+    private val stormify: Stormify
 ) :
     Node(type, invalidate, parent) {
     override val children = mutableMapOf<String, Node>()
-    private val tableInfo = TableInfo.retrieve(type)
+    private val tableInfo = stormify.resolveTableInfo(type)
 
-    private val tableDefinition = if (tableAlias.isEmpty()) tableInfo.table else "${tableInfo.table} AS $tableAlias"
-    private val tableHandler = tableAlias.ifEmpty { tableInfo.table }
+    private val tableDefinition = if (tableAlias.isEmpty()) tableInfo.tableName else "${tableInfo.tableName} AS $tableAlias"
+    private val tableHandler = tableAlias.ifEmpty { tableInfo.tableName }
 
     override fun findChild(fieldName: String, tableCounter: () -> Int) = children[fieldName] ?: run {
         val childType = tableInfo.getType(fieldName)
         val node = if (isScalarClass(childType))
             NodeField("$tableHandler.$fieldName", childType, invalidate, this)
         else
-            NodeTable("t${tableCounter()}", fieldName, childType, invalidate, this)
+            NodeTable("t${tableCounter()}", fieldName, childType, invalidate, this, stormify)
         children[fieldName] = node
         return node
     }
@@ -75,7 +76,7 @@ internal class NodeTable(
                 .append(" ON ")
                 .append(tableHandler)
                 .append(".")
-                .append(child.tableInfo.table)
+                .append(child.tableInfo.tableName)
                 .append(" = ")
                 .append(child.tableHandler)
                 .append(".")

@@ -29,9 +29,19 @@ internal actual fun getNativeAllPrimitives(): Collection<KClass<*>> = listOf(
     kotlin.time.Instant::class
 )
 
+@OptIn(kotlin.experimental.ExperimentalNativeApi::class)
+internal actual class WeakRef<T : Any> actual constructor(referent: T) {
+    private val ref = kotlin.native.ref.WeakReference(referent)
+    actual fun get(): T? = ref.get()
+}
+
+internal actual fun transformResultValue(value: Any?): Any? = value
+
 actual val Any.isOtherPrimitive
     get() = this is com.ionspin.kotlin.bignum.BigNumber<*> ||
             this is kotlinx.datetime.LocalDate ||
             this is kotlinx.datetime.LocalDateTime ||
             this is kotlinx.datetime.LocalTime ||
             this is kotlin.time.Instant
+
+internal actual fun <T : Any> tryReflection(type: KClass<T>): EntityMeta<T>? = null

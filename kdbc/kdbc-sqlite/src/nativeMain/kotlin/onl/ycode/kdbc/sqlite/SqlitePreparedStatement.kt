@@ -17,6 +17,8 @@ class SqlitePreparedStatement(
 ) : PreparedStatement {
     private val stmtPointer: CPointer<cnames.structs.sqlite3_stmt>
     private var lastInsertRowId: Long = 0
+    private val currentParams = mutableMapOf<Int, Any?>()
+    private val batches = mutableListOf<Map<Int, Any?>>()
 
     init {
         memScoped {
@@ -30,7 +32,26 @@ class SqlitePreparedStatement(
         }
     }
 
+    override fun addBatch() {
+        batches.add(currentParams.toMap())
+        currentParams.clear()
+    }
+
+    override fun executeBatch(): IntArray {
+        val results = IntArray(batches.size)
+        for ((i, params) in batches.withIndex()) {
+            sqlite3_reset(stmtPointer)
+            for ((index, value) in params) {
+                setObject(index, value)
+            }
+            results[i] = executeUpdate()
+        }
+        batches.clear()
+        return results
+    }
+
     override fun setObject(parameterIndex: Int, value: Any?) {
+        currentParams[parameterIndex] = value
         val result = when (value) {
             null -> sqlite3_bind_null(stmtPointer, parameterIndex)
             is Int -> sqlite3_bind_int(stmtPointer, parameterIndex, value)

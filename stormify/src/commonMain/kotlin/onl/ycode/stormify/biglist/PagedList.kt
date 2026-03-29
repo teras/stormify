@@ -22,12 +22,12 @@ import kotlin.reflect.KClass
  * @param stormify the Stormify instance for database operations
  */
 class PagedList<T : Any>(val classType: KClass<T>, private val stormify: Stormify) : AbstractList<T>() {
-    private val info: TableInfo<T> = TableInfo.retrieve(classType)
+    private val info: TableInfo<T> = stormify.resolveTableInfo(classType)
     private val tableCounter = atomic(0)
     private val custom = mutableListOf<CustomReference>()
     private val where = mutableListOf<MutableList<FilterReference>>()
     private val sort = mutableListOf<SortReference>()
-    private val root = NodeTable("", "", classType, { invalidate() }, null)
+    private val root = NodeTable("", "", classType, { invalidate() }, null, stormify)
     private var treeIsDirty = true
 
     /**
@@ -110,16 +110,16 @@ class PagedList<T : Any>(val classType: KClass<T>, private val stormify: Stormif
         get() {
             resolveCurrentTree()
             if (sort.isEmpty())
-                return (stormify.sqlDialect.orderByIdDialect(info.singleKeyName, selectedID)
+                return (stormify.sqlDialect.orderByIdDialect(info.singleKeyDbName, selectedID)
                     ?.let { "$it, " } ?: "") +
-                        info.table + "." + info.singleKeyName
+                        info.tableName + "." + info.singleKeyDbName
             return sort.joinToString(", ") { "${it.node.columnHandler}${if (!it.isAscending) " DESC" else ""}" }
         }
 
     private val tablesPart: String
         get() {
             resolveCurrentTree()
-            val out = StringBuilder(info.table)
+            val out = StringBuilder(info.tableName)
             root.getForeignKeys(out)
             return out.toString()
         }

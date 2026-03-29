@@ -8,11 +8,13 @@ import onl.ycode.kdbc.DataSource
  * This part defines the sequence dialects for different databases. *
  ********************************************************************/
 
-private val sequenceFromDual = { it: String -> "SELECT $it.NEXTVAL FROM dual" }
+private val sequenceFromDual = { it: String, count: Int -> "SELECT $it.NEXTVAL FROM dual CONNECT BY level <= $count" }
 
-private val sequenceNextValueFor = { it: String -> "SELECT NEXT VALUE FOR $it" }
+private val sequenceNextValueFor = { it: String, count: Int -> "SELECT NEXT VALUE FOR $it FROM (SELECT TOP $count 1 x FROM sys.objects) t" }
 
-private val sequenceNextval = { it: String -> "SELECT nextval('$it')" }
+private val sequenceNextval = { it: String, count: Int -> "SELECT nextval('$it') FROM generate_series(1, $count)" }
+
+private val sequenceMariaDb = { it: String, count: Int -> "SELECT NEXTVAL($it) FROM seq_1_to_$count" }
 
 /**********************************************************************
  * This part defines the pagination dialects for different databases. *
@@ -117,7 +119,7 @@ enum class SqlDialect(
      * A helper method to ask for sequences on different databases. As input is the name of the
      * sequence and as output the query to get the next value from the sequence.
      */
-    val sequenceDialect: (String) -> String?,
+    val sequenceDialect: (String, Int) -> String?,
     /**
      * A helper method to ask for order by id on different databases. This is used to create a query that,
      * before any other sorting, fetches a specific entity first.
@@ -144,7 +146,7 @@ enum class SqlDialect(
      * The MariaDB dialect for versions older than 10.3.
      */
     MARIA_DB_OLD(
-        { _ -> null },
+        { _, _ -> null },
         orderById,
         formatterLimitOffset,
         GeneratedKeyRetrieval.BY_INDEX
@@ -154,7 +156,7 @@ enum class SqlDialect(
      * The MariaDB dialect for versions 10.3 and newer.
      */
     MARIA_DB_NEW(
-        sequenceNextValueFor,
+        sequenceMariaDb,
         orderById,
         formatterLimitOffset, GeneratedKeyRetrieval.BY_INDEX
     ),
@@ -163,7 +165,7 @@ enum class SqlDialect(
      * The MySQL dialect for versions older than 8.
      */
     MYSQL_OLD(
-        { _ -> null },
+        { _, _ -> null },
         orderById,
         formatterLimitOffset, GeneratedKeyRetrieval.BY_INDEX
     ),
@@ -226,7 +228,7 @@ enum class SqlDialect(
      * The SQLite dialect.
      */
     SQLITE(
-        { _ -> null },
+        { _, _ -> null },
         orderById,
         formatterLimitOffset, GeneratedKeyRetrieval.BY_INDEX
     ),
@@ -262,7 +264,7 @@ enum class SqlDialect(
      * The dialect that is used when the database product name cannot be determined.
      */
     UNKNOWN(
-        { _ -> null },
+        { _, _ -> null },
         orderByCase,
         formatterLimitOffset, GeneratedKeyRetrieval.NONE
     ),
@@ -271,7 +273,7 @@ enum class SqlDialect(
      * A failsafe dialect, mostly in case of an error.
      */
     FAILSAFE(
-        { _ -> null },
+        { _, _ -> null },
         orderByCase,
         formatterLimitOffset, GeneratedKeyRetrieval.NONE
     );

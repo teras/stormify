@@ -31,6 +31,8 @@ class FreeTDSCallableStatement(
     private val procedureName: String
     private var hasExecuted = false
     private var returnStatus: Int? = null
+    private val currentParams = mutableMapOf<Int, Any?>()
+    private val batches = mutableListOf<Map<Int, Any?>>()
 
     init {
         // Extract procedure name from SQL
@@ -39,8 +41,26 @@ class FreeTDSCallableStatement(
     }
 
     override fun setObject(parameterIndex: Int, value: Any?) {
+        currentParams[parameterIndex] = value
         val param = parameters.getOrPut(parameterIndex) { Parameter() }
         param.value = value
+    }
+
+    override fun addBatch() {
+        batches.add(currentParams.toMap())
+        currentParams.clear()
+    }
+
+    override fun executeBatch(): IntArray {
+        val results = IntArray(batches.size)
+        for ((i, params) in batches.withIndex()) {
+            for ((index, value) in params) {
+                setObject(index, value)
+            }
+            results[i] = executeUpdate()
+        }
+        batches.clear()
+        return results
     }
 
     override fun registerOutParameter(parameterIndex: Int, type: KClass<*>) {
