@@ -6,7 +6,7 @@
 entities whose reference fields point to `AutoTable` subclasses, those references are created with only their primary
 key set. When you access any non-key field, the full entity is loaded from the database on demand.
 
-### How It Works
+### How It Works in Java
 
 Subclasses must call `autoPopulate()` in every getter/setter of non-primary-key fields:
 
@@ -34,6 +34,48 @@ public class User extends AutoTable {
     }
 }
 ```
+
+!!! note "JPA comparison"
+    JPA provides similar lazy-loading behavior, but it does so behind the scenes by injecting bytecode into
+    your POJO classes at build time or runtime — hidden, generated code that modifies your classes without
+    being visible in your source. Stormify takes the opposite approach: the `autoPopulate()` call is explicit,
+    so you always see exactly where lazy loading happens.
+
+### How It Works in Kotlin
+
+In Kotlin, the `db` property delegate eliminates the need to call `autoPopulate()` manually. Simply extend
+`AutoTable` and use `by db(defaultValue)` on non-key properties:
+
+```kotlin
+class User : AutoTable() {
+    @DbField(primaryKey = true)
+    var id: Int? = null
+    var name: String by db("")      // Auto-populated on first access
+    var email: String by db("")     // Auto-populated on first access
+}
+```
+
+That's it — no boilerplate getters and setters, no manual `autoPopulate()` calls. When `user.name` is accessed,
+the delegate triggers population automatically. Every non-key property that needs lazy loading simply uses
+`by db(defaultValue)`, and `AutoTable` provides the sibling batch optimization, `equals()`, `hashCode()`, and
+`toString()` implementations.
+
+!!! warning
+    The `db` delegate requires extending `AutoTable`. Without it, there is no `isDirty` flag to track
+    whether the entity has already been loaded, so every property access would trigger a database query.
+
+For parent-child relationships, the `lazyDetails` delegate loads child records on first access:
+
+```kotlin
+class Order : AutoTable() {
+    @DbField(primaryKey = true)
+    var id: Int? = null
+    var total: Double by db(0.0)
+    var items: List<OrderItem> by lazyDetails()    // Loaded on first access
+}
+```
+
+For more details on Kotlin-specific delegates, see [Kotlin Integration](Kotlin.md#property-delegation).
 
 `AutoTable` also provides implementations of `equals()`, `hashCode()`, and `toString()` based on primary key values.
 
@@ -94,8 +136,11 @@ public class User extends AutoTable implements CRUDTable {
 
 ### Using Sequences
 
-If your database uses sequences for generating primary keys, specify the sequence name. The primary key field must
-use a **boxed type** (e.g., `Integer` instead of `int`) so it can be `null` before the sequence value is assigned:
+If your database uses sequences for generating primary keys, specify the sequence name.
+
+!!! warning
+    The primary key field must use a **boxed type** (e.g., `Integer` instead of `int`) so it can be `null`
+    before the sequence value is assigned.
 
 ```java
 public class Test {
@@ -113,7 +158,10 @@ inserting. For batch inserts, all sequence values are fetched in a single query.
 ### Database Auto-Increment
 
 If no sequence is specified and the primary key is `null`, Stormify relies on the database's auto-increment mechanism.
-The generated key is populated back to the entity after a single insert (not available for batch inserts).
+The generated key is populated back to the entity after a single insert.
+
+!!! note
+    Auto-increment key retrieval is not available for batch inserts. Use database sequences instead.
 
 ## Working with Composite Keys
 
@@ -132,8 +180,9 @@ public class CompositeKeyExample {
 }
 ```
 
-**Note**: `findById` and sequence-based ID generation require a single primary key and are not available for composite
-keys. Use `read` or `findAll` with a WHERE clause instead.
+!!! note
+    `findById` and sequence-based ID generation require a single primary key and are not available for
+    composite keys. Use `read` or `findAll` with a WHERE clause instead.
 
 ## Stored Procedures
 

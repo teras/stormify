@@ -136,8 +136,9 @@ If you have an entity with only its primary key set, you can load its remaining 
     record.populate()
     ```
 
-**Note**: For `AutoTable` entities, `populate()` detaches the entity from any sibling batch group and loads it
-individually. See [AutoTable](Advanced_topics.md#autotable-lazy-loading) for details on batch loading.
+!!! note
+    For `AutoTable` entities, `populate()` detaches the entity from any sibling batch group and loads it
+    individually. See [AutoTable](Advanced_topics.md#autotable-lazy-loading) for details on batch loading.
 
 ## CRUD Operations
 
@@ -195,10 +196,11 @@ All CRUD methods accept collections for batch processing. Batch operations use J
     stormify().delete(items)
     ```
 
-**Note on batch insert with auto-generated keys**: When inserting multiple entities without pre-assigned IDs,
-the generated keys will **not** be populated back to the entities (JDBC does not guarantee key ordering for batch
-inserts). To reliably get generated IDs in batch inserts, use database sequences configured via
-`@DbField(primarySequence = "seq_name")`, which are fetched in bulk before the insert.
+!!! warning "Batch insert with auto-generated keys"
+    When inserting multiple entities without pre-assigned IDs, the generated keys will **not** be populated
+    back to the entities (JDBC does not guarantee key ordering for batch inserts). To reliably get generated
+    IDs in batch inserts, use database sequences configured via `@DbField(primarySequence = "seq_name")`,
+    which are fetched in bulk before the insert.
 
 ## Transaction Management
 
@@ -274,6 +276,7 @@ Use `getDetails` to retrieve child records of a parent entity:
     val byField = order.details<OrderItem>("parentOrder")
     ```
 
-The parent class must have exactly one primary key. If `propertyName` is not specified, Stormify finds the field
-in the details class whose type matches the parent class. If multiple fields match, or none matches, a
-`QueryException` is thrown.
+!!! info
+    The parent class must have exactly one primary key. If `propertyName` is not specified, Stormify finds
+    the field in the details class whose type matches the parent class. If multiple fields match, or none
+    matches, a `QueryException` is thrown.

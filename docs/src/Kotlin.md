@@ -68,17 +68,23 @@ These features are unique to Kotlin and have no Java equivalent.
 
 ### Auto-Populating Properties
 
-The `db` delegate auto-populates an entity from the database on first property access:
+The `db` delegate auto-populates an entity from the database on first property access. Use it together
+with `AutoTable` so that the entity is loaded only once (via the `isDirty` flag):
 
 ```kotlin
-class User {
-    var id: Int = 0
+class User : AutoTable() {
+    @DbField(primaryKey = true)
+    var id: Int? = null
     var name: String by db("")    // Loaded from DB on first get or set
 }
 ```
 
-When `user.name` is accessed, `stormify().populate(user)` is called automatically. This is a Kotlin-specific
-alternative to extending `AutoTable`.
+When `user.name` is accessed, `stormify().populate(user)` is called automatically. This is the Kotlin-idiomatic
+replacement for manually calling `autoPopulate()` in every getter and setter.
+
+!!! warning
+    The `db` delegate requires extending `AutoTable`. Without it, there is no `isDirty` flag to track
+    whether the entity has already been loaded, so every property access would trigger a database query.
 
 ### Lazy Details
 

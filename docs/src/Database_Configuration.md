@@ -5,8 +5,9 @@
 Stormify relies on a JDBC-compatible `javax.sql.DataSource` to connect to your database. You can use any connection
 pooling library such as HikariCP, Apache DBCP, or any other JDBC data source.
 
-The data source must be set before any database operations can be performed, and it can only be set once. To release
-it, use `closeDataSource()`.
+!!! warning
+    The data source must be set before any database operations can be performed, and it can only be set once.
+    To release it, use `closeDataSource()`.
 
 ### Setting Up the Data Source
 
@@ -54,7 +55,8 @@ Stormify is compatible with any `javax.sql.DataSource` implementation.
 
 ### Configuration
 
-Naming policies and primary key resolvers can be set at any time before the first query:
+!!! tip
+    Naming policies and primary key resolvers can be set at any time before the first query.
 
 ```java
 stormify().setNamingPolicy(NamingPolicy.camelCase);
@@ -82,7 +84,8 @@ When the application shuts down, close the data source to release connections:
 stormify().closeDataSource();
 ```
 
-If the data source implements `Closeable` or `AutoCloseable`, it will be closed automatically.
+!!! tip
+    If the data source implements `Closeable` or `AutoCloseable`, it will be closed automatically.
 
 ## Logging Configuration
 

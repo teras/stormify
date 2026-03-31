@@ -12,8 +12,9 @@ Stormify discovers entity properties by scanning for **getter/setter method pair
 property that is mapped to a database column. Read-only properties (getter without setter) are also supported but
 cannot be written to.
 
-**Important**: Raw public fields without getters/setters are **not** mapped. Your POJOs must follow the JavaBean
-convention, or use Kotlin `var` properties (which generate getters/setters automatically).
+!!! warning "JavaBean convention required"
+    Raw public fields without getters/setters are **not** mapped. Your POJOs must follow the JavaBean
+    convention, or use Kotlin `var` properties (which generate getters/setters automatically).
 
 - **Automatic Mapping**: Properties are automatically mapped to database columns with matching names (after applying
   the naming policy). No annotations are required.
@@ -171,7 +172,8 @@ If `Customer` extends `AutoTable`, its remaining fields are lazy-loaded on first
 Stormify includes a feature to manage fields that should be excluded from entity mapping entirely. Blacklisted fields
 are completely ignored during all database interactions (reads, creates, and updates).
 
-**Note**: Fields marked as `@Transient` are also ignored automatically.
+!!! note
+    Fields marked as `@Transient` are also ignored automatically.
 
 - **Add to Blacklist**: Use `addBlacklistField(String fieldName)` to add a field to the blacklist.
 - **Remove from Blacklist**: Use `removeBlacklistField(String fieldName)` to remove a field from the blacklist.
