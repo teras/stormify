@@ -374,7 +374,7 @@ public class StormifyManager {
         }
 
         String placeholders = String.join(", ", Collections.nCopies(uniqueIds.size(), "?"));
-        String query = "SELECT * FROM " + tableInfo.getTableName() + " WHERE " + pk.getDbName() + " IN (" + placeholders + ")";
+        String query = "SELECT " + tableInfo.selectFieldNames.get() + " FROM " + tableInfo.getTableName() + " WHERE " + pk.getDbName() + " IN (" + placeholders + ")";
 
         PopulationContext nestedContext = new PopulationContext();
         performQuery(query, uniqueIds.toArray(), false, statement -> {
@@ -401,7 +401,7 @@ public class StormifyManager {
         else if (info.status == NULL_ID_FIELDS)
             return;
         Object[] params = info.idValues.toArray();
-        String query = "SELECT * FROM " + info.table + " WHERE " + listOfIds(info.idFields);
+        String query = "SELECT " + registry.getTableInfo(info.itemClass).selectFieldNames.get() + " FROM " + info.table + " WHERE " + listOfIds(info.idFields);
         performQuery(query, params, false, statement -> {
             ResultSet rs = statement.executeQuery();
             if (rs.next())
@@ -691,9 +691,9 @@ public class StormifyManager {
             Collection<FieldInfo> fields = tableInfo.getDbField(columnName);
             if (fields.isEmpty()) {
                 if (strictMode)
-                    throw new QueryException("Field " + columnName + " not found in " + tableInfo.getTableName());
+                    throw new QueryException("Column " + columnName + " has no matching field in " + tableInfo.getClassType().getSimpleName());
                 else
-                    logger.warn("Field " + columnName + " not found in " + tableInfo.getTableName());
+                    logger.warn("Column " + columnName + " has no matching field in " + tableInfo.getClassType().getSimpleName());
                 continue;
             }
             Object value = resultSet.getObject(columnName);
@@ -799,7 +799,7 @@ public class StormifyManager {
                     " in class " + detailsClass.getSimpleName());
         Object parentPrimaryKeyValue = parentPrimaryKeys.iterator().next().getValue(parent);
         List<D> details = stormify().read(
-                detailsClass, "SELECT * FROM " + detailInfo.getTableName() + " WHERE " + field.getDbName() + " = ?",
+                detailsClass, "SELECT " + detailInfo.selectFieldNames.get() + " FROM " + detailInfo.getTableName() + " WHERE " + field.getDbName() + " = ?",
                 parentPrimaryKeyValue
         );
         for (D detail : details)
@@ -818,7 +818,8 @@ public class StormifyManager {
      */
     public <T> List<T> findAll(Class<T> clazz, String whereClause, Object... arguments) {
         requireNonNull(clazz, "Class cannot be null");
-        return read(clazz, "SELECT * FROM " + getTableInfo(clazz).getTableName()
+        TableInfo tableInfo = getTableInfo(clazz);
+        return read(clazz, "SELECT " + tableInfo.selectFieldNames.get() + " FROM " + tableInfo.getTableName()
                 + (whereClause == null || whereClause.isEmpty() ? "" : " " + whereClause), arguments);
     }
 
@@ -833,7 +834,8 @@ public class StormifyManager {
     public <T> T findById(Class<T> clazz, Object id) {
         requireNonNull(clazz, "Class cannot be null");
         requireNonNull(id, "ID cannot be null");
-        return readOne(clazz, "SELECT * FROM " + getTableInfo(clazz).getTableName() + " WHERE " + getTableInfo(clazz).getPrimaryKey().getDbName() + " = ?", id);
+        TableInfo tableInfo = getTableInfo(clazz);
+        return readOne(clazz, "SELECT " + tableInfo.selectFieldNames.get() + " FROM " + tableInfo.getTableName() + " WHERE " + tableInfo.getPrimaryKey().getDbName() + " = ?", id);
     }
 
     /**

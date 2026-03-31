@@ -130,7 +130,21 @@ inline fun <reified T : Any> INOUT(value: T?): SPParam<T> = SPParam.inout(T::cla
 inline val <reified T : Any> KClass<T>.db get() = stormify().getTableInfo(T::class.java).tableName
 
 /**
- * @suppress
+ * A property delegate that auto-populates an entity from the database on first property access.
+ * Use this on non-primary-key properties of classes that extend [AutoTable]. The `AutoTable` base class
+ * provides the `isDirty` flag that ensures the entity is loaded only once; without it, every property
+ * access would trigger a database query.
+ *
+ * Example:
+ * ```kotlin
+ * class User : AutoTable() {
+ *     @DbField(primaryKey = true)
+ *     var id: Int? = null
+ *     var name: String by db("")
+ * }
+ * ```
+ *
+ * @param defaultValue the default value before the entity is populated from the database.
  */
 class db<T>(defaultValue: T) : ReadWriteProperty<Any?, T> {
     var prop: T = defaultValue

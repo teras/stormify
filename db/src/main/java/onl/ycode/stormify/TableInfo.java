@@ -25,6 +25,7 @@ public class TableInfo {
     private final LazyProperty<Map<String, FieldInfo>> objFields;
     private final LazyProperty<List<FieldInfo>> createFields;
     private final LazyProperty<List<FieldInfo>> updateFields;
+    final LazyProperty<String> selectFieldNames;
     final LazyProperty<String> createFieldNames;
     final LazyProperty<String> updateFieldNames;
     final LazyProperty<String> createPlaceholders;
@@ -45,6 +46,11 @@ public class TableInfo {
             for (FieldInfo field : fields)
                 result.put(field.getName(), field);
             return result;
+        });
+        this.selectFieldNames = new LazyProperty<>(() -> {
+            LinkedHashSet<String> names = new LinkedHashSet<>();
+            for (FieldInfo field : this.fields) names.add(field.getDbName());
+            return String.join(", ", names);
         });
         this.createFields = new LazyProperty<>(() -> filter(fields, FieldInfo::isInsertable));
         this.updateFields = new LazyProperty<>(() -> filter(fields, FieldInfo::isUpdatable));
