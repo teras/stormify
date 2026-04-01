@@ -6,6 +6,9 @@ package onl.ycode.stormify;
 import java.math.BigDecimal;
 import java.sql.Connection;
 import java.sql.DatabaseMetaData;
+import java.sql.PreparedStatement;
+import java.sql.SQLException;
+import java.sql.Statement;
 import java.util.function.BiFunction;
 
 import static onl.ycode.stormify.SqlDialect.GeneratedKeyRetrieval.*;
@@ -23,51 +26,51 @@ public enum SqlDialect {
     /**
      * The MariaDB dialect for versions older than 10.3.
      */
-    MARIA_DB_OLD((s, n) -> null, getOrderById(), getFormatterLimitOffset(), BY_INDEX),
+    MARIA_DB_OLD((s, n) -> null, getOrderById(), getFormatterLimitOffset(), BY_INDEX, true),
     /**
      * The MariaDB dialect for versions 10.3 and newer.
      */
-    MARIA_DB_NEW(getSequenceMariaDb(), getOrderById(), getFormatterLimitOffset(), BY_INDEX),
+    MARIA_DB_NEW(getSequenceMariaDb(), getOrderById(), getFormatterLimitOffset(), BY_INDEX, true),
     /**
      * The MySQL dialect for versions older than 8.
      */
-    MYSQL_OLD((s, n) -> null, getOrderById(), getFormatterLimitOffset(), BY_INDEX),
+    MYSQL_OLD((s, n) -> null, getOrderById(), getFormatterLimitOffset(), BY_INDEX, true),
     /**
      * The MySQL dialect for versions 8 and newer.
      */
-    MYSQL_NEW(getSequenceNextValueFor(), getOrderById(), getFormatterLimitOffset(), BY_INDEX),
+    MYSQL_NEW((s, n) -> null, getOrderById(), getFormatterLimitOffset(), BY_INDEX, true),
     /**
      * The Oracle dialect for versions 12 and newer.
      */
-    ORACLE_NEW(getSequenceFromDual(), getOrderByCase(), getFormatterRowsFetch(), NONE),
+    ORACLE_NEW(getSequenceFromDual(), getOrderByCase(), getFormatterRowsFetch(), BY_NAME, false),
     /**
      * The Oracle dialect for versions older than 12.
      */
-    ORACLE_OLD(getSequenceFromDual(), getOrderByCase(), getFormatterRowNumber(), NONE),
+    ORACLE_OLD(getSequenceFromDual(), getOrderByCase(), getFormatterRowNumber(), NONE, false),
     /**
      * The PostgreSQL dialect.
      */
-    POSTGRESQL(getSequenceNextval(), getOrderById(), getFormatterLimitOffset(), BY_NAME),
+    POSTGRESQL(getSequenceNextval(), getOrderById(), getFormatterLimitOffset(), BY_NAME, true),
     /**
      * The SQL Server dialect for versions 2012 and newer.
      */
-    SQL_SERVER_NEW(getSequenceNextValueFor(), getOrderByCase(), getFormatterRowsFetch(), BY_NAME),
+    SQL_SERVER_NEW(getSequenceNextValueFor(), getOrderByCase(), getFormatterRowsFetch(), BY_INDEX, false),
     /**
      * The SQL Server dialect for versions older than 2012.
      */
-    SQL_SERVER_OLD(getSequenceNextValueFor(), getOrderByCase(), getFormatterRowNumber(), BY_NAME),
+    SQL_SERVER_OLD(getSequenceNextValueFor(), getOrderByCase(), getFormatterRowNumber(), BY_NAME, false),
     /**
      * The SQLite dialect.
      */
-    SQLITE((s, n) -> null, getOrderById(), getFormatterLimitOffset(), BY_INDEX),
+    SQLITE((s, n) -> null, getOrderById(), getFormatterLimitOffset(), BY_INDEX, true),
     /**
      * The dialect that is used when the database product name cannot be determined.
      */
-    UNKNOWN((s, n) -> null, getOrderByCase(), getFormatterLimitOffset(), NONE),
+    UNKNOWN((s, n) -> null, getOrderByCase(), getFormatterLimitOffset(), NONE, true),
     /**
      * A failsafe dialect, mostly in case of an error.
      */
-    FAILSAFE((s, n) -> null, getOrderByCase(), getFormatterLimitOffset(), NONE);
+    FAILSAFE((s, n) -> null, getOrderByCase(), getFormatterLimitOffset(), NONE, true);
 
     /**
      * A query builder for various SQL dialects. The main purpose of this interface is to be able
@@ -114,16 +117,32 @@ public enum SqlDialect {
     public final QueryFormatter queryFormatter;
 
     final GeneratedKeyRetrieval generatedKeyRetrieval;
+    final boolean supportsReleaseSavepoint;
+
+    PreparedStatement prepareForInsert(Connection conn, String query, boolean fetchGeneratedKeys, String pkColumn) throws SQLException {
+        if (!fetchGeneratedKeys)
+            return conn.prepareStatement(query);
+        switch (generatedKeyRetrieval) {
+            case BY_NAME:
+                return conn.prepareStatement(query, new String[]{pkColumn});
+            case BY_INDEX:
+                return conn.prepareStatement(query, Statement.RETURN_GENERATED_KEYS);
+            default:
+                return conn.prepareStatement(query);
+        }
+    }
 
     SqlDialect(BiFunction<String, Integer, String> sequenceDialect,
                BiFunction<String, BigDecimal, String> orderByIdDialect,
                QueryFormatter queryFormatter,
-               GeneratedKeyRetrieval generatedKeyRetrieval
+               GeneratedKeyRetrieval generatedKeyRetrieval,
+               boolean supportsReleaseSavepoint
     ) {
         this.sequenceDialect = sequenceDialect;
         this.orderByIdDialect = orderByIdDialect;
         this.queryFormatter = queryFormatter;
         this.generatedKeyRetrieval = generatedKeyRetrieval;
+        this.supportsReleaseSavepoint = supportsReleaseSavepoint;
     }
 
     static SqlDialect findDialect() {
@@ -140,9 +159,15 @@ public enum SqlDialect {
             else if (productName.contains("postgresql"))
                 return POSTGRESQL;
             else if (productName.contains("sqlite"))
-                return SQLITE; // SQLite does not support sequences natively
-            else if (productName.contains("mysql")) {
+                return SQLITE;
+            else if (productName.contains("mariadb")) {
+                if (majorVersion > 10 || (majorVersion == 10 && minorVersion >= 3))
+                    return MARIA_DB_NEW;
+                else
+                    return MARIA_DB_OLD;
+            } else if (productName.contains("mysql")) {
                 if (productVersion.contains("mariadb")) {
+                    // MySQL connector connected to MariaDB server
                     if (majorVersion > 10 || (majorVersion == 10 && minorVersion >= 3))
                         return MARIA_DB_NEW;
                     else

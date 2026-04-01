@@ -14,6 +14,9 @@ class AnnotationUtils {
     static final Class<? extends Annotation> columnClass;
     static final Class<? extends Annotation> joinColumnClass;
     static final Class<? extends Annotation> sequenceGeneratorClass;
+    static final Class<? extends Annotation> generatedValueClass;
+    static final Method generatedValueStrategyMethod;
+    static final Object identityStrategy;
     static final Method tableNameMethod;
     static final Method columnNameMethod;
     static final Method joinColumnNameMethod;
@@ -33,6 +36,9 @@ class AnnotationUtils {
         columnClass = findClass("javax.persistence.Column");
         joinColumnClass = findClass("javax.persistence.JoinColumn");
         sequenceGeneratorClass = findClass("javax.persistence.SequenceGenerator");
+        generatedValueClass = findClass("javax.persistence.GeneratedValue");
+        generatedValueStrategyMethod = findMethod(generatedValueClass, "strategy");
+        identityStrategy = findEnumConstant("javax.persistence.GenerationType", "IDENTITY");
         tableNameMethod = findMethod(tableClass, "name");
         columnNameMethod = findMethod(columnClass, "name");
         joinColumnNameMethod = findMethod(joinColumnClass, "name");
@@ -50,6 +56,23 @@ class AnnotationUtils {
         } catch (ClassNotFoundException e) {
             return null;
         }
+    }
+
+    private static Object findEnumConstant(String className, String constantName) {
+        try {
+            Class<?> enumClass = Class.forName(className);
+            for (Object c : enumClass.getEnumConstants())
+                if (c.toString().equals(constantName)) return c;
+        } catch (ClassNotFoundException ignored) {
+        }
+        return null;
+    }
+
+    static boolean isJpaIdentity(Field field) {
+        if (generatedValueClass == null || generatedValueStrategyMethod == null || identityStrategy == null)
+            return false;
+        Object strategy = getAnnotationValue(field, generatedValueClass, generatedValueStrategyMethod);
+        return identityStrategy.equals(strategy);
     }
 
     private static Method findMethod(Class<? extends Annotation> annotationClass, String methodName) {

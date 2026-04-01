@@ -38,7 +38,7 @@ public class TableInfo {
         this.dbFields = new LazyProperty<>(() -> {
             Map<String, Collection<FieldInfo>> result = new LinkedHashMap<>();
             for (FieldInfo field : fields)
-                result.computeIfAbsent(field.getDbName(), k -> new ArrayList<>()).add(field);
+                result.computeIfAbsent(field.getDbName().toLowerCase(), k -> new ArrayList<>()).add(field);
             return result;
         });
         this.objFields = new LazyProperty<>(() -> {
@@ -127,7 +127,7 @@ public class TableInfo {
      * @return The fields corresponding to the specific column name.
      */
     public Collection<FieldInfo> getDbField(String name) {
-        return dbFields.get().getOrDefault(name, Collections.emptyList());
+        return dbFields.get().getOrDefault(name.toLowerCase(), Collections.emptyList());
     }
 
     /**

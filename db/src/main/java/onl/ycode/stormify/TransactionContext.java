@@ -49,10 +49,12 @@ class TransactionContext implements Closeable {
     void commit() {
         if (!savepoints.isEmpty()) {
             stormify().dbLog("Commit inner transaction #" + savepoints.size(), null);
-            try {
-                connection.releaseSavepoint(savepoints.get(savepoints.size() - 1));
-            } catch (SQLException e) {
-                throw new QueryException("Unable to release savepoint", e);
+            if (stormify().getSqlDialect().supportsReleaseSavepoint) {
+                try {
+                    connection.releaseSavepoint(savepoints.get(savepoints.size() - 1));
+                } catch (SQLException e) {
+                    throw new QueryException("Unable to release savepoint", e);
+                }
             }
         } else {
             stormify().dbLog("Commit transaction", null);

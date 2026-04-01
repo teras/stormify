@@ -33,16 +33,35 @@ dependencies {
     testImplementation("org.junit.jupiter:junit-jupiter-api:5.12.2")
     testImplementation("org.junit.jupiter:junit-jupiter-engine:5.12.2")
     testImplementation("org.junit.platform:junit-platform-launcher")
-    testImplementation("com.mysql:mysql-connector-j:9.2.0")
     testImplementation("org.slf4j:slf4j-api:2.0.17")
     testImplementation("ch.qos.logback:logback-classic:1.5.18")
     testImplementation("ch.qos.logback:logback-core:1.5.18")
     testImplementation("com.zaxxer:HikariCP:6.3.0")
 
+    // Load only the JDBC driver for the target database (default: sqlite)
+    val testDb = System.getProperty("stormify.test.db") ?: "sqlite"
+    when {
+        testDb.startsWith("mysql") || testDb == "mariadb-mysql-driver" ->
+            testImplementation("com.mysql:mysql-connector-j:9.2.0")
+        testDb.startsWith("mariadb") -> testImplementation("org.mariadb.jdbc:mariadb-java-client:3.5.3")
+        testDb.startsWith("postgresql") -> testImplementation("org.postgresql:postgresql:42.7.5")
+        testDb.startsWith("oracle") -> testImplementation("com.oracle.database.jdbc:ojdbc8:21.9.0.0")
+        testDb.startsWith("mssql") -> testImplementation("com.microsoft.sqlserver:mssql-jdbc:12.8.1.jre8")
+        testDb == "spring-jdbc" -> {
+            testImplementation("org.springframework:spring-jdbc:5.3.39")
+            testImplementation("org.xerial:sqlite-jdbc:3.47.2.0")
+        }
+        else -> testImplementation("org.xerial:sqlite-jdbc:3.47.2.0")
+    }
+
 }
 
 tasks.test {
-    useJUnitPlatform() // Required for running JUnit 5 tests
+    useJUnitPlatform()
     testLogging.showStandardStreams = true
     reports.html.required.set(false)
+    val testDb = System.getProperty("stormify.test.db") ?: "sqlite"
+    systemProperty("stormify.test.db", testDb)
+    systemProperty("stormify.test.config", System.getProperty("stormify.test.config")
+        ?: if (testDb == "sqlite") "" else "")
 }

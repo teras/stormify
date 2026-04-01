@@ -379,8 +379,17 @@ public class StormifyManager {
         PopulationContext nestedContext = new PopulationContext();
         performQuery(query, uniqueIds.toArray(), false, statement -> {
             ResultSet rs = statement.executeQuery();
+            // Find the pk column index by label (case-insensitive, for Oracle compatibility)
+            ResultSetMetaData meta = rs.getMetaData();
+            int pkIndex = -1;
+            for (int i = 1; i <= meta.getColumnCount(); i++) {
+                if (meta.getColumnLabel(i).equalsIgnoreCase(pk.getDbName())) {
+                    pkIndex = i;
+                    break;
+                }
+            }
             while (rs.next()) {
-                String key = String.valueOf(rs.getObject(pk.getDbName()));
+                String key = String.valueOf(pkIndex > 0 ? rs.getObject(pkIndex) : rs.getObject(pk.getDbName()));
                 List<AutoTable> targets = byId.remove(key);
                 if (targets != null)
                     for (AutoTable target : targets)
@@ -444,6 +453,17 @@ public class StormifyManager {
         return sqlDialect;
     }
 
+    /**
+     * Manually sets the SQL dialect. Use this when auto-detection fails, for example
+     * when connecting through a database proxy that alters the product name reported
+     * by the JDBC driver.
+     *
+     * @param dialect the SQL dialect to use.
+     */
+    public synchronized void setSqlDialect(SqlDialect dialect) {
+        this.sqlDialect = dialect;
+    }
+
     private List<BigInteger> getNextSequences(String sequence, int count) {
         String sqlStatement = getSqlDialect().sequenceDialect.apply(sequence, count);
         if (sqlStatement == null) return emptyList();
@@ -497,13 +517,20 @@ public class StormifyManager {
         List<FieldInfo> primaryKeys = tableInfo.getPrimaryKeys();
         FieldInfo pkField = primaryKeys.size() == 1 ? primaryKeys.get(0) : null;
         boolean hasSequence = pkField != null && pkField.getSequence() != null;
+        boolean isAutoIncrement = pkField != null && pkField.isAutoIncrement();
 
         // Collect indices of items that need ID (only if single primary key exists)
         List<Integer> needsId = new ArrayList<>();
         if (pkField != null) {
-            for (int i = 0; i < items.size(); i++) {
-                if (pkField.getValue(items.get(i)) == null) {
+            if (isAutoIncrement) {
+                // Auto-increment: all items need generated IDs
+                for (int i = 0; i < items.size(); i++)
                     needsId.add(i);
+            } else {
+                for (int i = 0; i < items.size(); i++) {
+                    if (pkField.getValue(items.get(i)) == null) {
+                        needsId.add(i);
+                    }
                 }
             }
         }
@@ -528,19 +555,22 @@ public class StormifyManager {
 
         initConnection(connection -> {
             dbLog(query + " [batch: " + items.size() + "]", null);
-            try (PreparedStatement stmt = fetchGeneratedKeys
-                    ? connection.prepareStatement(query, Statement.RETURN_GENERATED_KEYS)
-                    : connection.prepareStatement(query)) {
+            try (PreparedStatement stmt = getSqlDialect().prepareForInsert(
+                    connection, query, fetchGeneratedKeys, pkField != null ? pkField.getDbName() : null)) {
 
-                // Add all items to batch
+                // Execute insert(s)
                 for (T item : items) {
                     int idx = 1;
                     for (FieldInfo field : tableInfo.getFields(FieldContext.CREATE))
                         stmt.setObject(idx++, sqlData(field.getValue(item), false));
-                    stmt.addBatch();
+                    if (fetchGeneratedKeys) {
+                        stmt.executeUpdate();
+                    } else {
+                        stmt.addBatch();
+                    }
                 }
-
-                stmt.executeBatch();
+                if (!fetchGeneratedKeys)
+                    stmt.executeBatch();
 
                 // Fetch generated key only for single item (no order guarantee for batch)
                 if (fetchGeneratedKeys) {
@@ -552,9 +582,9 @@ public class StormifyManager {
                                 ResultSetMetaData metaData = rs.getMetaData();
                                 int columnCount = metaData.getColumnCount();
                                 for (int i = 1; i <= columnCount; i++) {
-                                    String columnName = metaData.getColumnName(i);
-                                    for (FieldInfo fieldInfo : tableInfo.getDbField(columnName))
-                                        fieldInfo.setValue(items.get(needsId.get(0)), rs.getObject(columnName), registry, null);
+                                    String columnLabel = metaData.getColumnLabel(i);
+                                    for (FieldInfo fieldInfo : tableInfo.getDbField(columnLabel))
+                                        fieldInfo.setValue(items.get(needsId.get(0)), rs.getObject(i), registry, null);
                                 }
                             }
                         }
@@ -687,16 +717,16 @@ public class StormifyManager {
         if (item instanceof AutoTable)
             ((AutoTable) item).markPopulated();
         for (int i = 1; i <= columnCount; i++) {
-            String columnName = metaData.getColumnName(i);
-            Collection<FieldInfo> fields = tableInfo.getDbField(columnName);
+            String columnLabel = metaData.getColumnLabel(i);
+            Collection<FieldInfo> fields = tableInfo.getDbField(columnLabel);
             if (fields.isEmpty()) {
                 if (strictMode)
-                    throw new QueryException("Column " + columnName + " has no matching field in " + tableInfo.getClassType().getSimpleName());
+                    throw new QueryException("Column " + columnLabel + " has no matching field in " + tableInfo.getClassType().getSimpleName());
                 else
-                    logger.warn("Column " + columnName + " has no matching field in " + tableInfo.getClassType().getSimpleName());
+                    logger.warn("Column " + columnLabel + " has no matching field in " + tableInfo.getClassType().getSimpleName());
                 continue;
             }
-            Object value = resultSet.getObject(columnName);
+            Object value = resultSet.getObject(i);
             if (value != null) {
                 if (Clob.class.isAssignableFrom(value.getClass()))
                     value = ((Clob) value).getSubString(1, (int) ((Clob) value).length());

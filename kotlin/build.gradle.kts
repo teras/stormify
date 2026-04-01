@@ -29,7 +29,16 @@ dependencies {
 
     testImplementation(kotlin("test-junit5"))
 
-    testImplementation("com.mysql:mysql-connector-j:9.0.0")
+    // Load only the JDBC driver for the target database (default: sqlite)
+    val testDb = System.getProperty("stormify.test.db") ?: "sqlite"
+    when {
+        testDb.startsWith("mysql") -> testImplementation("com.mysql:mysql-connector-j:9.2.0")
+        testDb.startsWith("mariadb") -> testImplementation("org.mariadb.jdbc:mariadb-java-client:3.5.3")
+        testDb.startsWith("postgresql") -> testImplementation("org.postgresql:postgresql:42.7.5")
+        testDb.startsWith("oracle") -> testImplementation("com.oracle.database.jdbc:ojdbc8:21.9.0.0")
+        testDb.startsWith("mssql") -> testImplementation("com.microsoft.sqlserver:mssql-jdbc:12.8.1.jre8")
+        else -> testImplementation("org.xerial:sqlite-jdbc:3.47.2.0")
+    }
 
     testImplementation("org.slf4j:slf4j-api:2.0.17")
     testImplementation("ch.qos.logback:logback-classic:1.5.18")
@@ -45,7 +54,11 @@ kotlin {
 }
 
 tasks.test {
+    useJUnitPlatform()
     javaLauncher.set(javaToolchains.launcherFor {
         languageVersion.set(JavaLanguageVersion.of(11))
     })
+    val testDb = System.getProperty("stormify.test.db") ?: "sqlite"
+    systemProperty("stormify.test.db", testDb)
+    systemProperty("stormify.test.config", System.getProperty("stormify.test.config") ?: "")
 }

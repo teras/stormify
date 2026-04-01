@@ -16,6 +16,7 @@ final class BeanInfo {
     final DbField setterAnnotation;
     DbField fieldAnnotation;
     String sequence;
+    boolean autoIncrement;
     boolean primaryByIdAnnotation;
     boolean updatable;
     boolean creatable;

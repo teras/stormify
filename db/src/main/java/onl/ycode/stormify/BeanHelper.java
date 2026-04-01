@@ -40,6 +40,8 @@ class BeanHelper {
                 beanInfo.sequence = beanInfo.fieldAnnotation != null && !beanInfo.fieldAnnotation.primarySequence().trim().isEmpty()
                         ? beanInfo.fieldAnnotation.primarySequence().trim()
                         : getAnnotationValue(field, sequenceGeneratorClass, sequenceGeneratorNameMethod);
+                beanInfo.autoIncrement = (beanInfo.fieldAnnotation != null && beanInfo.fieldAnnotation.autoIncrement())
+                        || isJpaIdentity(field);
                 if (hasAnnotation(field, columnClass)) {
                     beanInfo.dbName = getAnnotationValue(field, columnClass, columnNameMethod);
                     beanInfo.creatable = getAnnotationValue(field, columnClass, insertableColumnMethod);
@@ -69,7 +71,7 @@ class BeanHelper {
             bInfo.creatable &= dbInsertable(bInfo.getterAnnotation, bInfo.setterAnnotation, bInfo.fieldAnnotation);
             bInfo.updatable &= dbUpdatable(bInfo.getterAnnotation, bInfo.setterAnnotation, bInfo.fieldAnnotation);
             hasPrimaryKey |= fieldPrimaryKey;
-            fieldInfo.add(new FieldInfo(bInfo.propertyName, dbName, bInfo.type, bInfo.getter, bInfo.setter, bInfo.sequence, fieldPrimaryKey, bInfo.creatable, bInfo.updatable));
+            fieldInfo.add(new FieldInfo(bInfo.propertyName, dbName, bInfo.type, bInfo.getter, bInfo.setter, bInfo.sequence, bInfo.autoIncrement, fieldPrimaryKey, bInfo.creatable, bInfo.updatable));
         }
 
         DbTable dbTable = clazz.getAnnotation(DbTable.class);

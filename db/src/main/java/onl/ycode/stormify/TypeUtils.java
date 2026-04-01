@@ -125,6 +125,13 @@ public final class TypeUtils {
         registerTimeRelated(BigInteger.class, BigInteger::valueOf);
         registerTimeRelated(BigDecimal.class, BigDecimal::valueOf);
         registerTimeRelated(String.class, time -> Instant.ofEpochMilli(time).atZone(ZoneId.systemDefault()).format(DateTimeFormatter.ISO_INSTANT));
+
+        // Register vendor-specific type conversions via reflection.
+        // These are safe to call even when the driver is not in the classpath.
+        tryRegisterVendorConversion("oracle.sql.TIMESTAMP", Timestamp.class, "timestampValue");
+        tryRegisterVendorConversion("oracle.sql.DATE", java.sql.Date.class, "dateValue");
+        tryRegisterVendorConversion("oracle.sql.NUMBER", BigDecimal.class, "bigDecimalValue");
+        tryRegisterVendorConversion("oracle.sql.CLOB", String.class, "stringValue");
     }
 
     /**
@@ -177,6 +184,49 @@ public final class TypeUtils {
         return result;
     }
 
+    private static long parseTemporalString(String s) {
+        try {
+            return Instant.parse(s).toEpochMilli();
+        } catch (Exception e1) {
+            try {
+                return LocalDateTime.parse(s).atZone(ZoneId.systemDefault()).toInstant().toEpochMilli();
+            } catch (Exception e2) {
+                try {
+                    return LocalDate.parse(s).atStartOfDay(ZoneId.systemDefault()).toInstant().toEpochMilli();
+                } catch (Exception e3) {
+                    throw new QueryException("Unable to parse temporal string: " + s, e1);
+                }
+            }
+        }
+    }
+
+    private static void tryRegisterVendorConversion(String vendorClassName, Class<?> standardType, String methodName) {
+        try {
+            Class<?> vendorClass = Class.forName(vendorClassName);
+            java.lang.reflect.Method method = vendorClass.getMethod(methodName);
+            Function<Object, Object> toStandard = value -> {
+                try {
+                    return method.invoke(value);
+                } catch (Exception e) {
+                    throw new QueryException("Failed to convert " + vendorClassName + " via " + methodName, e);
+                }
+            };
+            // Register direct conversion: vendorType → standardType
+            registry.computeIfAbsent(standardType, k -> new HashMap<>()).put(vendorClass, toStandard);
+            // Register chained conversions: vendorType → standardType → all targets that accept standardType
+            // This allows e.g. oracle.sql.TIMESTAMP → java.sql.Timestamp → LocalDateTime
+            for (Map.Entry<Class<?>, Map<Class<?>, Function<?, ?>>> entry : registry.entrySet()) {
+                Class<?> targetClass = entry.getKey();
+                Function<Object, ?> standardToTarget = (Function<Object, ?>) entry.getValue().get(standardType);
+                if (standardToTarget != null && targetClass != standardType) {
+                    entry.getValue().putIfAbsent(vendorClass, value -> standardToTarget.apply(toStandard.apply(value)));
+                }
+            }
+        } catch (ClassNotFoundException | NoSuchMethodException e) {
+            // Driver not in classpath or method not found — skip silently
+        }
+    }
+
     private static Map<Class<?>, Function<?, ?>> getConv(Class<?>[] acceptedTypes, Function<?, ?> converter) {
         Map<Class<?>, Function<?, ?>> converters = addConv(new HashMap<>(), acceptedTypes, converter);
         converters.put(String.class, input -> ((Function<Number, Object>) converter).apply(new BigDecimal(input.toString())));
@@ -223,7 +273,7 @@ public final class TypeUtils {
             converters.put(BigDecimal.class, n -> toNative.apply(((BigDecimal) n).longValue()));
             converters.put(Double.class, n -> toNative.apply(Math.round(((Double) n) * 1000d)));
             converters.put(Float.class, n -> toNative.apply(Math.round(((Float) n) * 1000d)));
-            converters.put(String.class, n -> toNative.apply(Instant.parse((String) n).toEpochMilli()));
+            converters.put(String.class, n -> toNative.apply(parseTemporalString((String) n)));
         }
     }
 
