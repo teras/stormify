@@ -3,8 +3,8 @@
 The `kotlin` module provides idiomatic Kotlin extensions for Stormify. Add it alongside the `db` module:
 
 ```kotlin
-implementation("onl.ycode.stormify:db:1.2.0")
-implementation("onl.ycode.stormify:kotlin:1.2.0")
+implementation("onl.ycode.stormify:db:1.3.0")
+implementation("onl.ycode.stormify:kotlin:1.3.0")
 ```
 
 All extensions are in the `onl.ycode.stormify` package.

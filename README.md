@@ -38,7 +38,7 @@ MySQL, MariaDB, PostgreSQL, Oracle (11g+), SQL Server (2012+), and SQLite.
 <dependency>
     <groupId>onl.ycode.stormify</groupId>
     <artifactId>db</artifactId>
-    <version>1.2.0</version>
+    <version>1.3.0</version>
 </dependency>
 ```
 
@@ -48,15 +48,15 @@ For Kotlin, also add:
 <dependency>
     <groupId>onl.ycode.stormify</groupId>
     <artifactId>kotlin</artifactId>
-    <version>1.2.0</version>
+    <version>1.3.0</version>
 </dependency>
 ```
 
 ### Gradle
 
 ```groovy
-implementation 'onl.ycode.stormify:db:1.2.0'
-implementation 'onl.ycode.stormify:kotlin:1.2.0'  // Kotlin only
+implementation 'onl.ycode.stormify:db:1.3.0'
+implementation 'onl.ycode.stormify:kotlin:1.3.0'  // Kotlin only
 ```
 
 ## Quick Start

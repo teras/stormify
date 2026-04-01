@@ -12,7 +12,7 @@ allprojects {
 }
 
 group = "onl.ycode.stormify"
-version = "1.2.0"
+version = "1.3.0"
 
 // Common POM metadata for all publishable subprojects
 extra["pomUrl"] = "https://github.com/teras/stormify"
