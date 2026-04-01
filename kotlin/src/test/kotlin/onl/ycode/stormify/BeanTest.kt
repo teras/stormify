@@ -58,13 +58,13 @@ class BeanTest {
 
         val tableInfo = stormify().getTableInfo(MyBean::class.java)
         assertEquals(
-            "my_bean{\uD83C\uDFF7{\uD83D\uDD04money \uD83D\uDCBE---#\$get : int} \uD83C\uDFF7{\uD83D\uDD04isExtra \uD83D\uDCBE--set : Boolean} \uD83C\uDFF7{\uD83D\uDD04a1 \uD83D\uDCBE---get : String} \uD83C\uDFF7{\uD83D\uDD04a2 \uD83D\uDCBE---get : String} \uD83C\uDFF7{\uD83D\uDCE4a3 \uD83D\uDCBE---#plain : boolean} \uD83C\uDFF7{\uD83D\uDD04a4 \uD83D\uDCBE--#set : boolean} \uD83C\uDFF7{\uD83D\uDD04a5 \uD83D\uDCBE---#get : String} \uD83C\uDFF7{\uD83D\uDD04a6 \uD83D\uDCBE---delegate : String} \uD83C\uDFF7{\uD83D\uDD04extra : boolean} \uD83C\uDFF7{\uD83D\uDD04other \uD83D\uDCBE---plain : boolean}}",
+            "my_bean{\uD83C\uDFF7{money \uD83D\uDCBE---#\$get : int} \uD83C\uDFF7{isExtra \uD83D\uDCBE--set : Boolean} \uD83C\uDFF7{a1 \uD83D\uDCBE---get : String} \uD83C\uDFF7{a2 \uD83D\uDCBE---get : String} \uD83C\uDFF7{\uD83D\uDCE4a3 \uD83D\uDCBE---#plain : boolean} \uD83C\uDFF7{a4 \uD83D\uDCBE--#set : boolean} \uD83C\uDFF7{a5 \uD83D\uDCBE---#get : String} \uD83C\uDFF7{a6 \uD83D\uDCBE---delegate : String} \uD83C\uDFF7{extra : boolean} \uD83C\uDFF7{other \uD83D\uDCBE---plain : boolean}}",
             tableInfo.toString(),
             "Table info does not match"
         )
         assertEquals(
-            """Table my_bean has more than one field that is creatable for column ---get: [{🔄a1 💾---get : String}, {🔄a2 💾---get : String}]
-Table my_bean has more than one field that is updatable for column ---get : [{🔄a1 💾---get : String}, {🔄a2 💾---get : String}]
+            """Table my_bean has more than one field that is creatable for column ---get: [{a1 💾---get : String}, {a2 💾---get : String}]
+Table my_bean has more than one field that is updatable for column ---get : [{a1 💾---get : String}, {a2 💾---get : String}]
 Please use the appropriate annotations to mark fields as non-creatable or non-updatable.
 The relevant annotations are @onl.ycode.stormify.DbField,  @javax.persistence.Column, and @javax.persistence.JoinColumn
 """, logger()

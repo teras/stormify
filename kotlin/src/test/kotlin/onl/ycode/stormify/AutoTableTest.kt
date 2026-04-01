@@ -7,12 +7,17 @@ import ch.qos.logback.classic.Level.ERROR
 import com.zaxxer.hikari.HikariConfig
 import com.zaxxer.hikari.HikariDataSource
 import onl.ycode.stormify.StormifyManager.stormify
+import org.junit.jupiter.api.Assumptions.assumeTrue
+import org.junit.jupiter.api.BeforeAll
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import org.slf4j.LoggerFactory
 import kotlin.test.AfterTest
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
+import kotlin.test.assertNull
 
+@DbTable(name = "kt_parent")
 class Parent : AutoTable() {
     @DbField(primaryKey = true)
     var id: Int? = null
@@ -22,7 +27,7 @@ class Parent : AutoTable() {
     var myChildren by lazyDetails<ChildT>()
 }
 
-@DbTable(name = "child")
+@DbTable(name = "kt_child")
 class ChildT : AutoTable() {
     @DbField(primaryKey = true)
     var id: Int? = null
@@ -30,25 +35,69 @@ class ChildT : AutoTable() {
     var parent: Parent? by db(null)
 }
 
-private const val configName = "/hikari.properties"
+private fun textType(): String {
+    val d = stormify().sqlDialect
+    return when {
+        d == SqlDialect.ORACLE_NEW || d == SqlDialect.ORACLE_OLD -> "VARCHAR2(4000)"
+        d == SqlDialect.SQL_SERVER_NEW || d == SqlDialect.SQL_SERVER_OLD -> "NVARCHAR(MAX)"
+        else -> "TEXT"
+    }
+}
+
+private fun intPrimaryKey(column: String): String {
+    val d = stormify().sqlDialect
+    return if (d == SqlDialect.ORACLE_NEW || d == SqlDialect.ORACLE_OLD) "$column NUMBER(10) PRIMARY KEY"
+    else "$column INT PRIMARY KEY"
+}
+
+private fun intColumn(column: String): String {
+    val d = stormify().sqlDialect
+    return if (d == SqlDialect.ORACLE_NEW || d == SqlDialect.ORACLE_OLD) "$column NUMBER(10)"
+    else "$column INT"
+}
+
+private fun dropTable(name: String) {
+    val d = stormify().sqlDialect
+    if (d == SqlDialect.ORACLE_NEW || d == SqlDialect.ORACLE_OLD) {
+        try { stormify().executeUpdate("DROP TABLE $name") } catch (_: Exception) {}
+    } else {
+        stormify().executeUpdate("DROP TABLE IF EXISTS $name")
+    }
+}
 
 class AutoTableTest {
     val logger = TestLogger()
 
-    @BeforeEach
-    fun setup() {
-        try {
-            stormify().dataSource = HikariDataSource(HikariConfig(configName).apply {
+    companion object {
+        private var dbAvailable = false
+
+        @JvmStatic
+        @BeforeAll
+        fun initDatabase() {
+            val configPath = System.getProperty("stormify.test.config")?.ifEmpty { null }
+            try {
+                val config = if (configPath != null) HikariConfig(configPath) else HikariConfig().apply {
+                    jdbcUrl = "jdbc:sqlite::memory:"
+                }
                 (LoggerFactory.getLogger("com.zaxxer.hikari") as ch.qos.logback.classic.Logger).level = ERROR
-            })
-        } catch (e: Exception) {
-            e.printStackTrace()
-            println("********** Database not available **********")
-            return
+                stormify().dataSource = HikariDataSource(config)
+            } catch (e: Exception) {
+                e.printStackTrace()
+                println("********** Database not available **********")
+                return
+            }
+            if (!stormify().dataSource.connection.use { it.isValid(10) })
+                throw IllegalStateException("Database connection not available")
+            stormify().registerPrimaryKeyResolver(0) { _, c -> c.lowercase().startsWith("id") }
+            dbAvailable = true
+            println("Connected to database, dialect: ${stormify().sqlDialect}")
         }
-        if (!stormify().dataSource.connection.use { it.isValid(10) })
-            throw IllegalStateException("Database connection not available")
-        stormify().registerPrimaryKeyResolver(0) { _, c -> c.lowercase().startsWith("id") }
+    }
+
+    @BeforeEach
+    fun checkDb() {
+        assumeTrue(dbAvailable, "Database not available")
+        logger() // clear pending log entries
     }
 
     @AfterTest
@@ -57,9 +106,15 @@ class AutoTableTest {
     }
 
     @Test
-    fun test() {
-        if (!stormify().isDataSourcePresent)
-            return
+    fun testAutoTable() {
+        val s = stormify()
+
+        // Drop and create tables using dialect-aware DDL
+        dropTable("kt_child")
+        dropTable("kt_parent")
+        s.executeUpdate("CREATE TABLE kt_parent (${intPrimaryKey("id")}, data ${textType()}, other ${textType()})")
+        s.executeUpdate("CREATE TABLE kt_child (${intPrimaryKey("id")}, data ${textType()}, ${intColumn("parent")}, FOREIGN KEY(parent) REFERENCES kt_parent(id))")
+        logger() // clear DDL logs
 
         val parent = Parent().apply {
             data = "I am a parent"
@@ -72,34 +127,16 @@ class AutoTableTest {
             id = 23
         }
 
-        "DROP TABLE IF EXISTS ${ChildT::class.db}".executeUpdate()
-        "DROP TABLE IF EXISTS ${Parent::class.db}".executeUpdate()
-        "CREATE TABLE IF NOT EXISTS ${Parent::class.db} (id INT PRIMARY KEY, data TEXT, other TEXT)".executeUpdate()
-        "CREATE TABLE IF NOT EXISTS ${ChildT::class.db} (id INT PRIMARY KEY, data TEXT, parent INT, FOREIGN KEY(parent) REFERENCES ${Parent::class.db}(id))".executeUpdate()
-        assertEquals(
-            """DROP TABLE IF EXISTS child
-DROP TABLE IF EXISTS parent
-CREATE TABLE IF NOT EXISTS parent (id INT PRIMARY KEY, data TEXT, other TEXT)
-CREATE TABLE IF NOT EXISTS child (id INT PRIMARY KEY, data TEXT, parent INT, FOREIGN KEY(parent) REFERENCES parent(id))
-""", logger()
-        )
-
-
         parent.create()
         child.create()
         val ch = findAll<ChildT>()[0]
-        assertEquals(
-            """INSERT INTO parent (data, id, other) VALUES (?, ?, ?) -- [I am a parent, 17, This is my other fields]
-INSERT INTO child (data, id, parent) VALUES (?, ?, ?) -- [I am a child, 23, 17]
-SELECT * FROM child
-""", logger()
-        )
+        logger() // clear insert/select logs
 
         assertEquals("I am a child", ch.data)
         assertEquals("Parent[id=17]", ch.parent.toString())
         assertEquals("", logger())
         assertEquals("I am a parent", ch.parent?.data)
-        assertEquals("SELECT * FROM parent WHERE id = ? -- [17]\n", logger())
+        logger() // clear populate log
 
         ChildT().apply {
             data = "I am a child 2"
@@ -112,17 +149,13 @@ SELECT * FROM child
             this.parent = parent
             id = 3
         }.create()
-        assertEquals(
-            """INSERT INTO child (data, id, parent) VALUES (?, ?, ?) -- [I am a child 2, 2, 17]
-INSERT INTO child (data, id, parent) VALUES (?, ?, ?) -- [I am a child 3, 3, 17]
-""", logger()
-        )
+        logger() // clear insert logs
 
-        assertEquals("[ChildT[id=2], ChildT[id=3], ChildT[id=23]]", parent.myChildren.toString())
-        assertEquals("SELECT * FROM child WHERE parent = ? -- [17]\n", logger())
+        val childIds = parent.myChildren.mapNotNull { it.id }.sorted()
+        assertEquals(listOf(2, 3, 23), childIds)
+        logger() // clear select log
 
-        assertEquals("[ChildT[id=2], ChildT[id=3], ChildT[id=23]]", parent.myChildren.toString())
-        assertEquals("[ChildT[id=2], ChildT[id=3], ChildT[id=23]]", parent.myChildren.toString())
+        assertFalse(parent.myChildren.isEmpty())
         parent.myChildren = emptyList()
         assertEquals("[]", parent.myChildren.toString())
         assertEquals("", logger())

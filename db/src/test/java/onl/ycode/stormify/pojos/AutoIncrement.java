@@ -5,9 +5,11 @@ package onl.ycode.stormify.pojos;
 
 import onl.ycode.stormify.AutoTable;
 import onl.ycode.stormify.CRUDTable;
+import onl.ycode.stormify.DbField;
 
 public class AutoIncrement extends AutoTable implements CRUDTable {
     private String name = null;
+    @DbField(primaryKey = true, autoIncrement = true)
     private int id = 0;
 
     public AutoIncrement() {

@@ -1,0 +1,160 @@
+services:
+  mysql:
+    image: mysql:8.0
+    profiles: ["mysql", "all"]
+    environment:
+      MYSQL_ROOT_PASSWORD: "Stormify1!"
+      MYSQL_DATABASE: stormify_test
+      MYSQL_USER: stormify
+      MYSQL_PASSWORD: "Stormify1!"
+    ports:
+      - "13306:3306"
+    volumes:
+      - ./config/mysql/init.sql:/docker-entrypoint-initdb.d/init.sql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+
+  mariadb:
+    image: mariadb:11
+    profiles: ["mariadb", "all"]
+    environment:
+      MARIADB_ROOT_PASSWORD: "Stormify1!"
+      MARIADB_DATABASE: stormify_test
+      MARIADB_USER: stormify
+      MARIADB_PASSWORD: "Stormify1!"
+    ports:
+      - "13307:3306"
+    volumes:
+      - ./config/mariadb/init.sql:/docker-entrypoint-initdb.d/init.sql
+    healthcheck:
+      test: ["CMD", "mariadb-admin", "ping", "-h", "localhost"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+
+  postgresql:
+    image: postgres:16
+    profiles: ["postgresql", "all"]
+    environment:
+      POSTGRES_DB: stormify_test
+      POSTGRES_USER: stormify
+      POSTGRES_PASSWORD: "Stormify1!"
+    ports:
+      - "15432:5432"
+    volumes:
+      - ./config/postgresql/init.sql:/docker-entrypoint-initdb.d/init.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U stormify -d stormify_test"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+
+  oracle:
+    image: gvenzl/oracle-xe:21-slim
+    profiles: ["oracle", "all"]
+    environment:
+      ORACLE_PASSWORD: "Stormify1!"
+      APP_USER: stormify
+      APP_USER_PASSWORD: "Stormify1!"
+    ports:
+      - "11521:1521"
+    volumes:
+      - ./config/oracle/init.sql:/container-entrypoint-initdb.d/init.sql
+    healthcheck:
+      test: ["CMD-SHELL", "healthcheck.sh"]
+      interval: 10s
+      timeout: 5s
+      retries: 60
+      start_period: 60s
+
+  mysql-old:
+    image: mysql:5.7
+    profiles: ["mysql-old", "all-versions"]
+    environment:
+      MYSQL_ROOT_PASSWORD: "Stormify1!"
+      MYSQL_DATABASE: stormify_test
+      MYSQL_USER: stormify
+      MYSQL_PASSWORD: "Stormify1!"
+    ports:
+      - "13316:3306"
+    volumes:
+      - ./config/mysql/init.sql:/docker-entrypoint-initdb.d/init.sql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+
+  mariadb-old:
+    image: mariadb:10.2
+    profiles: ["mariadb-old", "all-versions"]
+    environment:
+      MYSQL_ROOT_PASSWORD: "Stormify1!"
+      MYSQL_DATABASE: stormify_test
+      MYSQL_USER: stormify
+      MYSQL_PASSWORD: "Stormify1!"
+    ports:
+      - "13317:3306"
+    volumes:
+      - ./config/mariadb/init.sql:/docker-entrypoint-initdb.d/init.sql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+
+  postgresql-old:
+    image: postgres:10
+    profiles: ["postgresql-old", "all-versions"]
+    environment:
+      POSTGRES_DB: stormify_test
+      POSTGRES_USER: stormify
+      POSTGRES_PASSWORD: "Stormify1!"
+    ports:
+      - "15433:5432"
+    volumes:
+      - ./config/postgresql/init.sql:/docker-entrypoint-initdb.d/init.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U stormify -d stormify_test"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+
+  oracle-old:
+    image: gvenzl/oracle-xe:11-slim
+    profiles: ["oracle-old", "all-versions"]
+    environment:
+      ORACLE_PASSWORD: "Stormify1!"
+      APP_USER: stormify
+      APP_USER_PASSWORD: "Stormify1!"
+    ports:
+      - "11522:1521"
+    volumes:
+      - ./config/oracle/init.sql:/container-entrypoint-initdb.d/init.sql
+    healthcheck:
+      test: ["CMD-SHELL", "healthcheck.sh"]
+      interval: 10s
+      timeout: 5s
+      retries: 60
+      start_period: 60s
+
+  mssql:
+    image: mcr.microsoft.com/mssql/server:2022-latest
+    profiles: ["mssql", "all"]
+    environment:
+      ACCEPT_EULA: "Y"
+      MSSQL_SA_PASSWORD: "Stormify1!"
+      MSSQL_PID: "Developer"
+    ports:
+      - "11433:1433"
+    volumes:
+      - ./config/mssql/init.sql:/init.sql
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -P 'Stormify1!' -C -Q 'SELECT 1' || /opt/mssql-tools/bin/sqlcmd -S localhost -U sa -P 'Stormify1!' -Q 'SELECT 1' || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 30s

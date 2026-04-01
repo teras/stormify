@@ -6,7 +6,7 @@ import onl.ycode.stormify.DbTable;
 
 import java.util.List;
 
-@DbTable(name = "parent")
+@DbTable(name = "auto_parent")
 public class AutoParent extends AutoTable implements CRUDTable {
     private Integer id;
     private String other;

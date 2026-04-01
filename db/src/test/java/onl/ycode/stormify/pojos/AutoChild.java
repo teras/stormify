@@ -4,7 +4,7 @@ import onl.ycode.stormify.AutoTable;
 import onl.ycode.stormify.CRUDTable;
 import onl.ycode.stormify.DbTable;
 
-@DbTable(name = "child")
+@DbTable(name = "auto_child")
 public class AutoChild extends AutoTable implements CRUDTable {
     private Integer id;
     private String data; // Assuming `db("")` translates to handling as a String with default empty value
