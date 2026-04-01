@@ -1,5 +1,25 @@
 # Database Configuration
 
+## Supported Databases
+
+Stormify auto-detects the database dialect from the JDBC connection metadata. The following databases are tested and
+supported:
+
+| Database | Versions | Dialect |
+|----------|----------|---------|
+| MySQL | 5.7+, 8.x | `MYSQL_OLD`, `MYSQL_NEW` |
+| MariaDB | 10.2+, 10.3+, 11.x | `MARIA_DB_OLD`, `MARIA_DB_NEW` |
+| PostgreSQL | 10+ | `POSTGRESQL` |
+| Oracle | 11g (11.2), 12c+ (12.1+), 21c | `ORACLE_OLD`, `ORACLE_NEW` |
+| SQL Server | 2012+, 2017+, 2022 | `SQL_SERVER_OLD`, `SQL_SERVER_NEW` |
+| SQLite | All versions | `SQLITE` |
+
+!!! tip "Dialect override"
+    If auto-detection fails (e.g., when using a database proxy), you can set the dialect manually:
+    ```java
+    stormify().setSqlDialect(SqlDialect.ORACLE_OLD);
+    ```
+
 ## Data Source Configuration
 
 Stormify relies on a JDBC-compatible `javax.sql.DataSource` to connect to your database. You can use any connection

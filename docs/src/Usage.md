@@ -240,20 +240,39 @@ is committed. If an exception is thrown, the transaction is rolled back.
 Nested calls to `transaction()` use database savepoints. If an inner transaction fails, only the inner transaction is
 rolled back to its savepoint; the outer transaction can continue.
 
-```java
-stormify().transaction(() -> {
-    stormify().create(record1);
+=== "Java"
 
-    try {
-        stormify().transaction(() -> {
-            stormify().create(record2); // If this fails...
-        });
-    } catch (QueryException e) {
-        // ...only record2 is rolled back. record1 is still pending.
+    ```java
+    stormify().transaction(() -> {
+        stormify().create(record1);
+
+        try {
+            stormify().transaction(() -> {
+                stormify().create(record2); // If this fails...
+            });
+        } catch (QueryException e) {
+            // ...only record2 is rolled back. record1 is still pending.
+        }
+    });
+    // record1 is committed here.
+    ```
+
+=== "Kotlin"
+
+    ```kotlin
+    stormify().transaction {
+        record1.create()
+
+        try {
+            stormify().transaction {
+                record2.create() // If this fails...
+            }
+        } catch (e: QueryException) {
+            // ...only record2 is rolled back. record1 is still pending.
+        }
     }
-});
-// record1 is committed here.
-```
+    // record1 is committed here.
+    ```
 
 ## Parent-Child Relationships
 

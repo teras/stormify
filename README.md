@@ -26,6 +26,10 @@ Convention over configuration, minimal setup, clean code.
 - **Custom Type Conversions**: Register custom converters between Java and database types.
 - **Kotlin Support**: Dedicated extension functions and property delegates.
 
+## Tested Databases
+
+MySQL, MariaDB, PostgreSQL, Oracle (11g+), SQL Server (2012+), and SQLite.
+
 ## Installation
 
 ### Maven

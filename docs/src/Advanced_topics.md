@@ -103,34 +103,64 @@ data and does not need to be loaded from the database.
 `CRUDTable` is a convenience interface that adds CRUD methods directly to entity objects, reducing the need to call
 `stormify()` explicitly:
 
-```java
-public class Test implements CRUDTable {
-    private int id;
-    private String name;
-    // Getters and setters
-}
+=== "Java"
 
-Test record = new Test();
-record.setId(1);
-record.setName("Entry");
-record.create();       // INSERT
-record.update();       // UPDATE
-record.delete();       // DELETE
-record.populate();     // Load from DB by ID
-record.tableName();    // Get the mapped table name
+    ```java
+    public class Test implements CRUDTable {
+        private int id;
+        private String name;
+        // Getters and setters
+    }
 
-// Parent-child:
-List<Detail> details = record.getDetails(Detail.class);
-List<Detail> byField = record.getDetails(Detail.class, "propertyName");
-```
+    Test record = new Test();
+    record.setId(1);
+    record.setName("Entry");
+    record.create();       // INSERT
+    record.update();       // UPDATE
+    record.delete();       // DELETE
+    record.populate();     // Load from DB by ID
+    record.tableName();    // Get the mapped table name
+
+    // Parent-child:
+    List<Detail> details = record.getDetails(Detail.class);
+    ```
+
+=== "Kotlin"
+
+    ```kotlin
+    class Test : CRUDTable {
+        var id: Int = 0
+        var name: String? = null
+    }
+
+    val record = Test().apply { id = 1; name = "Entry" }
+    record.create()       // INSERT
+    record.update()       // UPDATE
+    record.delete()       // DELETE
+    record.populate()     // Load from DB by ID
+    record.tableName()    // Get the mapped table name
+
+    // Parent-child:
+    val details = record.getDetails(Detail::class.java)
+    ```
 
 `CRUDTable` can be combined with `AutoTable`:
 
-```java
-public class User extends AutoTable implements CRUDTable {
-    // Gets both lazy loading and direct CRUD methods
-}
-```
+=== "Java"
+
+    ```java
+    public class User extends AutoTable implements CRUDTable {
+        // Gets both lazy loading and direct CRUD methods
+    }
+    ```
+
+=== "Kotlin"
+
+    ```kotlin
+    class User : AutoTable(), CRUDTable {
+        // Gets both lazy loading and direct CRUD methods
+    }
+    ```
 
 ## Handling Auto-Increment Fields
 
@@ -142,23 +172,63 @@ If your database uses sequences for generating primary keys, specify the sequenc
     The primary key field must use a **boxed type** (e.g., `Integer` instead of `int`) so it can be `null`
     before the sequence value is assigned.
 
-```java
-public class Test {
-    @DbField(primaryKey = true, primarySequence = "id_seq")
-    private Integer id;  // Boxed type — null triggers sequence fetch
+=== "Java"
 
-    private String name;
-    // Getters and setters
-}
-```
+    ```java
+    public class Test {
+        @DbField(primaryKey = true, primarySequence = "id_seq")
+        private Integer id;  // Boxed type — null triggers sequence fetch
+
+        private String name;
+        // Getters and setters
+    }
+    ```
+
+=== "Kotlin"
+
+    ```kotlin
+    class Test : AutoTable() {
+        @DbField(primaryKey = true, primarySequence = "id_seq")
+        var id: Int? = null  // Nullable — null triggers sequence fetch
+
+        var name: String by db("")
+    }
+    ```
 
 When creating a new entity, if the primary key is `null`, Stormify fetches the next value from the sequence before
 inserting. For batch inserts, all sequence values are fetched in a single query.
 
 ### Database Auto-Increment
 
-If no sequence is specified and the primary key is `null`, Stormify relies on the database's auto-increment mechanism.
-The generated key is populated back to the entity after a single insert.
+For databases that use auto-increment / identity columns, mark the field with `autoIncrement = true`:
+
+=== "Java"
+
+    ```java
+    public class Product {
+        @DbField(primaryKey = true, autoIncrement = true)
+        private int id;  // Excluded from INSERT, populated after insert
+
+        private String name;
+        // Getters and setters
+    }
+    ```
+
+=== "Kotlin"
+
+    ```kotlin
+    class Product : AutoTable() {
+        @DbField(primaryKey = true, autoIncrement = true)
+        var id: Int = 0  // Excluded from INSERT, populated after insert
+
+        var name: String by db("")
+    }
+    ```
+
+When `autoIncrement` is set, the field is automatically excluded from INSERT statements. After a single insert,
+the generated key is read back and populated to the entity.
+
+The JPA equivalent `@GeneratedValue(strategy = GenerationType.IDENTITY)` is also supported.
 
 !!! note
     Auto-increment key retrieval is not available for batch inserts. Use database sequences instead.
@@ -167,18 +237,34 @@ The generated key is populated back to the entity after a single insert.
 
 Stormify supports tables with composite primary keys. Mark all fields involved in the key as primary keys:
 
-```java
-public class CompositeKeyExample {
-    @DbField(primaryKey = true)
-    private int part1;
+=== "Java"
 
-    @DbField(primaryKey = true)
-    private int part2;
+    ```java
+    public class CompositeKeyExample {
+        @DbField(primaryKey = true)
+        private int part1;
 
-    private String data;
-    // Getters and setters
-}
-```
+        @DbField(primaryKey = true)
+        private int part2;
+
+        private String data;
+        // Getters and setters
+    }
+    ```
+
+=== "Kotlin"
+
+    ```kotlin
+    class CompositeKeyExample {
+        @DbField(primaryKey = true)
+        var part1: Int = 0
+
+        @DbField(primaryKey = true)
+        var part2: Int = 0
+
+        var data: String? = null
+    }
+    ```
 
 !!! note
     `findById` and sequence-based ID generation require a single primary key and are not available for
