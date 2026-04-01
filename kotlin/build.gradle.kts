@@ -41,10 +41,10 @@ dependencies {
     }
 
     testImplementation("org.slf4j:slf4j-api:2.0.17")
-    testImplementation("ch.qos.logback:logback-classic:1.5.18")
-    testImplementation("ch.qos.logback:logback-core:1.5.18")
+    testImplementation("ch.qos.logback:logback-classic:1.3.14")
+    testImplementation("ch.qos.logback:logback-core:1.3.14")
 
-    testImplementation("com.zaxxer:HikariCP:6.3.0")
+    testImplementation("com.zaxxer:HikariCP:4.0.3")
 
     testImplementation("org.junit.jupiter:junit-jupiter-engine:5.12.2")
 }
@@ -56,7 +56,7 @@ kotlin {
 tasks.test {
     useJUnitPlatform()
     javaLauncher.set(javaToolchains.launcherFor {
-        languageVersion.set(JavaLanguageVersion.of(11))
+        languageVersion.set(JavaLanguageVersion.of(8))
     })
     val testDb = System.getProperty("stormify.test.db") ?: "sqlite"
     systemProperty("stormify.test.db", testDb)

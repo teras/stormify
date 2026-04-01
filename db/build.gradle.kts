@@ -34,9 +34,9 @@ dependencies {
     testImplementation("org.junit.jupiter:junit-jupiter-engine:5.12.2")
     testImplementation("org.junit.platform:junit-platform-launcher")
     testImplementation("org.slf4j:slf4j-api:2.0.17")
-    testImplementation("ch.qos.logback:logback-classic:1.5.18")
-    testImplementation("ch.qos.logback:logback-core:1.5.18")
-    testImplementation("com.zaxxer:HikariCP:6.3.0")
+    testImplementation("ch.qos.logback:logback-classic:1.3.14")
+    testImplementation("ch.qos.logback:logback-core:1.3.14")
+    testImplementation("com.zaxxer:HikariCP:4.0.3")
 
     // Load only the JDBC driver for the target database (default: sqlite)
     val testDb = System.getProperty("stormify.test.db") ?: "sqlite"
