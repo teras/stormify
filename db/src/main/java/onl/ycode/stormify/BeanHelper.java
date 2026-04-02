@@ -34,7 +34,7 @@ class BeanHelper {
             }
             BeanInfo beanInfo = findBeanInfo(name, beanInfos);
             if (beanInfo != null) {
-                if (hasAnnotation(field, transientClass))
+                if (java.lang.reflect.Modifier.isTransient(field.getModifiers()) || hasAnnotation(field, transientClass))
                     continue;
                 beanInfo.fieldAnnotation = field.getAnnotation(DbField.class);
                 beanInfo.sequence = beanInfo.fieldAnnotation != null && !beanInfo.fieldAnnotation.primarySequence().trim().isEmpty()

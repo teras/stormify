@@ -258,7 +258,7 @@ public class StormifyManager {
     private Object sqlData(Object value, boolean recursively) {
         Class<?> valueClass = value == null ? null : value.getClass();
         if (valueClass == null || isBaseClass(valueClass))
-            return value;
+            return value instanceof char[] ? new String((char[]) value) : value;
         if (recursively) {
             if (valueClass.isArray())
                 return sqlData(Arrays.asList((Object[]) value), true);
@@ -300,14 +300,23 @@ public class StormifyManager {
         requireNonNull(query, "Query cannot be null");
         requireNonNull(consumer, "Consumer cannot be null");
         boolean isBaseClass = isBaseClass(baseClass);
+        boolean isMap = Map.class.isAssignableFrom(baseClass);
         return performQuery(query, params, false, statement -> {
-            Constructor<T> constructor = isBaseClass ? null : baseClass.getDeclaredConstructor();
+            Constructor<T> constructor = (isBaseClass || isMap) ? null : baseClass.getDeclaredConstructor();
             ResultSet rs = statement.executeQuery();
-            PopulationContext context = isBaseClass ? null : new PopulationContext();
+            PopulationContext context = (isBaseClass || isMap) ? null : new PopulationContext();
             int count = 0;
             while (rs.next()) {
                 count++;
-                consumer.accept(isBaseClass ? castTo(baseClass, rs.getObject(1)) : forcePopulate(constructor.newInstance(), rs, context));
+                if (isMap) {
+                    ResultSetMetaData meta = rs.getMetaData();
+                    Map<String, Object> row = new java.util.LinkedHashMap<>();
+                    for (int i = 1; i <= meta.getColumnCount(); i++)
+                        row.put(meta.getColumnLabel(i).toLowerCase(), rs.getObject(i));
+                    consumer.accept((T) row);
+                } else {
+                    consumer.accept(isBaseClass ? castTo(baseClass, rs.getObject(1)) : forcePopulate(constructor.newInstance(), rs, context));
+                }
             }
             return count;
         });
