@@ -83,6 +83,10 @@ kotlin {
                     testDb.startsWith("postgresql") -> implementation("org.postgresql:postgresql:42.7.5")
                     testDb.startsWith("oracle") -> implementation("com.oracle.database.jdbc:ojdbc8:21.9.0.0")
                     testDb.startsWith("mssql") -> implementation("com.microsoft.sqlserver:mssql-jdbc:12.8.1.jre8")
+                    testDb == "spring-jdbc" -> {
+                        implementation("org.xerial:sqlite-jdbc:3.47.2.0")
+                        implementation("org.springframework:spring-jdbc:5.3.39")
+                    }
                     else -> implementation("org.xerial:sqlite-jdbc:3.47.2.0")
                 }
             }

@@ -75,3 +75,94 @@ data class DoubleDbName(
     @DbField(name = "name", updatable = false) var name1: String = "",
     @DbField(name = "name", creatable = false) var name2: String = ""
 )
+
+// --- Data types ---
+
+@DbTable(name = "all_types")
+data class AllTypesEntity(
+    @DbField(primaryKey = true) var id: Int = 0,
+    var byteVal: Byte = 0,
+    var shortVal: Short = 0,
+    var intVal: Int = 0,
+    var longVal: Long = 0,
+    var floatVal: Float = 0f,
+    var doubleVal: Double = 0.0,
+    var boolVal: Boolean = false,
+    var stringVal: String? = null
+)
+
+@DbTable(name = "nullable_test")
+data class NullableEntity(
+    @DbField(primaryKey = true) var id: Int = 0,
+    var name: String? = null,
+    var nullableInt: Int? = null,
+    var nullableString: String? = null
+)
+
+@DbTable(name = "blob_test")
+data class BlobEntity(
+    @DbField(primaryKey = true) var id: Int = 0,
+    var blobData: ByteArray? = null,
+    var clobAsChars: CharArray? = null,
+    var clobAsString: String? = null
+)
+
+// --- Annotations ---
+
+@DbTable(name = "annotated_test")
+data class AnnotatedEntity(
+    @DbField(primaryKey = true) var id: Int = 0,
+    @DbField(name = "custom_col") var renamedField: String? = null,
+    @DbField(creatable = false) var readOnlyOnCreate: String? = null,
+    @DbField(updatable = false) var readOnlyOnUpdate: String? = null
+)
+
+@DbTable(name = "blacklist_test")
+data class BlacklistEntity(
+    @DbField(primaryKey = true) var id: Int = 0,
+    var name: String? = null,
+    var secret: String? = null
+)
+
+// --- Naming policy ---
+
+data class CamelEntity(
+    @DbField(primaryKey = true) var id: Int = 0,
+    var firstName: String? = null,
+    var lastName: String? = null
+)
+
+data class CamelPolicyEntity(
+    @DbField(primaryKey = true) var id: Int = 0,
+    var firstName: String? = null,
+    var lastName: String? = null
+)
+
+data class UpperPolicyEntity(
+    @DbField(primaryKey = true) var id: Int = 0,
+    var firstName: String? = null,
+    var lastName: String? = null
+)
+
+// --- Inheritance ---
+
+open class BaseEntity(
+    @DbField(primaryKey = true) var id: Int = 0,
+    var createdBy: String? = null
+)
+
+@DbTable(name = "user_entity")
+class UserEntity(
+    var name: String? = null,
+    var email: String? = null
+) : BaseEntity() {
+    override fun toString() = "UserEntity(id=$id, name=$name, email=$email, createdBy=$createdBy)"
+}
+
+// --- Generics ---
+
+@DbTable(name = "generic_test")
+data class GenericHolder<T>(
+    @DbField(primaryKey = true) var id: Int = 0,
+    var value: T? = null
+)
