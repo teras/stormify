@@ -178,7 +178,8 @@ open class Stormify(val dataSource: DataSource, vararg registrars: EntityRegistr
 
     @Suppress("UNCHECKED_CAST")
     private fun sqlData(value: Any?, recursively: Boolean): Any? {
-        if (value == null || isScalarObject(value)) return value
+        if (value == null || isScalarObject(value))
+            return if (value is CharArray) value.concatToString() else value
         if (recursively) {
             if (value is Array<*>)
                 return sqlData(value.toList(), true)
@@ -219,17 +220,27 @@ open class Stormify(val dataSource: DataSource, vararg registrars: EntityRegistr
         vararg params: Any?,
         consumer: (T) -> Unit
     ) = performQuery(conn, query, params.toList(), false, { statement ->
-        val info = if (isScalarClass(baseClass)) null else resolveTableInfo(baseClass)
+        val isMap = Map::class == baseClass
+        val info = if (isScalarClass(baseClass) || isMap) null else resolveTableInfo(baseClass)
         val rs: ResultSet = statement.executeQuery()
         val context = if (info != null) PopulationContext() else null
         var count = 0
         while (rs.next()) {
             count++
-            consumer(
-                if (info != null) populate(info.create().also { attachStormify(it) }, rs, context)
-                else castTo(baseClass, rs.getObject(1, baseClass), this)
-                    ?: throw SQLException("Expecting type ${baseClass.fullName} but found null")
-            )
+            if (isMap) {
+                val meta = rs.getMetaData()
+                val row = LinkedHashMap<String, Any?>()
+                for (i in 1..meta.columnCount)
+                    row[meta.getColumnLabel(i).lowercase()] = rs.getObject(i, Any::class)
+                @Suppress("UNCHECKED_CAST")
+                consumer(row as T)
+            } else {
+                consumer(
+                    if (info != null) populate(info.create().also { attachStormify(it) }, rs, context)
+                    else castTo(baseClass, rs.getObject(1, baseClass), this)
+                        ?: throw SQLException("Expecting type ${baseClass.fullName} but found null")
+                )
+            }
         }
         count
     })
@@ -266,10 +277,6 @@ open class Stormify(val dataSource: DataSource, vararg registrars: EntityRegistr
         val idValues = info.getIdValues(entity)
         if (idValues.isEmpty())
             throw SQLException("No primary key found for object ${info.classType}")
-        idValues.forEachIndexed { i, value ->
-            if (value == null)
-                throw SQLException("Value of primary key ${info.idNames[i]} is null of entity ${entity::class.fullName}")
-        }
         return idValues
     }
 
@@ -283,7 +290,9 @@ open class Stormify(val dataSource: DataSource, vararg registrars: EntityRegistr
     internal fun <T : Any> populate(conn: Connection?, entity: T): T {
         attachStormify(entity)
         val info = resolveTableInfo(entity::class) as TableInfo<T>
-        performQuery<Any>(conn, info.populateQuery, getValidIds(entity, info), false, { statement ->
+        val idValues = getValidIds(entity, info)
+        if (idValues.any { it == null }) return entity  // null PK = nothing to populate
+        performQuery<Any>(conn, info.populateQuery, idValues, false, { statement ->
             val rs: ResultSet = statement.executeQuery()
             if (rs.next()) return@performQuery populate<T>(entity, rs)
             else throw SQLException("No data found for ${info.tableName}:${info.getIdValues(entity)}")

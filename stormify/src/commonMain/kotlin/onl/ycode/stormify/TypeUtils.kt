@@ -150,7 +150,8 @@ internal fun <T> findItemOnce(data: List<T>, key: T, spaceName: String): Int {
 }
 
 internal fun isScalarObject(request: Any) =
-    request is Number || request is CharSequence || request is Char || request is Boolean || request.isOtherPrimitive
+    request is Number || request is CharSequence || request is Char || request is Boolean
+            || request is ByteArray || request is CharArray || request.isOtherPrimitive
 
 internal fun isScalarClass(request: KClass<*>) = allPrimitives.contains(request.fullName)
 

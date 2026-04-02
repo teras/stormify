@@ -81,8 +81,9 @@ internal actual fun <T : Any> tryReflection(type: KClass<T>): EntityMeta<T>? {
         val annotations = (jField?.annotations?.toList() ?: emptyList()) +
                 (kProp.annotations)
 
-        // Check @Transient (kotlin or JPA)
-        val isTransient = annotations.any {
+        // Check transient: Java keyword, Kotlin @Transient, JPA @Transient
+        val isJavaTransient = jField != null && java.lang.reflect.Modifier.isTransient(jField.modifiers)
+        val isTransient = isJavaTransient || annotations.any {
             it is Transient || it.annotationClass.qualifiedName == "javax.persistence.Transient"
         }
 
@@ -120,11 +121,16 @@ internal actual fun <T : Any> tryReflection(type: KClass<T>): EntityMeta<T>? {
         } ?: true)
 
         // Determine if property type is a reference (entity type)
-        val propType = kProp.returnType.classifier as? KClass<*> ?: return@mapNotNull null
+        // For generic type variables (T), classifier is null — use Any::class
+        val propType = kProp.returnType.classifier as? KClass<*> ?: Any::class
         // Skip collection/map types — they are not DB columns (e.g. lazyDetails)
         if (Collection::class.java.isAssignableFrom(propType.java) || Map::class.java.isAssignableFrom(propType.java))
             return@mapNotNull null
-        val isReference = !isScalarClass(propType) && !isScalarObject(propType.java.kotlin)
+        // Generic type variables (erased to Any) are not entity references
+        val getterName = "get" + kProp.name.replaceFirstChar { it.uppercase() }
+        val javaGetter = try { jClass.getMethod(getterName) } catch (_: Exception) { null }
+        val isGenericTypeVar = javaGetter?.genericReturnType is java.lang.reflect.TypeVariable<*>
+        val isReference = !isGenericTypeVar && !isScalarClass(propType) && !isScalarObject(propType.java.kotlin)
                 && propType != ByteArray::class && propType != CharArray::class
 
         // Build getter/setter via Kotlin reflection
