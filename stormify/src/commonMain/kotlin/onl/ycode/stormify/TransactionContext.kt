@@ -155,7 +155,8 @@ class TransactionContext internal constructor(@PublishedApi internal val stormif
             if (count > MAX_COUNTER) counter.value = 0L
             savepoint = conn.setSavepoint("s" + systemMillis() + "_" + count)
             block()
-            conn.releaseSavepoint(savepoint)
+            if (stormify.sqlDialect.supportsReleaseSavepoint)
+                conn.releaseSavepoint(savepoint)
         } catch (e: Throwable) {
             if (savepoint != null)
                 conn.rollback(savepoint)

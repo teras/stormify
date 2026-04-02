@@ -109,6 +109,11 @@ internal actual fun registerNativeTargets(registry: MutableMap<KClass<*>, Mutabl
 
     runCatching { registerIonspinBigNumbers(registry) }
 
+    // Vendor-specific type conversions (safe when driver not in classpath)
+    tryRegisterVendorConversion("oracle.sql.TIMESTAMP", java.sql.Timestamp::class, "timestampValue", registry)
+    tryRegisterVendorConversion("oracle.sql.DATE", java.sql.Date::class, "dateValue", registry)
+    tryRegisterVendorConversion("oracle.sql.NUMBER", BigDecimal::class, "bigDecimalValue", registry)
+    tryRegisterVendorConversion("oracle.sql.CLOB", String::class, "stringValue", registry)
 }
 
 fun registerIonspinBigNumbers(registry: MutableMap<KClass<*>, MutableMap<KClass<*>, (Any) -> Any>>) {
@@ -204,6 +209,45 @@ private fun <T : Any> registerTimeRelated(
         converters[Long::class] = { toNative((it as Long)) }
         converters[Double::class] = { toNative(((it as Double) * 1000.0).toLong()) }
         converters[Float::class] = { toNative(((it as Float) * 1000.0).toLong()) }
-        converters[String::class] = { toNative(Instant.parse(it as String).toEpochMilli()) }
+        converters[String::class] = { toNative(parseTemporalString(it as String)) }
     }
     }
+
+private fun tryRegisterVendorConversion(
+    vendorClassName: String,
+    standardType: KClass<*>,
+    methodName: String,
+    registry: MutableMap<KClass<*>, MutableMap<KClass<*>, (Any) -> Any>>
+) {
+    try {
+        val vendorClass = Class.forName(vendorClassName).kotlin
+        val method = Class.forName(vendorClassName).getMethod(methodName)
+        val toStandard: (Any) -> Any = { method.invoke(it) }
+        // Direct: vendor → standard
+        registry.getOrPut(standardType) { mutableMapOf() }[vendorClass] = toStandard
+        // Chained: vendor → standard → all targets that accept standard
+        for ((targetClass, converters) in registry) {
+            val standardToTarget = converters[standardType]
+            if (standardToTarget != null && targetClass != standardType)
+                converters.putIfAbsent(vendorClass) { standardToTarget(toStandard(it)) }
+        }
+    } catch (_: ClassNotFoundException) {
+        // Driver not in classpath — skip
+    } catch (_: NoSuchMethodException) {
+        // Method not found — skip
+    }
+}
+
+private fun parseTemporalString(s: String): Long = try {
+    Instant.parse(s).toEpochMilli()
+} catch (_: Exception) {
+    try {
+        java.time.LocalDateTime.parse(s).atZone(ZoneId.systemDefault()).toInstant().toEpochMilli()
+    } catch (_: Exception) {
+        try {
+            java.time.LocalDate.parse(s).atStartOfDay(ZoneId.systemDefault()).toInstant().toEpochMilli()
+        } catch (e3: Exception) {
+            throw onl.ycode.kdbc.SQLException("Unable to parse temporal string: $s", e3)
+        }
+    }
+}

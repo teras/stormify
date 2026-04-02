@@ -33,6 +33,8 @@ interface Connection : AutoCloseable {
     val metaData: DatabaseMetaData
 
     fun prepareStatement(sql: String, returnGeneratedKeys: Boolean = false): PreparedStatement
+    fun prepareStatement(sql: String, columnNames: Array<String>): PreparedStatement =
+        prepareStatement(sql, returnGeneratedKeys = true)
     fun prepareCall(sql: String): CallableStatement
     fun commit()
     fun rollback(savepoint: Savepoint? = null)
@@ -61,4 +63,5 @@ interface ResultSet : AutoCloseable {
 interface ResultSetMetaData {
     val columnCount: Int
     fun getColumnName(column: Int): String
+    fun getColumnLabel(column: Int): String = getColumnName(column)
 }

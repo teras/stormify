@@ -73,6 +73,7 @@ internal actual fun <T : Any> tryReflection(type: KClass<T>): EntityMeta<T>? {
             ?.takeIf { it.isNotBlank() }
 
     val kProps = type.members.filterIsInstance<kotlin.reflect.KProperty1<T, *>>()
+        .filter { it.name.first().isLetter() } // Exclude internal/synthetic fields
     if (kProps.isEmpty()) return null
 
     val properties = kProps.mapNotNull { kProp ->
@@ -102,6 +103,15 @@ internal actual fun <T : Any> tryReflection(type: KClass<T>): EntityMeta<T>? {
                 try { ann.annotationClass.java.getMethod("name").invoke(ann) as? String } catch (_: Exception) { null }
             }?.takeIf { it.isNotBlank() }
 
+        val isAutoIncrement = (dbField?.autoIncrement ?: false) || annotations.any { ann ->
+            if (ann.annotationClass.qualifiedName == "javax.persistence.GeneratedValue") {
+                try {
+                    val strategy = ann.annotationClass.java.getMethod("strategy").invoke(ann)
+                    strategy?.toString() == "IDENTITY"
+                } catch (_: Exception) { false }
+            } else false
+        }
+
         val isCreatable = dbField?.creatable ?: (jpaColumn?.let { ann ->
             try { ann.annotationClass.java.getMethod("insertable").invoke(ann) as? Boolean } catch (_: Exception) { null }
         } ?: true)
@@ -111,6 +121,9 @@ internal actual fun <T : Any> tryReflection(type: KClass<T>): EntityMeta<T>? {
 
         // Determine if property type is a reference (entity type)
         val propType = kProp.returnType.classifier as? KClass<*> ?: return@mapNotNull null
+        // Skip collection/map types — they are not DB columns (e.g. lazyDetails)
+        if (Collection::class.java.isAssignableFrom(propType.java) || Map::class.java.isAssignableFrom(propType.java))
+            return@mapNotNull null
         val isReference = !isScalarClass(propType) && !isScalarObject(propType.java.kotlin)
                 && propType != ByteArray::class && propType != CharArray::class
 
@@ -130,6 +143,7 @@ internal actual fun <T : Any> tryReflection(type: KClass<T>): EntityMeta<T>? {
             dbNameOverride = dbNameOverride,
             isPrimaryKey = isPrimaryKey,
             sequence = sequence,
+            isAutoIncrement = isAutoIncrement,
             isCreatable = isCreatable,
             isUpdatable = isUpdatable,
             isTransient = isTransient

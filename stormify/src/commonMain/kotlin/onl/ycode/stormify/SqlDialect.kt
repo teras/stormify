@@ -140,7 +140,12 @@ enum class SqlDialect(
     /**
      * The method to create the query, how to retrieve the generated key from the database.
      */
-    val generatedKeyRetrieval: GeneratedKeyRetrieval
+    val generatedKeyRetrieval: GeneratedKeyRetrieval,
+    /**
+     * Whether this dialect supports the JDBC releaseSavepoint() operation.
+     * Oracle and SQL Server do not support it.
+     */
+    val supportsReleaseSavepoint: Boolean = true
 ) {
     /**
      * The MariaDB dialect for versions older than 10.3.
@@ -174,7 +179,7 @@ enum class SqlDialect(
      * The MySQL dialect for versions 8 and newer.
      */
     MYSQL_NEW(
-        sequenceNextValueFor,
+        { _, _ -> null },
         orderById,
         formatterLimitOffset, GeneratedKeyRetrieval.BY_INDEX
     ),
@@ -185,7 +190,7 @@ enum class SqlDialect(
     ORACLE_NEW(
         sequenceFromDual,
         orderByCase,
-        formatterRowsFetch, GeneratedKeyRetrieval.NONE
+        formatterRowsFetch, GeneratedKeyRetrieval.BY_NAME, supportsReleaseSavepoint = false
     ),
 
     /**
@@ -194,7 +199,7 @@ enum class SqlDialect(
     ORACLE_OLD(
         sequenceFromDual,
         orderByCase,
-        formatterRowNumber, GeneratedKeyRetrieval.NONE
+        formatterRowNumber, GeneratedKeyRetrieval.NONE, supportsReleaseSavepoint = false
     ),
 
     /**
@@ -212,7 +217,7 @@ enum class SqlDialect(
     SQL_SERVER_NEW(
         sequenceNextValueFor,
         orderByCase,
-        formatterRowsFetch, GeneratedKeyRetrieval.BY_NAME
+        formatterRowsFetch, GeneratedKeyRetrieval.BY_INDEX, supportsReleaseSavepoint = false
     ),
 
     /**
@@ -221,7 +226,7 @@ enum class SqlDialect(
     SQL_SERVER_OLD(
         sequenceNextValueFor,
         orderByCase,
-        formatterRowNumber, GeneratedKeyRetrieval.BY_NAME
+        formatterRowNumber, GeneratedKeyRetrieval.BY_NAME, supportsReleaseSavepoint = false
     ),
 
     /**
@@ -282,6 +287,14 @@ enum class SqlDialect(
         BY_INDEX, BY_NAME, NONE
     }
 
+    fun prepareForInsert(conn: Connection, query: String, fetchGeneratedKeys: Boolean, pkColumn: String?): onl.ycode.kdbc.PreparedStatement =
+        if (!fetchGeneratedKeys) conn.prepareStatement(query)
+        else when (generatedKeyRetrieval) {
+            GeneratedKeyRetrieval.BY_NAME -> conn.prepareStatement(query, arrayOf(pkColumn ?: ""))
+            GeneratedKeyRetrieval.BY_INDEX -> conn.prepareStatement(query, returnGeneratedKeys = true)
+            else -> conn.prepareStatement(query)
+        }
+
     companion object {
         fun findDialect(dataSource: DataSource): SqlDialect {
             dataSource.getConnection().use { conn ->
@@ -298,10 +311,12 @@ enum class SqlDialect(
                     productName.contains("h2") -> H2
                     productName.contains("hsql") -> HSQLDB
                     productName.contains("derby") -> DERBY
+                    productName.contains("mariadb") ->
+                        if (majorVersion > 10 || (majorVersion == 10 && minorVersion >= 3)) MARIA_DB_NEW
+                        else MARIA_DB_OLD
                     productName.contains("mysql") && productVersion.contains("mariadb") ->
                         if (majorVersion > 10 || (majorVersion == 10 && minorVersion >= 3)) MARIA_DB_NEW
                         else MARIA_DB_OLD
-
                     productName.contains("mysql") -> if (majorVersion >= 8) MYSQL_NEW else MYSQL_OLD
                     else -> UNKNOWN
                 }

@@ -17,6 +17,7 @@ class PropertyMeta<T : Any>(
     val dbNameOverride: String?,
     val isPrimaryKey: Boolean,
     val sequence: String?,
+    val isAutoIncrement: Boolean = false,
     val isCreatable: Boolean = true,
     val isUpdatable: Boolean = true,
     val isTransient: Boolean = false,

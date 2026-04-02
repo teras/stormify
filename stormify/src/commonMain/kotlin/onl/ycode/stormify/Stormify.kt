@@ -79,13 +79,25 @@ open class Stormify(val dataSource: DataSource, vararg registrars: EntityRegistr
 
     // --- SQL Dialect ---
 
-    val sqlDialect: SqlDialect by lazy {
-        try {
-            SqlDialect.findDialect(dataSource)
-        } catch (e: Throwable) {
-            e.throwQuery("Unable to find SQL dialect")
+    private var _sqlDialect: SqlDialect? = null
+
+    /**
+     * The SQL dialect used by this Stormify instance. Auto-detected from the data source
+     * on first access. Can be set manually for proxy scenarios where auto-detection fails.
+     */
+    var sqlDialect: SqlDialect
+        get() {
+            if (_sqlDialect == null)
+                _sqlDialect = try {
+                    SqlDialect.findDialect(dataSource)
+                } catch (e: Throwable) {
+                    e.throwQuery("Unable to find SQL dialect")
+                }
+            return _sqlDialect!!
         }
-    }
+        set(value) = kotlinx.atomicfu.locks.synchronized(configLock) {
+            _sqlDialect = value
+        }
 
     // --- Configuration ---
 
@@ -173,8 +185,9 @@ open class Stormify(val dataSource: DataSource, vararg registrars: EntityRegistr
             if (value is Iterable<*>)
                 return value.map { sqlData(it, false) }
         }
-        val info = resolveTableInfo(value::class)
-        return if (info.idNames.size == 1) info.getIdValues(value as Nothing)[0] else
+        @Suppress("UNCHECKED_CAST")
+        val info = resolveTableInfo(value::class) as TableInfo<Any>
+        return if (info.idNames.size == 1) info.getIdValues(value)[0] else
             throw SQLException("Multiple primary keys found in ${info.tableName}")
     }
 
@@ -286,8 +299,9 @@ open class Stormify(val dataSource: DataSource, vararg registrars: EntityRegistr
         val metaData = rs.getMetaData()
         val columnCount = metaData.columnCount
         for (i in 1..columnCount) {
-            val col = metaData.getColumnName(i)
-            val value = transformResultValue(rs.getObject(i, info.getType(col)))
+            val col = metaData.getColumnLabel(i)
+            val colType = info.getScalarType(col)
+            val value = transformResultValue(if (colType != null) rs.getObject(i, colType) else rs.getObject(i, Any::class))
             // Reference deduplication: if field is an AutoTable type and we have a context
             if (context != null && value != null && info.isReferenceField(col)) {
                 val refType = info.getReferenceType(col)!!
@@ -338,7 +352,7 @@ open class Stormify(val dataSource: DataSource, vararg registrars: EntityRegistr
             val meta = rs.getMetaData()
             var pkColIdx = 1
             for (c in 1..meta.columnCount)
-                if (meta.getColumnName(c).equals(pkDbName, ignoreCase = true)) { pkColIdx = c; break }
+                if (meta.getColumnLabel(c).equals(pkDbName, ignoreCase = true)) { pkColIdx = c; break }
             while (rs.next()) {
                 val key = rs.getObject(pkColIdx, info.idTypes[0]).toString()
                 val targets = byId.remove(key)
@@ -380,18 +394,27 @@ open class Stormify(val dataSource: DataSource, vararg registrars: EntityRegistr
     internal fun <T : Any> create(conn: Connection?, items: Collection<T>): List<T> {
         if (items.isEmpty()) return emptyList()
         val itemList = if (items is List) items else items.toList()
-        itemList.forEach { attachStormify(it) }
+        itemList.forEach {
+            attachStormify(it)
+            if (it is AutoTable) it.markPopulated() // Prevent lazy-load during value extraction
+        }
 
         return ConnectionMaker(conn).useWithException("Unable to batch create") { maker ->
             val info = resolveTableInfo(itemList[0]::class) as TableInfo<T>
             val hasSinglePk = info.idNames.size == 1
 
-            // Identify items needing IDs (single PK, null value)
+            // Identify items needing IDs (single PK)
+            val isAutoIncrement = hasSinglePk && info.primaryKeys[0].isAutoIncrement
             val needsId = mutableListOf<Int>()
             if (hasSinglePk) {
-                for (i in itemList.indices)
-                    if (info.getIdValues(itemList[i])[0] == null)
-                        needsId.add(i)
+                if (isAutoIncrement) {
+                    // Auto-increment: all items need generated IDs
+                    for (i in itemList.indices) needsId.add(i)
+                } else {
+                    for (i in itemList.indices)
+                        if (info.getIdValues(itemList[i])[0] == null)
+                            needsId.add(i)
+                }
             }
 
             // Bulk fetch sequences if applicable
@@ -405,16 +428,21 @@ open class Stormify(val dataSource: DataSource, vararg registrars: EntityRegistr
 
             val hasGK = sqlDialect.generatedKeyRetrieval !== GeneratedKeyRetrieval.NONE
             val fetchGeneratedKeys = hasGK && needsId.size == 1
+            val pkColumn = if (hasSinglePk) info.singleKeyDbName else null
 
             `!dbLog`("${info.createQuery} [batch: ${itemList.size}]", null)
-            maker.connection.prepareStatement(info.createQuery, fetchGeneratedKeys).use { stmt ->
+            sqlDialect.prepareForInsert(maker.connection, info.createQuery, fetchGeneratedKeys, pkColumn).use { stmt ->
                 for (item in itemList) {
                     val givenParams = info.getCreateValues(item)
                     for (i in givenParams.indices)
                         stmt.setObject(i + 1, sqlData(givenParams[i], false))
-                    stmt.addBatch()
+                    if (fetchGeneratedKeys)
+                        stmt.executeUpdate()
+                    else
+                        stmt.addBatch()
                 }
-                stmt.executeBatch()
+                if (!fetchGeneratedKeys)
+                    stmt.executeBatch()
 
                 // Fetch generated key only for single item (no order guarantee for batch)
                 if (fetchGeneratedKeys) {

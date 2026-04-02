@@ -73,14 +73,18 @@ kotlin {
 
         val jvmTest by getting {
             dependencies {
-                // HikariCP for connection pooling
-                implementation("com.zaxxer:HikariCP:5.0.1")
-                // SQLite JDBC driver
-                implementation("org.xerial:sqlite-jdbc:3.42.0.0")
-                // Optional: MySQL/MariaDB JDBC driver
-                // implementation("com.mysql:mysql-connector-j:8.0.33")
-                // Optional: PostgreSQL JDBC driver
-                // implementation("org.postgresql:postgresql:42.6.0")
+                implementation(kotlin("reflect"))
+                implementation("com.zaxxer:HikariCP:4.0.3")
+                // Load JDBC driver based on target database
+                val testDb = System.getProperty("stormify.test.db") ?: "sqlite"
+                when {
+                    testDb.startsWith("mysql") -> implementation("com.mysql:mysql-connector-j:9.2.0")
+                    testDb.startsWith("mariadb") -> implementation("org.mariadb.jdbc:mariadb-java-client:3.5.3")
+                    testDb.startsWith("postgresql") -> implementation("org.postgresql:postgresql:42.7.5")
+                    testDb.startsWith("oracle") -> implementation("com.oracle.database.jdbc:ojdbc8:21.9.0.0")
+                    testDb.startsWith("mssql") -> implementation("com.microsoft.sqlserver:mssql-jdbc:12.8.1.jre8")
+                    else -> implementation("org.xerial:sqlite-jdbc:3.47.2.0")
+                }
             }
         }
 
@@ -157,4 +161,10 @@ publishing {
     repositories {
         mavenLocal()
     }
+}
+
+tasks.withType<Test> {
+    val testDb = System.getProperty("stormify.test.db") ?: "sqlite"
+    systemProperty("stormify.test.db", testDb)
+    systemProperty("stormify.test.config", System.getProperty("stormify.test.config") ?: "")
 }

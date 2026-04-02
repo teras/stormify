@@ -116,6 +116,21 @@ private fun <T : Any> registerTimeRelated(
         converters[Long::class] = { toNative((it as Long)) }
         converters[Double::class] = { toNative(llround((it as Double) * 1000.0)) }
         converters[Float::class] = { toNative(llroundf((it as Float) * 1000.0f)) }
-        converters[String::class] = { toNative(KtInstant.parse(it as String).toEpochMilliseconds()) }
+        converters[String::class] = { toNative(parseTemporalString(it as String)) }
+    }
+}
+
+private fun parseTemporalString(s: String): Long = try {
+    KtInstant.parse(s).toEpochMilliseconds()
+} catch (_: Exception) {
+    try {
+        LocalDateTime.parse(s).toInstant(TimeZone.currentSystemDefault()).toEpochMilliseconds()
+    } catch (_: Exception) {
+        try {
+            LocalDateTime(LocalDate.parse(s), LocalTime(0, 0))
+                .toInstant(TimeZone.currentSystemDefault()).toEpochMilliseconds()
+        } catch (e: Exception) {
+            throw onl.ycode.kdbc.SQLException("Unable to parse temporal string: $s", e)
+        }
     }
 }

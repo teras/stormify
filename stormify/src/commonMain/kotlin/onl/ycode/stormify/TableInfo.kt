@@ -13,6 +13,7 @@ data class FieldInfo(
     val isPrimaryKey: Boolean,
     val isReference: Boolean,
     val sequence: String?,
+    val isAutoIncrement: Boolean,
     val isInsertable: Boolean,
     val isUpdatable: Boolean,
 )
@@ -38,7 +39,10 @@ class TableInfo<T : Any> internal constructor(
     private val referenceFieldMap = resolved.filter { it.isReference }.associate { it.dbName.lowercase() to it.type }
 
     internal fun getType(dbName: String): KClass<*> =
-        fieldTypeMap[dbName.lowercase()] ?: throw SQLException("Unknown field $dbName in $tableName")
+        fieldTypeMap[dbName.lowercase()] ?: Any::class
+
+    internal fun getScalarType(dbName: String): KClass<*>? =
+        fieldTypeMap[dbName.lowercase()]?.takeIf { isScalarClass(it) }
 
     internal fun isReferenceField(dbName: String): Boolean =
         referenceFieldMap.containsKey(dbName.lowercase())
@@ -62,9 +66,10 @@ class TableInfo<T : Any> internal constructor(
     internal val idTypes = idProps.map { it.type }
     internal val idSequences = idProps.map { it.sequence ?: "" }
 
-    internal val singleKeyDbName: String =
+    internal val singleKeyDbName: String by lazy {
         if (idProps.size == 1) idProps[0].dbName
         else throw SQLException("Expected exactly one primary key in $tableName, found ${idProps.size}")
+    }
 
     internal fun getIdValues(entity: T): List<Any?> = idProps.map { it.getter(entity) }
 
@@ -94,7 +99,7 @@ class TableInfo<T : Any> internal constructor(
     val fieldInfos: List<FieldInfo> by lazy {
         resolved.map {
             FieldInfo(it.name, it.dbName, it.type, it.isPrimaryKey, it.isReference,
-                it.sequence, it.isInsertable, it.isUpdatable)
+                it.sequence, it.isAutoIncrement, it.isInsertable, it.isUpdatable)
         }
     }
 
@@ -131,7 +136,8 @@ class TableInfo<T : Any> internal constructor(
                 ResolvedProperty(
                     name = prop.name, dbName = dbName, type = prop.type,
                     isReference = prop.isReference, isPrimaryKey = isPk,
-                    sequence = prop.sequence, isInsertable = prop.isCreatable,
+                    sequence = prop.sequence, isAutoIncrement = prop.isAutoIncrement,
+                    isInsertable = prop.isCreatable,
                     isUpdatable = prop.isUpdatable,
                     getter = prop.getter, setter = prop.setter
                 )
@@ -149,8 +155,11 @@ internal class ResolvedProperty<T : Any>(
     val isReference: Boolean,
     val isPrimaryKey: Boolean,
     val sequence: String?,
-    val isInsertable: Boolean,
+    val isAutoIncrement: Boolean,
+    isInsertable: Boolean,
     val isUpdatable: Boolean,
     val getter: (T) -> Any?,
     val setter: (T, Any?, Stormify) -> Unit,
-)
+) {
+    val isInsertable: Boolean = isInsertable && !isAutoIncrement
+}

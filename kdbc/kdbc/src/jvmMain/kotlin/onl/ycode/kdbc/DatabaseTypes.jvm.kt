@@ -95,6 +95,9 @@ private class JdbcConnection(private val jdbc: java.sql.Connection) : Connection
                 jdbc.prepareStatement(sql)
         )
 
+    override fun prepareStatement(sql: String, columnNames: Array<String>): PreparedStatement =
+        JdbcPreparedStatement(jdbc.prepareStatement(sql, columnNames))
+
     override fun prepareCall(sql: String): CallableStatement = JdbcCallableStatement(jdbc.prepareCall(sql))
     override fun commit() = jdbc.commit()
     override fun rollback(savepoint: Savepoint?) {
@@ -128,7 +131,12 @@ private class JdbcSavepoint(val jdbc: java.sql.Savepoint) : Savepoint {
 // Wrapper class for ResultSet
 private class JdbcResultSet(private val jdbc: java.sql.ResultSet) : ResultSet {
     override fun next(): Boolean = jdbc.next()
-    override fun getObject(columnIndex: Int, type: KClass<*>): Any? = jdbc.getObject(columnIndex, type.java)
+    override fun getObject(columnIndex: Int, type: KClass<*>): Any? = try {
+        if (type == Any::class) jdbc.getObject(columnIndex)
+        else jdbc.getObject(columnIndex, type.java)
+    } catch (_: java.sql.SQLException) {
+        jdbc.getObject(columnIndex)
+    }
     override fun getMetaData(): ResultSetMetaData = JdbcResultSetMetaData(jdbc.metaData)
     override fun close() = jdbc.close()
 }
@@ -137,4 +145,5 @@ private class JdbcResultSet(private val jdbc: java.sql.ResultSet) : ResultSet {
 private class JdbcResultSetMetaData(private val jdbc: java.sql.ResultSetMetaData) : ResultSetMetaData {
     override val columnCount: Int get() = jdbc.columnCount
     override fun getColumnName(column: Int): String = jdbc.getColumnName(column)
+    override fun getColumnLabel(column: Int): String = jdbc.getColumnLabel(column)
 }
