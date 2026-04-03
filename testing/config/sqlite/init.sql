@@ -1,0 +1,1 @@
+-- SQLite: no init needed

@@ -1,4 +1,0 @@
-headers = sybfront.h sybdb.h
-headerFilter = sybfront.h sybdb.h
-linkerOpts.linux = -L/usr/lib -lsybdb --allow-shlib-undefined
-compilerOpts.linux = -I/usr/include

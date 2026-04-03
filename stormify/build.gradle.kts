@@ -103,7 +103,7 @@ kotlin {
 
         val linuxX64Test by getting {
             dependencies {
-                implementation(project(":kdbc-sqlite"))
+                implementation(project(":kdbc"))
             }
         }
         
@@ -112,7 +112,7 @@ kotlin {
             val appleMain by creating {
                 dependsOn(nativeMain)
                 dependencies {
-                    implementation(project(":kdbc-sqlite"))
+                    implementation(project(":kdbc"))
                 }
             }
             

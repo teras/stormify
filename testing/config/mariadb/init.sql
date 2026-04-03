@@ -1,0 +1,1 @@
+-- MariaDB: database and user created via environment variables

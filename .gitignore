@@ -49,3 +49,12 @@ gradle/wrapper
 .DS_Store
 
 .idea
+
+### C build artifacts (kdbc) ###
+kdbc/src/c/**/*.o
+kdbc/src/c/libkdbc.a
+kdbc/src/c/libkdbc.so
+kdbc/src/c/test/test_kdbc
+
+### Test logs ###
+testing/.logs/

@@ -1,0 +1,1042 @@
+/*
+ * KDBC Native - PostgreSQL driver (binary protocol)
+ *
+ * Uses dlopen/dlsym to load libpq at runtime.
+ * Parameters are sent in binary format (network byte order).
+ * Results are received in binary format and decoded natively.
+ *
+ * SPDX-License-Identifier: Apache-2.0
+ */
+#include "../include/kdbc_internal.h"
+#include "../include/kdbc_dl.h"
+#include <libpq-fe.h>
+#include <postgres_ext.h>
+
+/* PostgreSQL type OIDs - stable catalog values, not in libpq headers */
+#define PG_BOOL_OID        16
+#define PG_INT2_OID        21
+#define PG_INT4_OID        23
+#define PG_INT8_OID        20
+#define PG_FLOAT4_OID     700
+#define PG_FLOAT8_OID     701
+#define PG_TEXT_OID        25
+#define PG_VARCHAR_OID   1043
+#define PG_BYTEA_OID       17
+#define PG_NUMERIC_OID   1700
+
+/* ========================================================================
+ * Byte-order helpers (network = big-endian)
+ * ======================================================================== */
+
+static inline int16_t pg_htobe16(int16_t h) {
+    uint16_t u = (uint16_t)h;
+    return (int16_t)(((u & 0xFF) << 8) | ((u >> 8) & 0xFF));
+}
+
+static inline int32_t pg_htobe32(int32_t h) {
+    uint32_t u = (uint32_t)h;
+    return (int32_t)(((u & 0xFF) << 24) | (((u >> 8) & 0xFF) << 16) |
+                     (((u >> 16) & 0xFF) << 8) | ((u >> 24) & 0xFF));
+}
+
+static inline int64_t pg_htobe64(int64_t h) {
+    uint64_t u = (uint64_t)h;
+    return (int64_t)(
+        ((u & 0xFFULL) << 56) | (((u >> 8) & 0xFFULL) << 48) |
+        (((u >> 16) & 0xFFULL) << 40) | (((u >> 24) & 0xFFULL) << 32) |
+        (((u >> 32) & 0xFFULL) << 24) | (((u >> 40) & 0xFFULL) << 16) |
+        (((u >> 48) & 0xFFULL) << 8)  | ((u >> 56) & 0xFFULL));
+}
+
+#define pg_be16toh pg_htobe16  /* symmetric */
+#define pg_be32toh pg_htobe32
+#define pg_be64toh pg_htobe64
+
+/* ========================================================================
+ * Function pointer types
+ * ======================================================================== */
+
+typedef PGconn    *(*fn_PQconnectdb)(const char *);
+typedef void       (*fn_PQfinish)(PGconn *);
+typedef int        (*fn_PQstatus)(const PGconn *);
+typedef char      *(*fn_PQerrorMessage)(const PGconn *);
+typedef PGresult  *(*fn_PQexec)(PGconn *, const char *);
+typedef PGresult  *(*fn_PQprepare)(PGconn *, const char *, const char *, int, const Oid *);
+typedef PGresult  *(*fn_PQexecPrepared)(PGconn *, const char *, int,
+                                         const char *const *, const int *, const int *, int);
+typedef int        (*fn_PQresultStatus)(const PGresult *);
+typedef char      *(*fn_PQresultErrorMessage)(const PGresult *);
+typedef char      *(*fn_PQcmdTuples)(PGresult *);
+typedef int        (*fn_PQntuples)(const PGresult *);
+typedef int        (*fn_PQnfields)(const PGresult *);
+typedef char      *(*fn_PQfname)(const PGresult *, int);
+typedef Oid        (*fn_PQftype)(const PGresult *, int);
+typedef int        (*fn_PQfformat)(const PGresult *, int);
+typedef int        (*fn_PQgetisnull)(const PGresult *, int, int);
+typedef char      *(*fn_PQgetvalue)(const PGresult *, int, int);
+typedef int        (*fn_PQgetlength)(const PGresult *, int, int);
+typedef void       (*fn_PQclear)(PGresult *);
+typedef int        (*fn_PQserverVersion)(const PGconn *);
+
+/* ========================================================================
+ * Loaded function pointers
+ * ======================================================================== */
+
+static kdbc_lib_handle lib_handle = NULL;
+
+static fn_PQconnectdb          p_connectdb;
+static fn_PQfinish             p_finish;
+static fn_PQstatus             p_status;
+static fn_PQerrorMessage       p_errorMessage;
+static fn_PQexec               p_exec;
+static fn_PQprepare            p_prepare;
+static fn_PQexecPrepared       p_execPrepared;
+static fn_PQresultStatus       p_resultStatus;
+static fn_PQresultErrorMessage p_resultErrorMessage;
+static fn_PQcmdTuples          p_cmdTuples;
+static fn_PQntuples            p_ntuples;
+static fn_PQnfields            p_nfields;
+static fn_PQfname              p_fname;
+static fn_PQftype              p_ftype;
+static fn_PQfformat            p_fformat;
+static fn_PQgetisnull          p_getisnull;
+static fn_PQgetvalue           p_getvalue;
+static fn_PQgetlength          p_getlength;
+static fn_PQclear              p_clear;
+static fn_PQserverVersion      p_serverVersion;
+
+/* ========================================================================
+ * Driver-specific structures
+ * ======================================================================== */
+
+typedef struct {
+    PGresult *res;
+    int       row_count;
+    int       col_count;
+    int       current_row;
+    /* Cached column type OIDs */
+    Oid      *col_types;
+    /* String conversion buffer per result set */
+    char      conv_buf[64];
+} pg_result_set;
+
+/* Per-parameter binary buffer */
+typedef struct {
+    char    *data;       /* binary data (owned) */
+    int      len;        /* length in bytes, 0 = NULL */
+    int      format;     /* 0=text, 1=binary */
+} pg_param_buf;
+
+typedef struct {
+    PGconn      *pg;
+    char         stmt_name[32];
+    int          param_count;
+    pg_param_buf *params;
+} pg_stmt_data;
+
+/* ========================================================================
+ * Library loading
+ * ======================================================================== */
+
+#define PG_LOAD(name) do { \
+    p_##name = (fn_PQ##name)kdbc_dl_sym(lib_handle, "PQ" #name); \
+    if (!p_##name) { kdbc_dl_close(lib_handle); lib_handle = NULL; return 0; } \
+} while (0)
+
+static int pg_load(void) {
+    if (lib_handle) return 1;
+    lib_handle = kdbc_dl_open(KDBC_LIBNAME("pq", "5"), RTLD_LAZY);
+    if (!lib_handle) lib_handle = kdbc_dl_open(KDBC_LIBNAME_NOVER("pq"), RTLD_LAZY);
+    if (!lib_handle) return 0;
+
+    PG_LOAD(connectdb);
+    PG_LOAD(finish);
+    PG_LOAD(status);
+    PG_LOAD(errorMessage);
+    PG_LOAD(exec);
+    PG_LOAD(prepare);
+    PG_LOAD(execPrepared);
+    PG_LOAD(resultStatus);
+    PG_LOAD(resultErrorMessage);
+    PG_LOAD(cmdTuples);
+    PG_LOAD(ntuples);
+    PG_LOAD(nfields);
+    PG_LOAD(fname);
+    PG_LOAD(ftype);
+    PG_LOAD(fformat);
+    PG_LOAD(getisnull);
+    PG_LOAD(getvalue);
+    PG_LOAD(getlength);
+    PG_LOAD(clear);
+    PG_LOAD(serverVersion);
+
+    return 1;
+}
+
+static int pg_loaded(void) { return lib_handle != NULL; }
+
+/* ========================================================================
+ * Connection
+ * ======================================================================== */
+
+static void *pg_connect(const char *url, const char *user, const char *password,
+                        char *err, size_t err_size) {
+    char connstr[1024];
+    if (user && password) {
+        snprintf(connstr, sizeof(connstr), "postgresql://%s:%s@%s", user, password, url);
+    } else if (user) {
+        snprintf(connstr, sizeof(connstr), "postgresql://%s@%s", user, url);
+    } else {
+        snprintf(connstr, sizeof(connstr), "postgresql://%s", url);
+    }
+
+    PGconn *conn = p_connectdb(connstr);
+    if (!conn) {
+        snprintf(err, err_size, "PostgreSQL: failed to allocate connection");
+        return NULL;
+    }
+    if (p_status(conn) != CONNECTION_OK) {
+        snprintf(err, err_size, "PostgreSQL: %s", p_errorMessage(conn));
+        p_finish(conn);
+        return NULL;
+    }
+    return conn;
+}
+
+static void pg_close(void *native) {
+    if (native) p_finish((PGconn *)native);
+}
+
+/* ========================================================================
+ * Transactions
+ * ======================================================================== */
+
+static int pg_exec_simple(kdbc_conn *conn, const char *sql) {
+    PGconn *pg = (PGconn *)conn->native;
+    PGresult *res = p_exec(pg, sql);
+    if (!res) {
+        CONN_ERR(conn, "PostgreSQL: %s", p_errorMessage(pg));
+        return KDBC_ERROR;
+    }
+    int st = p_resultStatus(res);
+    if (st != PGRES_COMMAND_OK && st != PGRES_TUPLES_OK) {
+        CONN_ERR(conn, "PostgreSQL: %s", p_resultErrorMessage(res));
+        p_clear(res);
+        return KDBC_ERROR;
+    }
+    p_clear(res);
+    return KDBC_OK;
+}
+
+static int pg_set_autocommit(kdbc_conn *conn, int enabled) {
+    if (enabled && !conn->autocommit)
+        return pg_exec_simple(conn, "COMMIT");
+    else if (!enabled && conn->autocommit)
+        return pg_exec_simple(conn, "BEGIN");
+    return KDBC_OK;
+}
+
+static int pg_commit(kdbc_conn *conn) {
+    int rc = pg_exec_simple(conn, "COMMIT");
+    if (rc != KDBC_OK) return rc;
+    if (!conn->autocommit) return pg_exec_simple(conn, "BEGIN");
+    return KDBC_OK;
+}
+
+static int pg_rollback(kdbc_conn *conn) {
+    int rc = pg_exec_simple(conn, "ROLLBACK");
+    if (rc != KDBC_OK) return rc;
+    if (!conn->autocommit) return pg_exec_simple(conn, "BEGIN");
+    return KDBC_OK;
+}
+
+/* ========================================================================
+ * Metadata
+ * ======================================================================== */
+
+static void pg_get_product_name(void *native, char *buf, size_t sz) {
+    (void)native;
+    snprintf(buf, sz, "PostgreSQL");
+}
+
+static void pg_get_product_version(void *native, char *buf, size_t sz) {
+    int ver = p_serverVersion((PGconn *)native);
+    snprintf(buf, sz, "%d.%d", ver / 10000, (ver % 10000) / 100);
+}
+
+static int pg_get_major_version(void *native) {
+    return p_serverVersion((PGconn *)native) / 10000;
+}
+
+static int pg_get_minor_version(void *native) {
+    return (p_serverVersion((PGconn *)native) % 10000) / 100;
+}
+
+/* ========================================================================
+ * Statement preparation
+ * ======================================================================== */
+
+static _Atomic long pg_stmt_counter = 0;
+
+static void *pg_prepare(kdbc_conn *conn, const char *native_sql,
+                        const char **ret_cols, int n_ret_cols,
+                        char *err, size_t err_size) {
+    PGconn *pg = (PGconn *)conn->native;
+
+    /* Append RETURNING clause if needed */
+    char *final_sql = NULL;
+    if (ret_cols && n_ret_cols > 0) {
+        size_t len = strlen(native_sql) + 32;
+        for (int i = 0; i < n_ret_cols; i++)
+            len += strlen(ret_cols[i]) + 2;
+        final_sql = (char *)malloc(len);
+        if (!final_sql) {
+            snprintf(err, err_size, "Out of memory");
+            return NULL;
+        }
+        strcpy(final_sql, native_sql);
+        strcat(final_sql, " RETURNING ");
+        for (int i = 0; i < n_ret_cols; i++) {
+            if (i > 0) strcat(final_sql, ", ");
+            strcat(final_sql, ret_cols[i]);
+        }
+    }
+
+    pg_stmt_data *sd = (pg_stmt_data *)calloc(1, sizeof(pg_stmt_data));
+    if (!sd) {
+        free(final_sql);
+        snprintf(err, err_size, "Out of memory");
+        return NULL;
+    }
+
+    sd->pg = pg;
+    snprintf(sd->stmt_name, sizeof(sd->stmt_name), "_kdbc_%ld",
+             pg_stmt_counter++);
+    /* Count params from the TRANSLATED sql ($1, $2...) by counting $ markers */
+    sd->param_count = 0;
+    for (const char *p = native_sql; *p; p++) {
+        if (*p == '$' && p[1] >= '1' && p[1] <= '9') sd->param_count++;
+    }
+
+    /* Allocate parameter buffers */
+    if (sd->param_count > 0) {
+        sd->params = (pg_param_buf *)calloc(sd->param_count, sizeof(pg_param_buf));
+        if (!sd->params) {
+            free(final_sql);
+            free(sd);
+            snprintf(err, err_size, "Out of memory");
+            return NULL;
+        }
+    }
+
+    const char *sql_to_prepare = final_sql ? final_sql : native_sql;
+    PGresult *res = p_prepare(pg, sd->stmt_name, sql_to_prepare, 0, NULL);
+    free(final_sql);
+
+    if (!res || p_resultStatus(res) != PGRES_COMMAND_OK) {
+        snprintf(err, err_size, "PostgreSQL prepare: %s",
+                 res ? p_resultErrorMessage(res) : p_errorMessage(pg));
+        if (res) p_clear(res);
+        free(sd->params);
+        free(sd);
+        return NULL;
+    }
+    p_clear(res);
+    return sd;
+}
+
+static void pg_stmt_close(void *native_stmt, void *native_conn) {
+    pg_stmt_data *sd = (pg_stmt_data *)native_stmt;
+    (void)native_conn;
+    if (!sd) return;
+
+    char sql[64];
+    snprintf(sql, sizeof(sql), "DEALLOCATE %s", sd->stmt_name);
+    PGresult *res = p_exec(sd->pg, sql);
+    if (res) p_clear(res);
+
+    if (sd->params) {
+        for (int i = 0; i < sd->param_count; i++)
+            free(sd->params[i].data);
+        free(sd->params);
+    }
+    free(sd);
+}
+
+/* ========================================================================
+ * Parameter binding (binary format)
+ *
+ * PostgreSQL binary wire format:
+ *   bool:   1 byte (0 or 1)
+ *   int2:   2 bytes big-endian
+ *   int4:   4 bytes big-endian
+ *   int8:   8 bytes big-endian
+ *   float4: 4 bytes IEEE 754 big-endian
+ *   float8: 8 bytes IEEE 754 big-endian
+ *   text:   raw UTF-8 bytes (no null terminator)
+ *   bytea:  raw bytes
+ * ======================================================================== */
+
+static void pg_param_set_binary(pg_stmt_data *sd, int idx, const void *data, int len) {
+    int i = idx - 1;
+    free(sd->params[i].data);
+    sd->params[i].data = (char *)malloc(len);
+    if (sd->params[i].data) {
+        memcpy(sd->params[i].data, data, len);
+        sd->params[i].len = len;
+    } else {
+        sd->params[i].len = 0;
+    }
+    sd->params[i].format = 1; /* binary */
+}
+
+static void pg_param_set_null(pg_stmt_data *sd, int idx) {
+    int i = idx - 1;
+    free(sd->params[i].data);
+    sd->params[i].data = NULL;
+    sd->params[i].len = 0;
+    sd->params[i].format = 1;
+}
+
+static int pg_bind_null(kdbc_stmt *stmt, int idx) {
+    pg_param_set_null((pg_stmt_data *)stmt->native, idx);
+    return KDBC_OK;
+}
+
+static int pg_bind_int(kdbc_stmt *stmt, int idx, int val) {
+    int32_t be = pg_htobe32((int32_t)val);
+    pg_param_set_binary((pg_stmt_data *)stmt->native, idx, &be, 4);
+    return KDBC_OK;
+}
+
+static int pg_bind_long(kdbc_stmt *stmt, int idx, int64_t val) {
+    int64_t be = pg_htobe64(val);
+    pg_param_set_binary((pg_stmt_data *)stmt->native, idx, &be, 8);
+    return KDBC_OK;
+}
+
+static int pg_bind_double(kdbc_stmt *stmt, int idx, double val) {
+    /* IEEE 754 double → int64 bits → big-endian */
+    int64_t bits;
+    memcpy(&bits, &val, sizeof(bits));
+    int64_t be = pg_htobe64(bits);
+    pg_param_set_binary((pg_stmt_data *)stmt->native, idx, &be, 8);
+    return KDBC_OK;
+}
+
+static int pg_bind_string(kdbc_stmt *stmt, int idx, const char *val) {
+    /* Strings sent as binary - PostgreSQL text binary format is raw UTF-8 bytes
+     * (no null terminator in wire protocol). Must use format=1 like all other
+     * params since PQexecPrepared requires uniform format per call. */
+    pg_param_set_binary((pg_stmt_data *)stmt->native, idx, val, (int)strlen(val));
+    return KDBC_OK;
+}
+
+static int pg_bind_blob(kdbc_stmt *stmt, int idx, const void *data, size_t len) {
+    /* Blobs sent as binary format - raw bytes */
+    pg_param_set_binary((pg_stmt_data *)stmt->native, idx, data, (int)len);
+    return KDBC_OK;
+}
+
+/* Date/time binding: PostgreSQL binary format
+ * TIMESTAMP: int64 microseconds since 2000-01-01 00:00:00 (big-endian)
+ * DATE: int32 days since 2000-01-01 (big-endian)
+ * TIME: int64 microseconds since midnight (big-endian) */
+
+/* Days from 1970-01-01 to 2000-01-01 */
+#define PG_EPOCH_OFFSET_DAYS 10957
+/* Microseconds from Unix epoch to PG epoch */
+#define PG_EPOCH_OFFSET_USEC (PG_EPOCH_OFFSET_DAYS * 86400LL * 1000000LL)
+
+static int days_from_civil(int y, int m, int d) {
+    /* Convert y/m/d to days since 1970-01-01 (Rata Die algorithm) */
+    if (m <= 2) { y--; m += 9; } else { m -= 3; }
+    int era = (y >= 0 ? y : y - 399) / 400;
+    int yoe = y - era * 400;
+    int doy = (153 * m + 2) / 5 + d - 1;
+    int doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    return era * 146097 + doe - 719468;
+}
+
+static void civil_from_days(int z, int *y, int *m, int *d) {
+    /* Convert days since 1970-01-01 back to y/m/d */
+    z += 719468;
+    int era = (z >= 0 ? z : z - 146096) / 146097;
+    int doe = z - era * 146097;
+    int yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+    *y = yoe + era * 400;
+    int doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    int mp = (5 * doy + 2) / 153;
+    *d = doy - (153 * mp + 2) / 5 + 1;
+    *m = mp + (mp < 10 ? 3 : -9);
+    if (*m <= 2) (*y)++;
+}
+
+static int pg_bind_timestamp(kdbc_stmt *stmt, int idx,
+                             int year, int month, int day,
+                             int hour, int minute, int second, int usec) {
+    int days = days_from_civil(year, month, day);
+    int64_t unix_usec = (int64_t)days * 86400LL * 1000000LL
+                      + (int64_t)hour * 3600000000LL
+                      + (int64_t)minute * 60000000LL
+                      + (int64_t)second * 1000000LL
+                      + usec;
+    int64_t pg_usec = unix_usec - PG_EPOCH_OFFSET_USEC;
+    int64_t be = pg_htobe64(pg_usec);
+    pg_param_set_binary((pg_stmt_data *)stmt->native, idx, &be, 8);
+    return KDBC_OK;
+}
+
+static int pg_bind_date(kdbc_stmt *stmt, int idx, int year, int month, int day) {
+    int unix_days = days_from_civil(year, month, day);
+    int32_t pg_days = (int32_t)(unix_days - PG_EPOCH_OFFSET_DAYS);
+    int32_t be = pg_htobe32(pg_days);
+    pg_param_set_binary((pg_stmt_data *)stmt->native, idx, &be, 4);
+    return KDBC_OK;
+}
+
+static int pg_bind_time(kdbc_stmt *stmt, int idx,
+                        int hour, int minute, int second, int usec) {
+    int64_t time_usec = (int64_t)hour * 3600000000LL
+                      + (int64_t)minute * 60000000LL
+                      + (int64_t)second * 1000000LL
+                      + usec;
+    int64_t be = pg_htobe64(time_usec);
+    pg_param_set_binary((pg_stmt_data *)stmt->native, idx, &be, 8);
+    return KDBC_OK;
+}
+
+/* ========================================================================
+ * Build PQexecPrepared argument arrays from pg_param_buf
+ * ======================================================================== */
+
+typedef struct {
+    const char **values;
+    int         *lengths;
+    int         *formats;
+} pg_exec_args;
+
+static pg_exec_args pg_build_args(pg_stmt_data *sd) {
+    pg_exec_args a = { NULL, NULL, NULL };
+    int n = sd->param_count;
+    if (n == 0) return a;
+
+    a.values  = (const char **)calloc(n, sizeof(const char *));
+    a.lengths = (int *)calloc(n, sizeof(int));
+    a.formats = (int *)calloc(n, sizeof(int));
+
+    for (int i = 0; i < n; i++) {
+        a.values[i]  = sd->params[i].data;   /* NULL for NULL params */
+        a.lengths[i] = sd->params[i].len;
+        a.formats[i] = sd->params[i].format;
+    }
+    return a;
+}
+
+static void pg_free_args(pg_exec_args *a) {
+    free(a->values);
+    free(a->lengths);
+    free(a->formats);
+}
+
+/* ========================================================================
+ * Execution
+ * ======================================================================== */
+
+static int pg_execute_update(kdbc_stmt *stmt) {
+    pg_stmt_data *sd = (pg_stmt_data *)stmt->native;
+    pg_exec_args args = pg_build_args(sd);
+
+    /* Binary result only if RETURNING clause (need to decode generated key).
+     * Otherwise use text result since PQcmdTuples requires it. */
+    int result_binary = (stmt->ret_col_count > 0) ? 1 : 0;
+    PGresult *res = p_execPrepared(sd->pg, sd->stmt_name,
+                                    sd->param_count,
+                                    args.values, args.lengths, args.formats,
+                                    result_binary);
+    pg_free_args(&args);
+
+    if (!res) {
+        STMT_ERR(stmt, "PostgreSQL: %s", p_errorMessage(sd->pg));
+        return KDBC_ERROR;
+    }
+
+    int status = p_resultStatus(res);
+    if (status == PGRES_TUPLES_OK) {
+        /* RETURNING clause - extract generated key from binary result */
+        if (p_ntuples(res) > 0 && p_nfields(res) > 0) {
+            if (!p_getisnull(res, 0, 0)) {
+                int len = p_getlength(res, 0, 0);
+                const char *raw = p_getvalue(res, 0, 0);
+                if (len == 4) {
+                    int32_t v;
+                    memcpy(&v, raw, 4);
+                    stmt->generated_key = pg_be32toh(v);
+                    stmt->has_generated_key = 1;
+                } else if (len == 8) {
+                    int64_t v;
+                    memcpy(&v, raw, 8);
+                    stmt->generated_key = pg_be64toh(v);
+                    stmt->has_generated_key = 1;
+                } else {
+                    /* Fallback: text format or unusual size, parse as string */
+                    /* This happens if the column type is not int4/int8 */
+                    char buf[64];
+                    int blen = len < 63 ? len : 63;
+                    memcpy(buf, raw, blen);
+                    buf[blen] = '\0';
+                    long long k = 0;
+                    sscanf(buf, "%lld", &k);
+                    stmt->generated_key = k;
+                    stmt->has_generated_key = 1;
+                }
+            }
+        }
+        int rows = p_ntuples(res);
+        p_clear(res);
+        return rows > 0 ? rows : 0;
+    } else if (status == PGRES_COMMAND_OK) {
+        const char *ct = p_cmdTuples(res);
+        int rows = ct ? atoi(ct) : 0;
+        p_clear(res);
+        return rows;
+    } else {
+        STMT_ERR(stmt, "PostgreSQL: %s", p_resultErrorMessage(res));
+        p_clear(res);
+        return KDBC_ERROR;
+    }
+}
+
+static void *pg_execute_query(kdbc_stmt *stmt, int *out_col_count,
+                              char *err, size_t err_size) {
+    pg_stmt_data *sd = (pg_stmt_data *)stmt->native;
+    pg_exec_args args = pg_build_args(sd);
+
+    /* Request binary result format */
+    PGresult *res = p_execPrepared(sd->pg, sd->stmt_name,
+                                    sd->param_count,
+                                    args.values, args.lengths, args.formats,
+                                    1 /* binary result */);
+    pg_free_args(&args);
+
+    if (!res) {
+        snprintf(err, err_size, "PostgreSQL: %s", p_errorMessage(sd->pg));
+        return NULL;
+    }
+
+    int status = p_resultStatus(res);
+    if (status != PGRES_TUPLES_OK) {
+        snprintf(err, err_size, "PostgreSQL: %s", p_resultErrorMessage(res));
+        p_clear(res);
+        return NULL;
+    }
+
+    int ncols = p_nfields(res);
+    pg_result_set *prs = (pg_result_set *)calloc(1, sizeof(pg_result_set));
+    if (!prs) {
+        snprintf(err, err_size, "Out of memory");
+        p_clear(res);
+        return NULL;
+    }
+
+    prs->res = res;
+    prs->row_count = p_ntuples(res);
+    prs->col_count = ncols;
+    prs->current_row = -1;
+
+    /* Cache column type OIDs for efficient binary decoding */
+    prs->col_types = (Oid *)calloc(ncols, sizeof(Oid));
+    if (prs->col_types) {
+        for (int i = 0; i < ncols; i++)
+            prs->col_types[i] = p_ftype(res, i);
+    }
+
+    *out_col_count = ncols;
+    return prs;
+}
+
+static int pg_get_generated_key(kdbc_stmt *stmt, int64_t *out_key) {
+    if (stmt->has_generated_key) {
+        *out_key = stmt->generated_key;
+        return KDBC_OK;
+    }
+    STMT_ERR(stmt, "No generated key available");
+    return KDBC_ERROR;
+}
+
+/* ========================================================================
+ * Result set - binary format decoding
+ *
+ * When PQfformat(res, col) == 1 (binary), the data from PQgetvalue is
+ * in PostgreSQL's binary wire format: big-endian for numeric types,
+ * raw bytes for text/bytea.
+ * ======================================================================== */
+
+static int pg_rs_next(kdbc_result *rs) {
+    pg_result_set *prs = (pg_result_set *)rs->native;
+    prs->current_row++;
+    return (prs->current_row < prs->row_count) ? 1 : 0;
+}
+
+static const char *pg_rs_col_name(void *native_rs, int col) {
+    pg_result_set *prs = (pg_result_set *)native_rs;
+    return p_fname(prs->res, col - 1);
+}
+
+static int pg_rs_is_null(kdbc_result *rs, int col) {
+    pg_result_set *prs = (pg_result_set *)rs->native;
+    rs->last_null = p_getisnull(prs->res, prs->current_row, col - 1);
+    return rs->last_null;
+}
+
+static int64_t pg_rs_get_long(kdbc_result *rs, int col) {
+    pg_result_set *prs = (pg_result_set *)rs->native;
+    int ci = col - 1;
+
+    if (p_getisnull(prs->res, prs->current_row, ci)) {
+        rs->last_null = 1;
+        return 0;
+    }
+    rs->last_null = 0;
+
+    const char *raw = p_getvalue(prs->res, prs->current_row, ci);
+    int len = p_getlength(prs->res, prs->current_row, ci);
+    int fmt = p_fformat(prs->res, ci);
+
+    if (fmt == 1) {
+        /* Binary format */
+        if (len == 1) return (int64_t)(*(int8_t *)raw);              /* bool */
+        if (len == 2) { int16_t v; memcpy(&v, raw, 2); return pg_be16toh(v); }
+        if (len == 4) { int32_t v; memcpy(&v, raw, 4); return pg_be32toh(v); }
+        if (len == 8) { int64_t v; memcpy(&v, raw, 8); return pg_be64toh(v); }
+        /* Unusual size or NUMERIC - fall through to text parse */
+    }
+
+    /* Text format or fallback */
+    long long v = 0;
+    if (raw) sscanf(raw, "%lld", &v);
+    return v;
+}
+
+static double pg_rs_get_double(kdbc_result *rs, int col) {
+    pg_result_set *prs = (pg_result_set *)rs->native;
+    int ci = col - 1;
+
+    if (p_getisnull(prs->res, prs->current_row, ci)) {
+        rs->last_null = 1;
+        return 0.0;
+    }
+    rs->last_null = 0;
+
+    const char *raw = p_getvalue(prs->res, prs->current_row, ci);
+    int len = p_getlength(prs->res, prs->current_row, ci);
+    int fmt = p_fformat(prs->res, ci);
+
+    if (fmt == 1) {
+        /* Binary format */
+        if (len == 4) {
+            /* float4 */
+            int32_t bits;
+            memcpy(&bits, raw, 4);
+            bits = pg_be32toh(bits);
+            float f;
+            memcpy(&f, &bits, sizeof(f));
+            return (double)f;
+        }
+        if (len == 8) {
+            /* float8 or int8 - check type OID to distinguish */
+            Oid oid = prs->col_types ? prs->col_types[ci] : 0;
+            if (oid == PG_INT8_OID) {
+                int64_t v;
+                memcpy(&v, raw, 8);
+                return (double)pg_be64toh(v);
+            }
+            /* Assume float8 */
+            int64_t bits;
+            memcpy(&bits, raw, 8);
+            bits = pg_be64toh(bits);
+            double d;
+            memcpy(&d, &bits, sizeof(d));
+            return d;
+        }
+        if (len == 2) { int16_t v; memcpy(&v, raw, 2); return (double)pg_be16toh(v); }
+        if (len == 4) { int32_t v; memcpy(&v, raw, 4); return (double)pg_be32toh(v); }
+    }
+
+    /* Text format or fallback */
+    return raw ? strtod(raw, NULL) : 0.0;
+}
+
+static const char *pg_rs_get_string(kdbc_result *rs, int col) {
+    pg_result_set *prs = (pg_result_set *)rs->native;
+    int ci = col - 1;
+
+    if (p_getisnull(prs->res, prs->current_row, ci)) {
+        rs->last_null = 1;
+        return NULL;
+    }
+    rs->last_null = 0;
+
+    const char *raw = p_getvalue(prs->res, prs->current_row, ci);
+    int len = p_getlength(prs->res, prs->current_row, ci);
+    int fmt = p_fformat(prs->res, ci);
+
+    if (fmt == 0) {
+        /* Text format - already a C string */
+        return raw;
+    }
+
+    /* Binary format - need to convert to string based on type */
+    Oid oid = prs->col_types ? prs->col_types[ci] : 0;
+
+    switch (oid) {
+        case PG_BOOL_OID:
+            return (len >= 1 && raw[0]) ? "true" : "false";
+
+        case PG_INT2_OID:
+            if (len == 2) {
+                int16_t v; memcpy(&v, raw, 2);
+                snprintf(prs->conv_buf, sizeof(prs->conv_buf), "%d", (int)pg_be16toh(v));
+                return prs->conv_buf;
+            }
+            break;
+
+        case PG_INT4_OID:
+            if (len == 4) {
+                int32_t v; memcpy(&v, raw, 4);
+                snprintf(prs->conv_buf, sizeof(prs->conv_buf), "%d", (int)pg_be32toh(v));
+                return prs->conv_buf;
+            }
+            break;
+
+        case PG_INT8_OID:
+            if (len == 8) {
+                int64_t v; memcpy(&v, raw, 8);
+                snprintf(prs->conv_buf, sizeof(prs->conv_buf), "%lld", (long long)pg_be64toh(v));
+                return prs->conv_buf;
+            }
+            break;
+
+        case PG_FLOAT4_OID:
+            if (len == 4) {
+                int32_t bits; memcpy(&bits, raw, 4); bits = pg_be32toh(bits);
+                float f; memcpy(&f, &bits, sizeof(f));
+                snprintf(prs->conv_buf, sizeof(prs->conv_buf), "%.7g", (double)f);
+                return prs->conv_buf;
+            }
+            break;
+
+        case PG_FLOAT8_OID:
+            if (len == 8) {
+                int64_t bits; memcpy(&bits, raw, 8); bits = pg_be64toh(bits);
+                double d; memcpy(&d, &bits, sizeof(d));
+                snprintf(prs->conv_buf, sizeof(prs->conv_buf), "%.17g", d);
+                return prs->conv_buf;
+            }
+            break;
+
+        case PG_TEXT_OID:
+        case PG_VARCHAR_OID:
+            /* Text in binary format is just raw UTF-8 bytes, but NOT null-terminated!
+             * We need to copy into a buffer with null terminator. */
+            if (kdbc_ensure_strbuf(rs, len + 1) == 0) {
+                memcpy(rs->str_buf, raw, len);
+                rs->str_buf[len] = '\0';
+                return rs->str_buf;
+            }
+            break;
+
+        case PG_BYTEA_OID:
+            /* Return hex representation for bytea as string */
+            if (kdbc_ensure_strbuf(rs, len * 2 + 3) == 0) {
+                rs->str_buf[0] = '\\';
+                rs->str_buf[1] = 'x';
+                for (int i = 0; i < len; i++)
+                    sprintf(rs->str_buf + 2 + i * 2, "%02x", (unsigned char)raw[i]);
+                return rs->str_buf;
+            }
+            break;
+
+        default:
+            /* Unknown binary type - try to return raw bytes as string if printable,
+             * otherwise return hex representation */
+            if (kdbc_ensure_strbuf(rs, len + 1) == 0) {
+                memcpy(rs->str_buf, raw, len);
+                rs->str_buf[len] = '\0';
+                return rs->str_buf;
+            }
+            break;
+    }
+
+    return NULL;
+}
+
+static const void *pg_rs_get_blob(kdbc_result *rs, int col, size_t *out_len) {
+    pg_result_set *prs = (pg_result_set *)rs->native;
+    int ci = col - 1;
+
+    if (p_getisnull(prs->res, prs->current_row, ci)) {
+        rs->last_null = 1;
+        *out_len = 0;
+        return NULL;
+    }
+    rs->last_null = 0;
+
+    /* In binary format, PQgetvalue returns raw bytes directly */
+    *out_len = (size_t)p_getlength(prs->res, prs->current_row, ci);
+    return p_getvalue(prs->res, prs->current_row, ci);
+}
+
+/* Date/time result retrieval: PG binary format */
+static int pg_rs_get_timestamp(kdbc_result *rs, int col,
+                               int *year, int *month, int *day,
+                               int *hour, int *minute, int *second, int *usec) {
+    pg_result_set *prs = (pg_result_set *)rs->native;
+    int ci = col - 1;
+    if (p_getisnull(prs->res, prs->current_row, ci)) { rs->last_null = 1; return KDBC_ERROR; }
+    rs->last_null = 0;
+    const char *raw = p_getvalue(prs->res, prs->current_row, ci);
+    int len = p_getlength(prs->res, prs->current_row, ci);
+    int fmt = p_fformat(prs->res, ci);
+
+    if (fmt == 1 && len == 8) {
+        /* Binary: int64 microseconds since 2000-01-01 */
+        int64_t pg_usec;
+        memcpy(&pg_usec, raw, 8);
+        pg_usec = pg_be64toh(pg_usec);
+        int64_t unix_usec = pg_usec + PG_EPOCH_OFFSET_USEC;
+        int64_t total_sec = unix_usec / 1000000;
+        int us = (int)(unix_usec % 1000000);
+        if (us < 0) { total_sec--; us += 1000000; }
+        int days = (int)(total_sec / 86400);
+        int day_sec = (int)(total_sec % 86400);
+        if (day_sec < 0) { days--; day_sec += 86400; }
+        civil_from_days(days, year, month, day);
+        *hour = day_sec / 3600;
+        *minute = (day_sec % 3600) / 60;
+        *second = day_sec % 60;
+        *usec = us;
+        return KDBC_OK;
+    }
+    /* Text fallback */
+    *usec = 0;
+    if (sscanf(raw, "%d-%d-%d %d:%d:%d.%d", year, month, day, hour, minute, second, usec) >= 6)
+        return KDBC_OK;
+    if (sscanf(raw, "%d-%d-%dT%d:%d:%d.%d", year, month, day, hour, minute, second, usec) >= 6)
+        return KDBC_OK;
+    RS_ERR(rs, "PostgreSQL: cannot parse timestamp value");
+    return KDBC_ERROR;
+}
+
+static int pg_rs_get_date(kdbc_result *rs, int col, int *year, int *month, int *day) {
+    pg_result_set *prs = (pg_result_set *)rs->native;
+    int ci = col - 1;
+    if (p_getisnull(prs->res, prs->current_row, ci)) { rs->last_null = 1; return KDBC_ERROR; }
+    rs->last_null = 0;
+    const char *raw = p_getvalue(prs->res, prs->current_row, ci);
+    int len = p_getlength(prs->res, prs->current_row, ci);
+    int fmt = p_fformat(prs->res, ci);
+
+    if (fmt == 1 && len == 4) {
+        /* Binary: int32 days since 2000-01-01 */
+        int32_t pg_days;
+        memcpy(&pg_days, raw, 4);
+        pg_days = pg_be32toh(pg_days);
+        civil_from_days(pg_days + PG_EPOCH_OFFSET_DAYS, year, month, day);
+        return KDBC_OK;
+    }
+    return (sscanf(raw, "%d-%d-%d", year, month, day) >= 3) ? KDBC_OK : KDBC_ERROR;
+}
+
+static int pg_rs_get_time(kdbc_result *rs, int col,
+                          int *hour, int *minute, int *second, int *usec) {
+    pg_result_set *prs = (pg_result_set *)rs->native;
+    int ci = col - 1;
+    if (p_getisnull(prs->res, prs->current_row, ci)) { rs->last_null = 1; return KDBC_ERROR; }
+    rs->last_null = 0;
+    const char *raw = p_getvalue(prs->res, prs->current_row, ci);
+    int len = p_getlength(prs->res, prs->current_row, ci);
+    int fmt = p_fformat(prs->res, ci);
+
+    if (fmt == 1 && len == 8) {
+        /* Binary: int64 microseconds since midnight */
+        int64_t time_usec;
+        memcpy(&time_usec, raw, 8);
+        time_usec = pg_be64toh(time_usec);
+        *usec = (int)(time_usec % 1000000);
+        int total_sec = (int)(time_usec / 1000000);
+        *hour = total_sec / 3600;
+        *minute = (total_sec % 3600) / 60;
+        *second = total_sec % 60;
+        return KDBC_OK;
+    }
+    *usec = 0;
+    return (sscanf(raw, "%d:%d:%d.%d", hour, minute, second, usec) >= 3) ? KDBC_OK : KDBC_ERROR;
+}
+
+static void pg_rs_close(void *native_rs) {
+    pg_result_set *prs = (pg_result_set *)native_rs;
+    if (prs) {
+        if (prs->res) p_clear(prs->res);
+        free(prs->col_types);
+        free(prs);
+    }
+}
+
+/* ========================================================================
+ * Driver vtable
+ * ======================================================================== */
+
+static const kdbc_driver_vtable postgres_vtable = {
+    .name               = "PostgreSQL",
+    .gk_strategy        = KDBC_GK_BY_NAME,
+    .supports_release_savepoint = 1,
+    .load               = pg_load,
+    .loaded             = pg_loaded,
+    .connect            = pg_connect,
+    .close              = pg_close,
+    .exec_direct        = NULL,
+    .query_direct       = NULL,
+    .set_autocommit     = pg_set_autocommit,
+    .commit             = pg_commit,
+    .rollback           = pg_rollback,
+    .get_product_name   = pg_get_product_name,
+    .get_product_version = pg_get_product_version,
+    .get_major_version  = pg_get_major_version,
+    .get_minor_version  = pg_get_minor_version,
+    .prepare            = pg_prepare,
+    .stmt_close         = pg_stmt_close,
+    .bind_null          = pg_bind_null,
+    .bind_int           = pg_bind_int,
+    .bind_long          = pg_bind_long,
+    .bind_double        = pg_bind_double,
+    .bind_string        = pg_bind_string,
+    .bind_blob          = pg_bind_blob,
+    .bind_timestamp     = pg_bind_timestamp,
+    .bind_date          = pg_bind_date,
+    .bind_time          = pg_bind_time,
+    .execute_update     = pg_execute_update,
+    .execute_query      = pg_execute_query,
+    .get_generated_key  = pg_get_generated_key,
+    .rs_next            = pg_rs_next,
+    .rs_col_name        = pg_rs_col_name,
+    .rs_col_label       = NULL,
+    .rs_is_null         = pg_rs_is_null,
+    .rs_get_long        = pg_rs_get_long,
+    .rs_get_double      = pg_rs_get_double,
+    .rs_get_string      = pg_rs_get_string,
+    .rs_get_blob        = pg_rs_get_blob,
+    .rs_get_timestamp   = pg_rs_get_timestamp,
+    .rs_get_date        = pg_rs_get_date,
+    .rs_get_time        = pg_rs_get_time,
+    .rs_close           = pg_rs_close,
+    .stmt_reset         = NULL,
+    .conn_gk_strategy   = NULL,
+    .prepare_call       = NULL,
+    .call_execute       = NULL,
+    .call_get_out       = NULL,
+};
+
+void kdbc_register_postgres(void) {
+    kdbc_register_driver(KDBC_POSTGRES, &postgres_vtable);
+}
