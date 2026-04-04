@@ -121,12 +121,6 @@ static int exec_sql(kdbc_conn *conn, const char *sql) {
     return kdbc_execute_update(conn, sql);
 }
 
-/* Direct query helper — for SELECT without params */
-static kdbc_result *query_sql(kdbc_conn *conn, const char *sql) {
-    if (!conn) return NULL;
-    return kdbc_execute_query(conn, sql);
-}
-
 /* Drop table, ignoring errors (table may not exist) */
 static void drop_table(kdbc_conn *conn, const char *name) {
     if (!conn) return;

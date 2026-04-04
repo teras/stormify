@@ -10,7 +10,7 @@ import kotlin.reflect.KClass
  * - Native: Implements native database drivers (Oracle ODPI, PostgreSQL libpq, MariaDB/MySQL, FreeTDS)
  */
 
-interface PreparedStatement : AutoCloseable {
+interface Statement : AutoCloseable {
     fun setObject(parameterIndex: Int, value: Any?)
     fun executeUpdate(): Int
     fun executeQuery(): ResultSet
@@ -19,7 +19,7 @@ interface PreparedStatement : AutoCloseable {
     fun executeBatch(): IntArray
 }
 
-interface CallableStatement : PreparedStatement {
+interface CallableStatement : Statement {
     fun registerOutParameter(parameterIndex: Int, type: KClass<*>)
     fun getObject(parameterIndex: Int, type: KClass<*>): Any?
     fun execute(): Boolean
@@ -31,10 +31,7 @@ interface DataSource {
 
 interface Connection : AutoCloseable {
     val metaData: DatabaseMetaData
-
-    fun prepareStatement(sql: String, returnGeneratedKeys: Boolean = false): PreparedStatement
-    fun prepareStatement(sql: String, columnNames: Array<String>): PreparedStatement =
-        prepareStatement(sql, returnGeneratedKeys = true)
+    fun initStatement(sql: String, returnGeneratedKeys: Boolean, columnNames: Array<String>?): Statement
     fun prepareCall(sql: String): CallableStatement
     fun commit()
     fun rollback(savepoint: Savepoint? = null)

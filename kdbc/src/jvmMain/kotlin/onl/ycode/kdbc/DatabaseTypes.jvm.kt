@@ -1,5 +1,7 @@
 package onl.ycode.kdbc
 
+import java.sql.PreparedStatement
+import java.sql.Statement.RETURN_GENERATED_KEYS
 import java.sql.Types
 import kotlin.reflect.KClass
 
@@ -12,15 +14,65 @@ import kotlin.reflect.KClass
  * - Nullable parameters ↔ Overloaded methods
  */
 
-// Wrapper class for PreparedStatement
-private class JdbcPreparedStatement(private val jdbc: java.sql.PreparedStatement) : PreparedStatement {
-    override fun setObject(parameterIndex: Int, value: Any?) = jdbc.setObject(parameterIndex, value)
-    override fun executeUpdate(): Int = jdbc.executeUpdate()
-    override fun executeQuery(): ResultSet = JdbcResultSet(jdbc.executeQuery())
-    override fun getGeneratedKeys(): ResultSet = JdbcResultSet(jdbc.generatedKeys)
-    override fun addBatch() = jdbc.addBatch()
-    override fun executeBatch(): IntArray = jdbc.executeBatch()
-    override fun close() = jdbc.close()
+// Wrapper class for PreparedStatement with lazy preparation.
+// If setObject() is never called (no params), executeUpdate/executeQuery
+// use direct execution via more efficient jdbc.createStatement()
+private class JdbcStatement(
+    private val jdbc: java.sql.Connection,
+    private val sql: String,
+    private val returnGeneratedKeys: Boolean,
+    private val columnNames: Array<String>?,
+) : Statement {
+    private var preparedStatement: PreparedStatement? = null
+    private var directStatement: java.sql.Statement? = null
+
+    private fun ensurePrepared(): PreparedStatement {
+        if (preparedStatement == null)
+            preparedStatement = if (returnGeneratedKeys)
+                jdbc.prepareStatement(sql, RETURN_GENERATED_KEYS)
+            else if (!columnNames.isNullOrEmpty())
+                jdbc.prepareStatement(sql, columnNames)
+            else
+                jdbc.prepareStatement(sql)
+        return preparedStatement!!
+    }
+
+    private fun ensureDirect(): java.sql.Statement {
+        if (directStatement == null)
+            directStatement = jdbc.createStatement()
+        return directStatement!!
+    }
+
+    override fun setObject(parameterIndex: Int, value: Any?) =
+        ensurePrepared().setObject(parameterIndex, value)
+
+    override fun executeUpdate(): Int =
+        preparedStatement?.executeUpdate()
+            ?: ensureDirect().let { s ->
+                if (returnGeneratedKeys) s.executeUpdate(sql, RETURN_GENERATED_KEYS)
+                else if (!columnNames.isNullOrEmpty()) s.executeUpdate(sql, columnNames)
+                else s.executeUpdate(sql)
+            }
+
+    override fun executeQuery(): ResultSet =
+        JdbcResultSet(
+            preparedStatement?.executeQuery()
+                ?: ensureDirect().executeQuery(sql)
+        )
+
+    override fun getGeneratedKeys(): ResultSet =
+        JdbcResultSet(
+            (preparedStatement ?: directStatement)?.generatedKeys
+                ?: throw SQLException("Generated keys not available")
+        )
+
+    override fun addBatch() = ensurePrepared().addBatch()
+    override fun executeBatch(): IntArray = ensurePrepared().executeBatch()
+
+    override fun close() {
+        preparedStatement?.close()
+        directStatement?.close()
+    }
 }
 
 // Wrapper class for CallableStatement
@@ -69,7 +121,7 @@ private class JdbcCallableStatement(private val jdbc: java.sql.CallableStatement
 
 /**
  * JDBC DataSource wrapper that implements KDBC DataSource interface.
- * 
+ *
  * Usage:
  * ```kotlin
  * val hikariDS = HikariDataSource(config)
@@ -87,16 +139,9 @@ private class JdbcConnection(private val jdbc: java.sql.Connection) : Connection
     override val metaData: DatabaseMetaData
         get() = JdbcDatabaseMetaData(jdbc.metaData)
 
-    override fun prepareStatement(sql: String, returnGeneratedKeys: Boolean): PreparedStatement =
-        JdbcPreparedStatement(
-            if (returnGeneratedKeys)
-                jdbc.prepareStatement(sql, java.sql.PreparedStatement.RETURN_GENERATED_KEYS)
-            else
-                jdbc.prepareStatement(sql)
-        )
 
-    override fun prepareStatement(sql: String, columnNames: Array<String>): PreparedStatement =
-        JdbcPreparedStatement(jdbc.prepareStatement(sql, columnNames))
+    override fun initStatement(sql: String, returnGeneratedKeys: Boolean, columnNames: Array<String>?): Statement =
+        JdbcStatement(jdbc, sql, returnGeneratedKeys, columnNames)
 
     override fun prepareCall(sql: String): CallableStatement = JdbcCallableStatement(jdbc.prepareCall(sql))
     override fun commit() = jdbc.commit()
@@ -107,11 +152,13 @@ private class JdbcConnection(private val jdbc: java.sql.Connection) : Connection
             jdbc.rollback()
         }
     }
+
     override fun setSavepoint(name: String): Savepoint = JdbcSavepoint(jdbc.setSavepoint(name))
     override fun releaseSavepoint(savepoint: Savepoint) = jdbc.releaseSavepoint((savepoint as JdbcSavepoint).jdbc)
     override fun setAutoCommit(autoCommit: Boolean) {
         jdbc.autoCommit = autoCommit
     }
+
     override fun close() = jdbc.close()
 }
 
@@ -137,6 +184,7 @@ private class JdbcResultSet(private val jdbc: java.sql.ResultSet) : ResultSet {
     } catch (_: java.sql.SQLException) {
         jdbc.getObject(columnIndex)
     }
+
     override fun getMetaData(): ResultSetMetaData = JdbcResultSetMetaData(jdbc.metaData)
     override fun close() = jdbc.close()
 }

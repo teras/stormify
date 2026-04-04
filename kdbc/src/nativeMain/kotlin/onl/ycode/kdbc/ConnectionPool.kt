@@ -1,13 +1,14 @@
 package onl.ycode.kdbc
 
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlin.time.Duration
+import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Duration.Companion.seconds
 import kotlin.time.TimeSource
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.withLock
-import kotlinx.coroutines.runBlocking
 
 /**
  * Configuration for connection pooling.
@@ -145,7 +146,7 @@ internal class ConnectionPool(
         // Pool is exhausted, wait for a connection or timeout
         val waitStart = timeSource.markNow()
         while (true) {
-            delay(100) // Wait 100ms before retry
+            delay(100.milliseconds) // Wait 100ms before retry
 
             mutex.withLock {
                 val nowAvailable = pool.firstOrNull { !it.isInUse }
@@ -200,7 +201,7 @@ internal class ConnectionPool(
     private fun isValid(connection: Connection): Boolean {
         return try {
             if (config.validationQuery != null) {
-                connection.prepareStatement(config.validationQuery).use { stmt ->
+                connection.initStatement(config.validationQuery, false, null).use { stmt ->
                     stmt.executeQuery().use { rs ->
                         rs.next()
                     }

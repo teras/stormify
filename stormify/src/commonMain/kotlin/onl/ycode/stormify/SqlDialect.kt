@@ -10,7 +10,8 @@ import onl.ycode.kdbc.DataSource
 
 private val sequenceFromDual = { it: String, count: Int -> "SELECT $it.NEXTVAL FROM dual CONNECT BY level <= $count" }
 
-private val sequenceNextValueFor = { it: String, count: Int -> "SELECT NEXT VALUE FOR $it FROM (SELECT TOP $count 1 x FROM sys.objects) t" }
+private val sequenceNextValueFor =
+    { it: String, count: Int -> "SELECT NEXT VALUE FOR $it FROM (SELECT TOP $count 1 x FROM sys.objects) t" }
 
 private val sequenceNextval = { it: String, count: Int -> "SELECT nextval('$it') FROM generate_series(1, $count)" }
 
@@ -287,12 +288,17 @@ enum class SqlDialect(
         BY_INDEX, BY_NAME, NONE
     }
 
-    fun prepareForInsert(conn: Connection, query: String, fetchGeneratedKeys: Boolean, pkColumn: String?): onl.ycode.kdbc.PreparedStatement =
-        if (!fetchGeneratedKeys) conn.prepareStatement(query)
+    fun prepareForInsert(
+        conn: Connection,
+        query: String,
+        fetchGeneratedKeys: Boolean,
+        pkColumn: String?
+    ): onl.ycode.kdbc.Statement =
+        if (!fetchGeneratedKeys) conn.initStatement(query, false, null)
         else when (generatedKeyRetrieval) {
-            GeneratedKeyRetrieval.BY_NAME -> conn.prepareStatement(query, arrayOf(pkColumn ?: ""))
-            GeneratedKeyRetrieval.BY_INDEX -> conn.prepareStatement(query, returnGeneratedKeys = true)
-            else -> conn.prepareStatement(query)
+            GeneratedKeyRetrieval.BY_NAME -> conn.initStatement(query, false, arrayOf(pkColumn ?: ""))
+            GeneratedKeyRetrieval.BY_INDEX -> conn.initStatement(query, true, null)
+            else -> conn.initStatement(query, false, null)
         }
 
     companion object {
@@ -314,9 +320,11 @@ enum class SqlDialect(
                     productName.contains("mariadb") ->
                         if (majorVersion > 10 || (majorVersion == 10 && minorVersion >= 3)) MARIA_DB_NEW
                         else MARIA_DB_OLD
+
                     productName.contains("mysql") && productVersion.contains("mariadb") ->
                         if (majorVersion > 10 || (majorVersion == 10 && minorVersion >= 3)) MARIA_DB_NEW
                         else MARIA_DB_OLD
+
                     productName.contains("mysql") -> if (majorVersion >= 8) MYSQL_NEW else MYSQL_OLD
                     else -> UNKNOWN
                 }

@@ -69,6 +69,8 @@ class StormifyJ(dataSource: DataSource, vararg registrars: EntityRegistrar) : Au
         set(value) { stormify.logger = value }
 
     fun asDefault(): StormifyJ { stormify.asDefault(); return this }
+    @Suppress("DEPRECATION")
+    @Deprecated("Stormify does not own the DataSource. Close the DataSource directly instead. Will be removed in the next major release.", level = DeprecationLevel.WARNING)
     override fun close() = stormify.close()
 }
 

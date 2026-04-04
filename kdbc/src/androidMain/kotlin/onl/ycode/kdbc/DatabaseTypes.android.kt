@@ -20,7 +20,7 @@ class AndroidDataSource(private val db: SQLiteDatabase) : DataSource {
 private class AndroidConnection(private val db: SQLiteDatabase) : Connection {
     override val metaData: DatabaseMetaData = AndroidDatabaseMetaData()
     
-    override fun prepareStatement(sql: String, returnGeneratedKeys: Boolean): PreparedStatement {
+    override fun initStatement(sql: String, returnGeneratedKeys: Boolean, columnNames: Array<String>?): Statement {
         return AndroidPreparedStatement(db, sql, returnGeneratedKeys)
     }
     
@@ -60,7 +60,7 @@ private class AndroidPreparedStatement(
     private val db: SQLiteDatabase,
     private val sql: String,
     private val returnGeneratedKeys: Boolean
-) : PreparedStatement {
+) : Statement {
     private val bindings = mutableMapOf<Int, Any?>()
     private val batches = mutableListOf<Map<Int, Any?>>()
 

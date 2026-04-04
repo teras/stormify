@@ -767,20 +767,6 @@ static int tds_bind_string(kdbc_stmt *stmt, int idx, const char *val) {
     return KDBC_OK;
 }
 
-/* Days since 1970-01-01 from civil date (Rata Die algorithm) */
-static int tds_days_from_civil(int y, int m, int d) {
-    if (m <= 2) { y--; m += 9; } else { m -= 3; }
-    int era = (y >= 0 ? y : y - 399) / 400;
-    int yoe = y - era * 400;
-    int doy = (153 * m + 2) / 5 + d - 1;
-    int doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
-    return era * 146097 + doe - 719468;
-}
-
-/* SQL Server DATETIME epoch: 1900-01-01 = day 0
- * Unix epoch 1970-01-01 = 25567 days after 1900-01-01 */
-#define TDS_EPOCH_OFFSET 25567
-
 /* Datetime binding: ODBC canonical string format.
  * CS_DATETIME_TYPE via ct_param has precision issues in FreeTDS,
  * but string "YYYY-MM-DD HH:MM:SS.fff" works reliably. */
@@ -795,14 +781,14 @@ static int tds_bind_timestamp(kdbc_stmt *stmt, int idx,
 }
 
 static int tds_bind_date(kdbc_stmt *stmt, int idx, int year, int month, int day) {
-    char buf[16];
+    char buf[32];
     snprintf(buf, sizeof(buf), "%04d-%02d-%02d", year, month, day);
     return tds_bind_string(stmt, idx, buf);
 }
 
 static int tds_bind_time(kdbc_stmt *stmt, int idx,
                          int hour, int minute, int second, int usec) {
-    char buf[16];
+    char buf[32];
     int millis = usec / 1000;
     snprintf(buf, sizeof(buf), "%02d:%02d:%02d.%03d", hour, minute, second, millis);
     return tds_bind_string(stmt, idx, buf);
@@ -904,54 +890,6 @@ static int tds_send_execute(tds_stmt_data *sd, char *err, size_t err_size) {
 /* ========================================================================
  * Execution
  * ======================================================================== */
-
-/**
- * After a successful INSERT, retrieve SCOPE_IDENTITY() if generated keys
- * were requested. Uses a separate ct_command since ct_dynamic can't do
- * multi-statement batches.
- */
-static void tds_fetch_scope_identity(tds_stmt_data *sd, kdbc_stmt *stmt) {
-    CS_COMMAND *id_cmd = NULL;
-    if (p_ct_cmd_alloc(sd->tc->conn, &id_cmd) != CS_SUCCEED) return;
-
-    if (p_ct_command(id_cmd, CS_LANG_CMD, "SELECT SCOPE_IDENTITY()",
-                     23, CS_UNUSED) != CS_SUCCEED ||
-        p_ct_send(id_cmd) != CS_SUCCEED) {
-        p_ct_cmd_drop(id_cmd);
-        return;
-    }
-
-    CS_INT res_type;
-    while (p_ct_results(id_cmd, &res_type) == CS_SUCCEED) {
-        if (res_type == CS_ROW_RESULT) {
-            CS_DATAFMT fmt;
-            memset(&fmt, 0, sizeof(fmt));
-            fmt.datatype = CS_CHAR_TYPE;
-            fmt.maxlength = 64;
-            fmt.format = CS_FMT_NULLTERM;
-            char buf[64] = "";
-            CS_INT datalen;
-            CS_SMALLINT ind;
-            p_ct_bind(id_cmd, 1, &fmt, buf, &datalen, &ind);
-            CS_INT rows_read;
-            if (p_ct_fetch(id_cmd, CS_UNUSED, CS_UNUSED, CS_UNUSED,
-                           &rows_read) == CS_SUCCEED) {
-                if (ind != -1 && buf[0] != '\0') {
-                    long long k = 0;
-                    sscanf(buf, "%lld", &k);
-                    if (k > 0) {
-                        stmt->generated_key = k;
-                        stmt->has_generated_key = 1;
-                    }
-                }
-            }
-            while (p_ct_fetch(id_cmd, CS_UNUSED, CS_UNUSED, CS_UNUSED,
-                              &rows_read) == CS_SUCCEED) {}
-        }
-    }
-
-    p_ct_cmd_drop(id_cmd);
-}
 
 static int tds_execute_update(kdbc_stmt *stmt) {
     tds_stmt_data *sd = (tds_stmt_data *)stmt->native;

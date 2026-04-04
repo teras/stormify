@@ -4,12 +4,8 @@
 
 package onl.ycode.stormify
 
-import onl.ycode.kdbc.CallableStatement
-import onl.ycode.kdbc.Connection
-import onl.ycode.kdbc.DataSource
-import onl.ycode.kdbc.PreparedStatement
-import onl.ycode.kdbc.ResultSet
-import onl.ycode.kdbc.SQLException
+import kotlinx.atomicfu.locks.synchronized
+import onl.ycode.kdbc.*
 import onl.ycode.logger.LogManager
 import onl.ycode.stormify.SPParam.Mode.*
 import onl.ycode.stormify.SqlDialect.GeneratedKeyRetrieval
@@ -37,7 +33,9 @@ open class Stormify(val dataSource: DataSource, vararg registrars: EntityRegistr
         private val _defaultInstance = kotlinx.atomicfu.atomic<Stormify?>(null)
         var defaultInstance: Stormify?
             get() = _defaultInstance.value
-            private set(value) { _defaultInstance.value = value }
+            private set(value) {
+                _defaultInstance.value = value
+            }
     }
 
     /** Sets this instance as [defaultInstance] and returns it. */
@@ -46,7 +44,12 @@ open class Stormify(val dataSource: DataSource, vararg registrars: EntityRegistr
         return this
     }
 
+    @Deprecated(
+        "Stormify does not own the DataSource. Close the DataSource directly instead. Will be removed in the next major release.",
+        level = DeprecationLevel.WARNING
+    )
     override fun close() {
+        logger.warn("Stormify.close() is deprecated and will be removed in the next major release — close the DataSource directly instead")
         if (dataSource is AutoCloseable) dataSource.close()
     }
 
@@ -58,10 +61,10 @@ open class Stormify(val dataSource: DataSource, vararg registrars: EntityRegistr
     private val blacklist = mutableSetOf<String>()
     private val pkResolvers = mutableMapOf<Int, (String, String) -> Boolean>()
 
-    fun addBlacklistField(name: String) = kotlinx.atomicfu.locks.synchronized(configLock) { blacklist.add(name) }
-    fun removeBlacklistField(name: String) = kotlinx.atomicfu.locks.synchronized(configLock) { blacklist.remove(name) }
+    fun addBlacklistField(name: String) = synchronized(configLock) { blacklist.add(name) }
+    fun removeBlacklistField(name: String) = synchronized(configLock) { blacklist.remove(name) }
     fun registerPrimaryKeyResolver(priority: Int, resolver: (String, String) -> Boolean) =
-        kotlinx.atomicfu.locks.synchronized(configLock) { pkResolvers[priority] = resolver }
+        synchronized(configLock) { pkResolvers[priority] = resolver }
 
     // --- Resolve pipeline ---
 
@@ -69,7 +72,7 @@ open class Stormify(val dataSource: DataSource, vararg registrars: EntityRegistr
 
     @Suppress("UNCHECKED_CAST")
     internal fun <T : Any> resolveTableInfo(type: KClass<out T>): TableInfo<T> =
-        kotlinx.atomicfu.locks.synchronized(configLock) {
+        synchronized(configLock) {
             tableInfoCache.getOrPut(type) {
                 val meta = EntityMeta.find(type) ?: tryReflection(type)
                 ?: throw SQLException("Unknown entity: ${type.simpleName}")
@@ -95,7 +98,7 @@ open class Stormify(val dataSource: DataSource, vararg registrars: EntityRegistr
                 }
             return _sqlDialect!!
         }
-        set(value) = kotlinx.atomicfu.locks.synchronized(configLock) {
+        set(value) = synchronized(configLock) {
             _sqlDialect = value
         }
 
@@ -146,10 +149,8 @@ open class Stormify(val dataSource: DataSource, vararg registrars: EntityRegistr
             } else query.append(givenQuery[i])
         }
         if (countQuestionMarks != args.size) throw SQLException(
-            ("The number of placeholders (" + count(
-                givenQuery,
-                '?'
-            )).toString() + ") in query '" + givenQuery + "' is less than the number of parameters (" + args.size + ")"
+            "The number of placeholders (" + count(givenQuery, '?')
+                    + ") in query '" + givenQuery + "' is less than the number of parameters (" + args.size + ")"
         )
         return FixedParams(query.toString(), params)
     }
@@ -159,15 +160,16 @@ open class Stormify(val dataSource: DataSource, vararg registrars: EntityRegistr
         givenQuery: String,
         givenParams: List<Any?>,
         generatedKeys: Boolean,
-        code: (PreparedStatement) -> T
+        code: (Statement) -> T
     ): T {
         val params = fixParams(givenQuery, givenParams)
         `!dbLog`(params.query, params.params.toTypedArray())
         val paramValues = if (params.params.isEmpty()) "" else " with values ${params.params}"
         return ConnectionMaker(conn).useWithException("Unable to execute query '${params.query}'$paramValues") { maker ->
-            maker.connection.prepareStatement(
+            maker.connection.initStatement(
                 params.query,
-                generatedKeys
+                generatedKeys,
+                null
             ).use { statement ->
                 for (i in params.params.indices)
                     statement.setObject(i + 1, params.params[i])
@@ -310,7 +312,8 @@ open class Stormify(val dataSource: DataSource, vararg registrars: EntityRegistr
         for (i in 1..columnCount) {
             val col = metaData.getColumnLabel(i)
             val colType = info.getScalarType(col)
-            val value = transformResultValue(if (colType != null) rs.getObject(i, colType) else rs.getObject(i, Any::class))
+            val value =
+                transformResultValue(if (colType != null) rs.getObject(i, colType) else rs.getObject(i, Any::class))
             // Reference deduplication: if field is an AutoTable type and we have a context
             if (context != null && value != null && info.isReferenceField(col)) {
                 val refType = info.getReferenceType(col)!!
@@ -352,7 +355,8 @@ open class Stormify(val dataSource: DataSource, vararg registrars: EntityRegistr
         }
 
         val placeholders = nCopies("?", ", ", uniqueIds.size)
-        val query = "SELECT ${info.selectFieldNames} FROM ${info.tableName} WHERE ${info.idDbNames[0]} IN ($placeholders)"
+        val query =
+            "SELECT ${info.selectFieldNames} FROM ${info.tableName} WHERE ${info.idDbNames[0]} IN ($placeholders)"
 
         val pkDbName = info.idDbNames[0]
         val nestedContext = PopulationContext()
@@ -361,7 +365,9 @@ open class Stormify(val dataSource: DataSource, vararg registrars: EntityRegistr
             val meta = rs.getMetaData()
             var pkColIdx = 1
             for (c in 1..meta.columnCount)
-                if (meta.getColumnLabel(c).equals(pkDbName, ignoreCase = true)) { pkColIdx = c; break }
+                if (meta.getColumnLabel(c).equals(pkDbName, ignoreCase = true)) {
+                    pkColIdx = c; break
+                }
             while (rs.next()) {
                 val key = rs.getObject(pkColIdx, info.idTypes[0]).toString()
                 val targets = byId.remove(key)
@@ -458,7 +464,12 @@ open class Stormify(val dataSource: DataSource, vararg registrars: EntityRegistr
                     stmt.getGeneratedKeys().use { rs ->
                         if (rs.next()) {
                             if (sqlDialect.generatedKeyRetrieval === GeneratedKeyRetrieval.BY_INDEX)
-                                info.setField(itemList[needsId[0]], info.singleKeyDbName, rs.getObject(1, NativeBigInteger::class), this)
+                                info.setField(
+                                    itemList[needsId[0]],
+                                    info.singleKeyDbName,
+                                    rs.getObject(1, NativeBigInteger::class),
+                                    this
+                                )
                             else
                                 populate(itemList[needsId[0]], rs)
                         }
@@ -483,20 +494,16 @@ open class Stormify(val dataSource: DataSource, vararg registrars: EntityRegistr
         if (items.isEmpty()) return emptyList()
         val itemList = if (items is List) items else items.toList()
         itemList.forEach { attachStormify(it) }
-
         val info = resolveTableInfo(itemList[0]::class) as TableInfo<T>
-
         `!dbLog`("${info.updateQuery} [batch: ${itemList.size}]", null)
-        ConnectionMaker(conn).useWithException("Unable to batch update") { maker ->
-            maker.connection.prepareStatement(info.updateQuery, false).use { stmt ->
-                for (item in itemList) {
-                    val params = info.getUpdateValues(item)
-                    for (i in params.indices)
-                        stmt.setObject(i + 1, params[i])
-                    stmt.addBatch()
-                }
-                stmt.executeBatch()
+        performQuery(conn, info.updateQuery, emptyList(), false) { stmt ->
+            for (item in itemList) {
+                val params = info.getUpdateValues(item)
+                for (i in params.indices)
+                    stmt.setObject(i + 1, params[i])
+                stmt.addBatch()
             }
+            stmt.executeBatch()
         }
         return itemList
     }
@@ -528,7 +535,7 @@ open class Stormify(val dataSource: DataSource, vararg registrars: EntityRegistr
         }
 
         val query = "DELETE FROM ${info.tableName} WHERE ${conditions.joinToString(" OR ")}"
-        performQuery<Any>(conn, query, allParams, false, PreparedStatement::executeUpdate)
+        performQuery<Any>(conn, query, allParams, false, Statement::executeUpdate)
     }
 
     // --- Detail retrieval ---
