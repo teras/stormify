@@ -10,10 +10,103 @@ object TestDDL {
 
     fun init(s: Stormify) { stormify = s }
 
-    private val dialect get() = stormify.sqlDialect
+    val dialect get() = stormify.sqlDialect
     private val isOracle get() = dialect == SqlDialect.ORACLE_NEW || dialect == SqlDialect.ORACLE_OLD
     private val isMssql get() = dialect == SqlDialect.SQL_SERVER_NEW || dialect == SqlDialect.SQL_SERVER_OLD
     private val isSqlite get() = dialect == SqlDialect.SQLITE
+    val isMysqlFamily get() = dialect == SqlDialect.MYSQL_OLD || dialect == SqlDialect.MYSQL_NEW ||
+            dialect == SqlDialect.MARIA_DB_OLD || dialect == SqlDialect.MARIA_DB_NEW
+    val isPostgres get() = dialect == SqlDialect.POSTGRESQL
+
+    /**
+     * Whether the current database's default character set can represent the
+     * full Unicode repertoire. All of our test targets are set up with
+     * Unicode-capable defaults (utf8mb4, UTF8, AL32UTF8, NVARCHAR UCS-2,
+     * SQLite UTF-8) EXCEPT the `oracle11` target, which pins its
+     * `NLS_CHARACTERSET` to `EL8ISO8859P7` (single-byte Greek). Tests that
+     * insert characters outside a legacy single-byte codepage (CJK, emoji,
+     * non-Greek Latin supplement, ...) must either skip those buckets or
+     * substitute a Greek-compatible alternative when this returns false.
+     *
+     * For Oracle we probe `NLS_DATABASE_PARAMETERS` at runtime and accept
+     * any charset whose name starts with `AL` (AL32UTF8, AL16UTF16) as
+     * Unicode-capable. For every other dialect the answer is compile-time
+     * true because we don't ship any non-Unicode targets for them.
+     */
+    val isUnicodeDatabase: Boolean by lazy {
+        if (!isOracle) return@lazy true
+        try {
+            val charset = stormify.readOne<String>(
+                "SELECT value FROM nls_database_parameters WHERE parameter = 'NLS_CHARACTERSET'"
+            )
+            charset != null && charset.startsWith("AL")
+        } catch (_: Throwable) {
+            // If the probe fails for any reason, assume Unicode so existing
+            // Oracle targets (21c AL32UTF8) stay on their current test path.
+            true
+        }
+    }
+
+    /**
+     * Identifier for a server-side text encoding bucket used by
+     * [columnTypeFor]. The test layer passes one of these when it wants a
+     * VARCHAR/TEXT column that physically stores data in the named encoding
+     * (where the dialect supports it — see [supportsPerColumnEncoding]).
+     */
+    enum class TextEncoding { ISO_8859_1, ISO_8859_7, UTF_8, UTF_16 }
+
+    /**
+     * Whether the current dialect lets us pick a different server-side text
+     * encoding for each column. Only MySQL/MariaDB (CHARACTER SET) and MSSQL
+     * (COLLATE with codepage-backed VARCHAR + NVARCHAR for UTF-16) qualify.
+     *
+     * On Postgres the encoding is database-wide, on Oracle it is fixed at DB
+     * creation (DB charset + national charset), and SQLite is always UTF-8.
+     * The test harness still runs on these dialects — it falls back to the
+     * DB-wide encoding and verifies that the characters in each bucket
+     * survive the pipeline (which is a weaker but still useful check).
+     */
+    fun supportsPerColumnEncoding(): Boolean = isMysqlFamily || isMssql
+
+    /**
+     * Return a column type DDL fragment (without column name) that stores
+     * text in [enc] on the current dialect. Caller prepends the column name:
+     *
+     *   "col_name ${TestDDL.columnTypeFor(TextEncoding.ISO_8859_1)}"
+     *
+     * On dialects without per-column encoding, all buckets map to the same
+     * DB-wide Unicode column type (VARCHAR2 / TEXT / ...). This keeps the
+     * test DDL portable.
+     */
+    fun columnTypeFor(enc: TextEncoding): String = when {
+        isMysqlFamily -> when (enc) {
+            // MySQL "latin1" is Windows-1252 (ISO-8859-1 + C1 characters) —
+            // a strict superset of ISO-8859-1 for bytes 0xA0..0xFF.
+            TextEncoding.ISO_8859_1 -> "VARCHAR(200) CHARACTER SET latin1"
+            // MySQL "greek" is the ISO-8859-7 single-byte Greek charset.
+            TextEncoding.ISO_8859_7 -> "VARCHAR(200) CHARACTER SET greek"
+            // utf8mb4 is MySQL's full-Unicode UTF-8 (up to 4 bytes/char).
+            TextEncoding.UTF_8      -> "VARCHAR(200) CHARACTER SET utf8mb4"
+            // "utf16" in MySQL stores UTF-16 with supplementary characters
+            // (per docs, unlike "ucs2" which is BMP-only).
+            TextEncoding.UTF_16     -> "VARCHAR(200) CHARACTER SET utf16"
+        }
+        isMssql -> when (enc) {
+            // CP1252 is a superset of ISO-8859-1.
+            TextEncoding.ISO_8859_1 -> "VARCHAR(200) COLLATE SQL_Latin1_General_CP1_CI_AS"
+            // CP1253 is Windows' Greek codepage; ISO-8859-7 letters map 1:1.
+            TextEncoding.ISO_8859_7 -> "VARCHAR(200) COLLATE Greek_CI_AS"
+            // SQL Server 2019+ introduced UTF-8 collations for VARCHAR.
+            TextEncoding.UTF_8      -> "VARCHAR(200) COLLATE Latin1_General_100_CI_AS_SC_UTF8"
+            // NVARCHAR is UTF-16; the _SC suffix enables supplementary
+            // character support so surrogate pairs round-trip correctly.
+            TextEncoding.UTF_16     -> "NVARCHAR(200) COLLATE Latin1_General_100_CI_AS_SC"
+        }
+        // Dialects without per-column encoding: fall back to the DB-wide
+        // Unicode column. Every bucket's characters are still representable
+        // because the DB charset is UTF-8 (PG/SQLite/Oracle AL32UTF8).
+        else -> textType()
+    }
 
     fun textType() = when {
         isOracle -> "VARCHAR2(4000)"

@@ -6,16 +6,20 @@ PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 C_SRC_DIR="$PROJECT_DIR/kdbc/src/c"
 C_TEST_BIN="$C_SRC_DIR/test/test_kdbc"
 
-ALL_DBS="sqlite postgresql mysql mariadb oracle mssql"
+ALL_DBS="sqlite postgresql mysql mariadb oracle oracle11 mssql"
 
 # Database connection details (matching docker-compose.yml)
-db_driver()   { case "$1" in mysql) echo "mariadb";; mssql) echo "mssql";; *) echo "$1";; esac; }
+db_driver()   { case "$1" in mysql) echo "mariadb";; mssql) echo "mssql";; oracle11) echo "oracle";; *) echo "$1";; esac; }
 db_url()      { case "$1" in
     sqlite)     echo ":memory:" ;;
     postgresql) echo "localhost:15432/stormify_test" ;;
     mysql)      echo "localhost:13306/stormify_test" ;;
     mariadb)    echo "localhost:13307/stormify_test" ;;
     oracle)     echo "localhost:11521/XEPDB1" ;;
+    # Oracle XE 11g uses the classic XE service name (no PDB), and the
+    # docker-compose definition maps the instance to port 11524 and the
+    # EL8ISO8859P7 (Greek ISO-8859-7) database character set.
+    oracle11)   echo "localhost:11524/XE" ;;
     mssql)      echo "localhost:11433/stormify_test" ;;
 esac; }
 db_user()     { case "$1" in mssql) echo "sa";; *) echo "stormify";; esac; }
@@ -35,7 +39,8 @@ Databases:
   postgresql           PostgreSQL 16
   mysql                MySQL 8.0
   mariadb              MariaDB 11
-  oracle               Oracle 21c XE
+  oracle               Oracle 21c XE (AL32UTF8)
+  oracle11             Oracle 11g XE (EL8ISO8859P7 / Greek ISO-8859-7)
   mssql                MS SQL Server 2022
 
 If no database specified, runs ALL databases sequentially.

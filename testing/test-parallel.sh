@@ -6,7 +6,7 @@ PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 LOG_DIR="$SCRIPT_DIR/.logs"
 RESULTS_FILE="$LOG_DIR/_results"
 
-ALL_DBS=(sqlite postgresql mysql mariadb oracle mssql)
+ALL_DBS=(sqlite postgresql mysql mariadb oracle oracle11 mssql)
 SESSION="stormify-tests"
 
 usage() {
@@ -25,7 +25,7 @@ Options:
 
 Requires: tmux (for grid view)
 
-The script creates a 3x2 tmux grid where each pane shows one database's
+The script creates a tiled tmux grid where each pane shows one database's
 test output in real-time. After all tests finish, a summary is displayed.
 EOF
     exit 1
@@ -228,15 +228,18 @@ MONITOR
     tmux new-session -d -s "$SESSION" -x 200 -y 50 \
         "$runner_script ${ALL_DBS[0]} $target $SCRIPT_DIR $LOG_DIR"
 
-    # Create remaining panes (5 more for 3x2 grid)
-    for i in 1 2 3 4 5; do
+    # Create remaining panes — one per database, letting tmux's "tiled"
+    # layout arrange them into a balanced grid (3x2 for 6 DBs, 4x2 for 7,
+    # 3x3 for 8-9, etc. — driven entirely by the number of entries in
+    # ALL_DBS).
+    for ((i = 1; i < ${#ALL_DBS[@]}; i++)); do
         tmux split-window -t "$SESSION" \
             "$runner_script ${ALL_DBS[$i]} $target $SCRIPT_DIR $LOG_DIR"
         # Rebalance after each split
         tmux select-layout -t "$SESSION" tiled
     done
 
-    # Set final tiled layout for 3x2 grid
+    # Final tiled layout pass
     tmux select-layout -t "$SESSION" tiled
 
     # Panes stay visible after command exits (so you can scroll back)
@@ -255,7 +258,7 @@ MONITOR
     tmux set-option -t "$SESSION" status-style "bg=black,fg=brightwhite,bold"
 
     # Status bar initial state
-    tmux set-option -t "$SESSION" status-left " [0/6] Starting... "
+    tmux set-option -t "$SESSION" status-left " [0/${#ALL_DBS[@]}] Starting... "
     tmux set-option -t "$SESSION" status-right " Running... "
     tmux set-option -t "$SESSION" status-interval 1
 

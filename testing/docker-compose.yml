@@ -70,6 +70,50 @@ services:
       retries: 60
       start_period: 60s
 
+  # Oracle XE 11g pinned to the EL8ISO8859P7 (Greek, ISO-8859-7) database
+  # character set. This is a first-class member of the test matrix — NOT a
+  # side channel — because we have production clients on this exact
+  # configuration (legacy Greek deployments running 11g with the ISO-8859-7
+  # codepage). Every test that runs against `oracle` should also run here to
+  # catch any driver regression in the single-byte codepage transcoding path.
+  #
+  # IMPORTANT — image choice and charset conversion:
+  #   - gvenzl/oracle-xe image family (both 21c and 11g, both slim and full,
+  #     both faststart and non-faststart) ships with a PRE-BUILT, compressed
+  #     database archive in AL32UTF8 and silently ignores ORACLE_CHARACTERSET.
+  #     The variable is present in the container environment but the
+  #     entrypoint never consults it.
+  #   - To get an actual EL8ISO8859P7 database on 11g we run an init script
+  #     (`config/oracle11/setup/01-charset-el8iso8859p7.sh`) that uses
+  #     `ALTER DATABASE CHARACTER SET INTERNAL_USE EL8ISO8859P7`, Oracle's
+  #     internal bypass of the normal superset requirement. This is safe
+  #     because the script runs on a fresh container with no user data yet.
+  #   - The conversion shuts down and restarts the instance once; the init
+  #     script then prints the final NLS_CHARACTERSET to the container log so
+  #     you can verify the change actually took effect.
+  oracle11:
+    image: gvenzl/oracle-xe:11-slim-faststart
+    profiles: ["oracle11", "all"]
+    environment:
+      ORACLE_PASSWORD: "Stormify1!"
+      APP_USER: stormify
+      APP_USER_PASSWORD: "Stormify1!"
+    ports:
+      - "11524:1521"
+    volumes:
+      - ./config/oracle11/init.sql:/container-entrypoint-initdb.d/02-init.sql
+      - ./config/oracle11/setup/01-charset-el8iso8859p7.sh:/container-entrypoint-initdb.d/01-charset.sh
+    healthcheck:
+      test: ["CMD-SHELL", "healthcheck.sh"]
+      interval: 10s
+      timeout: 5s
+      retries: 120
+      # First-boot timing: gvenzl uncompresses the DB archive (~20s), then
+      # our init script bounces the instance twice for the INTERNAL_USE
+      # charset flip. Allow up to three minutes before the healthcheck
+      # starts failing.
+      start_period: 180s
+
   mssql:
     image: mcr.microsoft.com/mssql/server:2022-latest
     profiles: ["mssql", "all"]

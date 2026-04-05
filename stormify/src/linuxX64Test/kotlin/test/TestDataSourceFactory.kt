@@ -47,6 +47,12 @@ actual fun createTestDatabases(): List<TestDatabase> {
                 "jdbc:mariadb://localhost:13307/stormify_test"
         "oracle" -> "Oracle Native" to
                 "jdbc:oracle:thin:@localhost:11521/XEPDB1"
+        // Oracle XE 11g with the database character set converted to
+        // EL8ISO8859P7 (Greek ISO-8859-7) via the init script under
+        // testing/config/oracle11/. First-class target in the test matrix —
+        // several production clients run this exact configuration.
+        "oracle11" -> "Oracle 11g Native (EL8ISO8859P7)" to
+                "jdbc:oracle:thin:@localhost:11524/XE"
         "mssql", "sqlserver" -> "MSSQL Native" to
                 "jdbc:sqlserver://localhost:11433;databaseName=stormify_test"
         else -> error("Unknown STORMIFY_TEST_DB value: '$dbName'")
