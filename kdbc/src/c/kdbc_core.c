@@ -8,27 +8,30 @@
  */
 #include "include/kdbc_internal.h"
 #include <stdarg.h>
+#include <pthread.h>
 
 /* ========================================================================
  * Driver registry
  * ======================================================================== */
 
 const kdbc_driver_vtable *kdbc_drivers[KDBC_DRIVER_COUNT] = { NULL };
-static int kdbc_initialized = 0;
+static pthread_once_t kdbc_init_once = PTHREAD_ONCE_INIT;
 
 void kdbc_register_driver(kdbc_driver id, const kdbc_driver_vtable *vt) {
     if (id >= 0 && id < KDBC_DRIVER_COUNT)
         kdbc_drivers[id] = vt;
 }
 
-void kdbc_init(void) {
-    if (kdbc_initialized) return;
-    kdbc_initialized = 1;
+static void kdbc_init_impl(void) {
     kdbc_register_sqlite();
     kdbc_register_postgres();
     kdbc_register_mariadb();
     kdbc_register_oracle();
     kdbc_register_freetds();
+}
+
+void kdbc_init(void) {
+    pthread_once(&kdbc_init_once, kdbc_init_impl);
 }
 
 static const kdbc_driver_vtable *get_vt(kdbc_driver d) {
@@ -134,6 +137,11 @@ void kdbc_close(kdbc_conn *conn) {
 
 kdbc_driver kdbc_conn_driver(kdbc_conn *conn) {
     return conn ? conn->driver : KDBC_SQLITE;
+}
+
+int kdbc_cancel(kdbc_conn *conn) {
+    if (!conn || !conn->vt || !conn->vt->cancel) return KDBC_ERROR;
+    return conn->vt->cancel(conn);
 }
 
 /* ========================================================================

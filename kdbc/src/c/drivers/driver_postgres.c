@@ -11,6 +11,7 @@
 #include "../include/kdbc_dl.h"
 #include <libpq-fe.h>
 #include <postgres_ext.h>
+#include <pthread.h>
 
 /* PostgreSQL type OIDs - stable catalog values, not in libpq headers */
 #define PG_BOOL_OID        16
@@ -77,6 +78,9 @@ typedef char      *(*fn_PQgetvalue)(const PGresult *, int, int);
 typedef int        (*fn_PQgetlength)(const PGresult *, int, int);
 typedef void       (*fn_PQclear)(PGresult *);
 typedef int        (*fn_PQserverVersion)(const PGconn *);
+typedef PGcancel  *(*fn_PQgetCancel)(PGconn *);
+typedef int        (*fn_PQcancel)(PGcancel *, char *, int);
+typedef void       (*fn_PQfreeCancel)(PGcancel *);
 
 /* ========================================================================
  * Loaded function pointers
@@ -104,6 +108,9 @@ static fn_PQgetvalue           p_getvalue;
 static fn_PQgetlength          p_getlength;
 static fn_PQclear              p_clear;
 static fn_PQserverVersion      p_serverVersion;
+static fn_PQgetCancel          p_getCancel;
+static fn_PQcancel             p_cancel;
+static fn_PQfreeCancel         p_freeCancel;
 
 /* ========================================================================
  * Driver-specific structures
@@ -140,14 +147,16 @@ typedef struct {
 
 #define PG_LOAD(name) do { \
     p_##name = (fn_PQ##name)kdbc_dl_sym(lib_handle, "PQ" #name); \
-    if (!p_##name) { kdbc_dl_close(lib_handle); lib_handle = NULL; return 0; } \
+    if (!p_##name) { kdbc_dl_close(lib_handle); lib_handle = NULL; return; } \
 } while (0)
 
-static int pg_load(void) {
-    if (lib_handle) return 1;
+static pthread_once_t pg_load_once = PTHREAD_ONCE_INIT;
+static int            pg_load_ok   = 0;
+
+static void pg_load_impl(void) {
     lib_handle = kdbc_dl_open(KDBC_LIBNAME("pq", "5"), RTLD_LAZY);
     if (!lib_handle) lib_handle = kdbc_dl_open(KDBC_LIBNAME_NOVER("pq"), RTLD_LAZY);
-    if (!lib_handle) return 0;
+    if (!lib_handle) return;
 
     PG_LOAD(connectdb);
     PG_LOAD(finish);
@@ -169,8 +178,16 @@ static int pg_load(void) {
     PG_LOAD(getlength);
     PG_LOAD(clear);
     PG_LOAD(serverVersion);
+    PG_LOAD(getCancel);
+    PG_LOAD(cancel);
+    PG_LOAD(freeCancel);
 
-    return 1;
+    pg_load_ok = 1;
+}
+
+static int pg_load(void) {
+    pthread_once(&pg_load_once, pg_load_impl);
+    return pg_load_ok;
 }
 
 static int pg_loaded(void) { return lib_handle != NULL; }
@@ -205,6 +222,24 @@ static void *pg_connect(const char *url, const char *user, const char *password,
 
 static void pg_close(void *native) {
     if (native) p_finish((PGconn *)native);
+}
+
+/* Async cancel of the currently-executing query on this connection.
+ * Safe to call from a thread different than the one blocked inside libpq:
+ * PQgetCancel + PQcancel open a separate backend channel to send the
+ * cancel request, without touching the original PGconn's protocol state. */
+static int pg_cancel(kdbc_conn *conn) {
+    if (!conn || !conn->native) return KDBC_ERROR;
+    PGcancel *c = p_getCancel((PGconn *)conn->native);
+    if (!c) return KDBC_ERROR;
+    char errbuf[256];
+    int ok = p_cancel(c, errbuf, (int)sizeof(errbuf));
+    p_freeCancel(c);
+    if (!ok) {
+        CONN_ERR(conn, "PostgreSQL cancel failed: %s", errbuf);
+        return KDBC_ERROR;
+    }
+    return KDBC_OK;
 }
 
 /* ========================================================================
@@ -1033,6 +1068,7 @@ static const kdbc_driver_vtable postgres_vtable = {
     .loaded             = pg_loaded,
     .connect            = pg_connect,
     .close              = pg_close,
+    .cancel             = pg_cancel,
     .exec_direct        = NULL,
     .query_direct       = NULL,
     .set_autocommit     = pg_set_autocommit,

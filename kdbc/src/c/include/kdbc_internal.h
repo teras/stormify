@@ -126,6 +126,12 @@ struct kdbc_driver_vtable {
                      char *err, size_t err_size);
     void  (*close)(void *native);
 
+    /* Best-effort async cancellation of any currently-executing statement
+     * on this connection. Must be safe to call from a thread different from
+     * the one currently inside a blocking driver call on the same connection.
+     * Optional: if NULL, kdbc_cancel() returns KDBC_ERROR. */
+    int (*cancel)(kdbc_conn *conn);
+
     /* Direct SQL execution (no prepare - for DDL, SAVEPOINT, etc.)
      * Optional: if NULL, falls back to prepare+execute. */
     int (*exec_direct)(kdbc_conn *conn, const char *sql);

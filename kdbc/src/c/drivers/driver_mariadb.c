@@ -10,6 +10,7 @@
 #include "../include/kdbc_internal.h"
 #include "../include/kdbc_dl.h"
 #include <mysql/mysql.h>
+#include <pthread.h>
 
 /* Aliases for our code (real types come from mysql.h) */
 typedef MYSQL_BIND  MY_BIND;
@@ -20,7 +21,9 @@ typedef my_bool     my_bool_t; /* may already be defined */
  * Function pointer types
  * ======================================================================== */
 
+typedef int          (*fn_mysql_library_init)(int, char **, char **);
 typedef MYSQL       *(*fn_mysql_init)(MYSQL *);
+typedef int          (*fn_mariadb_cancel)(MYSQL *);
 typedef MYSQL       *(*fn_mysql_real_connect)(MYSQL *, const char *, const char *,
                                               const char *, const char *,
                                               unsigned int, const char *, unsigned long);
@@ -59,6 +62,8 @@ typedef int          (*fn_mysql_query)(MYSQL *, const char *);
 
 static kdbc_lib_handle lib_handle = NULL;
 
+static fn_mysql_library_init          p_library_init;
+static fn_mariadb_cancel              p_mariadb_cancel; /* optional - NULL on MySQL libmysqlclient */
 static fn_mysql_init                  p_init;
 static fn_mysql_real_connect          p_real_connect;
 static fn_mysql_close                 p_close;
@@ -95,17 +100,27 @@ static fn_mysql_query                 p_query;
 
 #define MY_LOAD(name) do { \
     p_##name = (fn_mysql_##name)kdbc_dl_sym(lib_handle, "mysql_" #name); \
-    if (!p_##name) { kdbc_dl_close(lib_handle); lib_handle = NULL; return 0; } \
+    if (!p_##name) { kdbc_dl_close(lib_handle); lib_handle = NULL; return; } \
 } while (0)
 
-static int my_load(void) {
-    if (lib_handle) return 1;
+static pthread_once_t my_load_once = PTHREAD_ONCE_INIT;
+static int            my_load_ok   = 0;
 
+static void my_load_impl(void) {
     lib_handle = kdbc_dl_open(KDBC_LIBNAME("mariadb", "3"), RTLD_LAZY);
     if (!lib_handle) lib_handle = kdbc_dl_open(KDBC_LIBNAME_NOVER("mariadb"), RTLD_LAZY);
     if (!lib_handle) lib_handle = kdbc_dl_open(KDBC_LIBNAME("mysqlclient", "21"), RTLD_LAZY);
     if (!lib_handle) lib_handle = kdbc_dl_open(KDBC_LIBNAME_NOVER("mysqlclient"), RTLD_LAZY);
-    if (!lib_handle) return 0;
+    if (!lib_handle) return;
+
+    /* mysql_library_init: required once per process before any threading.
+     * Resolved via dlsym; present in both libmariadb and libmysqlclient. */
+    p_library_init = (fn_mysql_library_init)kdbc_dl_sym(lib_handle, "mysql_library_init");
+    if (p_library_init && p_library_init(0, NULL, NULL) != 0) {
+        kdbc_dl_close(lib_handle);
+        lib_handle = NULL;
+        return;
+    }
 
     MY_LOAD(init);
     MY_LOAD(real_connect);
@@ -114,7 +129,7 @@ static int my_load(void) {
 
     /* mysql_errno */
     p_errno_ = (fn_mysql_errno)kdbc_dl_sym(lib_handle, "mysql_errno");
-    if (!p_errno_) { kdbc_dl_close(lib_handle); lib_handle = NULL; return 0; }
+    if (!p_errno_) { kdbc_dl_close(lib_handle); lib_handle = NULL; return; }
 
     MY_LOAD(autocommit);
     MY_LOAD(commit);
@@ -141,7 +156,17 @@ static int my_load(void) {
     MY_LOAD(free_result);
     MY_LOAD(query);
 
-    return 1;
+    /* mariadb_cancel is present in libmariadb 3.x+ but NOT in Oracle's
+     * libmysqlclient. Resolve via dlsym and allow it to be NULL — the
+     * cancel wrapper checks before calling. */
+    p_mariadb_cancel = (fn_mariadb_cancel)kdbc_dl_sym(lib_handle, "mariadb_cancel");
+
+    my_load_ok = 1;
+}
+
+static int my_load(void) {
+    pthread_once(&my_load_once, my_load_impl);
+    return my_load_ok;
 }
 
 static int my_loaded(void) { return lib_handle != NULL; }
@@ -263,6 +288,23 @@ static void *my_connect(const char *url, const char *user, const char *password,
 
 static void my_close_conn(void *native) {
     if (native) p_close((MYSQL *)native);
+}
+
+/* Async cancel of the currently-executing query on this connection.
+ * mariadb_cancel sends an interrupt through a separate channel and is
+ * safe to call from any thread. Only available with libmariadb — with
+ * Oracle's libmysqlclient the symbol is absent and cancel is a no-op. */
+static int my_cancel(kdbc_conn *conn) {
+    if (!conn || !conn->native) return KDBC_ERROR;
+    if (!p_mariadb_cancel) {
+        CONN_ERR(conn, "MariaDB cancel not supported by this client library");
+        return KDBC_ERROR;
+    }
+    if (p_mariadb_cancel((MYSQL *)conn->native) != 0) {
+        CONN_ERR(conn, "MariaDB cancel failed: %s", p_error((MYSQL *)conn->native));
+        return KDBC_ERROR;
+    }
+    return KDBC_OK;
 }
 
 /* ========================================================================
@@ -926,6 +968,7 @@ static const kdbc_driver_vtable mariadb_vtable = {
     .loaded             = my_loaded,
     .connect            = my_connect,
     .close              = my_close_conn,
+    .cancel             = my_cancel,
     .exec_direct        = my_exec_direct,
     .query_direct       = NULL,
     .set_autocommit     = my_set_autocommit,

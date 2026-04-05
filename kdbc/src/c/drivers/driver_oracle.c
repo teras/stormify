@@ -10,6 +10,7 @@
 #include "../include/kdbc_internal.h"
 #include "../include/kdbc_dl.h"
 #include <dpi.h>
+#include <pthread.h>
 
 /* ========================================================================
  * Function pointer types
@@ -24,6 +25,7 @@ typedef int (*fn_dpiConn_create)(const dpiContext *,
                                  const char *, unsigned int,
                                  void *, void *, dpiConn **);
 typedef int (*fn_dpiConn_close)(dpiConn *, unsigned int, const char *, unsigned int);
+typedef int (*fn_dpiConn_breakExecution)(dpiConn *);
 typedef int (*fn_dpiConn_commit)(dpiConn *);
 typedef int (*fn_dpiConn_rollback)(dpiConn *);
 typedef int (*fn_dpiConn_prepareStmt)(dpiConn *, int,
@@ -64,6 +66,7 @@ static fn_dpiContext_createWithParams    p_ctx_create;
 static fn_dpiContext_getError            p_ctx_getError;
 static fn_dpiConn_create                 p_conn_create;
 static fn_dpiConn_close                  p_conn_close;
+static fn_dpiConn_breakExecution         p_conn_breakExecution;
 static fn_dpiConn_commit                 p_conn_commit;
 static fn_dpiConn_rollback               p_conn_rollback;
 static fn_dpiConn_prepareStmt            p_conn_prepareStmt;
@@ -96,20 +99,22 @@ static dpiContext *g_ora_ctx = NULL;
 
 #define ORA_LOAD(var, name) do { \
     var = kdbc_dl_sym(lib_handle, name); \
-    if (!var) { kdbc_dl_close(lib_handle); lib_handle = NULL; return 0; } \
+    if (!var) { kdbc_dl_close(lib_handle); lib_handle = NULL; return; } \
 } while (0)
 
-static int ora_load(void) {
-    if (lib_handle) return 1;
+static pthread_once_t ora_load_once = PTHREAD_ONCE_INIT;
+static int            ora_load_ok   = 0;
 
+static void ora_load_impl(void) {
     lib_handle = kdbc_dl_open(KDBC_LIBNAME_NOVER("odpic"), RTLD_LAZY);
     if (!lib_handle) lib_handle = kdbc_dl_open(KDBC_LIBNAME("odpic", "5"), RTLD_LAZY);
-    if (!lib_handle) return 0;
+    if (!lib_handle) return;
 
     ORA_LOAD(p_ctx_create,              "dpiContext_createWithParams");
     ORA_LOAD(p_ctx_getError,            "dpiContext_getError");
     ORA_LOAD(p_conn_create,             "dpiConn_create");
     ORA_LOAD(p_conn_close,              "dpiConn_close");
+    ORA_LOAD(p_conn_breakExecution,     "dpiConn_breakExecution");
     ORA_LOAD(p_conn_commit,             "dpiConn_commit");
     ORA_LOAD(p_conn_rollback,           "dpiConn_rollback");
     ORA_LOAD(p_conn_prepareStmt,        "dpiConn_prepareStmt");
@@ -141,10 +146,15 @@ static int ora_load(void) {
         kdbc_dl_close(lib_handle);
         lib_handle = NULL;
         g_ora_ctx = NULL;
-        return 0;
+        return;
     }
 
-    return 1;
+    ora_load_ok = 1;
+}
+
+static int ora_load(void) {
+    pthread_once(&ora_load_once, ora_load_impl);
+    return ora_load_ok;
 }
 
 static int ora_loaded(void) { return lib_handle != NULL && g_ora_ctx != NULL; }
@@ -192,6 +202,21 @@ static void ora_close(void *native) {
     if (!oc) return;
     p_conn_close(oc->conn, DPI_MODE_CONN_CLOSE_DEFAULT, NULL, 0);
     free(oc);
+}
+
+/* Async cancel of the currently-executing statement on this connection.
+ * dpiConn_breakExecution is explicitly documented as thread-safe: it uses
+ * OCIBreak to signal the server to interrupt the current operation,
+ * causing the blocking dpiStmt_execute on the other thread to return
+ * with an error. */
+static int ora_cancel(kdbc_conn *conn) {
+    if (!conn || !conn->native) return KDBC_ERROR;
+    ora_conn *oc = (ora_conn *)conn->native;
+    if (p_conn_breakExecution(oc->conn) != DPI_SUCCESS) {
+        CONN_ERR(conn, "Oracle cancel failed: %s", ora_get_error());
+        return KDBC_ERROR;
+    }
+    return KDBC_OK;
 }
 
 /* ========================================================================
@@ -939,6 +964,7 @@ static const kdbc_driver_vtable oracle_vtable = {
     .loaded             = ora_loaded,
     .connect            = ora_connect,
     .close              = ora_close,
+    .cancel             = ora_cancel,
     .exec_direct        = NULL,
     .query_direct       = NULL,
     .set_autocommit     = ora_set_autocommit,

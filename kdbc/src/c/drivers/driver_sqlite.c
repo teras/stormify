@@ -10,6 +10,7 @@
 #include "../include/kdbc_internal.h"
 #include "../include/kdbc_dl.h"
 #include <sqlite3.h>
+#include <pthread.h>
 
 /* ========================================================================
  * Function pointer types
@@ -43,6 +44,7 @@ typedef const char *(*fn_sqlite3_errmsg)(sqlite3 *);
 typedef const char *(*fn_sqlite3_libversion)(void);
 typedef int    (*fn_sqlite3_libversion_number)(void);
 typedef int    (*fn_sqlite3_exec)(sqlite3 *, const char *, void *, void *, char **);
+typedef void   (*fn_sqlite3_interrupt)(sqlite3 *);
 
 /* ========================================================================
  * Loaded function pointers
@@ -78,6 +80,7 @@ static fn_sqlite3_errmsg            p_errmsg;
 static fn_sqlite3_libversion        p_libversion;
 static fn_sqlite3_libversion_number p_libversion_number;
 static fn_sqlite3_exec              p_exec;
+static fn_sqlite3_interrupt         p_interrupt;
 
 /* ========================================================================
  * Driver-specific result set structure
@@ -96,16 +99,17 @@ typedef struct {
 
 #define LOAD_SYM(name) do { \
     p_##name = (fn_sqlite3_##name)kdbc_dl_sym(lib_handle, "sqlite3_" #name); \
-    if (!p_##name) { kdbc_dl_close(lib_handle); lib_handle = NULL; return 0; } \
+    if (!p_##name) { kdbc_dl_close(lib_handle); lib_handle = NULL; return; } \
 } while (0)
 
-static int sq_load(void) {
-    if (lib_handle) return 1;
+static pthread_once_t sq_load_once = PTHREAD_ONCE_INIT;
+static int            sq_load_ok   = 0;
 
+static void sq_load_impl(void) {
     /* Try platform-specific library names */
     lib_handle = kdbc_dl_open(KDBC_LIBNAME("sqlite3", "0"), RTLD_LAZY);
     if (!lib_handle) lib_handle = kdbc_dl_open(KDBC_LIBNAME_NOVER("sqlite3"), RTLD_LAZY);
-    if (!lib_handle) return 0;
+    if (!lib_handle) return;
 
     LOAD_SYM(open_v2);
     LOAD_SYM(close);
@@ -135,8 +139,14 @@ static int sq_load(void) {
     LOAD_SYM(libversion);
     LOAD_SYM(libversion_number);
     LOAD_SYM(exec);
+    LOAD_SYM(interrupt);
 
-    return 1;
+    sq_load_ok = 1;
+}
+
+static int sq_load(void) {
+    pthread_once(&sq_load_once, sq_load_impl);
+    return sq_load_ok;
 }
 
 static int sq_loaded(void) {
@@ -168,6 +178,15 @@ static void *sq_connect(const char *url, const char *user, const char *password,
 
 static void sq_close(void *native) {
     if (native) p_close((sqlite3 *)native);
+}
+
+/* sqlite3_interrupt is explicitly documented as safe to call from any
+ * thread at any time; it sets a flag that sqlite3_step observes at its
+ * next opportunity and returns SQLITE_INTERRUPT. */
+static int sq_cancel(kdbc_conn *conn) {
+    if (!conn || !conn->native) return KDBC_ERROR;
+    p_interrupt((sqlite3 *)conn->native);
+    return KDBC_OK;
 }
 
 /* ========================================================================
@@ -572,6 +591,7 @@ static const kdbc_driver_vtable sqlite_vtable = {
     .loaded             = sq_loaded,
     .connect            = sq_connect,
     .close              = sq_close,
+    .cancel             = sq_cancel,
     .exec_direct        = NULL,
     .query_direct       = NULL,
     .set_autocommit     = sq_set_autocommit,

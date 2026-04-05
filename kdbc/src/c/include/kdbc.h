@@ -134,6 +134,31 @@ void kdbc_close(kdbc_conn *conn);
  */
 kdbc_driver kdbc_conn_driver(kdbc_conn *conn);
 
+/**
+ * Best-effort asynchronous cancellation of any statement currently executing
+ * on this connection. Designed to be called from a thread OTHER than the one
+ * blocked inside a kdbc call — this is the mechanism by which higher-level
+ * code (e.g. a Kotlin coroutine cancellation handler) can interrupt a running
+ * query without having to wait for it to finish naturally.
+ *
+ * When the cancel takes effect, the blocking call on the other thread will
+ * return with an error (typically KDBC_ERROR and a driver-specific error
+ * message). Cancel is a request, not a guarantee — the query may still
+ * complete normally if it was already near completion.
+ *
+ * Thread safety: this function is safe to call concurrently with a blocking
+ * kdbc call on the same connection, because each driver dispatches to the
+ * underlying library's documented async-cancel primitive (libpq PQcancel,
+ * sqlite3_interrupt, dpiConn_breakExecution, mariadb_cancel). However, it is
+ * NOT safe to call concurrently with kdbc_close on the same connection — the
+ * caller must serialize cancellation with connection teardown.
+ *
+ * Returns KDBC_OK if the cancel request was dispatched, KDBC_ERROR if the
+ * connection is NULL, the driver does not support cancellation, or the
+ * underlying primitive reported a failure.
+ */
+int kdbc_cancel(kdbc_conn *conn);
+
 /* ========================================================================
  * Direct SQL execution (no prepare, no parameters)
  * ======================================================================== */
