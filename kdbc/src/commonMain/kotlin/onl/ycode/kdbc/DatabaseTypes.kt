@@ -38,6 +38,26 @@ interface Connection : AutoCloseable {
     fun setSavepoint(name: String): Savepoint
     fun releaseSavepoint(savepoint: Savepoint)
     fun setAutoCommit(autoCommit: Boolean)
+
+    /**
+     * Best-effort asynchronous cancellation of any statement currently executing on this
+     * connection. Designed to be called from a thread OTHER than the one blocked inside
+     * a kdbc call — that is the point: higher-level code (e.g. a Kotlin coroutine
+     * cancellation handler) can interrupt a running query without waiting for it.
+     *
+     * When the cancel takes effect the blocking call on the other thread returns with an
+     * error (typically mapped to an exception). Cancel is a request, not a guarantee.
+     *
+     * Thread safety: safe to call concurrently with a blocking kdbc call on the same
+     * connection. NOT safe to call concurrently with [close] — callers must serialize
+     * cancellation with connection teardown.
+     *
+     * Implementations: JVM delegates to `java.sql.Statement.cancel` on the active statement
+     * (or is a no-op if no active statement is tracked); Native delegates to the kdbc C
+     * layer's `kdbc_cancel` which dispatches to the driver-specific primitive (PQcancel,
+     * sqlite3_interrupt, mariadb_cancel, dpiConn_breakExecution). Default: no-op.
+     */
+    fun cancel(): Unit = Unit
 }
 
 interface DatabaseMetaData {

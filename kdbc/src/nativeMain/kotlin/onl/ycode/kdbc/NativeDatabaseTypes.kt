@@ -55,14 +55,17 @@ internal fun KdbcDriverKind.toCValue(): kdbc_driver = when (this) {
 /**
  * DataSource implementation that uses the unified kdbc C library.
  * Created indirectly through [KdbcDataSource] (the public factory).
+ *
+ * This DataSource does NOT pool connections — each [getConnection] call opens a
+ * fresh native connection. Connection pooling is the responsibility of a higher
+ * layer (see `stormify.coroutines` which provides a proper suspend-aware pool).
  */
 class NativeKdbcDataSource internal constructor(
     private val kind: KdbcDriverKind,
     private val nativeUrl: String,
     private val user: String?,
-    private val password: String?,
-    poolConfig: PoolConfig
-) : PoolableDataSource(poolConfig) {
+    private val password: String?
+) : DataSource {
 
     init {
         if (kdbc_driver_available(kind.toCValue()) == 0) {
@@ -73,7 +76,7 @@ class NativeKdbcDataSource internal constructor(
         }
     }
 
-    override fun createNewConnection(): Connection {
+    override fun getConnection(): Connection {
         val conn: CPointer<kdbc_conn>? = kdbc_connect(
             kind.toCValue(),
             nativeUrl,
@@ -94,6 +97,12 @@ private class NativeConnection(
     private val handle: CPointer<kdbc_conn>,
     private val kind: KdbcDriverKind
 ) : Connection {
+    // kotlin.concurrent.Volatile (multiplatform) ensures that [cancel], which is
+    // explicitly designed to be called from a thread other than the one using the
+    // connection, observes a close() that happened on the owning thread. Without
+    // the write-visibility guarantee, cancel() could dispatch kdbc_cancel on an
+    // already-freed handle on weak memory architectures.
+    @kotlin.concurrent.Volatile
     private var closed = false
     private val supportsReleaseSavepoint: Boolean =
         kdbc_driver_supports_release_savepoint(kind.toCValue()) != 0
@@ -174,6 +183,16 @@ private class NativeConnection(
         ensureOpen()
         if (kdbc_set_autocommit(handle, if (autoCommit) 1 else 0) != KDBC_OK)
             throw SQLException("setAutoCommit failed: ${connError(handle, "setAutoCommit failed")}")
+    }
+
+    override fun cancel() {
+        // Best-effort async cancel. Safe to call from a different thread while another
+        // thread is blocked inside a kdbc call on the same handle — this is the whole
+        // point of the primitive. Errors are swallowed: cancel is advisory, and a failure
+        // to dispatch the cancel should not throw a new exception at the cancellation
+        // handler site (which is typically called from coroutine machinery).
+        if (closed) return
+        kdbc_cancel(handle)
     }
 
     override fun close() {

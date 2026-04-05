@@ -1,12 +1,8 @@
 package onl.ycode.stormify
 
-import kotlinx.atomicfu.atomic
 import onl.ycode.kdbc.Connection
 import onl.ycode.kdbc.Savepoint
 import kotlin.reflect.KClass
-
-private val counter = atomic(0L)
-private const val MAX_COUNTER = 999_999_999_999_999L
 
 /**
  * Context for executing database operations within a transaction.
@@ -88,11 +84,35 @@ private const val MAX_COUNTER = 999_999_999_999_999L
  *
  * @see Stormify.transaction
  */
-class TransactionContext internal constructor(@PublishedApi internal val stormify: Stormify) {
-    @PublishedApi
-    internal val conn = tryQuery("Unable to get connection") { stormify.dataSource.getConnection() }
+class TransactionContext internal constructor(
+    @PublishedApi internal val stormify: Stormify,
+    @PublishedApi internal val conn: Connection,
+    /**
+     * True when this TransactionContext acquired the connection from the DataSource and
+     * therefore must close it when the transaction ends (the historical blocking API
+     * path). False when the connection was handed in externally — e.g. by a
+     * `SuspendConnectionPool.use` block in the coroutines layer — in which case the
+     * caller owns the connection's lifecycle and this class MUST NOT call `close()` on
+     * it. Commit/rollback still happen in both modes; only the final `close()` differs.
+     */
+    private val ownsConnection: Boolean,
+) {
+    /** Backwards-compatible secondary constructor: acquires a fresh connection from the data source. */
+    internal constructor(stormify: Stormify) : this(
+        stormify = stormify,
+        conn = tryQuery("Unable to get connection") { stormify.dataSource.getConnection() },
+        ownsConnection = true,
+    )
 
-    internal fun start(block: TransactionContext.() -> Unit) = conn.use {
+    internal fun start(block: TransactionContext.() -> Unit) {
+        if (ownsConnection) {
+            conn.use { runBody(block) }
+        } else {
+            runBody(block)
+        }
+    }
+
+    private fun runBody(block: TransactionContext.() -> Unit) {
         try {
             conn.setAutoCommit(false)
             block()
@@ -151,9 +171,7 @@ class TransactionContext internal constructor(@PublishedApi internal val stormif
     fun transaction(block: () -> Unit) {
         var savepoint: Savepoint? = null
         try {
-            val count = counter.getAndIncrement()
-            if (count > MAX_COUNTER) counter.value = 0L
-            savepoint = conn.setSavepoint("s" + systemMillis() + "_" + count)
+            savepoint = conn.setSavepoint(nextSavepointName())
             block()
             if (stormify.sqlDialect.supportsReleaseSavepoint)
                 conn.releaseSavepoint(savepoint)

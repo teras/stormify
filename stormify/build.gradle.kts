@@ -46,12 +46,22 @@ kotlin {
             dependencies {
                 implementation(project(":logger"))
                 implementation(project(":kdbc"))
+                // kotlinx.coroutines is used only by the optional suspend API in the
+                // `onl.ycode.stormify.coroutines` subpackage. Marked compileOnly so
+                // that consumers who only use the blocking API never pull it as a
+                // transitive dependency. Consumers who use the suspend API must add
+                // kotlinx.coroutines-core themselves to their build.
+                compileOnly("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.10.2")
             }
         }
 
         val commonTest by getting {
             dependencies {
                 implementation(kotlin("test"))
+                // Suspend API tests use real coroutines at runtime (unlike main code which
+                // only compile-references them via compileOnly).
+                implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.10.2")
+                implementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.10.2")
             }
         }
 

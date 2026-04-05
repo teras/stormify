@@ -12,8 +12,7 @@ package onl.ycode.kdbc
 actual fun KdbcDataSource(
     url: String,
     user: String?,
-    password: String?,
-    poolConfig: PoolConfig
+    password: String?
 ): DataSource {
     throw SQLException(
         "KdbcDataSource(url) is not yet implemented on JVM. " +

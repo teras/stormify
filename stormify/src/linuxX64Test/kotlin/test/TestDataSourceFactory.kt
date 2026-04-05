@@ -6,7 +6,6 @@ import db.stormify.GeneratedEntities
 import kotlinx.cinterop.ExperimentalForeignApi
 import kotlinx.cinterop.toKString
 import onl.ycode.kdbc.KdbcDataSource
-import onl.ycode.kdbc.PoolConfig
 import platform.posix.getenv
 import platform.posix.getpid
 import platform.posix.unlink
@@ -57,9 +56,9 @@ actual fun createTestDatabases(): List<TestDatabase> {
     val password = "Stormify1!"
 
     val ds = if (dbName == "sqlite") {
-        KdbcDataSource(url, poolConfig = PoolConfig(enabled = false))
+        KdbcDataSource(url)
     } else {
-        KdbcDataSource(url, user, password, poolConfig = PoolConfig(enabled = false))
+        KdbcDataSource(url, user, password)
     }
 
     return listOf(TestDatabase(name = displayName, dataSource = ds))

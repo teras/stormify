@@ -9,8 +9,7 @@ private val logger = LogManager.getLogger("onl.ycode.kdbc.KdbcDataSource")
 actual fun KdbcDataSource(
     url: String,
     user: String?,
-    password: String?,
-    poolConfig: PoolConfig
+    password: String?
 ): DataSource {
     val parsed = JdbcUrlParser.parse(url, user, password)
     if (parsed.extraParams.isNotEmpty()) {
@@ -24,7 +23,6 @@ actual fun KdbcDataSource(
         kind = parsed.kind,
         nativeUrl = parsed.nativeUrl,
         user = parsed.user,
-        password = parsed.password,
-        poolConfig = poolConfig
+        password = parsed.password
     )
 }

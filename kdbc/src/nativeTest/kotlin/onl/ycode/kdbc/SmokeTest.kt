@@ -8,7 +8,7 @@ import kotlin.test.assertTrue
 class SmokeTest {
     @Test
     fun blobRoundTrip() {
-        val ds = KdbcDataSource("jdbc:sqlite::memory:", poolConfig = PoolConfig(enabled = false))
+        val ds = KdbcDataSource("jdbc:sqlite::memory:")
         ds.getConnection().use { conn ->
             conn.initStatement("CREATE TABLE b(id INTEGER PRIMARY KEY, data BLOB)", false, null).use { it.executeUpdate() }
             val orig = byteArrayOf(0, 1, 2, -1, 127, -128, 42)
@@ -30,10 +30,7 @@ class SmokeTest {
 
     @Test
     fun sqliteInMemoryRoundTrip() {
-        val ds = KdbcDataSource(
-            "jdbc:sqlite::memory:",
-            poolConfig = PoolConfig(enabled = false)
-        )
+        val ds = KdbcDataSource("jdbc:sqlite::memory:")
         ds.getConnection().use { conn ->
             val meta = conn.metaData
             println("Product: ${meta.databaseProductName} ${meta.databaseProductVersion}")

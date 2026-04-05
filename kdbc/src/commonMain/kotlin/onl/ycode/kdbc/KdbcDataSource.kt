@@ -29,6 +29,5 @@ package onl.ycode.kdbc
 expect fun KdbcDataSource(
     url: String,
     user: String? = null,
-    password: String? = null,
-    poolConfig: PoolConfig = PoolConfig()
+    password: String? = null
 ): DataSource
