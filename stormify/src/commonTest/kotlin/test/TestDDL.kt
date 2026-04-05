@@ -42,11 +42,19 @@ object TestDDL {
         isOracle -> "NUMBER(10)"
         else -> "INT"
     }
-    // Oracle NUMBER(19) has 19 digits of precision but ODPI-C rounds through a
-    // non-exact internal format when converting between int64 and NUMBER at precision
-    // boundaries — using NUMBER(38) (Oracle's max precision) avoids the Long.MAX_VALUE
-    // round-trip corruption.
-    fun bigIntType() = if (isOracle) "NUMBER(38)" else "BIGINT"
+    fun bigIntType() = if (isOracle) "NUMBER(19)" else "BIGINT"
+
+    /** Portable fixed-precision decimal type (precision = total digits, scale = digits after decimal).
+     *
+     * SQLite has no real DECIMAL — NUMERIC column affinity coerces text values
+     * to INTEGER/REAL if they "look like" numbers, which loses precision for
+     * anything beyond double. TEXT affinity is the only way to preserve full
+     * BigDecimal/BigInteger precision on SQLite. */
+    fun decimalType(precision: Int, scale: Int) = when {
+        isOracle -> "NUMBER($precision, $scale)"
+        isSqlite -> "TEXT"
+        else -> "DECIMAL($precision, $scale)"
+    }
     fun floatType() = when {
         isOracle -> "BINARY_FLOAT"
         isMssql -> "REAL"

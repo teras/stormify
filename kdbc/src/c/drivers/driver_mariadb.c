@@ -55,6 +55,7 @@ typedef unsigned int (*fn_mysql_num_fields)(MYSQL_RES *);
 typedef MY_FIELD    *(*fn_mysql_fetch_fields)(MYSQL_RES *);
 typedef void         (*fn_mysql_free_result)(MYSQL_RES *);
 typedef int          (*fn_mysql_query)(MYSQL *, const char *);
+typedef int          (*fn_mysql_options)(MYSQL *, int, const void *);
 
 /* ========================================================================
  * Loaded function pointers
@@ -93,6 +94,7 @@ static fn_mysql_num_fields            p_num_fields;
 static fn_mysql_fetch_fields          p_fetch_fields;
 static fn_mysql_free_result           p_free_result;
 static fn_mysql_query                 p_query;
+static fn_mysql_options               p_options;
 
 /* ========================================================================
  * Library loading
@@ -155,6 +157,7 @@ static void my_load_impl(void) {
     MY_LOAD(fetch_fields);
     MY_LOAD(free_result);
     MY_LOAD(query);
+    MY_LOAD(options);
 
     /* mariadb_cancel is present in libmariadb 3.x+ but NOT in Oracle's
      * libmysqlclient. Resolve via dlsym and allow it to be NULL — the
@@ -188,6 +191,7 @@ typedef struct {
     } num;
     char        *str;        /* owned string/blob copy */
     unsigned long str_len;
+    MYSQL_TIME   time_val;   /* native binary date/time/timestamp */
     my_bool      is_null;
     unsigned long length;
 } my_param;
@@ -213,6 +217,7 @@ typedef struct {
     } num;
     char        *buf;
     unsigned long buf_cap;
+    MYSQL_TIME   time_val;   /* native binary date/time/timestamp */
     unsigned long length;
     my_bool      is_null;
     my_bool      error;
@@ -273,6 +278,13 @@ static void *my_connect(const char *url, const char *user, const char *password,
     if (strcmp(host, "localhost") == 0) {
         strcpy(host, "127.0.0.1");
     }
+
+    /* Force utf8mb4 for the connection BEFORE connecting so the handshake
+     * charset is UTF-8 and the server treats subsequent strings consistently.
+     * MYSQL_SET_CHARSET_NAME (enum value 7) is honored by both libmariadb and
+     * libmysqlclient. Without this the session falls back to the server
+     * default, which may be latin1 and would silently corrupt non-ASCII. */
+    p_options(mysql, 7 /* MYSQL_SET_CHARSET_NAME */, "utf8mb4");
 
     MYSQL *result = p_real_connect(mysql, host, user, password, db, port, NULL, 0);
     if (!result) {
@@ -386,8 +398,10 @@ static int my_get_minor_version(void *native) {
 
 static void *my_prepare(kdbc_conn *conn, const char *native_sql,
                         const char **ret_cols, int n_ret_cols,
+                        int generated_keys_requested,
                         char *err, size_t err_size) {
-    (void)ret_cols; (void)n_ret_cols; /* MariaDB uses mysql_stmt_insert_id */
+    (void)ret_cols; (void)n_ret_cols; (void)generated_keys_requested;
+    /* MariaDB uses mysql_stmt_insert_id — no per-statement handling needed. */
     MYSQL *mysql = (MYSQL *)conn->native;
 
     my_stmt_data *sd = (my_stmt_data *)calloc(1, sizeof(my_stmt_data));
@@ -490,6 +504,14 @@ static void my_setup_bind(my_stmt_data *sd, int idx) {
             b->buffer_length = p->str_len;
             p->length = p->str_len;
             break;
+        case MYSQL_TYPE_DATETIME:
+        case MYSQL_TYPE_TIMESTAMP:
+        case MYSQL_TYPE_DATE:
+        case MYSQL_TYPE_TIME:
+            b->buffer_type = p->type;
+            b->buffer = &p->time_val;
+            b->buffer_length = sizeof(MYSQL_TIME);
+            break;
     }
 }
 
@@ -559,34 +581,58 @@ static int my_bind_blob_fn(kdbc_stmt *stmt, int idx, const void *data, size_t le
     return KDBC_OK;
 }
 
-/* Date/time binding: as string (MySQL binary protocol sends datetime as text) */
+/* Date/time binding via native MYSQL_TIME struct — the binary protocol
+ * transmits these as 7-11 bytes on the wire (vs ~20-27 bytes as text) and
+ * avoids a server-side parse. second_part holds microseconds directly so
+ * DATETIME(6)/TIMESTAMP(6)/TIME(6) round-trip at full precision. */
 static int my_bind_timestamp(kdbc_stmt *stmt, int idx,
                              int year, int month, int day,
                              int hour, int minute, int second, int usec) {
-    char buf[32];
-    if (usec > 0)
-        snprintf(buf, sizeof(buf), "%04d-%02d-%02d %02d:%02d:%02d.%06d",
-                 year, month, day, hour, minute, second, usec);
-    else
-        snprintf(buf, sizeof(buf), "%04d-%02d-%02d %02d:%02d:%02d",
-                 year, month, day, hour, minute, second);
-    return my_bind_string(stmt, idx, buf);
+    my_stmt_data *sd = (my_stmt_data *)stmt->native;
+    my_param *p = &sd->params[idx - 1];
+    p->is_null = 0;
+    p->type = MYSQL_TYPE_DATETIME;
+    memset(&p->time_val, 0, sizeof(p->time_val));
+    p->time_val.year   = (unsigned int)year;
+    p->time_val.month  = (unsigned int)month;
+    p->time_val.day    = (unsigned int)day;
+    p->time_val.hour   = (unsigned int)hour;
+    p->time_val.minute = (unsigned int)minute;
+    p->time_val.second = (unsigned int)second;
+    p->time_val.second_part = (unsigned long)usec;
+    p->time_val.time_type = MYSQL_TIMESTAMP_DATETIME;
+    my_setup_bind(sd, idx);
+    return KDBC_OK;
 }
 
 static int my_bind_date(kdbc_stmt *stmt, int idx, int year, int month, int day) {
-    char buf[16];
-    snprintf(buf, sizeof(buf), "%04d-%02d-%02d", year, month, day);
-    return my_bind_string(stmt, idx, buf);
+    my_stmt_data *sd = (my_stmt_data *)stmt->native;
+    my_param *p = &sd->params[idx - 1];
+    p->is_null = 0;
+    p->type = MYSQL_TYPE_DATE;
+    memset(&p->time_val, 0, sizeof(p->time_val));
+    p->time_val.year  = (unsigned int)year;
+    p->time_val.month = (unsigned int)month;
+    p->time_val.day   = (unsigned int)day;
+    p->time_val.time_type = MYSQL_TIMESTAMP_DATE;
+    my_setup_bind(sd, idx);
+    return KDBC_OK;
 }
 
 static int my_bind_time(kdbc_stmt *stmt, int idx,
                         int hour, int minute, int second, int usec) {
-    char buf[20];
-    if (usec > 0)
-        snprintf(buf, sizeof(buf), "%02d:%02d:%02d.%06d", hour, minute, second, usec);
-    else
-        snprintf(buf, sizeof(buf), "%02d:%02d:%02d", hour, minute, second);
-    return my_bind_string(stmt, idx, buf);
+    my_stmt_data *sd = (my_stmt_data *)stmt->native;
+    my_param *p = &sd->params[idx - 1];
+    p->is_null = 0;
+    p->type = MYSQL_TYPE_TIME;
+    memset(&p->time_val, 0, sizeof(p->time_val));
+    p->time_val.hour   = (unsigned int)hour;
+    p->time_val.minute = (unsigned int)minute;
+    p->time_val.second = (unsigned int)second;
+    p->time_val.second_part = (unsigned long)usec;
+    p->time_val.time_type = MYSQL_TIMESTAMP_TIME;
+    my_setup_bind(sd, idx);
+    return KDBC_OK;
 }
 
 /* Date/time result retrieval: forward-declared, defined after result set */
@@ -723,6 +769,17 @@ static void *my_execute_query(kdbc_stmt *stmt, int *out_col_count,
                 b->buffer = &c->num.d;
                 b->buffer_length = 8;
                 break;
+            case MYSQL_TYPE_DATETIME:
+            case MYSQL_TYPE_TIMESTAMP:
+            case MYSQL_TYPE_DATE:
+            case MYSQL_TYPE_TIME:
+                /* Bind temporal columns to a native MYSQL_TIME receive buffer.
+                 * The binary protocol fills year/month/day/hour/minute/second
+                 * plus second_part (microseconds) directly — no text parsing. */
+                b->buffer_type = fields[i].type;
+                b->buffer = &c->time_val;
+                b->buffer_length = sizeof(MYSQL_TIME);
+                break;
             default:
                 /* Everything else as string with a reasonable buffer */
                 b->buffer_type = MYSQL_TYPE_STRING;
@@ -774,6 +831,9 @@ static int my_rs_next(kdbc_result *rs) {
             for (int i = 0; i < mrs->col_count; i++) {
                 my_col_data *c = &mrs->cols[i];
                 if (c->is_null) continue;
+                /* Temporal columns use a fixed-size MYSQL_TIME buffer and
+                 * never need refetch; their c->buf is NULL. */
+                if (!c->buf) continue;
                 if (c->length > c->buf_cap - 1) {
                     /* Resize and re-fetch this column only */
                     size_t need = (size_t)c->length + 1;
@@ -886,6 +946,36 @@ static const char *my_rs_get_string(kdbc_result *rs, int col) {
         case MYSQL_TYPE_DOUBLE:
             snprintf(mrs->conv_buf, sizeof(mrs->conv_buf), "%.17g", c->num.d);
             return mrs->conv_buf;
+        case MYSQL_TYPE_DATETIME:
+        case MYSQL_TYPE_TIMESTAMP:
+            /* Re-format the native MYSQL_TIME into canonical ISO text. */
+            if (c->time_val.second_part > 0)
+                snprintf(mrs->conv_buf, sizeof(mrs->conv_buf),
+                         "%04u-%02u-%02u %02u:%02u:%02u.%06lu",
+                         c->time_val.year, c->time_val.month, c->time_val.day,
+                         c->time_val.hour, c->time_val.minute, c->time_val.second,
+                         c->time_val.second_part);
+            else
+                snprintf(mrs->conv_buf, sizeof(mrs->conv_buf),
+                         "%04u-%02u-%02u %02u:%02u:%02u",
+                         c->time_val.year, c->time_val.month, c->time_val.day,
+                         c->time_val.hour, c->time_val.minute, c->time_val.second);
+            return mrs->conv_buf;
+        case MYSQL_TYPE_DATE:
+            snprintf(mrs->conv_buf, sizeof(mrs->conv_buf), "%04u-%02u-%02u",
+                     c->time_val.year, c->time_val.month, c->time_val.day);
+            return mrs->conv_buf;
+        case MYSQL_TYPE_TIME:
+            if (c->time_val.second_part > 0)
+                snprintf(mrs->conv_buf, sizeof(mrs->conv_buf),
+                         "%02u:%02u:%02u.%06lu",
+                         c->time_val.hour, c->time_val.minute, c->time_val.second,
+                         c->time_val.second_part);
+            else
+                snprintf(mrs->conv_buf, sizeof(mrs->conv_buf),
+                         "%02u:%02u:%02u",
+                         c->time_val.hour, c->time_val.minute, c->time_val.second);
+            return mrs->conv_buf;
         default:
             if (c->buf) {
                 /* Ensure null-terminated */
@@ -927,6 +1017,26 @@ static void my_rs_close(void *native_rs) {
 static int my_rs_get_timestamp(kdbc_result *rs, int col,
                                int *year, int *month, int *day,
                                int *hour, int *minute, int *second, int *usec) {
+    my_result_set *mrs = (my_result_set *)rs->native;
+    my_col_data *c = &mrs->cols[col - 1];
+    if (c->is_null) { RS_ERR(rs, "MariaDB: NULL timestamp value"); return KDBC_ERROR; }
+
+    /* Native binary path: column was bound as MYSQL_TYPE_DATETIME/TIMESTAMP/
+     * DATE/TIME — fields are filled directly from the wire. */
+    if (c->type == MYSQL_TYPE_DATETIME || c->type == MYSQL_TYPE_TIMESTAMP ||
+        c->type == MYSQL_TYPE_DATE) {
+        *year   = (int)c->time_val.year;
+        *month  = (int)c->time_val.month;
+        *day    = (int)c->time_val.day;
+        *hour   = (int)c->time_val.hour;
+        *minute = (int)c->time_val.minute;
+        *second = (int)c->time_val.second;
+        *usec   = (int)c->time_val.second_part;
+        return KDBC_OK;
+    }
+
+    /* Text fallback for non-temporal columns (e.g. NEWDECIMAL or VARCHAR
+     * holding a stringified timestamp from a user-written SELECT). */
     const char *txt = my_rs_get_string(rs, col);
     if (!txt) { RS_ERR(rs, "MariaDB: NULL timestamp value"); return KDBC_ERROR; }
     *usec = 0;
@@ -939,6 +1049,18 @@ static int my_rs_get_timestamp(kdbc_result *rs, int col,
 }
 
 static int my_rs_get_date(kdbc_result *rs, int col, int *year, int *month, int *day) {
+    my_result_set *mrs = (my_result_set *)rs->native;
+    my_col_data *c = &mrs->cols[col - 1];
+    if (c->is_null) { RS_ERR(rs, "MariaDB: NULL date value"); return KDBC_ERROR; }
+
+    if (c->type == MYSQL_TYPE_DATE || c->type == MYSQL_TYPE_DATETIME ||
+        c->type == MYSQL_TYPE_TIMESTAMP) {
+        *year  = (int)c->time_val.year;
+        *month = (int)c->time_val.month;
+        *day   = (int)c->time_val.day;
+        return KDBC_OK;
+    }
+
     const char *txt = my_rs_get_string(rs, col);
     if (!txt) { RS_ERR(rs, "MariaDB: NULL date value"); return KDBC_ERROR; }
     if (sscanf(txt, "%d-%d-%d", year, month, day) >= 3) return KDBC_OK;
@@ -948,6 +1070,19 @@ static int my_rs_get_date(kdbc_result *rs, int col, int *year, int *month, int *
 
 static int my_rs_get_time(kdbc_result *rs, int col,
                           int *hour, int *minute, int *second, int *usec) {
+    my_result_set *mrs = (my_result_set *)rs->native;
+    my_col_data *c = &mrs->cols[col - 1];
+    if (c->is_null) { RS_ERR(rs, "MariaDB: NULL time value"); return KDBC_ERROR; }
+
+    if (c->type == MYSQL_TYPE_TIME || c->type == MYSQL_TYPE_DATETIME ||
+        c->type == MYSQL_TYPE_TIMESTAMP) {
+        *hour   = (int)c->time_val.hour;
+        *minute = (int)c->time_val.minute;
+        *second = (int)c->time_val.second;
+        *usec   = (int)c->time_val.second_part;
+        return KDBC_OK;
+    }
+
     const char *txt = my_rs_get_string(rs, col);
     if (!txt) { RS_ERR(rs, "MariaDB: NULL time value"); return KDBC_ERROR; }
     *usec = 0;

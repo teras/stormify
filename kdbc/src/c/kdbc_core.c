@@ -390,6 +390,7 @@ static kdbc_stmt *prepare_impl(kdbc_conn *conn, const char *sql,
 
     /* Driver-level prepare */
     stmt->native = conn->vt->prepare(conn, native_sql, col_names, n_cols,
+                                     generated_keys_requested,
                                      stmt->error, KDBC_ERR_SIZE);
     if (!stmt->native) {
         if (stmt->error[0])
@@ -451,6 +452,7 @@ void kdbc_stmt_close(kdbc_stmt *stmt) {
     free_callable(stmt);
     free(stmt->sql);
     free(stmt->native_sql);
+    free(stmt->generated_key_str);
     if (stmt->ret_col_names) {
         for (int i = 0; i < stmt->ret_col_count; i++)
             free(stmt->ret_col_names[i]);
@@ -467,6 +469,8 @@ int kdbc_stmt_reset(kdbc_stmt *stmt) {
         memset(&stmt->params[i], 0, sizeof(kdbc_param));
     }
     stmt->has_generated_key = 0;
+    free(stmt->generated_key_str);
+    stmt->generated_key_str = NULL;
     stmt->error[0] = '\0';
     /* Driver-level reset if available */
     if (stmt->conn->vt->stmt_reset)
@@ -622,7 +626,7 @@ kdbc_result *kdbc_execute_query_stmt(kdbc_stmt *stmt) {
 
 kdbc_result *kdbc_generated_keys(kdbc_stmt *stmt) {
     if (!stmt) return NULL;
-    if (!stmt->has_generated_key) {
+    if (!stmt->has_generated_key && !stmt->generated_key_str) {
         /* Try to get from driver */
         int64_t key;
         if (stmt->conn->vt->get_generated_key &&
@@ -641,11 +645,22 @@ kdbc_result *kdbc_generated_keys(kdbc_stmt *stmt) {
     rs->native = NULL; /* synthetic result - no native handle */
     rs->col_count = 1;
     rs->current_row = -2; /* special marker: generated key result */
-    /* Store the key in str_buf for retrieval */
-    rs->str_buf = (char *)malloc(32);
-    if (rs->str_buf) {
-        snprintf(rs->str_buf, 32, "%lld", (long long)stmt->generated_key);
-        rs->str_buf_cap = 32;
+    /* Store the key in str_buf for retrieval. Prefer the verbatim string form
+     * (UUID, ROWID, VARCHAR2 PKs) when the driver supplied one — otherwise
+     * format the numeric key as text. */
+    if (stmt->generated_key_str) {
+        size_t cap = strlen(stmt->generated_key_str) + 1;
+        rs->str_buf = (char *)malloc(cap);
+        if (rs->str_buf) {
+            memcpy(rs->str_buf, stmt->generated_key_str, cap);
+            rs->str_buf_cap = cap;
+        }
+    } else {
+        rs->str_buf = (char *)malloc(32);
+        if (rs->str_buf) {
+            snprintf(rs->str_buf, 32, "%lld", (long long)stmt->generated_key);
+            rs->str_buf_cap = 32;
+        }
     }
     /* Synthetic column name: use the first requested returning column if any,
      * otherwise default to "id" — this is how stormify's populate() path finds

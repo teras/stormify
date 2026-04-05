@@ -326,7 +326,19 @@ static void *tds_connect(const char *url, const char *user, const char *password
                 "SET ANSI_NULLS ON; "
                 "SET ANSI_PADDING ON; "
                 "SET CONCAT_NULL_YIELDS_NULL ON; "
-                "SET QUOTED_IDENTIFIER ON") != FAIL
+                "SET QUOTED_IDENTIFIER ON; "
+                /* ARITHABORT is required by indexed views, filtered indexes,
+                 * and computed-column indexes on modern SQL Server; without
+                 * it, DML on such tables can error at runtime. Matches the
+                 * JDBC driver default. */
+                "SET ARITHABORT ON; "
+                /* XACT_ABORT ON turns runtime errors (constraint violations,
+                 * deadlocks, etc.) into automatic full-transaction rollbacks,
+                 * which matches stormify's "exception → rollback" expectation
+                 * from the other drivers. Without it, MSSQL can leave the
+                 * transaction in a doomed state that requires an explicit
+                 * ROLLBACK before any new statement can run. */
+                "SET XACT_ABORT ON") != FAIL
         && p_dbsqlexec(dbproc) != FAIL) {
         while (p_dbresults(dbproc) != NO_MORE_RESULTS) {
             while (p_dbnextrow(dbproc) != NO_MORE_ROWS) {}
@@ -468,13 +480,23 @@ static void tds_param_reset(tds_param *p) {
 
 static void *tds_prepare_fn(kdbc_conn *conn, const char *native_sql,
                             const char **ret_cols, int n_ret_cols,
+                            int generated_keys_requested,
                             char *err, size_t err_size) {
     tds_conn *tc = (tds_conn *)conn->native;
 
     /* Inject OUTPUT INSERTED.<col> into INSERT statements when generated keys
-     * are requested. SQL Server syntax: INSERT ... OUTPUT INSERTED.id VALUES (...). */
+     * are requested. SQL Server syntax: INSERT ... OUTPUT INSERTED.id VALUES (...).
+     *
+     * When the caller requested generated keys but did not specify columns
+     * (BY_INDEX path), inject OUTPUT INSERTED.$IDENTITY — SQL Server's pseudo-
+     * column referring to the table's IDENTITY column. This works for any
+     * table with an identity and keeps the generated key fetch in the same
+     * RPC as the INSERT, avoiding a second roundtrip and the @@IDENTITY
+     * trigger-contamination pitfall. */
     char *final_sql = NULL;
-    if (ret_cols && n_ret_cols > 0) {
+    int inject_output = (ret_cols && n_ret_cols > 0) ||
+                        (generated_keys_requested && n_ret_cols == 0);
+    if (inject_output) {
         const char *values_pos = NULL;
         for (const char *p = native_sql; *p; p++) {
             if ((p == native_sql || !((p[-1] >= 'a' && p[-1] <= 'z') || (p[-1] >= 'A' && p[-1] <= 'Z'))) &&
@@ -486,7 +508,7 @@ static void *tds_prepare_fn(kdbc_conn *conn, const char *native_sql,
         }
         if (values_pos) {
             size_t prefix_len = values_pos - native_sql;
-            size_t len = strlen(native_sql) + 32;
+            size_t len = strlen(native_sql) + 64;
             for (int i = 0; i < n_ret_cols; i++)
                 len += strlen(ret_cols[i]) + 12;
             final_sql = (char *)malloc(len);
@@ -494,9 +516,13 @@ static void *tds_prepare_fn(kdbc_conn *conn, const char *native_sql,
                 memcpy(final_sql, native_sql, prefix_len);
                 char *dst = final_sql + prefix_len;
                 dst += sprintf(dst, "OUTPUT ");
-                for (int i = 0; i < n_ret_cols; i++) {
-                    if (i > 0) dst += sprintf(dst, ", ");
-                    dst += sprintf(dst, "INSERTED.%s", ret_cols[i]);
+                if (n_ret_cols > 0) {
+                    for (int i = 0; i < n_ret_cols; i++) {
+                        if (i > 0) dst += sprintf(dst, ", ");
+                        dst += sprintf(dst, "INSERTED.%s", ret_cols[i]);
+                    }
+                } else {
+                    dst += sprintf(dst, "INSERTED.$IDENTITY");
                 }
                 sprintf(dst, " %s", values_pos);
             }
@@ -629,10 +655,28 @@ static int tds_bind_blob(kdbc_stmt *stmt, int idx, const void *data, size_t len)
     return KDBC_OK;
 }
 
-/* Datetime / date / time are bound as ISO text and cast server-side.
- * db-lib's native DBDATETIME only covers the legacy DATETIME (millisecond
- * precision); passing text lets SQL Server implicitly convert into the
- * column's actual type (DATETIME2/DATE/TIME) at any precision. */
+/* Datetime / date / time are bound as ISO text and cast server-side via the
+ * declared `DATETIME2(7)` / `DATE` / `TIME(7)` @params type.
+ *
+ * Why not native binary (SYBMSDATETIME2/SYBMSDATE/SYBMSTIME, TDS type codes
+ * 40-43)? db-lib has no public struct or packing helper for these types —
+ * `dbdatecrack`/`dbanydatecrack` go the other way (binary → DBDATEREC on
+ * receive), and there is no `dbdate*make*` companion. DATETIME2's TDS 7.3+
+ * wire format is variable-length (6-8 bytes depending on fractional-second
+ * scale) with a custom date encoding (days since 0001-01-01) and time
+ * encoding (100-ns ticks since midnight); implementing it here would mean
+ * hand-rolling the TDS protocol, which is exactly what FreeTDS is supposed
+ * to abstract away.
+ *
+ * The legacy `SYBDATETIME` / `DBDATETIME` struct is 8 bytes binary and IS
+ * exposed by db-lib, but caps at millisecond precision and year ≥ 1753 —
+ * we'd lose microseconds and pre-1753 dates that DATETIME2 supports.
+ *
+ * The text path is lossless at our API level (kdbc_bind_timestamp takes
+ * `int usec` = microsecond precision, which is below DATETIME2(7)'s 100-ns
+ * precision), adds only ~20 extra bytes on the wire per value, and lets the
+ * server's dedicated type coercer handle the parse — which is exactly what
+ * tedious, pymssql and the Microsoft ODBC driver do internally as well. */
 static int tds_bind_timestamp(kdbc_stmt *stmt, int idx,
                               int year, int month, int day,
                               int hour, int minute, int second, int usec) {
@@ -675,8 +719,10 @@ static int tds_bind_time(kdbc_stmt *stmt, int idx,
  * ======================================================================== */
 
 /* Translate SQL with `?` placeholders into `@p1`, `@p2`, ... form so that
- * sp_executesql's inner statement references the named parameters. The scan
- * respects string literals and -- line comments.
+ * sp_executesql's inner statement references the named parameters. Uses the
+ * shared sql_scan_char state machine so it respects single-quoted strings
+ * (including escaped `''`), double-quoted identifiers (with QUOTED_IDENTIFIER
+ * ON), `-- line comments`, and `/* block comments *​/`.
  *
  * NULL params are inlined as literal `NULL` rather than declared in the
  * @params list: sp_executesql requires a concrete type for each declared
@@ -692,33 +738,36 @@ static char *tds_translate_placeholders(const char *sql, tds_param *params,
     if (!dst) return NULL;
     size_t di = 0;
     int param_idx = 0;
-    int i = 0;
-    while (sql[i]) {
-        char c = sql[i];
-        if (c == '\'' || c == '"') {
-            char q = c;
-            dst[di++] = c; i++;
-            while (sql[i] && sql[i] != q) {
-                if (di + 8 >= cap) { cap *= 2; char *n = realloc(dst, cap); if (!n) { free(dst); return NULL; } dst = n; }
-                dst[di++] = sql[i++];
+
+    sql_scan_state scan;
+    sql_scan_init(&scan);
+
+    for (const char *p = sql; *p; p++) {
+        const char *before = p;
+        int live = sql_scan_char(&p, &scan);
+        /* Copy every char in [before, p] — sql_scan_char may advance p by 1
+         * for two-character tokens like `--`, `/​*`, `*​/`, `''`. */
+        for (const char *q = before; q <= p; q++) {
+            if (di + 16 >= cap) {
+                cap *= 2;
+                char *n = realloc(dst, cap);
+                if (!n) { free(dst); return NULL; }
+                dst = n;
             }
-            if (sql[i]) { dst[di++] = sql[i]; i++; }
-        } else if (c == '-' && sql[i+1] == '-') {
-            while (sql[i] && sql[i] != '\n') dst[di++] = sql[i++];
-        } else if (c == '?') {
-            param_idx++;
-            if (param_idx <= param_count && params[param_idx - 1].is_null) {
-                memcpy(dst + di, "NULL", 4);
-                di += 4;
+            if (live && *q == '?') {
+                param_idx++;
+                if (param_idx <= param_count && params[param_idx - 1].is_null) {
+                    memcpy(dst + di, "NULL", 4);
+                    di += 4;
+                } else {
+                    di += snprintf(dst + di, cap - di, "@p%d", param_idx);
+                }
+                /* live is only true for the first char of the (before..p) run,
+                 * and for a ? it's a single-char token anyway. */
             } else {
-                di += snprintf(dst + di, cap - di, "@p%d", param_idx);
+                dst[di++] = *q;
             }
-            i++;
-        } else {
-            dst[di++] = c;
-            i++;
         }
-        if (di + 16 >= cap) { cap *= 2; char *n = realloc(dst, cap); if (!n) { free(dst); return NULL; } dst = n; }
     }
     dst[di] = '\0';
     return dst;
@@ -980,10 +1029,11 @@ static int tds_execute_update(kdbc_stmt *stmt) {
         int captured_this_result = 0;
 
         /* Drain rows and capture the generated key from the first row of an
-         * OUTPUT INSERTED result set (when caller supplied ret_cols). */
+         * OUTPUT INSERTED result set — either explicit ret_cols or the
+         * auto-injected $IDENTITY pseudo-column when generated_keys_requested. */
         while (p_dbnextrow(dbproc) == REG_ROW) {
             rows_read++;
-            if (stmt->ret_col_count > 0 && !stmt->has_generated_key
+            if (stmt->generated_keys_requested && !stmt->has_generated_key
                 && !captured_this_result && ncols >= 1) {
                 captured_this_result = 1;
                 int ctype = p_dbcoltype(dbproc, 1);
@@ -1023,31 +1073,6 @@ static int tds_execute_update(kdbc_stmt *stmt) {
     if (failed) {
         STMT_ERR(stmt, "MSSQL: %s", g_last_msg[0] ? g_last_msg : "command failed");
         return KDBC_ERROR;
-    }
-
-    /* BY_INDEX generated-key path without explicit OUTPUT columns: fetch the
-     * identity via @@IDENTITY in a fresh batch. @@IDENTITY is session-scoped,
-     * not scope-scoped like SCOPE_IDENTITY(), so it works across batches. */
-    if (stmt->generated_keys_requested && stmt->ret_col_count == 0
-        && !stmt->has_generated_key && total > 0) {
-        p_dbcancel(dbproc);
-        if (p_dbcmd(dbproc, "SELECT CAST(@@IDENTITY AS BIGINT)") != FAIL
-            && p_dbsqlexec(dbproc) != FAIL) {
-            while (p_dbresults(dbproc) == SUCCEED) {
-                if (p_dbnextrow(dbproc) == REG_ROW) {
-                    BYTE *data = p_dbdata(dbproc, 1);
-                    DBINT len = p_dbdatlen(dbproc, 1);
-                    if (data && len == 8) {
-                        stmt->generated_key = *(int64_t *)data;
-                        stmt->has_generated_key = 1;
-                    } else if (data && len == 4) {
-                        stmt->generated_key = *(int32_t *)data;
-                        stmt->has_generated_key = 1;
-                    }
-                }
-                while (p_dbnextrow(dbproc) != NO_MORE_ROWS) {}
-            }
-        }
     }
 
     return total;
@@ -1325,7 +1350,9 @@ static const kdbc_driver_vtable mssql_vtable = {
     .get_generated_key      = tds_get_generated_key,
     .rs_next                = tds_rs_next,
     .rs_col_name            = tds_rs_col_name,
-    .rs_col_label           = NULL,
+    /* SQL Server returns the alias (e.g. "SELECT x AS y" → "y") via dbcolname,
+     * so label and name are the same — just alias the function pointer. */
+    .rs_col_label           = tds_rs_col_name,
     .rs_is_null             = tds_rs_is_null,
     .rs_get_long            = tds_rs_get_long,
     .rs_get_double          = tds_rs_get_double,

@@ -18,6 +18,8 @@
 
 typedef int (*fn_dpiContext_createWithParams)(unsigned int, unsigned int, void *,
                                               dpiContext **, dpiErrorInfo *);
+typedef int (*fn_dpiContext_initCommonCreateParams)(const dpiContext *,
+                                                    dpiCommonCreateParams *);
 typedef void (*fn_dpiContext_getError)(const dpiContext *, dpiErrorInfo *);
 typedef int (*fn_dpiConn_create)(const dpiContext *,
                                  const char *, unsigned int,
@@ -44,6 +46,9 @@ typedef int (*fn_dpiStmt_getQueryInfo)(dpiStmt *, unsigned int, dpiQueryInfo *);
 typedef int (*fn_dpiStmt_getQueryValue)(dpiStmt *, unsigned int, unsigned int *, dpiData **);
 typedef int (*fn_dpiStmt_fetch)(dpiStmt *, int *, unsigned int *);
 typedef int (*fn_dpiStmt_bindByPos)(dpiStmt *, unsigned int, dpiVar *);
+typedef int (*fn_dpiStmt_getBindCount)(dpiStmt *, uint32_t *);
+typedef int (*fn_dpiStmt_define)(dpiStmt *, uint32_t, dpiVar *);
+typedef int (*fn_dpiStmt_getFetchArraySize)(dpiStmt *, uint32_t *);
 typedef int (*fn_dpiStmt_close)(dpiStmt *, const char *, unsigned int);
 typedef int (*fn_dpiStmt_release)(dpiStmt *);
 typedef int (*fn_dpiVar_release)(dpiVar *);
@@ -63,6 +68,7 @@ typedef int (*fn_dpiLob_release)(dpiLob *);
 static kdbc_lib_handle lib_handle = NULL;
 
 static fn_dpiContext_createWithParams    p_ctx_create;
+static fn_dpiContext_initCommonCreateParams p_ctx_init_common_params;
 static fn_dpiContext_getError            p_ctx_getError;
 static fn_dpiConn_create                 p_conn_create;
 static fn_dpiConn_close                  p_conn_close;
@@ -79,6 +85,9 @@ static fn_dpiStmt_getQueryInfo           p_stmt_getQueryInfo;
 static fn_dpiStmt_getQueryValue          p_stmt_getQueryValue;
 static fn_dpiStmt_fetch                  p_stmt_fetch;
 static fn_dpiStmt_bindByPos              p_stmt_bindByPos;
+static fn_dpiStmt_getBindCount           p_stmt_getBindCount;
+static fn_dpiStmt_define                 p_stmt_define;
+static fn_dpiStmt_getFetchArraySize      p_stmt_getFetchArraySize;
 static fn_dpiStmt_close                  p_stmt_close;
 static fn_dpiStmt_release                p_stmt_release;
 static fn_dpiVar_release                 p_var_release;
@@ -111,6 +120,7 @@ static void ora_load_impl(void) {
     if (!lib_handle) return;
 
     ORA_LOAD(p_ctx_create,              "dpiContext_createWithParams");
+    ORA_LOAD(p_ctx_init_common_params,  "dpiContext_initCommonCreateParams");
     ORA_LOAD(p_ctx_getError,            "dpiContext_getError");
     ORA_LOAD(p_conn_create,             "dpiConn_create");
     ORA_LOAD(p_conn_close,              "dpiConn_close");
@@ -127,6 +137,9 @@ static void ora_load_impl(void) {
     ORA_LOAD(p_stmt_getQueryValue,      "dpiStmt_getQueryValue");
     ORA_LOAD(p_stmt_fetch,              "dpiStmt_fetch");
     ORA_LOAD(p_stmt_bindByPos,          "dpiStmt_bindByPos");
+    ORA_LOAD(p_stmt_getBindCount,       "dpiStmt_getBindCount");
+    ORA_LOAD(p_stmt_define,             "dpiStmt_define");
+    ORA_LOAD(p_stmt_getFetchArraySize,  "dpiStmt_getFetchArraySize");
     ORA_LOAD(p_stmt_close,              "dpiStmt_close");
     ORA_LOAD(p_stmt_release,            "dpiStmt_release");
     ORA_LOAD(p_var_release,             "dpiVar_release");
@@ -185,11 +198,24 @@ static void *ora_connect(const char *url, const char *user, const char *password
     if (!oc) { snprintf(err, err_size, "Out of memory"); return NULL; }
     oc->autocommit = 1;
 
+    /* Pin the session to UTF-8 for both CHAR (encoding) and NCHAR (nencoding)
+     * data so that VARCHAR2/NVARCHAR2/CLOB round-trip Kotlin's UTF-8 strings
+     * losslessly, regardless of the process's NLS_LANG environment variable
+     * (which ODPI-C otherwise falls back to and is often non-UTF-8 in the wild). */
+    dpiCommonCreateParams common;
+    if (p_ctx_init_common_params(g_ora_ctx, &common) != DPI_SUCCESS) {
+        snprintf(err, err_size, "Oracle: %s", ora_get_error());
+        free(oc);
+        return NULL;
+    }
+    common.encoding  = "UTF-8";
+    common.nencoding = "UTF-8";
+
     if (p_conn_create(g_ora_ctx,
                       user, user ? (unsigned int)strlen(user) : 0,
                       password, password ? (unsigned int)strlen(password) : 0,
                       url, (unsigned int)strlen(url),
-                      NULL, NULL, &oc->conn) != DPI_SUCCESS) {
+                      &common, NULL, &oc->conn) != DPI_SUCCESS) {
         snprintf(err, err_size, "Oracle: %s", ora_get_error());
         free(oc);
         return NULL;
@@ -321,7 +347,9 @@ typedef struct {
 
 static void *ora_prepare(kdbc_conn *conn, const char *native_sql,
                          const char **ret_cols, int n_ret_cols,
+                         int generated_keys_requested,
                          char *err, size_t err_size) {
+    (void)generated_keys_requested; /* Oracle uses BY_NAME with explicit RETURNING INTO */
     ora_conn *oc = (ora_conn *)conn->native;
 
     ora_stmt_data *sd = (ora_stmt_data *)calloc(1, sizeof(ora_stmt_data));
@@ -361,22 +389,44 @@ static void *ora_prepare(kdbc_conn *conn, const char *native_sql,
         free(sd);
         return NULL;
     }
-    /* Count input params from the ORIGINAL native_sql (before RETURNING append).
-     * native_sql has :1, :2 etc for input params only. */
-    sd->param_count = 0;
-    for (const char *p = native_sql; *p; p++) {
-        if (*p == ':' && p[1] >= '1' && p[1] <= '9') sd->param_count++;
+    /* Ask ODPI-C for the authoritative bind count — it parses the statement
+     * the same way the server will, so it handles multi-digit :NN, quoted
+     * strings, and comments correctly. The old handrolled `:1..:9` scan
+     * silently miscounted statements with 10+ parameters. */
+    {
+        uint32_t bind_count = 0;
+        if (p_stmt_getBindCount(sd->stmt, &bind_count) == DPI_SUCCESS) {
+            /* When RETURNING INTO :kdbc_ret was injected, ODPI-C will report
+             * N+1 binds — subtract the synthetic OUT binding. */
+            int n = (int)bind_count;
+            if (sd->has_returning && n > 0) n--;
+            sd->param_count = n;
+        } else {
+            sd->param_count = 0;
+        }
     }
     free(final_sql);
     if (sd->param_count > 0) {
         sd->vars = (dpiVar **)calloc(sd->param_count, sizeof(dpiVar *));
     }
 
-    /* Create OUT variable for RETURNING INTO */
+    /* Create OUT variable for RETURNING INTO.
+     *
+     * Bound as VARCHAR2(4000)/BYTES rather than NUMBER/INT64 so it handles
+     * any PK type the caller may RETURNING — NUMBER (auto-increment ID),
+     * VARCHAR2 (UUID / natural key / user-generated string), ROWID, CHAR,
+     * DATE (formatted by Oracle using NLS_DATE_FORMAT). Oracle implicitly
+     * converts the underlying column value to its canonical text form on
+     * the way out, so the receive buffer just has to be wide enough.
+     *
+     * 4000 is Oracle's VARCHAR2 max without MAX_STRING_SIZE=EXTENDED — long
+     * enough for any realistic PK representation (36-char UUID, 18-byte
+     * ROWID, 38-digit NUMBER, etc.). */
     if (sd->has_returning) {
         dpiData *ret_data = NULL;
-        if (p_conn_newVar(oc->conn, DPI_ORACLE_TYPE_NUMBER, DPI_NATIVE_TYPE_INT64,
-                          1, 0, 0, 0, NULL, &sd->ret_var, &ret_data) != DPI_SUCCESS) {
+        if (p_conn_newVar(oc->conn, DPI_ORACLE_TYPE_VARCHAR, DPI_NATIVE_TYPE_BYTES,
+                          1, 4000, 1 /* sizeIsBytes */, 0, NULL,
+                          &sd->ret_var, &ret_data) != DPI_SUCCESS) {
             snprintf(err, err_size, "Oracle RETURNING var: %s", ora_get_error());
             /* Non-fatal: just disable RETURNING */
             sd->has_returning = 0;
@@ -454,32 +504,21 @@ static int ora_bind_null(kdbc_stmt *stmt, int idx) {
     return KDBC_OK;
 }
 
-static int ora_bind_long_text(kdbc_stmt *stmt, int idx, int64_t val) {
-    /* Bind as VARCHAR2 string — Oracle will parse into whatever the column type is.
-     * We use this for int/long binds because ODPI-C's int64↔NUMBER path corrupts
-     * values near Long.MAX_VALUE (round-trip via internal double conversion). */
-    char buf[32];
-    snprintf(buf, sizeof(buf), "%lld", (long long)val);
-    unsigned int len = (unsigned int)strlen(buf);
-    dpiData *data = ora_create_and_bind_var(stmt, idx, DPI_ORACLE_TYPE_VARCHAR,
-                                            DPI_NATIVE_TYPE_BYTES, len + 1);
+static int ora_bind_int(kdbc_stmt *stmt, int idx, int val) {
+    /* Native int32 → NUMBER via DPI_NATIVE_TYPE_INT64 is exact and server-side
+     * parsing cost-free. The previous text-based workaround was a misdiagnosis
+     * of a read-side precision problem (NUMBER columns were being returned as
+     * DOUBLE, losing low bits); that is now fixed by defining NUMBER result
+     * columns as BYTES in ora_execute_query. */
+    dpiData *data = ora_create_and_bind_var(stmt, idx, DPI_ORACLE_TYPE_NUMBER,
+                                            DPI_NATIVE_TYPE_INT64, 0);
     if (!data) return KDBC_ERROR;
-    ora_stmt_data *sd = (ora_stmt_data *)stmt->native;
-    if (p_var_setFromBytes(sd->vars[idx - 1], 0, buf, len) != DPI_SUCCESS) {
-        STMT_ERR(stmt, "Oracle setFromBytes: %s", ora_get_error());
-        return KDBC_ERROR;
-    }
+    data->isNull = 0;
+    data->value.asInt64 = (int64_t)val;
     return KDBC_OK;
 }
 
-static int ora_bind_int(kdbc_stmt *stmt, int idx, int val) {
-    return ora_bind_long_text(stmt, idx, (int64_t)val);
-}
-
 static int ora_bind_long(kdbc_stmt *stmt, int idx, int64_t val) {
-    return ora_bind_long_text(stmt, idx, val);
-    /* unreachable below — kept to document the native int64 path that had
-     * precision-loss issues with values near Long.MAX_VALUE. */
     dpiData *data = ora_create_and_bind_var(stmt, idx, DPI_ORACLE_TYPE_NUMBER,
                                             DPI_NATIVE_TYPE_INT64, 0);
     if (!data) return KDBC_ERROR;
@@ -637,14 +676,39 @@ static int ora_execute_update(kdbc_stmt *stmt) {
     unsigned long long rowCount = 0;
     p_stmt_getRowCount(sd->stmt, &rowCount);
 
-    /* Retrieve RETURNING INTO value if available */
+    /* Retrieve RETURNING INTO value if available. The var is bound as
+     * VARCHAR2/BYTES so the returned data carries Oracle's canonical text
+     * representation of whatever type the column actually is. */
     if (sd->has_returning && sd->ret_var && rowCount > 0) {
         unsigned int numElements = 0;
         dpiData *retData = NULL;
         if (p_var_getReturnedData(sd->ret_var, 0, &numElements, &retData) == DPI_SUCCESS
             && numElements > 0 && retData && !retData->isNull) {
-            /* The returned value is INT64 (we bound as DPI_NATIVE_TYPE_INT64) */
-            stmt->generated_key = retData->value.asInt64;
+            const char *bytes = retData->value.asBytes.ptr;
+            unsigned int blen = retData->value.asBytes.length;
+
+            /* Keep the verbatim text form for non-numeric PKs (UUID, VARCHAR2,
+             * ROWID, formatted DATE). kdbc_generated_keys prefers this over
+             * the int64 form when it's set. */
+            free(stmt->generated_key_str);
+            stmt->generated_key_str = (char *)malloc((size_t)blen + 1);
+            if (stmt->generated_key_str) {
+                memcpy(stmt->generated_key_str, bytes, blen);
+                stmt->generated_key_str[blen] = '\0';
+            }
+
+            /* Also parse as int64 for the common numeric-PK case so callers
+             * that go through get_generated_key (vs kdbc_generated_keys) still
+             * get a useful value. sscanf silently returns 0 for non-numeric
+             * input — acceptable because string-PK callers should use the
+             * string path anyway. */
+            char buf[64];
+            unsigned int n = blen < 63 ? blen : 63;
+            memcpy(buf, bytes, n);
+            buf[n] = '\0';
+            long long v = 0;
+            sscanf(buf, "%lld", &v);
+            stmt->generated_key = v;
             stmt->has_generated_key = 1;
         }
     }
@@ -657,6 +721,7 @@ typedef struct {
     int            col_count;
     char         **col_names;
     unsigned int  *native_types;
+    dpiVar       **fetch_vars;  /* dpiStmt_define overrides per column, may contain NULL */
     char           conv_buf[64];
 } ora_result_set;
 
@@ -683,8 +748,16 @@ static void *ora_execute_query(kdbc_stmt *stmt, int *out_col_count,
     ors->col_count = (int)numQueryCols;
     ors->col_names = (char **)calloc(numQueryCols, sizeof(char *));
     ors->native_types = (unsigned int *)calloc(numQueryCols, sizeof(unsigned int));
+    ors->fetch_vars = (dpiVar **)calloc(numQueryCols, sizeof(dpiVar *));
 
-    /* Cache column info */
+    /* Cache column info and override NUMBER columns to fetch as BYTES so that
+     * high-precision values (including Long.MAX_VALUE, BigInteger, arbitrary
+     * DECIMAL) round-trip losslessly. ODPI-C otherwise defaults generic NUMBER
+     * columns (precision ≥ 0 with scale == 0 and precision > 18, or precision
+     * == 0 i.e. "NUMBER") to DPI_NATIVE_TYPE_DOUBLE, which silently loses low
+     * bits near 2^53. BYTES fetch returns the canonical NUMBER text exactly
+     * as Oracle stored it — callers then parse via int64/double/BigDecimal as
+     * needed. */
     for (unsigned int i = 1; i <= numQueryCols; i++) {
         dpiQueryInfo qi;
         memset(&qi, 0, sizeof(qi));
@@ -697,6 +770,32 @@ static void *ora_execute_query(kdbc_stmt *stmt, int *out_col_count,
             }
             ors->col_names[i - 1] = name;
             ors->native_types[i - 1] = qi.typeInfo.defaultNativeTypeNum;
+
+            if (qi.typeInfo.oracleTypeNum == DPI_ORACLE_TYPE_NUMBER) {
+                /* maxArraySize must match dpiStmt_getFetchArraySize (default
+                 * DPI_DEFAULT_FETCH_ARRAY_SIZE = 100 — ODPI-C batch-fetches
+                 * that many rows per round-trip). Using 1 here causes the
+                 * next fetch to fail with ORA-24335 or an internal mismatch.
+                 * Generous size: NUMBER(38) worst case is ~42 bytes. */
+                uint32_t fetch_array_size = 100;
+                p_stmt_getFetchArraySize(sd->stmt, &fetch_array_size);
+                dpiVar *var = NULL;
+                dpiData *var_data = NULL;
+                if (p_conn_newVar(sd->oc->conn,
+                                  DPI_ORACLE_TYPE_NUMBER,
+                                  DPI_NATIVE_TYPE_BYTES,
+                                  fetch_array_size,
+                                  64 /* size in bytes */, 1 /* sizeIsBytes */,
+                                  0 /* isArray */, NULL /* objType */,
+                                  &var, &var_data) == DPI_SUCCESS) {
+                    if (p_stmt_define(sd->stmt, i, var) == DPI_SUCCESS) {
+                        ors->fetch_vars[i - 1] = var;
+                        ors->native_types[i - 1] = DPI_NATIVE_TYPE_BYTES;
+                    } else {
+                        p_var_release(var);
+                    }
+                }
+            }
         }
     }
 
@@ -757,19 +856,12 @@ static int64_t ora_rs_get_long(kdbc_result *rs, int col) {
     switch (nt) {
         case DPI_NATIVE_TYPE_INT64:    return data->value.asInt64;
         case DPI_NATIVE_TYPE_UINT64:   return (int64_t)data->value.asUint64;
-        case DPI_NATIVE_TYPE_DOUBLE: {
-            /* ODPI-C returns NUMBER columns whose precision > 18 as DOUBLE, even if
-             * the stored value would fit in int64. For values near Long.MAX_VALUE,
-             * the double representation loses low bits and the cast (int64)double
-             * overflows to Long.MIN_VALUE. Round-trip via text to keep precision. */
-            char buf[64];
-            snprintf(buf, sizeof(buf), "%.0f", data->value.asDouble);
-            long long v = 0;
-            sscanf(buf, "%lld", &v);
-            return v;
-        }
+        case DPI_NATIVE_TYPE_DOUBLE:   return (int64_t)data->value.asDouble;
         case DPI_NATIVE_TYPE_FLOAT:    return (int64_t)data->value.asFloat;
         case DPI_NATIVE_TYPE_BYTES: {
+            /* NUMBER columns are fetched as BYTES (see ora_execute_query).
+             * Parse the canonical text representation — lossless for any
+             * value that fits in int64, including Long.MAX/MIN_VALUE. */
             char buf[64];
             unsigned int n = data->value.asBytes.length;
             if (n > 63) n = 63;
@@ -900,6 +992,11 @@ static void ora_rs_close(void *native_rs) {
         for (int i = 0; i < ors->col_count; i++)
             free(ors->col_names[i]);
         free(ors->col_names);
+    }
+    if (ors->fetch_vars) {
+        for (int i = 0; i < ors->col_count; i++)
+            if (ors->fetch_vars[i]) p_var_release(ors->fetch_vars[i]);
+        free(ors->fetch_vars);
     }
     free(ors->native_types);
     free(ors);

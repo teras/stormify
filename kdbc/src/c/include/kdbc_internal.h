@@ -75,9 +75,14 @@ struct kdbc_stmt {
     char      **ret_col_names;
     int         ret_col_count;
     int         generated_keys_requested; /* prepare_returning was called, even if col_names is NULL */
-    /* Generated key after INSERT */
+    /* Generated key after INSERT. For numeric PKs (AUTO_INCREMENT, sequences)
+     * drivers populate `generated_key`. For non-numeric PKs (UUID, VARCHAR2,
+     * ROWID) drivers populate `generated_key_str` with the canonical text
+     * representation; `kdbc_generated_keys` then surfaces that string through
+     * the synthetic result set instead of formatting the int64 as text. */
     int64_t     generated_key;
     int         has_generated_key;
+    char       *generated_key_str;  /* owned; may be NULL */
     /* Fetch size hint (0 = default) */
     int          fetch_size;
     /* Batch execution */
@@ -154,9 +159,13 @@ struct kdbc_driver_vtable {
     int  (*get_major_version)(void *native);
     int  (*get_minor_version)(void *native);
 
-    /* Statement preparation */
+    /* Statement preparation.
+     * generated_keys_requested=1 when caller used kdbc_prepare_returning, even
+     * if ret_cols is NULL — drivers can use this to pick an identity-retrieval
+     * strategy when no explicit columns were named (e.g. MSSQL OUTPUT INSERTED.$IDENTITY). */
     void *(*prepare)(kdbc_conn *conn, const char *native_sql,
                      const char **ret_cols, int n_ret_cols,
+                     int generated_keys_requested,
                      char *err, size_t err_size);
     void  (*stmt_close)(void *native_stmt, void *native_conn);
 

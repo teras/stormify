@@ -703,6 +703,75 @@ static void test_generated_keys(void) {
     kdbc_close(conn);
 }
 
+/* Oracle-specific: RETURNING INTO with a non-numeric primary key (VARCHAR2
+ * populated by SYS_GUID()). Exercises the driver's VARCHAR2/BYTES output
+ * binding path which the older INT64-only implementation could not handle.
+ *
+ * Skipped on other drivers because SYS_GUID() and RETURNING INTO are Oracle
+ * syntax; the equivalent path on PG/MSSQL uses OUTPUT / RETURNING directly
+ * on standard result columns and is covered by test_generated_keys already. */
+static void test_generated_keys_string_pk(void) {
+    if (!is_oracle()) SKIP("Oracle-specific: SYS_GUID RETURNING");
+
+    kdbc_conn *conn = open_db();
+    drop_table(conn, "kdbc_gk_uuid");
+    exec_sql(conn,
+        "CREATE TABLE kdbc_gk_uuid ("
+        "  id VARCHAR2(36) DEFAULT SYS_GUID() PRIMARY KEY, "
+        "  val VARCHAR2(100)"
+        ")");
+
+    const char *cols[] = { "id" };
+    kdbc_stmt *stmt = kdbc_prepare_returning(conn,
+        "INSERT INTO kdbc_gk_uuid (val) VALUES (?)", cols, 1);
+    ASSERT(stmt != NULL, "prepare returning uuid");
+
+    kdbc_bind_string(stmt, 1, "alpha");
+    ASSERT_EQ_INT(kdbc_execute_update_stmt(stmt), 1, "1 row alpha");
+
+    kdbc_result *keys = kdbc_generated_keys(stmt);
+    ASSERT(keys != NULL, "has keys uuid");
+    ASSERT(kdbc_next(keys) == 1, "has key row uuid");
+    const char *uuid1 = kdbc_get_string(keys, 1);
+    ASSERT(uuid1 != NULL, "uuid1 non-null");
+    /* SYS_GUID() returns a 32-char hex string (no hyphens) on Oracle. */
+    size_t len1 = uuid1 ? strlen(uuid1) : 0;
+    ASSERT(len1 > 0 && len1 <= 36, "uuid1 length reasonable");
+    /* Copy before closing the result (pointer tied to RS lifetime). */
+    char uuid1_copy[64];
+    snprintf(uuid1_copy, sizeof(uuid1_copy), "%s", uuid1 ? uuid1 : "");
+    kdbc_result_close(keys);
+    kdbc_stmt_close(stmt);
+
+    /* Second insert — must produce a DIFFERENT UUID (SYS_GUID is random). */
+    stmt = kdbc_prepare_returning(conn,
+        "INSERT INTO kdbc_gk_uuid (val) VALUES (?)", cols, 1);
+    kdbc_bind_string(stmt, 1, "beta");
+    kdbc_execute_update_stmt(stmt);
+    keys = kdbc_generated_keys(stmt);
+    ASSERT(keys != NULL, "has keys uuid 2");
+    ASSERT(kdbc_next(keys), "has key row uuid 2");
+    const char *uuid2 = kdbc_get_string(keys, 1);
+    ASSERT(uuid2 != NULL && strlen(uuid2) > 0, "uuid2 non-empty");
+    ASSERT(strcmp(uuid1_copy, uuid2) != 0, "uuid2 differs from uuid1");
+    kdbc_result_close(keys);
+    kdbc_stmt_close(stmt);
+
+    /* Verify both rows exist by SELECT-ing back by PK. */
+    stmt = kdbc_prepare(conn, "SELECT val FROM kdbc_gk_uuid WHERE id = ?");
+    kdbc_bind_string(stmt, 1, uuid1_copy);
+    kdbc_result *rs = kdbc_execute_query_stmt(stmt);
+    ASSERT(rs != NULL, "select by uuid1");
+    ASSERT(kdbc_next(rs) == 1, "row found by uuid1");
+    const char *val = kdbc_get_string(rs, 1);
+    ASSERT(val && strcmp(val, "alpha") == 0, "val == alpha");
+    kdbc_result_close(rs);
+    kdbc_stmt_close(stmt);
+
+    drop_table(conn, "kdbc_gk_uuid");
+    kdbc_close(conn);
+}
+
 /* ========================================================================
  * Tests: Column metadata
  * ======================================================================== */
@@ -1089,6 +1158,7 @@ int main(int argc, char **argv) {
 
     printf("\nGenerated Keys:\n");
     RUN_TEST(test_generated_keys);
+    RUN_TEST(test_generated_keys_string_pk);
 
     printf("\nColumn Metadata:\n");
     RUN_TEST(test_column_names);

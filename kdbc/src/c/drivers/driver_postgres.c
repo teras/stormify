@@ -24,6 +24,9 @@
 #define PG_VARCHAR_OID   1043
 #define PG_BYTEA_OID       17
 #define PG_NUMERIC_OID   1700
+#define PG_TIMESTAMP_OID 1114
+#define PG_DATE_OID      1082
+#define PG_TIME_OID      1083
 
 /* ========================================================================
  * Byte-order helpers (network = big-endian)
@@ -132,13 +135,21 @@ typedef struct {
     char    *data;       /* binary data (owned) */
     int      len;        /* length in bytes, 0 = NULL */
     int      format;     /* 0=text, 1=binary */
+    Oid      oid;        /* 0 = let server infer; otherwise explicit (INT4OID, etc.) */
 } pg_param_buf;
 
 typedef struct {
     PGconn      *pg;
     char         stmt_name[32];
+    char        *sql;          /* owned copy of SQL to be prepared (may include appended RETURNING) */
     int          param_count;
     pg_param_buf *params;
+    /* Server-side prepare is deferred until first execute so we can supply
+     * accurate per-parameter Oids derived from the actual bind calls. Once
+     * prepared, prepared_oids holds the types committed to the server; a
+     * subsequent execute with different Oids triggers a DEALLOCATE + re-Parse. */
+    int          prepared;
+    Oid         *prepared_oids;
 } pg_stmt_data;
 
 /* ========================================================================
@@ -315,7 +326,9 @@ static _Atomic long pg_stmt_counter = 0;
 
 static void *pg_prepare(kdbc_conn *conn, const char *native_sql,
                         const char **ret_cols, int n_ret_cols,
+                        int generated_keys_requested,
                         char *err, size_t err_size) {
+    (void)generated_keys_requested; /* PostgreSQL uses BY_NAME with explicit RETURNING */
     PGconn *pg = (PGconn *)conn->native;
 
     /* Append RETURNING clause if needed */
@@ -364,20 +377,73 @@ static void *pg_prepare(kdbc_conn *conn, const char *native_sql,
         }
     }
 
-    const char *sql_to_prepare = final_sql ? final_sql : native_sql;
-    PGresult *res = p_prepare(pg, sd->stmt_name, sql_to_prepare, 0, NULL);
+    /* Keep an owned copy of the SQL for the deferred Parse. */
+    sd->sql = strdup(final_sql ? final_sql : native_sql);
     free(final_sql);
-
-    if (!res || p_resultStatus(res) != PGRES_COMMAND_OK) {
-        snprintf(err, err_size, "PostgreSQL prepare: %s",
-                 res ? p_resultErrorMessage(res) : p_errorMessage(pg));
-        if (res) p_clear(res);
+    if (!sd->sql) {
         free(sd->params);
         free(sd);
+        snprintf(err, err_size, "Out of memory");
         return NULL;
     }
-    p_clear(res);
+    sd->prepared = 0;
+    sd->prepared_oids = NULL;
     return sd;
+}
+
+/* Ensure the statement is Parsed server-side with Oids matching the current
+ * bind state. Re-Parses (DEALLOCATE + PQprepare) if Oids have changed since
+ * the last execute — rare in practice but necessary when a caller rebinds
+ * the same prepared statement with a different Kotlin-side type. */
+static int pg_ensure_prepared(pg_stmt_data *sd, char *err, size_t err_size) {
+    /* Collect current Oids from bind state. */
+    Oid *current = NULL;
+    if (sd->param_count > 0) {
+        current = (Oid *)calloc(sd->param_count, sizeof(Oid));
+        if (!current) {
+            snprintf(err, err_size, "Out of memory");
+            return KDBC_ERROR;
+        }
+        for (int i = 0; i < sd->param_count; i++) current[i] = sd->params[i].oid;
+    }
+
+    /* Already prepared with matching Oids? Nothing to do. */
+    if (sd->prepared && sd->param_count > 0 && sd->prepared_oids) {
+        int same = 1;
+        for (int i = 0; i < sd->param_count; i++) {
+            if (sd->prepared_oids[i] != current[i]) { same = 0; break; }
+        }
+        if (same) { free(current); return KDBC_OK; }
+    } else if (sd->prepared && sd->param_count == 0) {
+        free(current);
+        return KDBC_OK;
+    }
+
+    /* If already prepared under different Oids, tear down the server-side
+     * prepared statement before re-parsing. */
+    if (sd->prepared) {
+        char dealloc[64];
+        snprintf(dealloc, sizeof(dealloc), "DEALLOCATE %s", sd->stmt_name);
+        PGresult *dres = p_exec(sd->pg, dealloc);
+        if (dres) p_clear(dres);
+        sd->prepared = 0;
+    }
+
+    PGresult *res = p_prepare(sd->pg, sd->stmt_name, sd->sql,
+                              sd->param_count, current);
+    if (!res || p_resultStatus(res) != PGRES_COMMAND_OK) {
+        snprintf(err, err_size, "PostgreSQL prepare: %s",
+                 res ? p_resultErrorMessage(res) : p_errorMessage(sd->pg));
+        if (res) p_clear(res);
+        free(current);
+        return KDBC_ERROR;
+    }
+    p_clear(res);
+
+    free(sd->prepared_oids);
+    sd->prepared_oids = current;  /* transfer ownership */
+    sd->prepared = 1;
+    return KDBC_OK;
 }
 
 static void pg_stmt_close(void *native_stmt, void *native_conn) {
@@ -385,16 +451,22 @@ static void pg_stmt_close(void *native_stmt, void *native_conn) {
     (void)native_conn;
     if (!sd) return;
 
-    char sql[64];
-    snprintf(sql, sizeof(sql), "DEALLOCATE %s", sd->stmt_name);
-    PGresult *res = p_exec(sd->pg, sql);
-    if (res) p_clear(res);
+    /* Only DEALLOCATE if we actually Parsed on the server. A stmt that was
+     * prepared but never executed has no server-side state to clean up. */
+    if (sd->prepared) {
+        char sql[64];
+        snprintf(sql, sizeof(sql), "DEALLOCATE %s", sd->stmt_name);
+        PGresult *res = p_exec(sd->pg, sql);
+        if (res) p_clear(res);
+    }
 
     if (sd->params) {
         for (int i = 0; i < sd->param_count; i++)
             free(sd->params[i].data);
         free(sd->params);
     }
+    free(sd->sql);
+    free(sd->prepared_oids);
     free(sd);
 }
 
@@ -412,7 +484,7 @@ static void pg_stmt_close(void *native_stmt, void *native_conn) {
  *   bytea:  raw bytes
  * ======================================================================== */
 
-static void pg_param_set_binary(pg_stmt_data *sd, int idx, const void *data, int len) {
+static void pg_param_set_binary(pg_stmt_data *sd, int idx, const void *data, int len, Oid oid) {
     int i = idx - 1;
     free(sd->params[i].data);
     sd->params[i].data = (char *)malloc(len);
@@ -423,6 +495,7 @@ static void pg_param_set_binary(pg_stmt_data *sd, int idx, const void *data, int
         sd->params[i].len = 0;
     }
     sd->params[i].format = 1; /* binary */
+    sd->params[i].oid = oid;
 }
 
 static void pg_param_set_null(pg_stmt_data *sd, int idx) {
@@ -431,6 +504,9 @@ static void pg_param_set_null(pg_stmt_data *sd, int idx) {
     sd->params[i].data = NULL;
     sd->params[i].len = 0;
     sd->params[i].format = 1;
+    /* Leave oid unchanged: a null followed by a typed bind in a later execute
+     * should keep the typed Oid. A plain kdbc_bind_null without any prior
+     * bind leaves oid=0 (let server infer from SQL context). */
 }
 
 static int pg_bind_null(kdbc_stmt *stmt, int idx) {
@@ -438,11 +514,10 @@ static int pg_bind_null(kdbc_stmt *stmt, int idx) {
     return KDBC_OK;
 }
 
-/* Set a text-format parameter. PG will parse the string and convert to whatever
- * type the target column expects. Used for numeric binds where the caller's
- * Kotlin-side type (Int, Long, Double) may not match the server column type
- * exactly (e.g. Int bound to a SMALLINT column — binary format would mismatch). */
-static void pg_param_set_text(pg_stmt_data *sd, int idx, const char *text) {
+/* Set a text-format parameter. PG will parse the string and convert to
+ * whatever type the target column expects. Used for string binds and any
+ * other case where the exact type isn't known at bind time. */
+static void pg_param_set_text(pg_stmt_data *sd, int idx, const char *text, Oid oid) {
     int i = idx - 1;
     free(sd->params[i].data);
     int len = (int)strlen(text);
@@ -454,41 +529,51 @@ static void pg_param_set_text(pg_stmt_data *sd, int idx, const char *text) {
         sd->params[i].len = 0;
     }
     sd->params[i].format = 0; /* text */
+    sd->params[i].oid = oid;
 }
 
 static int pg_bind_int(kdbc_stmt *stmt, int idx, int val) {
-    char buf[16];
-    snprintf(buf, sizeof(buf), "%d", val);
-    pg_param_set_text((pg_stmt_data *)stmt->native, idx, buf);
+    /* 4-byte big-endian int4 with Oid=INT4. The server will implicit-cast to
+     * int2/int8/numeric/etc. as needed by the target column since we told it
+     * at Parse time that this param is int4. */
+    int32_t be = pg_htobe32((int32_t)val);
+    pg_param_set_binary((pg_stmt_data *)stmt->native, idx, &be, 4, PG_INT4_OID);
     return KDBC_OK;
 }
 
 static int pg_bind_long(kdbc_stmt *stmt, int idx, int64_t val) {
-    char buf[32];
-    snprintf(buf, sizeof(buf), "%lld", (long long)val);
-    pg_param_set_text((pg_stmt_data *)stmt->native, idx, buf);
+    int64_t be = pg_htobe64(val);
+    pg_param_set_binary((pg_stmt_data *)stmt->native, idx, &be, 8, PG_INT8_OID);
     return KDBC_OK;
 }
 
 static int pg_bind_double(kdbc_stmt *stmt, int idx, double val) {
-    char buf[64];
-    /* 17 significant digits round-trips IEEE 754 doubles losslessly */
-    snprintf(buf, sizeof(buf), "%.17g", val);
-    pg_param_set_text((pg_stmt_data *)stmt->native, idx, buf);
+    /* IEEE 754 bit pattern sent as 8 bytes big-endian — bit-exact round-trip
+     * for every finite double, including subnormals and NaN payloads. */
+    int64_t bits;
+    memcpy(&bits, &val, 8);
+    int64_t be = pg_htobe64(bits);
+    pg_param_set_binary((pg_stmt_data *)stmt->native, idx, &be, 8, PG_FLOAT8_OID);
     return KDBC_OK;
 }
 
 static int pg_bind_string(kdbc_stmt *stmt, int idx, const char *val) {
-    /* Strings sent as binary - PostgreSQL text binary format is raw UTF-8 bytes
-     * (no null terminator in wire protocol). Must use format=1 like all other
-     * params since PQexecPrepared requires uniform format per call. */
-    pg_param_set_binary((pg_stmt_data *)stmt->native, idx, val, (int)strlen(val));
+    /* Strings sent as text format with Oid=0 (unspecified) so the server
+     * parses them via its normal type coercion path. This matters for
+     * non-string target columns:
+     *   - NUMERIC / DECIMAL: binary format would require the base-10000 wire
+     *     encoding; text lets PG parse arbitrary-precision BigDecimal strings.
+     *   - UUID / JSON / INET / etc.: text format just works; binary would need
+     *     per-type encoding.
+     * Each param's format is recorded independently in paramFormats[], so
+     * mixing binary numerics and text strings in the same execute is fine. */
+    pg_param_set_text((pg_stmt_data *)stmt->native, idx, val, 0);
     return KDBC_OK;
 }
 
 static int pg_bind_blob(kdbc_stmt *stmt, int idx, const void *data, size_t len) {
-    /* Blobs sent as binary format - raw bytes */
-    pg_param_set_binary((pg_stmt_data *)stmt->native, idx, data, (int)len);
+    /* Blobs sent as binary format with Oid=BYTEA */
+    pg_param_set_binary((pg_stmt_data *)stmt->native, idx, data, (int)len, PG_BYTEA_OID);
     return KDBC_OK;
 }
 
@@ -537,7 +622,7 @@ static int pg_bind_timestamp(kdbc_stmt *stmt, int idx,
                       + usec;
     int64_t pg_usec = unix_usec - PG_EPOCH_OFFSET_USEC;
     int64_t be = pg_htobe64(pg_usec);
-    pg_param_set_binary((pg_stmt_data *)stmt->native, idx, &be, 8);
+    pg_param_set_binary((pg_stmt_data *)stmt->native, idx, &be, 8, PG_TIMESTAMP_OID);
     return KDBC_OK;
 }
 
@@ -545,7 +630,7 @@ static int pg_bind_date(kdbc_stmt *stmt, int idx, int year, int month, int day) 
     int unix_days = days_from_civil(year, month, day);
     int32_t pg_days = (int32_t)(unix_days - PG_EPOCH_OFFSET_DAYS);
     int32_t be = pg_htobe32(pg_days);
-    pg_param_set_binary((pg_stmt_data *)stmt->native, idx, &be, 4);
+    pg_param_set_binary((pg_stmt_data *)stmt->native, idx, &be, 4, PG_DATE_OID);
     return KDBC_OK;
 }
 
@@ -556,7 +641,7 @@ static int pg_bind_time(kdbc_stmt *stmt, int idx,
                       + (int64_t)second * 1000000LL
                       + usec;
     int64_t be = pg_htobe64(time_usec);
-    pg_param_set_binary((pg_stmt_data *)stmt->native, idx, &be, 8);
+    pg_param_set_binary((pg_stmt_data *)stmt->native, idx, &be, 8, PG_TIME_OID);
     return KDBC_OK;
 }
 
@@ -599,6 +684,8 @@ static void pg_free_args(pg_exec_args *a) {
 
 static int pg_execute_update(kdbc_stmt *stmt) {
     pg_stmt_data *sd = (pg_stmt_data *)stmt->native;
+    if (pg_ensure_prepared(sd, stmt->error, KDBC_ERR_SIZE) != KDBC_OK)
+        return KDBC_ERROR;
     pg_exec_args args = pg_build_args(sd);
 
     /* Binary result only if RETURNING clause (need to decode generated key).
@@ -664,6 +751,7 @@ static int pg_execute_update(kdbc_stmt *stmt) {
 static void *pg_execute_query(kdbc_stmt *stmt, int *out_col_count,
                               char *err, size_t err_size) {
     pg_stmt_data *sd = (pg_stmt_data *)stmt->native;
+    if (pg_ensure_prepared(sd, err, err_size) != KDBC_OK) return NULL;
     pg_exec_args args = pg_build_args(sd);
 
     /* Request binary result format */
@@ -737,6 +825,114 @@ static const char *pg_rs_col_name(void *native_rs, int col) {
     return p_fname(prs->res, col - 1);
 }
 
+/* Decode PostgreSQL binary NUMERIC wire format into a canonical decimal
+ * string written to `out` (capacity `cap`). Returns the number of bytes
+ * written (excluding NUL) or -1 on error.
+ *
+ * Wire format (big-endian int16 fields):
+ *   ndigits   number of base-10000 "digits" in the value
+ *   weight    weight of the first digit — value = Σ digit[i] * 10000^(weight-i)
+ *   sign      0x0000=pos, 0x4000=neg, 0xC000=NaN, 0xD000=+inf, 0xF000=-inf
+ *   dscale    display scale: digit count after the decimal point
+ *   digits[ndigits]  base-10000 digits, most significant first
+ *
+ * The integer part uses weight+1 base-10000 digits (zero-padded if fewer
+ * digits are stored than the weight implies). The fractional part is the
+ * remaining stored digits plus leading-zero padding, trimmed/padded to
+ * exactly dscale decimal characters. */
+static int pg_decode_numeric(const unsigned char *raw, int raw_len,
+                             char *out, int cap) {
+    if (raw_len < 8) return -1;
+    int ndigits = (int16_t)((raw[0] << 8) | raw[1]);
+    int weight  = (int16_t)((raw[2] << 8) | raw[3]);
+    int sign    = (uint16_t)((raw[4] << 8) | raw[5]);
+    int dscale  = (int16_t)((raw[6] << 8) | raw[7]);
+    if (raw_len < 8 + ndigits * 2) return -1;
+
+    if (sign == 0xC000) {
+        if (cap < 4) return -1;
+        memcpy(out, "NaN", 4); return 3;
+    }
+    if (sign == 0xD000) {
+        if (cap < 9) return -1;
+        memcpy(out, "Infinity", 9); return 8;
+    }
+    if (sign == 0xF000) {
+        if (cap < 10) return -1;
+        memcpy(out, "-Infinity", 10); return 9;
+    }
+
+    /* Read base-10000 digits. */
+    int16_t digits[128];
+    if (ndigits > (int)(sizeof(digits) / sizeof(digits[0]))) return -1;
+    for (int i = 0; i < ndigits; i++) {
+        digits[i] = (int16_t)((raw[8 + i * 2] << 8) | raw[9 + i * 2]);
+    }
+
+    int pos = 0;
+    if (sign == 0x4000) { if (pos >= cap) return -1; out[pos++] = '-'; }
+
+    /* Integer part. If weight < 0 there is no integer part — emit "0". */
+    if (weight < 0) {
+        if (pos >= cap) return -1;
+        out[pos++] = '0';
+    } else {
+        for (int i = 0; i <= weight; i++) {
+            int d = (i < ndigits) ? digits[i] : 0;
+            if (i == 0) {
+                int n = snprintf(out + pos, (size_t)(cap - pos), "%d", d);
+                if (n < 0 || pos + n >= cap) return -1;
+                pos += n;
+            } else {
+                if (pos + 4 >= cap) return -1;
+                pos += snprintf(out + pos, (size_t)(cap - pos), "%04d", d);
+            }
+        }
+    }
+
+    /* Fractional part. */
+    if (dscale > 0) {
+        if (pos + 1 >= cap) return -1;
+        out[pos++] = '.';
+        /* The first fractional digit group is at index (weight+1) — which may
+         * be beyond what's stored (in that case we synthesize leading zeros)
+         * OR negative (meaning the integer part is 0 and the first stored
+         * digit already lies below the decimal point, possibly with leading
+         * zero groups). */
+        int emitted = 0;
+        int frac_index = weight + 1;
+        while (emitted < dscale) {
+            int d;
+            if (frac_index < 0 || frac_index >= ndigits) {
+                d = 0;
+            } else {
+                d = digits[frac_index];
+            }
+            frac_index++;
+            /* Each group contributes 4 decimal chars but we may need fewer
+             * to reach dscale exactly. */
+            int need = dscale - emitted;
+            if (need >= 4) {
+                if (pos + 4 >= cap) return -1;
+                pos += snprintf(out + pos, (size_t)(cap - pos), "%04d", d);
+                emitted += 4;
+            } else {
+                /* Truncate the last group to the required digit count. */
+                char tmp[8];
+                snprintf(tmp, sizeof(tmp), "%04d", d);
+                if (pos + need >= cap) return -1;
+                memcpy(out + pos, tmp, (size_t)need);
+                pos += need;
+                emitted += need;
+            }
+        }
+    }
+
+    if (pos >= cap) return -1;
+    out[pos] = '\0';
+    return pos;
+}
+
 static int pg_rs_is_null(kdbc_result *rs, int col) {
     pg_result_set *prs = (pg_result_set *)rs->native;
     rs->last_null = p_getisnull(prs->res, prs->current_row, col - 1);
@@ -763,16 +959,29 @@ static int64_t pg_rs_get_long(kdbc_result *rs, int col) {
          * Otherwise (e.g. TEXT/VARCHAR) the raw bytes are a UTF-8 string and must be
          * sscanf'd instead of memcpy'd — otherwise "42" (len=2) would be decoded as
          * the 16-bit big-endian integer 13362 (= 0x3432). */
-        int is_numeric = (oid == PG_BOOL_OID || oid == PG_INT2_OID ||
-                          oid == PG_INT4_OID || oid == PG_INT8_OID);
-        if (is_numeric) {
+        int is_int = (oid == PG_BOOL_OID || oid == PG_INT2_OID ||
+                      oid == PG_INT4_OID || oid == PG_INT8_OID);
+        if (is_int) {
             if (len == 1) return (int64_t)(*(int8_t *)raw);              /* bool */
             if (len == 2) { int16_t v; memcpy(&v, raw, 2); return pg_be16toh(v); }
             if (len == 4) { int32_t v; memcpy(&v, raw, 4); return pg_be32toh(v); }
             if (len == 8) { int64_t v; memcpy(&v, raw, 8); return pg_be64toh(v); }
         }
-        /* For TEXT-like types and NUMERIC, fall through to sscanf below. raw isn't
-         * null-terminated in binary format, so we copy into a bounded buffer. */
+        if (oid == PG_NUMERIC_OID) {
+            /* Decode the base-10000 binary NUMERIC into a text representation
+             * then parse as int64. Truncates any fractional part and saturates
+             * silently if the value exceeds int64 range — callers needing full
+             * precision should use rs_get_string/BigDecimal. */
+            char buf[64];
+            int n = pg_decode_numeric((const unsigned char *)raw, len, buf, sizeof(buf));
+            if (n > 0) {
+                long long v = 0;
+                sscanf(buf, "%lld", &v);
+                return v;
+            }
+            return 0;
+        }
+        /* For TEXT-like types, the raw bytes are UTF-8 without NUL terminator. */
         if (raw && len > 0) {
             char buf[64];
             int blen = len < 63 ? len : 63;
@@ -916,6 +1125,15 @@ static const char *pg_rs_get_string(kdbc_result *rs, int col) {
                 memcpy(rs->str_buf, raw, len);
                 rs->str_buf[len] = '\0';
                 return rs->str_buf;
+            }
+            break;
+
+        case PG_NUMERIC_OID:
+            /* Decode base-10000 NUMERIC into a canonical decimal string. */
+            if (kdbc_ensure_strbuf(rs, (size_t)len * 2 + 32) == 0) {
+                int n = pg_decode_numeric((const unsigned char *)raw, len,
+                                          rs->str_buf, (int)rs->str_buf_cap);
+                if (n >= 0) return rs->str_buf;
             }
             break;
 

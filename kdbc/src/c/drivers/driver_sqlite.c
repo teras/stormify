@@ -45,6 +45,7 @@ typedef const char *(*fn_sqlite3_libversion)(void);
 typedef int    (*fn_sqlite3_libversion_number)(void);
 typedef int    (*fn_sqlite3_exec)(sqlite3 *, const char *, void *, void *, char **);
 typedef void   (*fn_sqlite3_interrupt)(sqlite3 *);
+typedef void   (*fn_sqlite3_free)(void *);
 
 /* ========================================================================
  * Loaded function pointers
@@ -81,6 +82,7 @@ static fn_sqlite3_libversion        p_libversion;
 static fn_sqlite3_libversion_number p_libversion_number;
 static fn_sqlite3_exec              p_exec;
 static fn_sqlite3_interrupt         p_interrupt;
+static fn_sqlite3_free              p_sq_free;
 
 /* ========================================================================
  * Driver-specific result set structure
@@ -140,6 +142,10 @@ static void sq_load_impl(void) {
     LOAD_SYM(libversion_number);
     LOAD_SYM(exec);
     LOAD_SYM(interrupt);
+    /* sqlite3_free has a different storage-class name in our macro scheme
+     * (p_free would collide with POSIX free), so load it manually. */
+    p_sq_free = (fn_sqlite3_free)kdbc_dl_sym(lib_handle, "sqlite3_free");
+    if (!p_sq_free) { kdbc_dl_close(lib_handle); lib_handle = NULL; return; }
 
     sq_load_ok = 1;
 }
@@ -199,11 +205,12 @@ static int sq_exec_sql(kdbc_conn *conn, const char *sql) {
     int rc = p_exec(db, sql, NULL, NULL, &errmsg);
     if (rc != SQLITE_OK) {
         CONN_ERR(conn, "SQLite: %s", errmsg ? errmsg : "unknown error");
-        /* Note: errmsg from sqlite3_exec should be freed with sqlite3_free,
-         * but since we're using dlsym we might not have it. The error is
-         * already captured in conn->error. errmsg is valid until next call. */
+        if (errmsg) p_sq_free(errmsg);
         return KDBC_ERROR;
     }
+    /* Success path also must free errmsg if sqlite3_exec allocated one
+     * (it never should on OK, but the API contract is symmetric). */
+    if (errmsg) p_sq_free(errmsg);
     return KDBC_OK;
 }
 
@@ -265,8 +272,10 @@ static int sq_get_minor_version(void *native) {
 
 static void *sq_prepare(kdbc_conn *conn, const char *native_sql,
                         const char **ret_cols, int n_ret_cols,
+                        int generated_keys_requested,
                         char *err, size_t err_size) {
-    (void)ret_cols; (void)n_ret_cols; /* SQLite uses last_insert_rowid */
+    (void)ret_cols; (void)n_ret_cols; (void)generated_keys_requested;
+    /* SQLite uses last_insert_rowid — no per-statement handling needed. */
 
     sqlite3 *db = (sqlite3 *)conn->native;
     sqlite3_stmt *stmt = NULL;
@@ -379,6 +388,15 @@ static int sq_execute_update(kdbc_stmt *stmt) {
     sqlite3_stmt *s = (sqlite3_stmt *)stmt->native;
     sqlite3 *db = (sqlite3 *)stmt->conn->native;
 
+    /* Snapshot the current rowid BEFORE stepping so we can tell whether this
+     * statement actually inserted a row. sqlite3_last_insert_rowid is a
+     * connection-level counter that only changes on a successful INSERT, so
+     * comparing before/after lets us distinguish INSERT from UPDATE/DELETE
+     * without parsing the SQL. */
+    long long rowid_before =
+        (stmt->generated_keys_requested || stmt->ret_col_names)
+            ? p_last_insert_rowid(db) : 0;
+
     int rc = p_step(s);
     if (rc != SQLITE_DONE && rc != SQLITE_ROW) {
         STMT_ERR(stmt, "SQLite execute: %s", p_errmsg(db));
@@ -388,11 +406,12 @@ static int sq_execute_update(kdbc_stmt *stmt) {
 
     int changes = p_changes(db);
 
-    /* Capture generated key if this was an INSERT */
-    if (stmt->ret_col_count > 0 || stmt->ret_col_names) {
-        long long rowid = p_last_insert_rowid(db);
-        if (rowid > 0) {
-            stmt->generated_key = rowid;
+    /* Capture generated key only if the rowid actually advanced (i.e., this
+     * was an INSERT). Prevents returning stale rowids after UPDATE/DELETE. */
+    if (stmt->generated_keys_requested || stmt->ret_col_names) {
+        long long rowid_after = p_last_insert_rowid(db);
+        if (rowid_after > rowid_before) {
+            stmt->generated_key = rowid_after;
             stmt->has_generated_key = 1;
         }
     }
@@ -507,8 +526,22 @@ static const char *sq_rs_get_string(kdbc_result *rs, int col) {
     if (type == SQLITE_TEXT || type == SQLITE_INTEGER || type == SQLITE_FLOAT) {
         return (const char *)p_column_text(sr->stmt, idx);
     } else if (type == SQLITE_BLOB) {
-        /* Return hex representation? For now return text if possible */
-        return (const char *)p_column_text(sr->stmt, idx);
+        /* Hex-encode the raw bytes into the per-result string buffer.
+         * Calling sqlite3_column_text on a BLOB would interpret bytes as
+         * UTF-8 and truncate at the first NUL — lossy for binary data.
+         * Hex is the only lossless textual representation. Callers that
+         * actually want the raw bytes should use rs_get_blob. */
+        const unsigned char *blob = (const unsigned char *)p_column_blob(sr->stmt, idx);
+        int len = p_column_bytes(sr->stmt, idx);
+        if (!blob || len <= 0) return "";
+        if (kdbc_ensure_strbuf(rs, (size_t)len * 2 + 1) != 0) return NULL;
+        static const char hexd[] = "0123456789abcdef";
+        for (int i = 0; i < len; i++) {
+            rs->str_buf[i * 2]     = hexd[blob[i] >> 4];
+            rs->str_buf[i * 2 + 1] = hexd[blob[i] & 0x0F];
+        }
+        rs->str_buf[len * 2] = '\0';
+        return rs->str_buf;
     }
     return NULL;
 }

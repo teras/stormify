@@ -1,5 +1,7 @@
 package test
 
+import com.ionspin.kotlin.bignum.decimal.BigDecimal
+import com.ionspin.kotlin.bignum.integer.BigInteger
 import onl.ycode.stormify.Stormify
 import kotlin.test.*
 
@@ -154,6 +156,60 @@ class TypesTest {
         assertNull(nulled.blobData)
         assertNull(nulled.clobAsChars)
         assertNull(nulled.clobAsString)
+    }
+
+    @Test
+    fun testBigDecimalPrecision() = withDb("BIGDECIMAL") { s ->
+        TestDDL.dropTable("bd_test")
+        // precision 38 = Oracle's max NUMBER; scale 10 leaves 28 integer digits.
+        s.executeUpdate(TestDDL.createTable("bd_test",
+            "${TestDDL.intPrimaryKey("id")}, val ${TestDDL.decimalType(38, 10)}"))
+
+        // Values chosen to stress different paths:
+        //  - small values that DOUBLE would mangle (0.1 binary representation)
+        //  - 18-digit integer (Snowflake-class ID, within Long but beyond Float precision)
+        //  - value just above Long.MAX_VALUE that forces the string-bind path
+        //  - 28-digit integer (well beyond Long, exercises full NUMBER precision)
+        //  - negative high-precision
+        val values = listOf(
+            "0.1000000000",
+            "123456789012345678.0000000000",                // 18-digit integer
+            "9223372036854775808.0000000000",               // Long.MAX + 1
+            "1234567890123456789012345678.0000000000",      // 28-digit integer
+            "-99999999999999999999.1234567890",
+            "0.0000000001",                                  // tiny fraction
+        )
+        for ((i, str) in values.withIndex()) {
+            val id = 10 + i
+            val bd = BigDecimal.parseString(str)
+            s.executeUpdate("INSERT INTO bd_test (id, val) VALUES (?, ?)", id, bd)
+            val back = s.readOne<BigDecimal>("SELECT val FROM bd_test WHERE id = ?", id)
+            assertNotNull(back, "no row for $str")
+            assertEquals(0, bd.compareTo(back),
+                "precision lost for $str: expected $bd, got $back")
+        }
+    }
+
+    @Test
+    fun testBigIntegerBeyondLong() = withDb("BIGINT-XL") { s ->
+        TestDDL.dropTable("bi_test")
+        s.executeUpdate(TestDDL.createTable("bi_test",
+            "${TestDDL.intPrimaryKey("id")}, val ${TestDDL.decimalType(38, 0)}"))
+
+        val values = listOf(
+            BigInteger.parseString("9223372036854775807"),            // Long.MAX
+            BigInteger.parseString("9223372036854775808"),            // Long.MAX + 1
+            BigInteger.parseString("99999999999999999999999999999999999999"), // 38-digit max
+            BigInteger.parseString("-9223372036854775808"),           // Long.MIN
+            BigInteger.parseString("-99999999999999999999999999999999999999"), // -38-digit max
+        )
+        for ((i, bi) in values.withIndex()) {
+            val id = 20 + i
+            s.executeUpdate("INSERT INTO bi_test (id, val) VALUES (?, ?)", id, bi)
+            val back = s.readOne<BigInteger>("SELECT val FROM bi_test WHERE id = ?", id)
+            assertNotNull(back, "no row for $bi")
+            assertEquals(bi, back, "BigInteger round-trip failed")
+        }
     }
 
     @Test
