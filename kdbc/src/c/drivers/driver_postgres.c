@@ -84,6 +84,7 @@ typedef int        (*fn_PQserverVersion)(const PGconn *);
 typedef PGcancel  *(*fn_PQgetCancel)(PGconn *);
 typedef int        (*fn_PQcancel)(PGcancel *, char *, int);
 typedef void       (*fn_PQfreeCancel)(PGcancel *);
+typedef int        (*fn_PQsetClientEncoding)(PGconn *, const char *);
 
 /* ========================================================================
  * Loaded function pointers
@@ -114,6 +115,7 @@ static fn_PQserverVersion      p_serverVersion;
 static fn_PQgetCancel          p_getCancel;
 static fn_PQcancel             p_cancel;
 static fn_PQfreeCancel         p_freeCancel;
+static fn_PQsetClientEncoding  p_setClientEncoding;
 
 /* ========================================================================
  * Driver-specific structures
@@ -192,6 +194,7 @@ static void pg_load_impl(void) {
     PG_LOAD(getCancel);
     PG_LOAD(cancel);
     PG_LOAD(freeCancel);
+    PG_LOAD(setClientEncoding);
 
     pg_load_ok = 1;
 }
@@ -225,6 +228,19 @@ static void *pg_connect(const char *url, const char *user, const char *password,
     }
     if (p_status(conn) != CONNECTION_OK) {
         snprintf(err, err_size, "PostgreSQL: %s", p_errorMessage(conn));
+        p_finish(conn);
+        return NULL;
+    }
+    /* Pin the session's client_encoding to UTF8 so the server transcodes
+     * result bytes into UTF-8 regardless of the cluster's server_encoding or
+     * the PGCLIENTENCODING environment variable. The rest of the driver
+     * assumes TEXT-like binary values are UTF-8 (see pg_get_string and the
+     * BYTEA vs TEXT decode paths) — this makes that assumption explicit and
+     * brings the driver in line with the other backends (MariaDB: utf8mb4,
+     * Oracle: AL32UTF8, MSSQL: DBSETCHARSET=UTF-8). */
+    if (p_setClientEncoding(conn, "UTF8") != 0) {
+        snprintf(err, err_size, "PostgreSQL: failed to set client_encoding UTF8: %s",
+                 p_errorMessage(conn));
         p_finish(conn);
         return NULL;
     }

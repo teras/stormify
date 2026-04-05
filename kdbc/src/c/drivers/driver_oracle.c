@@ -569,7 +569,26 @@ static int ora_bind_string(kdbc_stmt *stmt, int idx, const char *val) {
     ora_stmt_data *sd = (ora_stmt_data *)stmt->native;
     unsigned int len = (unsigned int)strlen(val);
     if (len > ORA_VARCHAR_MAX) return ora_bind_clob(stmt, idx, val, len);
-    dpiData *data = ora_create_and_bind_var(stmt, idx, DPI_ORACLE_TYPE_VARCHAR,
+    /* Bind as NVARCHAR (NCHAR charform) rather than VARCHAR. This matters on
+     * instances whose NLS_CHARACTERSET is a legacy single-byte codepage
+     * (e.g. EL8ISO8859P7 on a classic Greek 11g deployment): VARCHAR binds
+     * would make the server transcode our UTF-8 bytes through the DB
+     * charset first, silently replacing any code point outside that
+     * codepage with '?' BEFORE storage — even when the target column is
+     * NVARCHAR2 (which is backed by NLS_NCHAR_CHARACTERSET = AL16UTF16 and
+     * can hold the full Unicode repertoire).
+     *
+     * Binding as NVARCHAR tells ODPI-C to pair the parameter with the NCHAR
+     * charform, whose client-side encoding we already pinned to UTF-8 at
+     * context creation (common.nencoding = "UTF-8"). That gives lossless
+     * UTF-8 ↔ AL16UTF16 transcoding on the wire and preserves the full
+     * Unicode repertoire when the target column is NVARCHAR2. For VARCHAR2
+     * targets Oracle performs an implicit NCHAR → CHAR conversion at
+     * insert time: characters representable in the DB charset are stored
+     * as-is, characters outside it are replaced with '?' — which is
+     * exactly the behaviour that was already in effect before this change,
+     * so no VARCHAR2 regression. */
+    dpiData *data = ora_create_and_bind_var(stmt, idx, DPI_ORACLE_TYPE_NVARCHAR,
                                             DPI_NATIVE_TYPE_BYTES, len + 1);
     if (!data) return KDBC_ERROR;
     if (p_var_setFromBytes(sd->vars[idx - 1], 0, val, len) != DPI_SUCCESS) {
