@@ -56,6 +56,10 @@ typedef MY_FIELD    *(*fn_mysql_fetch_fields)(MYSQL_RES *);
 typedef void         (*fn_mysql_free_result)(MYSQL_RES *);
 typedef int          (*fn_mysql_query)(MYSQL *, const char *);
 typedef int          (*fn_mysql_options)(MYSQL *, int, const void *);
+typedef MYSQL_RES   *(*fn_mysql_store_result)(MYSQL *);
+typedef char       **(*fn_mysql_fetch_row)(MYSQL_RES *);
+typedef unsigned long *(*fn_mysql_fetch_lengths)(MYSQL_RES *);
+typedef int          (*fn_mysql_next_result)(MYSQL *);
 
 /* ========================================================================
  * Loaded function pointers
@@ -95,6 +99,10 @@ static fn_mysql_fetch_fields          p_fetch_fields;
 static fn_mysql_free_result           p_free_result;
 static fn_mysql_query                 p_query;
 static fn_mysql_options               p_options;
+static fn_mysql_store_result          p_store_result;
+static fn_mysql_fetch_row             p_fetch_row;
+static fn_mysql_fetch_lengths         p_fetch_lengths;
+static fn_mysql_next_result           p_next_result;
 
 /* ========================================================================
  * Library loading
@@ -158,6 +166,10 @@ static void my_load_impl(void) {
     MY_LOAD(free_result);
     MY_LOAD(query);
     MY_LOAD(options);
+    MY_LOAD(store_result);
+    MY_LOAD(fetch_row);
+    MY_LOAD(fetch_lengths);
+    MY_LOAD(next_result);
 
     /* mariadb_cancel is present in libmariadb 3.x+ but NOT in Oracle's
      * libmysqlclient. Resolve via dlsym and allow it to be NULL — the
@@ -202,6 +214,12 @@ typedef struct {
     int         param_count;
     my_param   *params;
     MY_BIND    *bind_params;
+    /* Some DDL — notably CREATE / DROP / ALTER PROCEDURE|FUNCTION|TRIGGER —
+     * cannot be sent through the binary prepared-statement protocol on MySQL
+     * (the server replies with ER_UNSUPPORTED_PS). When my_prepare detects
+     * such a statement it keeps a raw copy of the SQL here and leaves sd->stmt
+     * NULL; my_execute_update then dispatches via mysql_query. */
+    char       *direct_sql;
 } my_stmt_data;
 
 /* Per-column data for result set fetching */
@@ -286,7 +304,12 @@ static void *my_connect(const char *url, const char *user, const char *password,
      * default, which may be latin1 and would silently corrupt non-ASCII. */
     p_options(mysql, 7 /* MYSQL_SET_CHARSET_NAME */, "utf8mb4");
 
-    MYSQL *result = p_real_connect(mysql, host, user, password, db, port, NULL, 0);
+    /* CLIENT_MULTI_RESULTS (0x00020000) tells the server it can send multiple
+     * result sets from a single CALL — required so mysql_next_result can
+     * traverse them. libmariadb enables it by default on 3.x but libmysqlclient
+     * historically did not; set it explicitly for portability. */
+    MYSQL *result = p_real_connect(mysql, host, user, password, db, port, NULL,
+                                   0x00020000UL /* CLIENT_MULTI_RESULTS */);
     if (!result) {
         snprintf(err, err_size, "MariaDB: %s", p_error(mysql));
         p_close(mysql);
@@ -396,6 +419,42 @@ static int my_get_minor_version(void *native) {
  * Statement preparation
  * ======================================================================== */
 
+/* Heuristic: return 1 if the SQL is a DDL statement that MySQL (not MariaDB)
+ * refuses to process through the binary prepared-statement protocol. MariaDB
+ * accepts all DDL via prepared stmts, so this is a MySQL-specific compat
+ * hack — but we can't tell at prepare time which server flavour we're on,
+ * so we always check and fall back to mysql_query when the keyword matches. */
+static int my_is_non_preparable_ddl(const char *sql) {
+    while (*sql == ' ' || *sql == '\t' || *sql == '\n' || *sql == '\r') sql++;
+    /* CREATE / DROP / ALTER followed by PROCEDURE / FUNCTION / TRIGGER /
+     * EVENT / VIEW — all of which MySQL blocks in the PS protocol.
+     * Note: CREATE TABLE and DROP TABLE ARE preparable on MySQL, so we only
+     * match when the *second* keyword is one of the non-preparable ones. */
+    const char *verb_end = NULL;
+    if (strncasecmp(sql, "CREATE", 6) == 0) { verb_end = sql + 6; }
+    else if (strncasecmp(sql, "DROP", 4) == 0) { verb_end = sql + 4; }
+    else if (strncasecmp(sql, "ALTER", 5) == 0) { verb_end = sql + 5; }
+    else return 0;
+    if (*verb_end != ' ' && *verb_end != '\t') return 0;
+    while (*verb_end == ' ' || *verb_end == '\t') verb_end++;
+    /* Skip OR REPLACE / DEFINER=... qualifiers so we can still match the
+     * object kind. This is imperfect but covers the common cases. */
+    if (strncasecmp(verb_end, "OR REPLACE", 10) == 0) {
+        verb_end += 10;
+        while (*verb_end == ' ' || *verb_end == '\t') verb_end++;
+    }
+    if (strncasecmp(verb_end, "DEFINER", 7) == 0) {
+        /* Skip to whitespace past the = and the user spec. */
+        while (*verb_end && *verb_end != ' ' && *verb_end != '\t') verb_end++;
+        while (*verb_end == ' ' || *verb_end == '\t') verb_end++;
+    }
+    return strncasecmp(verb_end, "PROCEDURE", 9) == 0
+        || strncasecmp(verb_end, "FUNCTION", 8) == 0
+        || strncasecmp(verb_end, "TRIGGER", 7) == 0
+        || strncasecmp(verb_end, "EVENT", 5) == 0
+        || strncasecmp(verb_end, "VIEW", 4) == 0;
+}
+
 static void *my_prepare(kdbc_conn *conn, const char *native_sql,
                         const char **ret_cols, int n_ret_cols,
                         int generated_keys_requested,
@@ -408,6 +467,20 @@ static void *my_prepare(kdbc_conn *conn, const char *native_sql,
     if (!sd) { snprintf(err, err_size, "Out of memory"); return NULL; }
 
     sd->mysql = mysql;
+
+    /* DDL that MySQL won't let through the PS protocol — defer to a direct
+     * mysql_query at execute time. We still return a stmt handle so the core
+     * execute path works uniformly. sd->stmt stays NULL as the signal. */
+    if (my_is_non_preparable_ddl(native_sql)) {
+        sd->direct_sql = strdup(native_sql);
+        if (!sd->direct_sql) {
+            snprintf(err, err_size, "Out of memory");
+            free(sd);
+            return NULL;
+        }
+        return sd;
+    }
+
     sd->stmt = p_stmt_init(mysql);
     if (!sd->stmt) {
         snprintf(err, err_size, "MariaDB: %s", p_error(mysql));
@@ -448,11 +521,14 @@ static void my_stmt_close_fn(void *native_stmt, void *native_conn) {
     (void)native_conn;
     my_stmt_data *sd = (my_stmt_data *)native_stmt;
     if (!sd) return;
-    p_stmt_close(sd->stmt);
-    for (int i = 0; i < sd->param_count; i++)
-        free(sd->params[i].str);
-    free(sd->params);
+    if (sd->stmt) p_stmt_close(sd->stmt);
+    if (sd->params) {
+        for (int i = 0; i < sd->param_count; i++)
+            free(sd->params[i].str);
+        free(sd->params);
+    }
     free(sd->bind_params);
+    free(sd->direct_sql);
     free(sd);
 }
 
@@ -649,6 +725,15 @@ static int my_rs_get_time(kdbc_result *rs, int col,
 
 static int my_execute_update(kdbc_stmt *stmt) {
     my_stmt_data *sd = (my_stmt_data *)stmt->native;
+
+    /* Direct-exec path: DDL that MySQL doesn't accept via PS protocol. */
+    if (sd->direct_sql) {
+        if (p_query(sd->mysql, sd->direct_sql)) {
+            STMT_ERR(stmt, "MariaDB: %s", p_error(sd->mysql));
+            return KDBC_ERROR;
+        }
+        return 0;
+    }
 
     if (sd->param_count > 0) {
         if (p_stmt_bind_param(sd->stmt, sd->bind_params)) {
@@ -1092,6 +1177,207 @@ static int my_rs_get_time(kdbc_result *rs, int col,
 }
 
 /* ========================================================================
+ * Callable statements
+ *
+ * MySQL/MariaDB's binary prepared-statement protocol does not support OUT
+ * parameters through `?` placeholders — the only way to retrieve them is via
+ * user-defined session variables (`@name`). The canonical pattern is:
+ *
+ *   1. Run `SET @_kdbc_call_N = <in_value>` for each IN / INOUT parameter
+ *      (we use a prepared stmt to bind each input safely, avoiding any
+ *      escaping concerns).
+ *   2. Run `CALL proc(@_kdbc_call_1, @_kdbc_call_2, ...)` via mysql_query.
+ *   3. Run `SELECT @_kdbc_call_3, @_kdbc_call_4, ...` to retrieve OUT values.
+ *   4. Cache the returned row strings into stmt->out_values[].
+ *
+ * The original prepared statement (CALL with `?` placeholders) is discarded
+ * and rebuilt for each call — MySQL doesn't allow re-preparing the same stmt
+ * handle with different SQL meaningfully, so we use a throwaway stmt for the
+ * SET statements and mysql_query for the CALL/SELECT.
+ * ======================================================================== */
+
+static int my_call_execute(kdbc_stmt *stmt) {
+    my_stmt_data *sd = (my_stmt_data *)stmt->native;
+    MYSQL *mysql = sd->mysql;
+
+    /* The core's kdbc_prepare_call rewrote the caller's "{call proc(?, ?)}"
+     * into "CALL proc(?, ?)" and stored the rewritten text in stmt->sql. */
+    char proc_name[256];
+    static const char *const verbs[] = { "CALL" };
+    if (!kdbc_extract_proc_name(stmt->sql ? stmt->sql : "", verbs, 1,
+                                 proc_name, sizeof(proc_name))) {
+        STMT_ERR(stmt, "MariaDB: cannot parse procedure name from '%s'",
+                 stmt->sql ? stmt->sql : "(null)");
+        return KDBC_ERROR;
+    }
+
+    /* 1. Populate every user variable in a single round-trip:
+     *        SET @_kdbc_call_1 = ?, @_kdbc_call_2 = ?, ..., @_kdbc_call_N = ?
+     *
+     *    This matches Oracle's Connector/Python behaviour — one prepared
+     *    statement with N placeholders bound from sd->params[]. Binary-safe
+     *    for all types (including BLOB / TEXT / DECIMAL) because each `?` is
+     *    a real wire-protocol parameter, not an inline escape.
+     *
+     *    IN slots carry the caller's value, pure OUT slots become NULL,
+     *    INOUT carries its input value. The server overwrites OUT / INOUT
+     *    vars when the subsequent CALL runs. */
+    if (sd->param_count > 0) {
+        /* Build the SQL text. Upper bound: "SET " (4) + N × "@_kdbc_call_NNN = ?, " (24) + NUL */
+        size_t set_len = 8 + (size_t)sd->param_count * 32;
+        char *set_sql = (char *)malloc(set_len);
+        if (!set_sql) {
+            STMT_ERR(stmt, "MariaDB: out of memory");
+            return KDBC_ERROR;
+        }
+        int so = snprintf(set_sql, set_len, "SET ");
+        for (int i = 0; i < sd->param_count; i++) {
+            so += snprintf(set_sql + so, set_len - so,
+                           "%s@_kdbc_call_%d = ?",
+                           i == 0 ? "" : ", ", i + 1);
+        }
+
+        MYSQL_STMT *set_stmt = p_stmt_init(mysql);
+        if (!set_stmt) {
+            STMT_ERR(stmt, "MariaDB stmt_init for SET: out of memory");
+            free(set_sql);
+            return KDBC_ERROR;
+        }
+        if (p_stmt_prepare(set_stmt, set_sql, (unsigned long)strlen(set_sql))) {
+            STMT_ERR(stmt, "MariaDB prepare combined SET: %s", p_stmt_error(set_stmt));
+            p_stmt_close(set_stmt);
+            free(set_sql);
+            return KDBC_ERROR;
+        }
+        free(set_sql);
+
+        /* For any slot the caller never touched (pure OUT), force a NULL bind
+         * via the normal my_setup_bind path so sd->bind_params[i] is a valid
+         * MY_BIND entry pointing into sd->params[i]. IN / INOUT slots already
+         * had bind_X called during Stormify.procedure's IN pass and their
+         * sd->bind_params[] entries are ready. */
+        for (int i = 0; i < sd->param_count; i++) {
+            if (sd->params[i].type == 0 /* never set */ &&
+                sd->bind_params[i].buffer_type == MYSQL_TYPE_NULL) {
+                sd->params[i].type = MYSQL_TYPE_NULL;
+                sd->params[i].is_null = 1;
+                my_setup_bind(sd, i + 1);
+            }
+        }
+
+        if (p_stmt_bind_param(set_stmt, sd->bind_params)) {
+            STMT_ERR(stmt, "MariaDB bind combined SET: %s", p_stmt_error(set_stmt));
+            p_stmt_close(set_stmt);
+            return KDBC_ERROR;
+        }
+        if (p_stmt_execute(set_stmt)) {
+            STMT_ERR(stmt, "MariaDB execute combined SET: %s", p_stmt_error(set_stmt));
+            p_stmt_close(set_stmt);
+            return KDBC_ERROR;
+        }
+        p_stmt_close(set_stmt);
+    }
+
+    /* 2. Build and execute `CALL proc(@_kdbc_call_1, @_kdbc_call_2, ...)` via
+     *    mysql_query (text protocol — no params to bind, the variables carry
+     *    everything). */
+    size_t call_len = strlen(proc_name) + sd->param_count * 20 + 16;
+    char *call_sql = (char *)malloc(call_len);
+    if (!call_sql) {
+        STMT_ERR(stmt, "MariaDB: out of memory");
+        return KDBC_ERROR;
+    }
+    int off = snprintf(call_sql, call_len, "CALL %s(", proc_name);
+    for (int i = 0; i < sd->param_count; i++) {
+        off += snprintf(call_sql + off, call_len - off,
+                        "%s@_kdbc_call_%d", i == 0 ? "" : ", ", i + 1);
+    }
+    snprintf(call_sql + off, call_len - off, ")");
+
+    if (p_query(mysql, call_sql)) {
+        STMT_ERR(stmt, "MariaDB CALL %s: %s", proc_name, p_error(mysql));
+        free(call_sql);
+        return KDBC_ERROR;
+    }
+    free(call_sql);
+
+    /* The CALL may have returned result sets (if the proc executed SELECTs).
+     * All of them must be drained before we can issue the follow-up SELECT —
+     * otherwise libmariadb reports CR_COMMANDS_OUT_OF_SYNC. */
+    for (;;) {
+        MYSQL_RES *res = p_store_result(mysql);
+        if (res) p_free_result(res);
+        int next = p_next_result(mysql);
+        if (next > 0) {
+            STMT_ERR(stmt, "MariaDB CALL next_result: %s", p_error(mysql));
+            return KDBC_ERROR;
+        }
+        if (next < 0) break;  /* no more results */
+    }
+
+    /* 3. SELECT the OUT / INOUT user variables back. Only query the ones the
+     *    caller registered as OUT; pure IN slots are skipped. */
+    if (stmt->out_params && stmt->out_values) {
+        /* Count OUT slots and build the SELECT list. */
+        int out_count = 0;
+        for (int i = 0; i < sd->param_count; i++) if (stmt->out_params[i]) out_count++;
+
+        if (out_count > 0) {
+            size_t sel_len = 16 + out_count * 24;
+            char *sel_sql = (char *)malloc(sel_len);
+            if (!sel_sql) {
+                STMT_ERR(stmt, "MariaDB: out of memory");
+                return KDBC_ERROR;
+            }
+            int so = snprintf(sel_sql, sel_len, "SELECT ");
+            int emitted = 0;
+            for (int i = 0; i < sd->param_count; i++) {
+                if (!stmt->out_params[i]) continue;
+                so += snprintf(sel_sql + so, sel_len - so,
+                               "%s@_kdbc_call_%d",
+                               emitted == 0 ? "" : ", ", i + 1);
+                emitted++;
+            }
+
+            if (p_query(mysql, sel_sql)) {
+                STMT_ERR(stmt, "MariaDB SELECT out vars: %s", p_error(mysql));
+                free(sel_sql);
+                return KDBC_ERROR;
+            }
+            free(sel_sql);
+
+            MYSQL_RES *res = p_store_result(mysql);
+            if (!res) {
+                STMT_ERR(stmt, "MariaDB store_result: %s", p_error(mysql));
+                return KDBC_ERROR;
+            }
+            MYSQL_ROW row = p_fetch_row(res);
+            if (row) {
+                unsigned long *lengths = p_fetch_lengths(res);
+                int col = 0;
+                for (int i = 0; i < sd->param_count; i++) {
+                    if (!stmt->out_params[i]) continue;
+                    free(stmt->out_values[i]);
+                    stmt->out_values[i] = NULL;
+                    if (row[col] != NULL) {
+                        unsigned long len = lengths ? lengths[col] : strlen(row[col]);
+                        stmt->out_values[i] = (char *)malloc((size_t)len + 1);
+                        if (stmt->out_values[i]) {
+                            memcpy(stmt->out_values[i], row[col], (size_t)len);
+                            stmt->out_values[i][len] = '\0';
+                        }
+                    }
+                    col++;
+                }
+            }
+            p_free_result(res);
+        }
+    }
+
+    return 1;
+}
+
+/* ========================================================================
  * Driver vtable
  * ======================================================================== */
 
@@ -1142,7 +1428,7 @@ static const kdbc_driver_vtable mariadb_vtable = {
     .stmt_reset         = NULL,
     .conn_gk_strategy   = NULL,
     .prepare_call       = NULL,
-    .call_execute       = NULL,
+    .call_execute       = my_call_execute,
     .call_get_out       = NULL,
 };
 

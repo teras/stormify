@@ -46,11 +46,9 @@ inline fun <reified D : Any> Any.details(propertyName: String? = null): List<D> 
 // Transactions
 fun transaction(block: TransactionContext.() -> Unit) = stormify().transaction(block)
 
-// Stored procedure helpers
-inline fun <reified T : Any> IN(value: T): SPParam<T> = SPParam.`in`(T::class, value)
-inline fun <reified T : Any> OUT(): SPParam<T> = SPParam.out(T::class)
-inline fun <reified T : Any> INOUT(value: T): SPParam<T> = SPParam.inout(T::class, value)
-fun String.storedProcedure(vararg params: SPParam<*>) = stormify().procedure(null, this, *params)
+// Stored procedure shortcut — IN args pass through raw, OUT/INOUT via Sp.Out/Sp.InOut
+// (or the reified helpers spOut<T>() / spInOut(value)).
+fun String.storedProcedure(vararg args: Any?) = stormify().procedure(null, this, *args)
 
 // Property delegate — auto-populate on access (for AutoTable)
 class db<T>(private val defaultValue: T) : ReadWriteProperty<Any?, T> {

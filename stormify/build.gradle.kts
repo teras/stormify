@@ -39,6 +39,19 @@ kotlin {
             }
         }
     }
+    // Target Java 8 bytecode for the published JVM artifact so consumers on older
+    // JDKs can still load the library. All runtime deps (bignum 0.3.9, kotlinx-datetime
+    // 0.7.1, kotlinx-coroutines 1.10.2, HikariCP 4.0.3) ship Java 8 bytecode.
+    // Tests run on the toolchain JDK (11) which can load Java 8 class files fine.
+    jvm {
+        compilations.all {
+            compileTaskProvider.configure {
+                compilerOptions {
+                    jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_1_8)
+                }
+            }
+        }
+    }
     jvmToolchain(11)
 
     sourceSets {
@@ -70,7 +83,11 @@ kotlin {
             dependsOn(commonMain)
             dependencies {
                 compileOnly("org.jetbrains.kotlinx:kotlinx-datetime:0.7.1")
-                compileOnly("com.ionspin.kotlin:bignum:0.3.10")
+                compileOnly("com.ionspin.kotlin:bignum:0.3.9")
+                // kotlin-reflect is used at compile time by tryReflection() for the
+                // reflection-based entity discovery path. Marked compileOnly so consumers
+                // using only the annproc path don't pull it transitively.
+                compileOnly(kotlin("reflect"))
             }
         }
 
@@ -85,6 +102,10 @@ kotlin {
         val jvmTest by getting {
             dependencies {
                 implementation(kotlin("reflect"))
+                // Tests exercise the BigDecimal/BigInteger and kotlinx-datetime paths
+                // which are compileOnly in jvmBasedMain — re-declare as runtime deps here.
+                implementation("org.jetbrains.kotlinx:kotlinx-datetime:0.7.1")
+                implementation("com.ionspin.kotlin:bignum:0.3.9")
                 implementation("com.zaxxer:HikariCP:4.0.3")
                 // Load JDBC driver based on target database
                 val testDb = System.getProperty("stormify.test.db") ?: "sqlite"
@@ -106,7 +127,12 @@ kotlin {
         val nativeMain by getting {
             dependencies {
                 api("org.jetbrains.kotlinx:kotlinx-datetime:0.7.1")
-                api("com.ionspin.kotlin:bignum:0.3.10")
+                api("com.ionspin.kotlin:bignum:0.3.9")
+                // Kotlin/Native does not support compileOnly dependencies — the klib
+                // compilation pipeline requires every referenced symbol to be present.
+                // commonMain keeps `compileOnly` so JVM/Android consumers who only use
+                // the blocking API don't pull coroutines; native consumers get it via api.
+                api("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.10.2")
             }
         }
 
@@ -158,6 +184,12 @@ kotlin {
     }
 }
 
+// Align Java compile tasks with the Kotlin JVM 1.8 target.
+tasks.withType<JavaCompile>().configureEach {
+    sourceCompatibility = "1.8"
+    targetCompatibility = "1.8"
+}
+
 android {
     namespace = "onl.ycode.stormify"
     compileSdk = 34
@@ -167,8 +199,8 @@ android {
     }
     
     compileOptions {
-        sourceCompatibility = JavaVersion.VERSION_11
-        targetCompatibility = JavaVersion.VERSION_11
+        sourceCompatibility = JavaVersion.VERSION_1_8
+        targetCompatibility = JavaVersion.VERSION_1_8
     }
 }
 

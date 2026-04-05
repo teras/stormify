@@ -60,6 +60,11 @@ typedef DBINT        (*fn_dbcount)(DBPROCESS *);
 typedef RETCODE      (*fn_dbrpcinit)(DBPROCESS *, const char *, DBSMALLINT);
 typedef RETCODE      (*fn_dbrpcparam)(DBPROCESS *, const char *, BYTE, int, DBINT, DBINT, BYTE *);
 typedef RETCODE      (*fn_dbrpcsend)(DBPROCESS *);
+typedef int          (*fn_dbnumrets)(DBPROCESS *);
+typedef BYTE        *(*fn_dbretdata)(DBPROCESS *, int);
+typedef int          (*fn_dbretlen)(DBPROCESS *, int);
+typedef int          (*fn_dbrettype)(DBPROCESS *, int);
+typedef char        *(*fn_dbretname)(DBPROCESS *, int);
 typedef RETCODE      (*fn_dbcancel)(DBPROCESS *);
 typedef DBINT        (*fn_dbconvert)(DBPROCESS *, int, const BYTE *, DBINT, int, BYTE *, DBINT);
 typedef RETCODE      (*fn_dbsetopt)(DBPROCESS *, int, const char *, int);
@@ -99,6 +104,11 @@ static fn_dbcount       p_dbcount;
 static fn_dbrpcinit     p_dbrpcinit;
 static fn_dbrpcparam    p_dbrpcparam;
 static fn_dbrpcsend     p_dbrpcsend;
+static fn_dbnumrets     p_dbnumrets;
+static fn_dbretdata     p_dbretdata;
+static fn_dbretlen      p_dbretlen;
+static fn_dbrettype     p_dbrettype;
+static fn_dbretname     p_dbretname;
 static fn_dbcancel      p_dbcancel;
 static fn_dbconvert     p_dbconvert;
 static fn_dbsetopt      p_dbsetopt;
@@ -177,6 +187,11 @@ static int tds_load(void) {
     DB_LOAD(p_dbrpcinit,     "dbrpcinit");
     DB_LOAD(p_dbrpcparam,    "dbrpcparam");
     DB_LOAD(p_dbrpcsend,     "dbrpcsend");
+    DB_LOAD(p_dbnumrets,     "dbnumrets");
+    DB_LOAD(p_dbretdata,     "dbretdata");
+    DB_LOAD(p_dbretlen,      "dbretlen");
+    DB_LOAD(p_dbrettype,     "dbrettype");
+    DB_LOAD(p_dbretname,     "dbretname");
     DB_LOAD(p_dbcancel,      "dbcancel");
     DB_LOAD(p_dbconvert,     "dbconvert");
     DB_LOAD(p_dbsetopt,      "dbsetopt");
@@ -1314,6 +1329,175 @@ static void tds_rs_close(void *native_rs) {
 }
 
 /* ========================================================================
+ * Callable statements
+ *
+ * SQL Server procedures with OUT and INOUT parameters are invoked through
+ * the native RPC path (dbrpcinit / dbrpcparam / dbrpcsend) rather than via
+ * sp_executesql. Each OUT / INOUT parameter is flagged with the DBRPCRETURN
+ * status bit when bound; after dbsqlok and dbresults, db-lib exposes the
+ * returned values via dbnumrets / dbretdata / dbretlen / dbrettype.
+ *
+ * The `EXEC proc ?, ?, ?, ?` SQL template the core produces is only used to
+ * extract the procedure name. We don't actually ship that text to the server
+ * — the RPC call takes the name directly.
+ * ======================================================================== */
+
+/* dbrpcparam wrapper that flags the slot as DBRPCRETURN (OUT or INOUT) and
+ * supplies a generous receive buffer. For pure OUT params (is_null=1 at call
+ * time) we send a NULL value; for INOUT we send the caller's value. The
+ * `maxlen` parameter is the max output buffer the server may populate. */
+static RETCODE tds_rpc_send_param(DBPROCESS *dbproc, const char *name,
+                                  int is_return, tds_param *p) {
+    BYTE status = is_return ? DBRPCRETURN : 0;
+    int sybtype = p->sybtype;
+    BYTE *value = NULL;
+    DBINT datalen = 0;
+    DBINT maxlen = -1;
+
+    /* Pure OUT slot the caller never touched — sybtype is 0, treat as
+     * SYBVARCHAR with a 4000-byte receive buffer for flexibility. */
+    if (sybtype == 0) {
+        sybtype = SYBVARCHAR;
+    }
+
+    if (p->is_null) {
+        /* No input value bound. For pure OUT, we must still reserve an
+         * output buffer via maxlen. */
+        if (is_return) {
+            /* db-lib requires maxlen > 0 for OUT string types. 4000 matches
+             * typical NVARCHAR(4000) return values. */
+            maxlen = (sybtype == SYBVARCHAR || sybtype == SYBCHAR ||
+                      sybtype == SYBIMAGE  || sybtype == SYBBINARY ||
+                      sybtype == SYBTEXT   || sybtype == SYBNTEXT) ? 4000 : 8;
+        }
+    } else {
+        /* Bound value — same encoding as sp_executesql path. */
+        switch (sybtype) {
+            case SYBINT4:
+                value = (BYTE *)&p->num.i32; datalen = 4; break;
+            case SYBINT8:
+                value = (BYTE *)&p->num.i64; datalen = 8; break;
+            case SYBFLT8:
+                value = (BYTE *)&p->num.dbl; datalen = 8; break;
+            case SYBVARCHAR:
+                value = p->bytes_len > 0 ? (BYTE *)p->bytes : (BYTE *)"";
+                datalen = p->bytes_len;
+                if (is_return && datalen < 4000) maxlen = 4000;
+                break;
+            case SYBNTEXT:
+            case SYBIMAGE:
+                value = p->bytes_len > 0 ? (BYTE *)p->bytes : (BYTE *)"";
+                datalen = p->bytes_len;
+                maxlen = is_return ? 0 /* MAX */ : -1;
+                break;
+            default:
+                return FAIL;
+        }
+    }
+
+    return p_dbrpcparam(dbproc, name, status, sybtype, maxlen, datalen, value);
+}
+
+static int tds_call_execute(kdbc_stmt *stmt) {
+    tds_stmt_data *sd = (tds_stmt_data *)stmt->native;
+    DBPROCESS *dbproc = sd->tc->dbproc;
+    g_last_msg[0] = '\0';
+    p_dbcancel(dbproc);
+
+    char proc_name[256];
+    static const char *const verbs[] = { "EXECUTE", "EXEC" };
+    if (!kdbc_extract_proc_name(sd->sql, verbs, 2, proc_name, sizeof(proc_name))) {
+        STMT_ERR(stmt, "MSSQL: cannot parse procedure name from '%s'", sd->sql);
+        return KDBC_ERROR;
+    }
+
+    if (p_dbrpcinit(dbproc, proc_name, 0) == FAIL) {
+        STMT_ERR(stmt, "MSSQL dbrpcinit(%s): %s", proc_name,
+                 g_last_msg[0] ? g_last_msg : "failed");
+        return KDBC_ERROR;
+    }
+
+    /* Bind every parameter. We use positional binding (name = NULL-equivalent),
+     * but db-lib accepts an empty string to mean "position by order". */
+    for (int i = 0; i < sd->param_count; i++) {
+        tds_param *p = &sd->params[i];
+        int is_return = stmt->out_params && stmt->out_params[i];
+        if (tds_rpc_send_param(dbproc, "", is_return, p) == FAIL) {
+            STMT_ERR(stmt, "MSSQL dbrpcparam[%d]: %s", i + 1,
+                     g_last_msg[0] ? g_last_msg : "failed");
+            return KDBC_ERROR;
+        }
+    }
+
+    if (p_dbrpcsend(dbproc) == FAIL) {
+        STMT_ERR(stmt, "MSSQL dbrpcsend: %s",
+                 g_last_msg[0] ? g_last_msg : "failed");
+        return KDBC_ERROR;
+    }
+    if (p_dbsqlok(dbproc) == FAIL) {
+        STMT_ERR(stmt, "MSSQL dbsqlok: %s",
+                 g_last_msg[0] ? g_last_msg : "failed");
+        return KDBC_ERROR;
+    }
+
+    /* Drain any result sets the procedure may have returned (SELECT ... inside
+     * the proc body). We don't expose those here — kdbc's call API only
+     * surfaces OUT parameters — but db-lib requires them consumed before
+     * return values become available. */
+    while (1) {
+        RETCODE rc = p_dbresults(dbproc);
+        if (rc == NO_MORE_RESULTS) break;
+        if (rc == FAIL) {
+            STMT_ERR(stmt, "MSSQL: %s",
+                     g_last_msg[0] ? g_last_msg : "dbresults failed");
+            return KDBC_ERROR;
+        }
+        while (p_dbnextrow(dbproc) != NO_MORE_ROWS) { /* drain rows */ }
+    }
+
+    /* Collect return values. dbnumrets gives the count; return slot k
+     * corresponds to the k-th parameter we bound with DBRPCRETURN. Map back
+     * to the original param index by walking out_params in order. */
+    int nrets = p_dbnumrets(dbproc);
+    if (nrets > 0 && stmt->out_params && stmt->out_values) {
+        int ret_idx = 1;  /* db-lib return slots are 1-based */
+        for (int i = 0; i < sd->param_count && ret_idx <= nrets; i++) {
+            if (!stmt->out_params[i]) continue;
+
+            BYTE *data = p_dbretdata(dbproc, ret_idx);
+            int len = p_dbretlen(dbproc, ret_idx);
+            int type = p_dbrettype(dbproc, ret_idx);
+
+            free(stmt->out_values[i]);
+            stmt->out_values[i] = NULL;
+
+            if (data && len > 0) {
+                /* dbconvert handles every TDS type → SYBCHAR, including
+                 * NUMBER/MONEY/DECIMAL that a bespoke switch would have to
+                 * duplicate. Allocate a destination sized for the worst-case
+                 * text form: 4 × source length plus a 64-byte fudge covers
+                 * DECIMAL(38,18) and GUID formatting. */
+                size_t dest_cap = (size_t)len * 4 + 64;
+                char *dest = (char *)malloc(dest_cap);
+                if (dest) {
+                    DBINT n = p_dbconvert(dbproc, type, data, len, SYBCHAR,
+                                          (BYTE *)dest, (DBINT)(dest_cap - 1));
+                    if (n > 0) {
+                        dest[n] = '\0';
+                        stmt->out_values[i] = dest;
+                    } else {
+                        free(dest);
+                    }
+                }
+            }
+            ret_idx++;
+        }
+    }
+
+    return 1;
+}
+
+/* ========================================================================
  * Driver vtable
  * ======================================================================== */
 
@@ -1365,7 +1549,7 @@ static const kdbc_driver_vtable mssql_vtable = {
     .stmt_reset             = NULL,
     .conn_gk_strategy       = NULL,
     .prepare_call           = NULL,
-    .call_execute           = NULL,
+    .call_execute           = tds_call_execute,
     .call_get_out           = NULL,
 };
 

@@ -13,6 +13,7 @@
 #define _DEFAULT_SOURCE
 
 #include "kdbc.h"
+#include <ctype.h>
 #include <string.h>
 #include <stdlib.h>
 #include <stdio.h>
@@ -286,6 +287,47 @@ static inline int sql_scan_char(const char **pp, sql_scan_state *s) {
     if (c == '-' && p[1] == '-') { s->in_line_comment = 1; (*pp)++; return 0; }
     if (c == '/' && p[1] == '*') { s->in_block_comment = 1; (*pp)++; return 0; }
     return 1; /* this is live SQL */
+}
+
+/**
+ * Extract the procedure name from a "VERB proc_name[(...)]" SQL string.
+ * Used by callable-statement drivers (MariaDB, MSSQL) to get the target
+ * procedure name from the core's rewritten CALL/EXEC text. Accepts any
+ * of the passed-in verb keywords (case-insensitive), writes up to
+ * buf_size-1 chars into buf, and NUL-terminates. Returns 1 on success,
+ * 0 if the SQL does not start with one of `verbs[]`.
+ *
+ * Identifier character set: letters, digits, underscore, $, dot, backtick,
+ * hash, and square brackets — a superset that covers MySQL/MariaDB
+ * (backticks), SQL Server (brackets, schema.proc), and MS-style temp names.
+ */
+static inline int kdbc_extract_proc_name(const char *sql,
+                                          const char *const *verbs, int n_verbs,
+                                          char *buf, size_t buf_size) {
+    while (*sql == ' ' || *sql == '\t' || *sql == '\n' || *sql == '\r') sql++;
+
+    const char *after_verb = NULL;
+    for (int i = 0; i < n_verbs; i++) {
+        size_t vlen = strlen(verbs[i]);
+        if (strncasecmp(sql, verbs[i], vlen) == 0
+            && (sql[vlen] == ' ' || sql[vlen] == '\t')) {
+            after_verb = sql + vlen;
+            break;
+        }
+    }
+    if (!after_verb) return 0;
+
+    while (*after_verb == ' ' || *after_verb == '\t') after_verb++;
+
+    size_t i = 0;
+    while (*after_verb && i < buf_size - 1 &&
+           (isalnum((unsigned char)*after_verb) || *after_verb == '_' ||
+            *after_verb == '$' || *after_verb == '.' || *after_verb == '`' ||
+            *after_verb == '#' || *after_verb == '[' || *after_verb == ']')) {
+        buf[i++] = *after_verb++;
+    }
+    buf[i] = '\0';
+    return i > 0 ? 1 : 0;
 }
 
 /**

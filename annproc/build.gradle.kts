@@ -8,14 +8,17 @@ group = parent?.group ?: IllegalStateException("Group is not defined")
 version = parent?.version ?: IllegalStateException("Version is not defined")
 description = "Stormify Processor for Database Connectivity"
 
-java.sourceCompatibility = JavaVersion.VERSION_11
-java.targetCompatibility = JavaVersion.VERSION_11
+java.sourceCompatibility = JavaVersion.VERSION_1_8
+java.targetCompatibility = JavaVersion.VERSION_1_8
 
 dependencies {
     implementation("com.google.devtools.ksp:symbol-processing-api:2.2.20-2.0.2")
 }
 
 kotlin {
+    compilerOptions {
+        jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_1_8)
+    }
     jvmToolchain(11)
 }
 

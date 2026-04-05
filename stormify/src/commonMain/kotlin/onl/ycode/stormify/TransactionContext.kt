@@ -166,7 +166,7 @@ class TransactionContext internal constructor(
 
     fun <T : Any> findById(kclass: KClass<T>, id: Any) = stormify.findById(conn, kclass, id)
 
-    fun procedure(name: String, vararg params: SPParam<*>) = stormify.procedure(conn, name, *params)
+    fun procedure(name: String, vararg args: Any?) = stormify.procedure(conn, name, *args)
 
     fun transaction(block: () -> Unit) {
         var savepoint: Savepoint? = null

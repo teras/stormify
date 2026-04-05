@@ -63,6 +63,16 @@ kotlin {
         macosX64()
     }
 
+    // Target Java 8 bytecode for the JVM artifact (matches stormify's Java 8 floor).
+    jvm {
+        compilations.all {
+            compileTaskProvider.configure {
+                compilerOptions {
+                    jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_1_8)
+                }
+            }
+        }
+    }
     jvmToolchain(11)
 
     sourceSets {
@@ -72,15 +82,27 @@ kotlin {
             }
         }
 
+        val commonTest by getting {
+            dependencies {
+                implementation(kotlin("test"))
+            }
+        }
+
         val nativeMain by getting {
             dependencies {
                 implementation("org.jetbrains.kotlinx:kotlinx-datetime:0.7.1")
-                implementation("com.ionspin.kotlin:bignum:0.3.10")
+                implementation("com.ionspin.kotlin:bignum:0.3.9")
             }
         }
 
         val linuxX64Main by getting
     }
+}
+
+// Align Java compile tasks with the Kotlin JVM 1.8 target.
+tasks.withType<JavaCompile>().configureEach {
+    sourceCompatibility = "1.8"
+    targetCompatibility = "1.8"
 }
 
 // Ensure libkdbc.a is built before any linuxX64 cinterop task runs.
@@ -97,8 +119,8 @@ android {
     }
 
     compileOptions {
-        sourceCompatibility = JavaVersion.VERSION_11
-        targetCompatibility = JavaVersion.VERSION_11
+        sourceCompatibility = JavaVersion.VERSION_1_8
+        targetCompatibility = JavaVersion.VERSION_1_8
     }
 }
 

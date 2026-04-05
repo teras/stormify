@@ -99,9 +99,10 @@ static const char  *g_user     = NULL;
 static const char  *g_password = NULL;
 
 /* Is the test database SQLite? (some tests are SQLite-specific) */
-static int is_sqlite(void) { return g_driver == KDBC_SQLITE; }
-static int is_oracle(void) { return g_driver == KDBC_ORACLE; }
-static int is_mssql(void)  { return g_driver == KDBC_MSSQL; }
+static int is_sqlite(void)   { return g_driver == KDBC_SQLITE; }
+static int is_oracle(void)   { return g_driver == KDBC_ORACLE; }
+static int is_mssql(void)    { return g_driver == KDBC_MSSQL; }
+static int is_postgres(void) { return g_driver == KDBC_POSTGRES; }
 
 /* ========================================================================
  * Helper: open a connection using global config
@@ -703,23 +704,48 @@ static void test_generated_keys(void) {
     kdbc_close(conn);
 }
 
-/* Oracle-specific: RETURNING INTO with a non-numeric primary key (VARCHAR2
- * populated by SYS_GUID()). Exercises the driver's VARCHAR2/BYTES output
- * binding path which the older INT64-only implementation could not handle.
+/* Server-generated non-numeric (UUID/GUID) primary keys via the "RETURNING
+ * clause" family of drivers (Group A): Oracle (SYS_GUID + RETURNING INTO),
+ * PostgreSQL (gen_random_uuid + RETURNING), and MSSQL (NEWID + OUTPUT
+ * INSERTED). All three drivers must correctly surface a string value
+ * through the generated-keys path.
  *
- * Skipped on other drivers because SYS_GUID() and RETURNING INTO are Oracle
- * syntax; the equivalent path on PG/MSSQL uses OUTPUT / RETURNING directly
- * on standard result columns and is covered by test_generated_keys already. */
+ * Skipped on Group B drivers (MariaDB/MySQL/SQLite): their generated-keys
+ * path goes through mysql_stmt_insert_id / sqlite3_last_insert_rowid, which
+ * can only return an AUTO_INCREMENT integer / internal rowid. A non-numeric
+ * server-side default cannot be retrieved through those APIs — client-side
+ * UUID generation is the only portable alternative there, covered by the
+ * common-level testStringPkRoundTrip. */
 static void test_generated_keys_string_pk(void) {
-    if (!is_oracle()) SKIP("Oracle-specific: SYS_GUID RETURNING");
+    if (!is_oracle() && !is_postgres() && !is_mssql())
+        SKIP("Group A only: Oracle/PG/MSSQL RETURNING-family drivers");
 
     kdbc_conn *conn = open_db();
     drop_table(conn, "kdbc_gk_uuid");
-    exec_sql(conn,
-        "CREATE TABLE kdbc_gk_uuid ("
-        "  id VARCHAR2(36) DEFAULT SYS_GUID() PRIMARY KEY, "
-        "  val VARCHAR2(100)"
-        ")");
+
+    /* Dialect-specific DDL: VARCHAR PK with a server-generated UUID default. */
+    if (is_oracle()) {
+        exec_sql(conn,
+            "CREATE TABLE kdbc_gk_uuid ("
+            "  id VARCHAR2(36) DEFAULT SYS_GUID() PRIMARY KEY, "
+            "  val VARCHAR2(100)"
+            ")");
+    } else if (is_postgres()) {
+        /* pgcrypto provides gen_random_uuid on older PG; PG 13+ has it built-in.
+         * The UUID type round-trips as text through libpq's text protocol. */
+        exec_sql(conn, "CREATE EXTENSION IF NOT EXISTS pgcrypto");
+        exec_sql(conn,
+            "CREATE TABLE kdbc_gk_uuid ("
+            "  id UUID DEFAULT gen_random_uuid() PRIMARY KEY, "
+            "  val VARCHAR(100)"
+            ")");
+    } else { /* MSSQL */
+        exec_sql(conn,
+            "CREATE TABLE kdbc_gk_uuid ("
+            "  id UNIQUEIDENTIFIER DEFAULT NEWID() PRIMARY KEY, "
+            "  val VARCHAR(100)"
+            ")");
+    }
 
     const char *cols[] = { "id" };
     kdbc_stmt *stmt = kdbc_prepare_returning(conn,
@@ -734,16 +760,18 @@ static void test_generated_keys_string_pk(void) {
     ASSERT(kdbc_next(keys) == 1, "has key row uuid");
     const char *uuid1 = kdbc_get_string(keys, 1);
     ASSERT(uuid1 != NULL, "uuid1 non-null");
-    /* SYS_GUID() returns a 32-char hex string (no hyphens) on Oracle. */
+    /* Length varies: Oracle SYS_GUID → 32 hex chars, PG gen_random_uuid and
+     * MSSQL NEWID → 36-char canonical UUID with hyphens. */
     size_t len1 = uuid1 ? strlen(uuid1) : 0;
-    ASSERT(len1 > 0 && len1 <= 36, "uuid1 length reasonable");
+    ASSERT(len1 >= 32 && len1 <= 36, "uuid1 length reasonable");
     /* Copy before closing the result (pointer tied to RS lifetime). */
     char uuid1_copy[64];
     snprintf(uuid1_copy, sizeof(uuid1_copy), "%s", uuid1 ? uuid1 : "");
     kdbc_result_close(keys);
     kdbc_stmt_close(stmt);
 
-    /* Second insert — must produce a DIFFERENT UUID (SYS_GUID is random). */
+    /* Second insert — must produce a DIFFERENT UUID (all three generators
+     * are random: SYS_GUID/gen_random_uuid/NEWID). */
     stmt = kdbc_prepare_returning(conn,
         "INSERT INTO kdbc_gk_uuid (val) VALUES (?)", cols, 1);
     kdbc_bind_string(stmt, 1, "beta");

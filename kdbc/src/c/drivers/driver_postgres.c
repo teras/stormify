@@ -1275,6 +1275,83 @@ static void pg_rs_close(void *native_rs) {
 }
 
 /* ========================================================================
+ * Callable statements
+ *
+ * PostgreSQL procedures (PG 11+, introduced by CREATE PROCEDURE / CALL) with
+ * OUT and INOUT parameters return their OUT/INOUT values as a regular result
+ * set from CALL. Each OUT/INOUT parameter becomes one column in the result,
+ * in the order declared in the procedure signature. Pure IN parameters do
+ * not appear in the output.
+ *
+ * PG 14+ is required for CALL to return OUT values via libpq — earlier
+ * versions silently discarded them.
+ *
+ * Implementation: run the prepared CALL via PQexecPrepared in text result
+ * format (so we can read arbitrary types as strings and cache them into
+ * stmt->out_values[]), then walk the output columns and map them to the
+ * corresponding OUT/INOUT param slots. The core's call_get_long / call_get_string
+ * fallback path reads from out_values[] — no per-driver call_get_out needed.
+ * ======================================================================== */
+
+static int pg_call_execute(kdbc_stmt *stmt) {
+    pg_stmt_data *sd = (pg_stmt_data *)stmt->native;
+    if (pg_ensure_prepared(sd, stmt->error, KDBC_ERR_SIZE) != KDBC_OK)
+        return KDBC_ERROR;
+
+    pg_exec_args args = pg_build_args(sd);
+    /* Text result format for simplicity — out values are parsed as strings
+     * and cached in stmt->out_values[]. */
+    PGresult *res = p_execPrepared(sd->pg, sd->stmt_name,
+                                   sd->param_count,
+                                   args.values, args.lengths, args.formats,
+                                   0 /* text result */);
+    pg_free_args(&args);
+
+    if (!res) {
+        STMT_ERR(stmt, "PostgreSQL: %s", p_errorMessage(sd->pg));
+        return KDBC_ERROR;
+    }
+
+    int status = p_resultStatus(res);
+    if (status != PGRES_TUPLES_OK && status != PGRES_COMMAND_OK) {
+        STMT_ERR(stmt, "PostgreSQL: %s", p_resultErrorMessage(res));
+        p_clear(res);
+        return KDBC_ERROR;
+    }
+
+    /* Map result columns back to OUT/INOUT param slots.
+     *
+     * PG's CALL returns one row where each column corresponds to the next
+     * OUT or INOUT parameter (IN params are skipped). Walk the params array
+     * and assign columns in order. */
+    if (status == PGRES_TUPLES_OK && p_ntuples(res) > 0
+        && stmt->out_params && stmt->out_values) {
+        int ncols = p_nfields(res);
+        int col = 0;
+        for (int i = 0; i < stmt->param_count && col < ncols; i++) {
+            if (!stmt->out_params[i]) continue;  /* skip pure IN params */
+
+            free(stmt->out_values[i]);
+            stmt->out_values[i] = NULL;
+
+            if (!p_getisnull(res, 0, col)) {
+                const char *v = p_getvalue(res, 0, col);
+                int len = p_getlength(res, 0, col);
+                stmt->out_values[i] = (char *)malloc((size_t)len + 1);
+                if (stmt->out_values[i]) {
+                    memcpy(stmt->out_values[i], v, (size_t)len);
+                    stmt->out_values[i][len] = '\0';
+                }
+            }
+            col++;
+        }
+    }
+
+    p_clear(res);
+    return 1;
+}
+
+/* ========================================================================
  * Driver vtable
  * ======================================================================== */
 
@@ -1325,7 +1402,7 @@ static const kdbc_driver_vtable postgres_vtable = {
     .stmt_reset         = NULL,
     .conn_gk_strategy   = NULL,
     .prepare_call       = NULL,
-    .call_execute       = NULL,
+    .call_execute       = pg_call_execute,
     .call_get_out       = NULL,
 };
 

@@ -28,6 +28,16 @@ kotlin {
         macosX64()
     }
     
+    // Target Java 8 bytecode for the JVM artifact.
+    jvm {
+        compilations.all {
+            compileTaskProvider.configure {
+                compilerOptions {
+                    jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_1_8)
+                }
+            }
+        }
+    }
     jvmToolchain(11)
 
     sourceSets {
@@ -48,6 +58,12 @@ kotlin {
     }
 }
 
+// Align Java compile tasks with the Kotlin JVM 1.8 target.
+tasks.withType<JavaCompile>().configureEach {
+    sourceCompatibility = "1.8"
+    targetCompatibility = "1.8"
+}
+
 android {
     namespace = "onl.ycode.logger"
     compileSdk = 34
@@ -57,8 +73,8 @@ android {
     }
     
     compileOptions {
-        sourceCompatibility = JavaVersion.VERSION_11
-        targetCompatibility = JavaVersion.VERSION_11
+        sourceCompatibility = JavaVersion.VERSION_1_8
+        targetCompatibility = JavaVersion.VERSION_1_8
     }
 }
 

@@ -80,6 +80,10 @@ object TestDDL {
 
     fun intPrimaryKey(col: String) = if (isOracle) "$col NUMBER(10) PRIMARY KEY" else "$col INT PRIMARY KEY"
 
+    /** Bounded-VARCHAR column type suitable as a primary key (so MySQL/MariaDB don't
+     *  reject a TEXT-affinity PK). Large enough to hold a 36-char UUID plus padding. */
+    fun stringPkType(size: Int = 64) = if (isOracle) "VARCHAR2($size)" else "VARCHAR($size)"
+
     fun intNotNull(col: String) = if (isOracle) "$col NUMBER(10) NOT NULL" else "$col INT NOT NULL"
 
     fun intColumn(col: String) = if (isOracle) "$col NUMBER(10)" else "$col INT"
@@ -96,6 +100,83 @@ object TestDDL {
 
     fun supportsAutoIncrement() = autoIncrementPrimaryKey("x") != null
     fun supportsHighConcurrency() = !isSqlite
+
+    /** True when the current dialect supports user-defined stored procedures with OUT/INOUT params. */
+    fun supportsStoredProcedures() = !isSqlite
+
+    /**
+     * DDL for a test stored procedure named [name] with signature
+     * `(IN x INT, IN y VARCHAR, OUT z INT, INOUT w INT)` that sets
+     * `z := x * 2` and `w := w + x`. Callers are responsible for invoking
+     * [dropProcedure] first (most dialects error on existing definitions).
+     */
+    fun createTestProcedure(name: String): String = when {
+        dialect == SqlDialect.POSTGRESQL ->
+            // PG 14+ supports OUT/INOUT in CREATE PROCEDURE.
+            """
+            CREATE PROCEDURE $name(IN x INT, IN y VARCHAR, OUT z INT, INOUT w INT)
+            LANGUAGE plpgsql AS $$
+            BEGIN
+                z := x * 2;
+                w := w + x;
+            END;
+            $$
+            """.trimIndent()
+        dialect == SqlDialect.MYSQL_OLD || dialect == SqlDialect.MYSQL_NEW ||
+                dialect == SqlDialect.MARIA_DB_OLD || dialect == SqlDialect.MARIA_DB_NEW ->
+            """
+            CREATE PROCEDURE $name(IN x INT, IN y VARCHAR(50), OUT z INT, INOUT w INT)
+            BEGIN
+                SET z = x * 2;
+                SET w = w + x;
+            END
+            """.trimIndent()
+        isOracle ->
+            // Oracle uses PL/SQL and prefers `CREATE OR REPLACE` — but we still
+            // call dropProcedure first for a clean slate in case the definition
+            // changes between test runs.
+            """
+            CREATE OR REPLACE PROCEDURE $name(
+                x IN NUMBER,
+                y IN VARCHAR2,
+                z OUT NUMBER,
+                w IN OUT NUMBER
+            ) AS
+            BEGIN
+                z := x * 2;
+                w := w + x;
+            END;
+            """.trimIndent()
+        isMssql ->
+            // SQL Server has no IN/OUT/INOUT distinction at declaration — OUTPUT
+            // covers both OUT and INOUT. We rely on the caller passing a value
+            // for INOUT and NULL (or uninitialized) for pure OUT.
+            """
+            CREATE PROCEDURE $name
+                @x INT,
+                @y VARCHAR(50),
+                @z INT OUTPUT,
+                @w INT OUTPUT
+            AS
+            BEGIN
+                SET @z = @x * 2;
+                SET @w = @w + @x;
+            END
+            """.trimIndent()
+        else -> error("Stored procedures not supported for dialect $dialect")
+    }
+
+    /** Drops the test procedure if it exists. Safe to call even if absent. */
+    fun dropProcedure(name: String) {
+        when {
+            isOracle -> try {
+                stormify.executeUpdate("DROP PROCEDURE $name")
+            } catch (_: Exception) { /* PLS-00201: does not exist — ignore */ }
+            else -> try {
+                stormify.executeUpdate("DROP PROCEDURE IF EXISTS $name")
+            } catch (_: Exception) { /* belt-and-braces */ }
+        }
+    }
 
     fun foreignKey(column: String, refTable: String, refColumn: String) =
         "FOREIGN KEY($column) REFERENCES $refTable($refColumn)"

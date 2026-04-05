@@ -7,7 +7,6 @@ package onl.ycode.stormify
 import kotlinx.atomicfu.locks.synchronized
 import onl.ycode.kdbc.*
 import onl.ycode.logger.LogManager
-import onl.ycode.stormify.SPParam.Mode.*
 import onl.ycode.stormify.SqlDialect.GeneratedKeyRetrieval
 import onl.ycode.stormify.TypeUtils.castTo
 import kotlin.reflect.KClass
@@ -617,27 +616,51 @@ open class Stormify(val dataSource: DataSource, vararg registrars: EntityRegistr
 
     // --- Stored Procedures ---
 
-    /** Executes a stored procedure with IN/OUT/INOUT parameters. */
-    fun procedure(conn: Connection?, name: String, vararg params: SPParam<*>) {
+    /**
+     * Executes a stored procedure with IN / OUT / INOUT parameters.
+     *
+     * Each [args] entry is either:
+     *  - an [Sp.Out] or [Sp.InOut] reference that the caller holds, to be
+     *    populated after execution, OR
+     *  - an [Sp.In] wrapper, OR
+     *  - any other value — automatically wrapped as [Sp.In].
+     *
+     * After the call returns, OUT and INOUT refs carry the typed `value`
+     * produced by the procedure.
+     */
+    fun procedure(name: String, vararg args: Any?) = procedure(null, name, *args)
+
+    internal fun procedure(conn: Connection?, name: String, vararg args: Any?) {
         val shouldClose = conn == null
         val connection = conn ?: dataSource.getConnection()
+        val params: Array<Sp> = Array(args.size) { i ->
+            val a = args[i]
+            if (a is Sp) a else Sp.In(a)
+        }
         try {
             val placeholders: String = nCopies("?", ", ", params.size)
             val statement = "CALL $name($placeholders)"
             `!dbLog`(statement, params)
             connection.prepareCall("{$statement}").use { cs ->
                 for (i in params.indices) {
-                    val p: SPParam<*> = params[i]
-                    if (p.mode === OUT || p.mode === INOUT)
-                        cs.registerOutParameter(i + 1, p.type)
-                    if (p.mode === IN || p.mode === INOUT)
-                        cs.setObject(i + 1, p.value)
+                    when (val p = params[i]) {
+                        is Sp.In -> cs.setObject(i + 1, p.value)
+                        is Sp.Out<*> -> cs.registerOutParameter(i + 1, p.type)
+                        is Sp.InOut<*> -> {
+                            cs.registerOutParameter(i + 1, p.type)
+                            cs.setObject(i + 1, p.input)
+                        }
+                    }
                 }
                 cs.execute()
                 for (i in params.indices) {
-                    val p: SPParam<*> = params[i]
-                    if (p.mode === OUT || p.mode === INOUT)
-                        p.result = TypeUtils.castTo(p.type, cs.getObject(i + 1, p.type), this)
+                    when (val p = params[i]) {
+                        is Sp.In -> { /* no post-execute state */ }
+                        is Sp.Out<*> ->
+                            p.assign(castTo(p.type, cs.getObject(i + 1, p.type), this))
+                        is Sp.InOut<*> ->
+                            p.assign(castTo(p.type, cs.getObject(i + 1, p.type), this))
+                    }
                 }
             }
         } catch (e: Throwable) {

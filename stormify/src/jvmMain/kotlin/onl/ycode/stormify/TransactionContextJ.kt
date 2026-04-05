@@ -41,7 +41,7 @@ class TransactionContextJ(private val ctx: TransactionContext) {
 
     fun <T : Any> findById(baseClass: Class<T>, id: Any) = stormify.findById(connection, baseClass.kotlin, id)
 
-    fun procedure(name: String, vararg params: SPParam<*>) = stormify.procedure(connection, name, *params)
+    fun procedure(name: String, vararg args: Any?) = stormify.procedure(connection, name, *args)
 
     internal fun start(block: Consumer<TransactionContextJ>) = ctx.start { block.accept(this@TransactionContextJ) }
 

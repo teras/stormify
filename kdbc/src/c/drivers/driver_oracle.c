@@ -339,7 +339,9 @@ typedef struct {
     ora_conn  *oc;
     dpiStmt   *stmt;
     int        param_count;
-    dpiVar   **vars;       /* bound variables (one per param) */
+    dpiVar   **vars;                /* bound variables (one per param) */
+    dpiData  **var_data;            /* dpiData pointer into each var's internal buffer */
+    unsigned int *var_native_types; /* DPI_NATIVE_TYPE_* per slot, for OUT readback */
     /* RETURNING INTO support (Oracle 12c+) */
     dpiVar    *ret_var;    /* OUT variable for RETURNING INTO :ret */
     int        has_returning;
@@ -408,6 +410,8 @@ static void *ora_prepare(kdbc_conn *conn, const char *native_sql,
     free(final_sql);
     if (sd->param_count > 0) {
         sd->vars = (dpiVar **)calloc(sd->param_count, sizeof(dpiVar *));
+        sd->var_data = (dpiData **)calloc(sd->param_count, sizeof(dpiData *));
+        sd->var_native_types = (unsigned int *)calloc(sd->param_count, sizeof(unsigned int));
     }
 
     /* Create OUT variable for RETURNING INTO.
@@ -455,6 +459,8 @@ static void ora_stmt_close_fn(void *native_stmt, void *native_conn) {
             if (sd->vars[i]) p_var_release(sd->vars[i]);
         free(sd->vars);
     }
+    free(sd->var_data);
+    free(sd->var_native_types);
     if (sd->ret_var) p_var_release(sd->ret_var);
     p_stmt_close(sd->stmt, NULL, 0);
     p_stmt_release(sd->stmt);
@@ -493,6 +499,8 @@ static dpiData *ora_create_and_bind_var(kdbc_stmt *stmt, int idx,
         return NULL;
     }
 
+    if (sd->var_native_types) sd->var_native_types[i] = natType;
+    if (sd->var_data) sd->var_data[i] = data;
     return data;
 }
 
@@ -927,6 +935,39 @@ static long ora_read_lob_into_strbuf(kdbc_result *rs, dpiLob *lob) {
     return (long)len;
 }
 
+/* Format a scalar dpiData value into `buf` as UTF-8 text, for the narrow
+ * subset of native types we bind via ora_create_and_bind_var. Returns a
+ * pointer to the text (either `buf` for numeric/boolean, or the dpiData's
+ * asBytes.ptr for BYTES) and writes the length into *out_len. NULL on
+ * unsupported types (caller should treat as "cannot stringify"). */
+static const char *ora_format_scalar(const dpiData *data, unsigned int nt,
+                                     char *buf, size_t buf_size, int *out_len) {
+    switch (nt) {
+        case DPI_NATIVE_TYPE_BYTES:
+            *out_len = (int)data->value.asBytes.length;
+            return data->value.asBytes.ptr;
+        case DPI_NATIVE_TYPE_INT64:
+            *out_len = snprintf(buf, buf_size, "%lld", (long long)data->value.asInt64);
+            return buf;
+        case DPI_NATIVE_TYPE_UINT64:
+            *out_len = snprintf(buf, buf_size, "%llu",
+                                (unsigned long long)data->value.asUint64);
+            return buf;
+        case DPI_NATIVE_TYPE_DOUBLE:
+            *out_len = snprintf(buf, buf_size, "%.17g", data->value.asDouble);
+            return buf;
+        case DPI_NATIVE_TYPE_FLOAT:
+            *out_len = snprintf(buf, buf_size, "%.7g", (double)data->value.asFloat);
+            return buf;
+        case DPI_NATIVE_TYPE_BOOLEAN:
+            if (data->value.asBoolean) { *out_len = 4; return "true"; }
+            else                       { *out_len = 5; return "false"; }
+        default:
+            *out_len = 0;
+            return NULL;
+    }
+}
+
 static const char *ora_rs_get_string(kdbc_result *rs, int col) {
     ora_result_set *ors = (ora_result_set *)rs->native;
     unsigned int nt;
@@ -934,35 +975,23 @@ static const char *ora_rs_get_string(kdbc_result *rs, int col) {
     if (!data || data->isNull) { rs->last_null = 1; return NULL; }
     rs->last_null = 0;
 
-    switch (nt) {
-        case DPI_NATIVE_TYPE_BYTES: {
-            unsigned int n = data->value.asBytes.length;
-            if (kdbc_ensure_strbuf(rs, n + 1) != 0) return NULL;
-            memcpy(rs->str_buf, data->value.asBytes.ptr, n);
-            rs->str_buf[n] = '\0';
-            return rs->str_buf;
-        }
-        case DPI_NATIVE_TYPE_LOB: {
-            if (ora_read_lob_into_strbuf(rs, data->value.asLOB) < 0) return NULL;
-            return rs->str_buf;
-        }
-        case DPI_NATIVE_TYPE_INT64:
-            snprintf(ors->conv_buf, sizeof(ors->conv_buf), "%lld",
-                     (long long)data->value.asInt64);
-            return ors->conv_buf;
-        case DPI_NATIVE_TYPE_DOUBLE:
-            snprintf(ors->conv_buf, sizeof(ors->conv_buf), "%.17g",
-                     data->value.asDouble);
-            return ors->conv_buf;
-        case DPI_NATIVE_TYPE_FLOAT:
-            snprintf(ors->conv_buf, sizeof(ors->conv_buf), "%.7g",
-                     (double)data->value.asFloat);
-            return ors->conv_buf;
-        case DPI_NATIVE_TYPE_BOOLEAN:
-            return data->value.asBoolean ? "true" : "false";
-        default:
-            return NULL;
+    /* BYTES is large-arbitrary (CLOB-ish) and needs the per-result str_buf
+     * so the returned pointer stays valid across subsequent column getters.
+     * LOB needs the same buffer for its streamed read. Everything else is
+     * small enough to land in the per-result conv_buf via ora_format_scalar. */
+    if (nt == DPI_NATIVE_TYPE_BYTES) {
+        unsigned int n = data->value.asBytes.length;
+        if (kdbc_ensure_strbuf(rs, n + 1) != 0) return NULL;
+        memcpy(rs->str_buf, data->value.asBytes.ptr, n);
+        rs->str_buf[n] = '\0';
+        return rs->str_buf;
     }
+    if (nt == DPI_NATIVE_TYPE_LOB) {
+        if (ora_read_lob_into_strbuf(rs, data->value.asLOB) < 0) return NULL;
+        return rs->str_buf;
+    }
+    int out_len = 0;
+    return ora_format_scalar(data, nt, ors->conv_buf, sizeof(ors->conv_buf), &out_len);
 }
 
 static const void *ora_rs_get_blob(kdbc_result *rs, int col, size_t *out_len) {
@@ -1050,6 +1079,93 @@ static int ora_rs_get_time(kdbc_result *rs, int col,
 }
 
 /* ========================================================================
+ * Callable statements
+ *
+ * The core rewrites stored procedure calls to `BEGIN proc(:1, :2, :3, :4); END;`
+ * and then through the normal prepare/bind path. ODPI-C's dpiStmt_execute fills
+ * OUT and INOUT dpiVars automatically during execute — the driver does not need
+ * an explicit OUT direction flag; ODPI-C figures it out from the PL/SQL itself.
+ *
+ * Flow:
+ *  1. At bind time, IN / INOUT params already have a dpiVar bound via
+ *     ora_create_and_bind_var (via the normal bind_int / bind_string path).
+ *  2. Pure OUT params have `out_params[i] == 1` but no bound var yet (the
+ *     Kotlin-side `registerOutParameter` only flips the flag). We detect
+ *     these and bind a default VARCHAR2(4000)/BYTES var — Oracle implicitly
+ *     converts any OUT column value to text for us.
+ *  3. Execute the PL/SQL block via dpiStmt_execute.
+ *  4. For each OUT/INOUT slot, read the resulting value via dpiData and
+ *     cache it as a string in stmt->out_values[] so the core's
+ *     kdbc_call_get_long / kdbc_call_get_string helpers can parse it.
+ *
+ * Format buffer is shared with a stack scratch area — values large enough to
+ * overflow (CLOB-sized outputs) would need special handling, but the current
+ * 4000-byte VARCHAR2 buffer covers every realistic scalar OUT param.
+ * ======================================================================== */
+
+static int ora_call_execute(kdbc_stmt *stmt) {
+    ora_stmt_data *sd = (ora_stmt_data *)stmt->native;
+
+    /* Ensure every OUT slot has a bound dpiVar. Pure OUT params were flagged
+     * via out_params[i]=1 but never went through a bind_X call, so sd->vars[i]
+     * is still NULL. Create a default VARCHAR2(4000)/BYTES receive buffer —
+     * Oracle implicitly converts any scalar OUT column value to text for us.
+     * INOUT params already have a typed var from the IN bind and we leave
+     * them alone; ODPI-C populates the same var during execute. */
+    if (stmt->out_params) {
+        for (int i = 0; i < sd->param_count; i++) {
+            if (stmt->out_params[i] && sd->vars[i] == NULL) {
+                dpiData *data = ora_create_and_bind_var(
+                    stmt, i + 1, DPI_ORACLE_TYPE_VARCHAR, DPI_NATIVE_TYPE_BYTES, 4000);
+                if (!data) return KDBC_ERROR;
+                data->isNull = 1;
+            }
+        }
+    }
+
+    unsigned int mode = sd->oc->autocommit ?
+        DPI_MODE_EXEC_COMMIT_ON_SUCCESS : DPI_MODE_EXEC_DEFAULT;
+    unsigned int numQueryCols = 0;
+    if (p_stmt_execute(sd->stmt, mode, &numQueryCols) != DPI_SUCCESS) {
+        STMT_ERR(stmt, "Oracle execute: %s", ora_get_error());
+        return KDBC_ERROR;
+    }
+
+    /* Read back OUT / INOUT values and cache them as strings in out_values[].
+     *
+     * For PL/SQL OUT params, ODPI-C writes the result directly into the
+     * dpiData struct we obtained at dpiConn_newVar time — that's what
+     * sd->var_data[i] points to. (dpiVar_getReturnedData is specifically for
+     * DML RETURNING clauses, not for PL/SQL OUT binds.)
+     *
+     * We dispatch on var_native_types[i] to read the right union member. */
+    if (stmt->out_params && stmt->out_values && sd->var_native_types && sd->var_data) {
+        for (int i = 0; i < sd->param_count; i++) {
+            if (!stmt->out_params[i] || !sd->var_data[i]) continue;
+
+            dpiData *data = sd->var_data[i];
+            free(stmt->out_values[i]);
+            stmt->out_values[i] = NULL;
+            if (data->isNull) continue;
+
+            char buf[64];
+            int srclen = 0;
+            const char *src = ora_format_scalar(data, sd->var_native_types[i],
+                                                buf, sizeof(buf), &srclen);
+            if (src && srclen > 0) {
+                stmt->out_values[i] = (char *)malloc((size_t)srclen + 1);
+                if (stmt->out_values[i]) {
+                    memcpy(stmt->out_values[i], src, (size_t)srclen);
+                    stmt->out_values[i][srclen] = '\0';
+                }
+            }
+        }
+    }
+
+    return 1;
+}
+
+/* ========================================================================
  * Driver vtable
  * ======================================================================== */
 
@@ -1100,7 +1216,7 @@ static const kdbc_driver_vtable oracle_vtable = {
     .stmt_reset         = NULL,
     .conn_gk_strategy   = ora_conn_gk_strategy,
     .prepare_call       = NULL,
-    .call_execute       = NULL,
+    .call_execute       = ora_call_execute,
     .call_get_out       = NULL,
 };
 
