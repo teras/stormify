@@ -3,6 +3,7 @@ plugins {
     kotlin("multiplatform")
     id("com.android.library")
     id("org.jetbrains.kotlinx.atomicfu") version "0.30.0-beta"
+    id("com.google.devtools.ksp") version "2.2.20-2.0.2"
 }
 
 group = parent?.group ?: IllegalStateException("Group is not defined")
@@ -171,4 +172,22 @@ tasks.withType<Test> {
     val testDb = System.getProperty("stormify.test.db") ?: "sqlite"
     systemProperty("stormify.test.db", testDb)
     systemProperty("stormify.test.config", System.getProperty("stormify.test.config") ?: "")
+}
+
+// Run the annproc KSP processor against the commonTest entities so that native test targets
+// (which lack reflection-based entity discovery) get a generated EntityRegistrar. The generated
+// object is `db.stormify.GeneratedEntities` and is registered explicitly by the test factories.
+dependencies {
+    add("kspCommonMainMetadata", project(":annproc"))
+    add("kspLinuxX64Test", project(":annproc"))
+}
+
+// Make the KSP-generated sources visible to the common test source set so entity classes
+// can see the GeneratedEntities object on native targets.
+kotlin.sourceSets.named("linuxX64Test") {
+    kotlin.srcDir("build/generated/ksp/linuxX64/linuxX64Test/kotlin")
+}
+
+tasks.matching { it.name == "compileTestKotlinLinuxX64" }.configureEach {
+    dependsOn("kspTestKotlinLinuxX64")
 }

@@ -102,6 +102,8 @@ struct kdbc_result {
     /* String conversion buffer (reusable) */
     char       *str_buf;
     size_t      str_buf_cap;
+    /* Synthetic result (native == NULL) column name — owned, freed on close */
+    char       *synthetic_col_name;
     char        error[KDBC_ERR_SIZE];
 };
 

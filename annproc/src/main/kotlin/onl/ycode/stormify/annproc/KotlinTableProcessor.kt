@@ -7,10 +7,15 @@ import com.google.devtools.ksp.KspExperimental
 import com.google.devtools.ksp.processing.*
 import com.google.devtools.ksp.symbol.KSAnnotated
 import com.google.devtools.ksp.symbol.KSClassDeclaration
+import com.google.devtools.ksp.symbol.KSPropertyDeclaration
 import java.io.Writer
 
 private const val DB_TABLE = "onl.ycode.stormify.DbTable"
 private const val ENTITY = "javax.persistence.Entity"
+private const val DB_FIELD = "onl.ycode.stormify.DbField"
+private const val JPA_ID = "javax.persistence.Id"
+private const val JPA_COLUMN = "javax.persistence.Column"
+private const val JPA_JOIN_COLUMN = "javax.persistence.JoinColumn"
 
 class KotlinTableProcessorProvider : SymbolProcessorProvider {
     override fun create(environment: SymbolProcessorEnvironment): SymbolProcessor = KotlinTableProcessor(environment)
@@ -19,8 +24,25 @@ class KotlinTableProcessorProvider : SymbolProcessorProvider {
 class KotlinTableProcessor(private val env: SymbolProcessorEnvironment) : SymbolProcessor {
 
     override fun process(resolver: Resolver): List<KSAnnotated> {
-        val entities = resolver.getSymbolsWithAnnotation(DB_TABLE).filterIsInstance<KSClassDeclaration>().toSet() +
+        // Classes explicitly marked as entities.
+        val explicit = resolver.getSymbolsWithAnnotation(DB_TABLE).filterIsInstance<KSClassDeclaration>().toSet() +
                 resolver.getSymbolsWithAnnotation(ENTITY).filterIsInstance<KSClassDeclaration>().toSet()
+
+        // Classes that have at least one property carrying an entity-relevant annotation
+        // (@DbField / @Id / @Column / @JoinColumn) are also considered entities, so tests that
+        // rely on auto-derived table names still work on native targets without reflection.
+        val implicit = sequenceOf(DB_FIELD, JPA_ID, JPA_COLUMN, JPA_JOIN_COLUMN)
+            .flatMap { resolver.getSymbolsWithAnnotation(it) }
+            .mapNotNull { sym ->
+                when (sym) {
+                    is KSPropertyDeclaration -> sym.parentDeclaration as? KSClassDeclaration
+                    is KSClassDeclaration -> sym
+                    else -> null
+                }
+            }
+            .toSet()
+
+        val entities = (explicit + implicit).filter { it.classKind.name == "CLASS" }.toSet()
         if (entities.isNotEmpty())
             generateRegistrar(entities)
         return emptyList()
@@ -46,7 +68,8 @@ class KotlinTableProcessor(private val env: SymbolProcessorEnvironment) : Symbol
                 val className = entity.simpleName.asString()
                 val tableName = EntityProperty.findTableName(entity)
                 val props = EntityProperty.find(entity)
-                writeEntityMeta(w, className, tableName, props)
+                val typeParams = entity.typeParameters.size
+                writeEntityMeta(w, className, tableName, props, typeParams)
             }
 
             w.write("    }\n")
@@ -58,11 +81,22 @@ class KotlinTableProcessor(private val env: SymbolProcessorEnvironment) : Symbol
         w: Writer,
         className: String,
         tableName: String,
-        properties: Collection<EntityProperty>
+        properties: Collection<EntityProperty>,
+        typeParamCount: Int
     ) {
-        w.write("        EntityMeta.register(EntityMeta(\n")
-        w.write("            ${className}::class,\n")
-        w.write("            { ${className}() },\n")
+        // For generic classes we fix the type arguments to `Any?` so the property setters
+        // can assign through without running into star-projection write restrictions.
+        val typeArgs = if (typeParamCount == 0) "" else
+            "<" + List(typeParamCount) { "kotlin.Any?" }.joinToString(", ") + ">"
+        val fullClassName = "$className$typeArgs"
+        val kclassExpr = if (typeArgs.isEmpty())
+            "${className}::class"
+        else
+            "@Suppress(\"UNCHECKED_CAST\") (${className}::class as kotlin.reflect.KClass<$fullClassName>)"
+
+        w.write("        EntityMeta.register(EntityMeta<$fullClassName>(\n")
+        w.write("            $kclassExpr,\n")
+        w.write("            { $fullClassName() },\n")
         w.write("            listOf(\n")
 
         properties.forEachIndexed { i, prop ->
@@ -70,13 +104,19 @@ class KotlinTableProcessor(private val env: SymbolProcessorEnvironment) : Symbol
             w.write("                PropertyMeta(\n")
             w.write("                    \"${prop.name}\", ${prop.type}::class, ${prop.isReference},\n")
             w.write("                    { it.${prop.name} },\n")
-            w.write("                    { e, v, s -> e.${prop.name} = castTo(${prop.type}::class, v, s)")
-            if (!prop.nullable) w.write(" ?: throw IllegalArgumentException(\"${prop.name} cannot be null in $className\")")
-            w.write(" },\n")
+            // Setter uses an unchecked cast to the full property type so that generic
+            // types (e.g. List<Foo>) and type parameters assign cleanly on strict-typing
+            // targets like Kotlin/Native.
+            val fullType = prop.fullType
+            val notNullSuffix = if (!prop.nullable)
+                " ?: throw IllegalArgumentException(\"${prop.name} cannot be null in $className\")"
+            else ""
+            w.write("                    @Suppress(\"UNCHECKED_CAST\") { e, v, s -> e.${prop.name} = (castTo(${prop.type}::class, v, s) as? $fullType)$notNullSuffix },\n")
             w.write("                    ${if (prop.dbname != prop.name) "\"${prop.dbname}\"" else "null"},\n")
             w.write("                    ${prop.primary},\n")
             w.write("                    ${if (prop.sequence.isNotBlank()) "\"${prop.sequence}\"" else "null"},\n")
-            w.write("                    ${prop.insertable}, ${prop.updatable}, false\n")
+            // Order: isAutoIncrement, isCreatable, isUpdatable, isTransient
+            w.write("                    ${prop.autoIncrement}, ${prop.insertable}, ${prop.updatable}, false\n")
             w.write("                )$comma\n")
         }
 

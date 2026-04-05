@@ -21,6 +21,50 @@ object TestDDL {
         else -> "TEXT"
     }
 
+    fun blobType() = when (dialect) {
+        SqlDialect.POSTGRESQL -> "BYTEA"
+        SqlDialect.SQL_SERVER_NEW, SqlDialect.SQL_SERVER_OLD -> "VARBINARY(MAX)"
+        else -> "BLOB"
+    }
+
+    // --- Portable numeric type aliases ---
+    // Some dialects lack SMALLINT/INT/BIGINT/REAL/DOUBLE PRECISION as native types
+    // (notably Oracle, which maps everything through NUMBER / BINARY_*).
+
+    fun smallIntType() = when {
+        isOracle -> "NUMBER(5)"
+        else -> "SMALLINT"
+    }
+    fun intType() = when {
+        isOracle -> "NUMBER(10)"
+        else -> "INT"
+    }
+    // Oracle NUMBER(19) has 19 digits of precision but ODPI-C rounds through a
+    // non-exact internal format when converting between int64 and NUMBER at precision
+    // boundaries — using NUMBER(38) (Oracle's max precision) avoids the Long.MAX_VALUE
+    // round-trip corruption.
+    fun bigIntType() = if (isOracle) "NUMBER(38)" else "BIGINT"
+    fun floatType() = when {
+        isOracle -> "BINARY_FLOAT"
+        isMssql -> "REAL"
+        else -> "REAL"
+    }
+    fun doubleType() = when {
+        isOracle -> "BINARY_DOUBLE"
+        isMssql -> "FLOAT(53)" // SQL Server's 64-bit float
+        else -> "DOUBLE PRECISION"
+    }
+
+    /**
+     * Large text column type for values that exceed VARCHAR2(4000) on Oracle. Uses CLOB
+     * on Oracle/DB2-style databases and plain TEXT/NVARCHAR(MAX) everywhere else.
+     */
+    fun largeTextType() = when {
+        isOracle -> "CLOB"
+        isMssql -> "NVARCHAR(MAX)"
+        else -> "TEXT"
+    }
+
     fun timestampType() = if (isMssql) "DATETIME2" else "TIMESTAMP"
 
     fun intPrimaryKey(col: String) = if (isOracle) "$col NUMBER(10) PRIMARY KEY" else "$col INT PRIMARY KEY"
@@ -50,14 +94,25 @@ object TestDDL {
     fun selectExpr(expr: String) = if (isOracle) "SELECT $expr FROM dual" else "SELECT $expr"
 
     fun dropTable(name: String) {
-        if (isOracle) {
-            try {
-                stormify.executeUpdate("DROP TABLE $name")
+        when {
+            isOracle -> try {
+                stormify.executeUpdate("DROP TABLE $name CASCADE CONSTRAINTS")
             } catch (_: Exception) {
                 // ORA-00942: table or view does not exist — safe to ignore on Oracle
             }
-        } else {
-            stormify.executeUpdate("DROP TABLE IF EXISTS $name")
+            dialect == SqlDialect.POSTGRESQL ->
+                stormify.executeUpdate("DROP TABLE IF EXISTS $name CASCADE")
+            dialect == SqlDialect.MYSQL_OLD || dialect == SqlDialect.MYSQL_NEW ||
+                    dialect == SqlDialect.MARIA_DB_OLD || dialect == SqlDialect.MARIA_DB_NEW -> {
+                // MySQL/MariaDB have no `DROP TABLE ... CASCADE` syntax; bypass FK checks
+                // for the duration of a single transaction so SET and DROP share a connection.
+                stormify.transaction {
+                    executeUpdate("SET FOREIGN_KEY_CHECKS = 0")
+                    executeUpdate("DROP TABLE IF EXISTS $name")
+                    executeUpdate("SET FOREIGN_KEY_CHECKS = 1")
+                }
+            }
+            else -> stormify.executeUpdate("DROP TABLE IF EXISTS $name")
         }
     }
 }

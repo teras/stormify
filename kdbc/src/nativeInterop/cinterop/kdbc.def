@@ -1,0 +1,11 @@
+package = onl.ycode.kdbc.cinterop
+headers = kdbc.h
+headerFilter = kdbc.h
+
+# libkdbc.a is built by the :kdbc:buildNativeKdbc gradle task and statically linked into
+# the Kotlin/Native binary. The absolute path to it is injected from build.gradle.kts via
+# cinterop extraOpts, so we do not repeat it here.
+# The database client libraries (libpq, libmariadb, libsqlite3, etc.) are loaded at runtime
+# via dlopen by the C library itself — only -ldl is required at link time.
+staticLibraries = libkdbc.a
+linkerOpts.linux_x64 = -ldl

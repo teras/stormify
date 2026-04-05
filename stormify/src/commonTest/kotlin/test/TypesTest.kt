@@ -10,8 +10,10 @@ class TypesTest {
     fun testNumericTypes() = withDb("NUMERIC") { s ->
         TestDDL.dropTable("all_types")
         s.executeUpdate(TestDDL.createTable("all_types",
-            "${TestDDL.intPrimaryKey("id")}, byte_val SMALLINT, short_val SMALLINT, int_val INT, long_val BIGINT" +
-                    ", float_val REAL, double_val DOUBLE PRECISION, bool_val SMALLINT, string_val ${TestDDL.textType()}"))
+            "${TestDDL.intPrimaryKey("id")}, byte_val ${TestDDL.smallIntType()}, short_val ${TestDDL.smallIntType()}, " +
+                    "int_val ${TestDDL.intType()}, long_val ${TestDDL.bigIntType()}, " +
+                    "float_val ${TestDDL.floatType()}, double_val ${TestDDL.doubleType()}, " +
+                    "bool_val ${TestDDL.smallIntType()}, string_val ${TestDDL.textType()}"))
 
         val e = AllTypesEntity(id = 1, byteVal = 42, shortVal = 1000, intVal = 123456,
             longVal = 9876543210L, floatVal = 3.14f, doubleVal = 2.718281828,
@@ -33,13 +35,18 @@ class TypesTest {
     fun testBoundaryValues() = withDb("BOUNDARY") { s ->
         TestDDL.dropTable("all_types")
         s.executeUpdate(TestDDL.createTable("all_types",
-            "${TestDDL.intPrimaryKey("id")}, byte_val SMALLINT, short_val SMALLINT, int_val INT, long_val BIGINT" +
-                    ", float_val REAL, double_val DOUBLE PRECISION, bool_val SMALLINT, string_val ${TestDDL.textType()}"))
+            "${TestDDL.intPrimaryKey("id")}, byte_val ${TestDDL.smallIntType()}, short_val ${TestDDL.smallIntType()}, " +
+                    "int_val ${TestDDL.intType()}, long_val ${TestDDL.bigIntType()}, " +
+                    "float_val ${TestDDL.floatType()}, double_val ${TestDDL.doubleType()}, " +
+                    "bool_val ${TestDDL.smallIntType()}, string_val ${TestDDL.textType()}"))
         s.create(AllTypesEntity(id = 2, intVal = Int.MAX_VALUE, longVal = Long.MAX_VALUE, stringVal = ""))
         val found = s.findById<AllTypesEntity>(2)!!
         assertEquals(Int.MAX_VALUE, found.intVal)
         assertEquals(Long.MAX_VALUE, found.longVal)
-        assertEquals("", found.stringVal)
+        // Oracle stores empty strings as NULL, so we accept either — dedicated
+        // empty-string semantics live in testEmptyStringVsNull.
+        val sv = found.stringVal
+        assertTrue(sv == null || sv.isEmpty(), "Expected null or empty, got: $sv")
 
         s.create(AllTypesEntity(id = 3, intVal = Int.MIN_VALUE, longVal = Long.MIN_VALUE, doubleVal = -999.999))
         val neg = s.findById<AllTypesEntity>(3)!!
@@ -104,7 +111,7 @@ class TypesTest {
     fun testLargeStrings() = withDb("LARGE-STRINGS") { s ->
         TestDDL.dropTable("large_test")
         s.executeUpdate(TestDDL.createTable("large_test",
-            "${TestDDL.intPrimaryKey("id")}, value ${TestDDL.textType()}"))
+            "${TestDDL.intPrimaryKey("id")}, value ${TestDDL.largeTextType()}"))
 
         val large = "X".repeat(10000)
         s.executeUpdate("INSERT INTO large_test (id, value) VALUES (?, ?)", 1, large)
@@ -129,7 +136,7 @@ class TypesTest {
     fun testBlobAndClob() = withDb("BLOB-CLOB") { s ->
         TestDDL.dropTable("blob_test")
         s.executeUpdate(TestDDL.createTable("blob_test",
-            "${TestDDL.intPrimaryKey("id")}, blob_data BLOB, clob_as_chars ${TestDDL.textType()}, clob_as_string ${TestDDL.textType()}"))
+            "${TestDDL.intPrimaryKey("id")}, blob_data ${TestDDL.blobType()}, clob_as_chars ${TestDDL.textType()}, clob_as_string ${TestDDL.textType()}"))
 
         val binaryData = byteArrayOf(0, 1, 2, -1, 127, -128, 42)
         val charData = "Hello char[] CLOB Ελληνικά".toCharArray()

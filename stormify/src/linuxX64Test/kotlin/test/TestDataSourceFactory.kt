@@ -2,67 +2,65 @@
 // (C) Panayotis Katsaloulis
 package test
 
+import db.stormify.GeneratedEntities
+import kotlinx.cinterop.ExperimentalForeignApi
+import kotlinx.cinterop.toKString
+import onl.ycode.kdbc.KdbcDataSource
 import onl.ycode.kdbc.PoolConfig
-import onl.ycode.kdbc.sqlite.SqliteDataSource
-// Uncomment when PostgreSQL and MariaDB native drivers are ready:
-// import onl.ycode.kdbc.postgres.PostgresDataSource
-// import onl.ycode.kdbc.mariadb.MariadbDataSource
+import platform.posix.getenv
+import platform.posix.getpid
+import platform.posix.unlink
 
 /**
- * Native (Linux x64) implementation providing KDBC-based DataSources for testing.
+ * Native (Linux x64) implementation of [createTestDatabases].
  *
- * Currently tests with:
- * - SQLite (in-memory) - lightweight, works natively
+ * Picks a single target database based on the `STORMIFY_TEST_DB` environment variable
+ * (mirrors the `stormify.test.db` system property used on JVM). When the variable is
+ * unset or equals "sqlite", uses an in-memory SQLite database with no external dependencies.
  *
- * Planned support (when native drivers are stable):
- * - PostgreSQL (requires libpq)
- * - MariaDB (requires libmariadb)
+ * For network databases, start the corresponding Docker container from
+ * `testing/docker-compose.yml` before running the tests. Credentials and ports match
+ * that file.
  */
+@OptIn(ExperimentalForeignApi::class)
 actual fun createTestDatabases(): List<TestDatabase> {
-    val databases = mutableListOf<TestDatabase>()
+    // Native targets have no reflection, so test entities must be registered explicitly
+    // via the annproc-generated EntityRegistrar.
+    GeneratedEntities.register()
 
-    // SQLite shared in-memory database (persists across connections)
-    databases.add(
-        TestDatabase(
-            name = "SQLite Native (shared memory)",
-            dataSource = SqliteDataSource(
-                url = "file::memory:?cache=shared",
-                poolConfig = PoolConfig(enabled = true, minConnections = 1, maxConnections = 5)
-            )
-        )
-    )
+    val dbName = (getenv("STORMIFY_TEST_DB")?.toKString() ?: "sqlite").lowercase().ifEmpty { "sqlite" }
 
-    // TODO: Add PostgreSQL when native driver is ready
-    // Requires libpq shared library
-    // databases.add(
-    //     TestDatabase(
-    //         name = "PostgreSQL Native",
-    //         dataSource = PostgresDataSource(
-    //             host = "localhost",
-    //             port = 5432,
-    //             database = "stormify_test",
-    //             user = "test",
-    //             password = "test",
-    //             poolConfig = PoolConfig(enabled = false)
-    //         )
-    //     )
-    // )
+    val (displayName, url) = when (dbName) {
+        "sqlite" -> {
+            // Use a temp-file DB rather than `:memory:` so every connection obtained from the
+            // pool-disabled data source sees the same schema. `file::memory:?cache=shared`
+            // would also work but depends on the embedded SQLite version supporting shared
+            // cache via URI, which is not guaranteed across distributions.
+            val path = "/tmp/stormify_native_test_${getpid()}.db"
+            unlink(path) // start clean
+            "SQLite (file: $path)" to "jdbc:sqlite:$path"
+        }
+        "postgresql", "postgres" -> "PostgreSQL Native" to
+                "jdbc:postgresql://localhost:15432/stormify_test"
+        "mysql" -> "MySQL Native" to
+                "jdbc:mysql://localhost:13306/stormify_test"
+        "mariadb" -> "MariaDB Native" to
+                "jdbc:mariadb://localhost:13307/stormify_test"
+        "oracle" -> "Oracle Native" to
+                "jdbc:oracle:thin:@localhost:11521/XEPDB1"
+        "mssql", "sqlserver" -> "MSSQL Native" to
+                "jdbc:sqlserver://localhost:11433;databaseName=stormify_test"
+        else -> error("Unknown STORMIFY_TEST_DB value: '$dbName'")
+    }
 
-    // TODO: Add MariaDB when native driver is ready
-    // Requires libmariadb shared library
-    // databases.add(
-    //     TestDatabase(
-    //         name = "MariaDB Native",
-    //         dataSource = MariadbDataSource(
-    //             host = "localhost",
-    //             port = 3306,
-    //             database = "stormify_test",
-    //             user = "test",
-    //             password = "test",
-    //             poolConfig = PoolConfig(enabled = false)
-    //         )
-    //     )
-    // )
+    val user = if (dbName == "mssql" || dbName == "sqlserver") "sa" else "stormify"
+    val password = "Stormify1!"
 
-    return databases
+    val ds = if (dbName == "sqlite") {
+        KdbcDataSource(url, poolConfig = PoolConfig(enabled = false))
+    } else {
+        KdbcDataSource(url, user, password, poolConfig = PoolConfig(enabled = false))
+    }
+
+    return listOf(TestDatabase(name = displayName, dataSource = ds))
 }

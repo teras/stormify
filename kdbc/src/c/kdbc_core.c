@@ -637,6 +637,13 @@ kdbc_result *kdbc_generated_keys(kdbc_stmt *stmt) {
         snprintf(rs->str_buf, 32, "%lld", (long long)stmt->generated_key);
         rs->str_buf_cap = 32;
     }
+    /* Synthetic column name: use the first requested returning column if any,
+     * otherwise default to "id" — this is how stormify's populate() path finds
+     * the primary-key field on the target entity. */
+    const char *col_name = (stmt->ret_col_names && stmt->ret_col_count > 0 && stmt->ret_col_names[0])
+        ? stmt->ret_col_names[0]
+        : "id";
+    rs->synthetic_col_name = strdup(col_name);
     return rs;
 }
 
@@ -891,12 +898,14 @@ int kdbc_col_count(kdbc_result *rs) {
 }
 
 const char *kdbc_col_name(kdbc_result *rs, int col) {
-    if (!rs || !rs->native || col < 1 || col > rs->col_count) return NULL;
+    if (!rs || col < 1 || col > rs->col_count) return NULL;
+    if (!rs->native) return rs->synthetic_col_name; /* synthetic generated-key result */
     return rs->conn->vt->rs_col_name(rs->native, col);
 }
 
 const char *kdbc_col_label(kdbc_result *rs, int col) {
-    if (!rs || !rs->native || col < 1 || col > rs->col_count) return NULL;
+    if (!rs || col < 1 || col > rs->col_count) return NULL;
+    if (!rs->native) return rs->synthetic_col_name; /* synthetic generated-key result */
     if (rs->conn->vt->rs_col_label)
         return rs->conn->vt->rs_col_label(rs->native, col);
     return rs->conn->vt->rs_col_name(rs->native, col);
@@ -997,5 +1006,6 @@ void kdbc_result_close(kdbc_result *rs) {
     if (rs->owned_stmt)
         kdbc_stmt_close(rs->owned_stmt);
     free(rs->str_buf);
+    free(rs->synthetic_col_name);
     free(rs);
 }

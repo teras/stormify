@@ -403,24 +403,43 @@ static int pg_bind_null(kdbc_stmt *stmt, int idx) {
     return KDBC_OK;
 }
 
+/* Set a text-format parameter. PG will parse the string and convert to whatever
+ * type the target column expects. Used for numeric binds where the caller's
+ * Kotlin-side type (Int, Long, Double) may not match the server column type
+ * exactly (e.g. Int bound to a SMALLINT column — binary format would mismatch). */
+static void pg_param_set_text(pg_stmt_data *sd, int idx, const char *text) {
+    int i = idx - 1;
+    free(sd->params[i].data);
+    int len = (int)strlen(text);
+    sd->params[i].data = (char *)malloc((size_t)len + 1);
+    if (sd->params[i].data) {
+        memcpy(sd->params[i].data, text, (size_t)len + 1);
+        sd->params[i].len = len;
+    } else {
+        sd->params[i].len = 0;
+    }
+    sd->params[i].format = 0; /* text */
+}
+
 static int pg_bind_int(kdbc_stmt *stmt, int idx, int val) {
-    int32_t be = pg_htobe32((int32_t)val);
-    pg_param_set_binary((pg_stmt_data *)stmt->native, idx, &be, 4);
+    char buf[16];
+    snprintf(buf, sizeof(buf), "%d", val);
+    pg_param_set_text((pg_stmt_data *)stmt->native, idx, buf);
     return KDBC_OK;
 }
 
 static int pg_bind_long(kdbc_stmt *stmt, int idx, int64_t val) {
-    int64_t be = pg_htobe64(val);
-    pg_param_set_binary((pg_stmt_data *)stmt->native, idx, &be, 8);
+    char buf[32];
+    snprintf(buf, sizeof(buf), "%lld", (long long)val);
+    pg_param_set_text((pg_stmt_data *)stmt->native, idx, buf);
     return KDBC_OK;
 }
 
 static int pg_bind_double(kdbc_stmt *stmt, int idx, double val) {
-    /* IEEE 754 double → int64 bits → big-endian */
-    int64_t bits;
-    memcpy(&bits, &val, sizeof(bits));
-    int64_t be = pg_htobe64(bits);
-    pg_param_set_binary((pg_stmt_data *)stmt->native, idx, &be, 8);
+    char buf[64];
+    /* 17 significant digits round-trips IEEE 754 doubles losslessly */
+    snprintf(buf, sizeof(buf), "%.17g", val);
+    pg_param_set_text((pg_stmt_data *)stmt->native, idx, buf);
     return KDBC_OK;
 }
 
@@ -702,17 +721,36 @@ static int64_t pg_rs_get_long(kdbc_result *rs, int col) {
     const char *raw = p_getvalue(prs->res, prs->current_row, ci);
     int len = p_getlength(prs->res, prs->current_row, ci);
     int fmt = p_fformat(prs->res, ci);
+    Oid oid = (prs->col_types && ci < prs->col_count) ? prs->col_types[ci] : 0;
 
     if (fmt == 1) {
-        /* Binary format */
-        if (len == 1) return (int64_t)(*(int8_t *)raw);              /* bool */
-        if (len == 2) { int16_t v; memcpy(&v, raw, 2); return pg_be16toh(v); }
-        if (len == 4) { int32_t v; memcpy(&v, raw, 4); return pg_be32toh(v); }
-        if (len == 8) { int64_t v; memcpy(&v, raw, 8); return pg_be64toh(v); }
-        /* Unusual size or NUMERIC - fall through to text parse */
+        /* Only decode as binary integer when the column OID is a numeric/bool type.
+         * Otherwise (e.g. TEXT/VARCHAR) the raw bytes are a UTF-8 string and must be
+         * sscanf'd instead of memcpy'd — otherwise "42" (len=2) would be decoded as
+         * the 16-bit big-endian integer 13362 (= 0x3432). */
+        int is_numeric = (oid == PG_BOOL_OID || oid == PG_INT2_OID ||
+                          oid == PG_INT4_OID || oid == PG_INT8_OID);
+        if (is_numeric) {
+            if (len == 1) return (int64_t)(*(int8_t *)raw);              /* bool */
+            if (len == 2) { int16_t v; memcpy(&v, raw, 2); return pg_be16toh(v); }
+            if (len == 4) { int32_t v; memcpy(&v, raw, 4); return pg_be32toh(v); }
+            if (len == 8) { int64_t v; memcpy(&v, raw, 8); return pg_be64toh(v); }
+        }
+        /* For TEXT-like types and NUMERIC, fall through to sscanf below. raw isn't
+         * null-terminated in binary format, so we copy into a bounded buffer. */
+        if (raw && len > 0) {
+            char buf[64];
+            int blen = len < 63 ? len : 63;
+            memcpy(buf, raw, blen);
+            buf[blen] = '\0';
+            long long v = 0;
+            sscanf(buf, "%lld", &v);
+            return v;
+        }
+        return 0;
     }
 
-    /* Text format or fallback */
+    /* Text format - raw is already null-terminated */
     long long v = 0;
     if (raw) sscanf(raw, "%lld", &v);
     return v;

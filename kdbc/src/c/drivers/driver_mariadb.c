@@ -37,6 +37,7 @@ typedef MYSQL_STMT  *(*fn_mysql_stmt_init)(MYSQL *);
 typedef int          (*fn_mysql_stmt_prepare)(MYSQL_STMT *, const char *, unsigned long);
 typedef int          (*fn_mysql_stmt_execute)(MYSQL_STMT *);
 typedef int          (*fn_mysql_stmt_fetch)(MYSQL_STMT *);
+typedef int          (*fn_mysql_stmt_fetch_column)(MYSQL_STMT *, MY_BIND *, unsigned int, unsigned long);
 typedef unsigned long(*fn_mysql_stmt_param_count)(MYSQL_STMT *);
 typedef my_bool      (*fn_mysql_stmt_bind_param)(MYSQL_STMT *, MY_BIND *);
 typedef my_bool      (*fn_mysql_stmt_bind_result)(MYSQL_STMT *, MY_BIND *);
@@ -72,6 +73,7 @@ static fn_mysql_stmt_init             p_stmt_init;
 static fn_mysql_stmt_prepare          p_stmt_prepare;
 static fn_mysql_stmt_execute          p_stmt_execute;
 static fn_mysql_stmt_fetch            p_stmt_fetch;
+static fn_mysql_stmt_fetch_column     p_stmt_fetch_column;
 static fn_mysql_stmt_param_count      p_stmt_param_count;
 static fn_mysql_stmt_bind_param       p_stmt_bind_param;
 static fn_mysql_stmt_bind_result      p_stmt_bind_result;
@@ -123,6 +125,7 @@ static int my_load(void) {
     MY_LOAD(stmt_prepare);
     MY_LOAD(stmt_execute);
     MY_LOAD(stmt_fetch);
+    MY_LOAD(stmt_fetch_column);
     MY_LOAD(stmt_param_count);
     MY_LOAD(stmt_bind_param);
     MY_LOAD(stmt_bind_result);
@@ -722,12 +725,43 @@ static int my_get_gen_key(kdbc_stmt *stmt, int64_t *out_key) {
 static int my_rs_next(kdbc_result *rs) {
     my_result_set *mrs = (my_result_set *)rs->native;
     int rc = p_stmt_fetch(mrs->stmt);
-    if (rc == 0) return 1;
+    /* MYSQL_DATA_TRUNCATED (101): row fetched but one or more TEXT/BLOB columns
+     * exceeded the initial buffer size. Resize affected columns and refetch them. */
+    if (rc == 0 || rc == 101) {
+        if (rc == 101) {
+            for (int i = 0; i < mrs->col_count; i++) {
+                my_col_data *c = &mrs->cols[i];
+                if (c->is_null) continue;
+                if (c->length > c->buf_cap - 1) {
+                    /* Resize and re-fetch this column only */
+                    size_t need = (size_t)c->length + 1;
+                    char *nb = (char *)realloc(c->buf, need);
+                    if (!nb) continue;
+                    c->buf = nb;
+                    c->buf_cap = need;
+                    MY_BIND tmp;
+                    memset(&tmp, 0, sizeof(tmp));
+                    tmp.buffer_type = MYSQL_TYPE_STRING;
+                    tmp.buffer = c->buf;
+                    tmp.buffer_length = (unsigned long)c->buf_cap;
+                    tmp.length = &c->length;
+                    tmp.is_null = &c->is_null;
+                    p_stmt_fetch_column(mrs->stmt, &tmp, (unsigned int)i, 0);
+                    /* Re-sync bind_result so subsequent fetches on the next row
+                     * use the enlarged buffer. */
+                    mrs->bind_result[i].buffer = c->buf;
+                    mrs->bind_result[i].buffer_length = (unsigned long)c->buf_cap;
+                }
+            }
+            p_stmt_bind_result(mrs->stmt, mrs->bind_result);
+        }
+        return 1;
+    }
     if (rc == 1) {
         RS_ERR(rs, "MariaDB fetch: %s", p_stmt_error(mrs->stmt));
         return KDBC_ERROR;
     }
-    return 0; /* MYSQL_NO_DATA (100) or MYSQL_DATA_TRUNCATED */
+    return 0; /* MYSQL_NO_DATA (100) */
 }
 
 static const char *my_rs_col_name(void *native_rs, int col) {

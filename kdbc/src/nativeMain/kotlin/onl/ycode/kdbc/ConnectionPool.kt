@@ -4,28 +4,8 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
-import kotlin.time.Duration
 import kotlin.time.Duration.Companion.milliseconds
-import kotlin.time.Duration.Companion.minutes
-import kotlin.time.Duration.Companion.seconds
 import kotlin.time.TimeSource
-
-/**
- * Configuration for connection pooling.
- */
-data class PoolConfig(
-    val enabled: Boolean = true,
-    val minConnections: Int = 2,
-    val maxConnections: Int = 10,
-    val connectionTimeout: Duration = 30.seconds,
-    val idleTimeout: Duration = 5.minutes,
-    val validationQuery: String? = null
-) {
-    init {
-        require(minConnections >= 0) { "minConnections must be >= 0" }
-        require(maxConnections >= minConnections) { "maxConnections must be >= minConnections" }
-    }
-}
 
 /**
  * Abstract base class for DataSource implementations with built-in connection pooling.

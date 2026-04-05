@@ -46,7 +46,13 @@ typedef int (*fn_dpiStmt_close)(dpiStmt *, const char *, unsigned int);
 typedef int (*fn_dpiStmt_release)(dpiStmt *);
 typedef int (*fn_dpiVar_release)(dpiVar *);
 typedef int (*fn_dpiVar_setFromBytes)(dpiVar *, unsigned int, const char *, unsigned int);
+typedef int (*fn_dpiVar_setFromLob)(dpiVar *, unsigned int, dpiLob *);
 typedef int (*fn_dpiVar_getReturnedData)(dpiVar *, unsigned int, unsigned int *, dpiData **);
+typedef int (*fn_dpiConn_newTempLob)(dpiConn *, unsigned int, dpiLob **);
+typedef int (*fn_dpiLob_setFromBytes)(dpiLob *, const char *, uint64_t);
+typedef int (*fn_dpiLob_readBytes)(dpiLob *, uint64_t, uint64_t, char *, uint64_t *);
+typedef int (*fn_dpiLob_getSize)(dpiLob *, uint64_t *);
+typedef int (*fn_dpiLob_release)(dpiLob *);
 
 /* ========================================================================
  * Loaded function pointers
@@ -74,7 +80,13 @@ static fn_dpiStmt_close                  p_stmt_close;
 static fn_dpiStmt_release                p_stmt_release;
 static fn_dpiVar_release                 p_var_release;
 static fn_dpiVar_setFromBytes            p_var_setFromBytes;
+static fn_dpiVar_setFromLob              p_var_setFromLob;
 static fn_dpiVar_getReturnedData         p_var_getReturnedData;
+static fn_dpiConn_newTempLob             p_conn_newTempLob;
+static fn_dpiLob_setFromBytes            p_lob_setFromBytes;
+static fn_dpiLob_readBytes               p_lob_readBytes;
+static fn_dpiLob_getSize                 p_lob_getSize;
+static fn_dpiLob_release                 p_lob_release;
 
 static dpiContext *g_ora_ctx = NULL;
 
@@ -114,7 +126,13 @@ static int ora_load(void) {
     ORA_LOAD(p_stmt_release,            "dpiStmt_release");
     ORA_LOAD(p_var_release,             "dpiVar_release");
     ORA_LOAD(p_var_setFromBytes,        "dpiVar_setFromBytes");
+    ORA_LOAD(p_var_setFromLob,          "dpiVar_setFromLob");
     ORA_LOAD(p_var_getReturnedData,  "dpiVar_getReturnedData");
+    ORA_LOAD(p_conn_newTempLob,         "dpiConn_newTempLob");
+    ORA_LOAD(p_lob_setFromBytes,        "dpiLob_setFromBytes");
+    ORA_LOAD(p_lob_readBytes,           "dpiLob_readBytes");
+    ORA_LOAD(p_lob_getSize,             "dpiLob_getSize");
+    ORA_LOAD(p_lob_release,             "dpiLob_release");
 
     /* Initialize global ODPI-C context */
     dpiErrorInfo errInfo;
@@ -411,11 +429,32 @@ static int ora_bind_null(kdbc_stmt *stmt, int idx) {
     return KDBC_OK;
 }
 
+static int ora_bind_long_text(kdbc_stmt *stmt, int idx, int64_t val) {
+    /* Bind as VARCHAR2 string — Oracle will parse into whatever the column type is.
+     * We use this for int/long binds because ODPI-C's int64↔NUMBER path corrupts
+     * values near Long.MAX_VALUE (round-trip via internal double conversion). */
+    char buf[32];
+    snprintf(buf, sizeof(buf), "%lld", (long long)val);
+    unsigned int len = (unsigned int)strlen(buf);
+    dpiData *data = ora_create_and_bind_var(stmt, idx, DPI_ORACLE_TYPE_VARCHAR,
+                                            DPI_NATIVE_TYPE_BYTES, len + 1);
+    if (!data) return KDBC_ERROR;
+    ora_stmt_data *sd = (ora_stmt_data *)stmt->native;
+    if (p_var_setFromBytes(sd->vars[idx - 1], 0, buf, len) != DPI_SUCCESS) {
+        STMT_ERR(stmt, "Oracle setFromBytes: %s", ora_get_error());
+        return KDBC_ERROR;
+    }
+    return KDBC_OK;
+}
+
 static int ora_bind_int(kdbc_stmt *stmt, int idx, int val) {
-    return kdbc_bind_long(stmt, idx, (int64_t)val);
+    return ora_bind_long_text(stmt, idx, (int64_t)val);
 }
 
 static int ora_bind_long(kdbc_stmt *stmt, int idx, int64_t val) {
+    return ora_bind_long_text(stmt, idx, val);
+    /* unreachable below — kept to document the native int64 path that had
+     * precision-loss issues with values near Long.MAX_VALUE. */
     dpiData *data = ora_create_and_bind_var(stmt, idx, DPI_ORACLE_TYPE_NUMBER,
                                             DPI_NATIVE_TYPE_INT64, 0);
     if (!data) return KDBC_ERROR;
@@ -433,9 +472,39 @@ static int ora_bind_double(kdbc_stmt *stmt, int idx, double val) {
     return KDBC_OK;
 }
 
+/* Oracle VARCHAR2 bind parameters cap at 4000 bytes (32767 with MAX_STRING_SIZE=EXTENDED).
+ * For larger strings we must bind via a temporary CLOB. */
+#define ORA_VARCHAR_MAX 4000u
+
+static int ora_bind_clob(kdbc_stmt *stmt, int idx, const char *val, unsigned int len) {
+    ora_stmt_data *sd = (ora_stmt_data *)stmt->native;
+    dpiLob *lob = NULL;
+    if (p_conn_newTempLob(sd->oc->conn, DPI_ORACLE_TYPE_CLOB, &lob) != DPI_SUCCESS) {
+        STMT_ERR(stmt, "Oracle newTempLob(CLOB): %s", ora_get_error());
+        return KDBC_ERROR;
+    }
+    if (p_lob_setFromBytes(lob, val, (uint64_t)len) != DPI_SUCCESS) {
+        STMT_ERR(stmt, "Oracle LOB setFromBytes: %s", ora_get_error());
+        p_lob_release(lob);
+        return KDBC_ERROR;
+    }
+    dpiData *data = ora_create_and_bind_var(stmt, idx, DPI_ORACLE_TYPE_CLOB,
+                                            DPI_NATIVE_TYPE_LOB, 0);
+    if (!data) { p_lob_release(lob); return KDBC_ERROR; }
+    if (p_var_setFromLob(sd->vars[idx - 1], 0, lob) != DPI_SUCCESS) {
+        STMT_ERR(stmt, "Oracle setFromLob(CLOB): %s", ora_get_error());
+        p_lob_release(lob);
+        return KDBC_ERROR;
+    }
+    /* The var retains its own reference — we can release ours immediately. */
+    p_lob_release(lob);
+    return KDBC_OK;
+}
+
 static int ora_bind_string(kdbc_stmt *stmt, int idx, const char *val) {
     ora_stmt_data *sd = (ora_stmt_data *)stmt->native;
     unsigned int len = (unsigned int)strlen(val);
+    if (len > ORA_VARCHAR_MAX) return ora_bind_clob(stmt, idx, val, len);
     dpiData *data = ora_create_and_bind_var(stmt, idx, DPI_ORACLE_TYPE_VARCHAR,
                                             DPI_NATIVE_TYPE_BYTES, len + 1);
     if (!data) return KDBC_ERROR;
@@ -446,7 +515,35 @@ static int ora_bind_string(kdbc_stmt *stmt, int idx, const char *val) {
     return KDBC_OK;
 }
 
+/* Oracle RAW bind caps at 2000 bytes. Larger blobs bind via a temporary BLOB. */
+#define ORA_RAW_MAX 2000u
+
+static int ora_bind_blob_lob(kdbc_stmt *stmt, int idx, const void *data, size_t len) {
+    ora_stmt_data *sd = (ora_stmt_data *)stmt->native;
+    dpiLob *lob = NULL;
+    if (p_conn_newTempLob(sd->oc->conn, DPI_ORACLE_TYPE_BLOB, &lob) != DPI_SUCCESS) {
+        STMT_ERR(stmt, "Oracle newTempLob(BLOB): %s", ora_get_error());
+        return KDBC_ERROR;
+    }
+    if (p_lob_setFromBytes(lob, (const char *)data, (uint64_t)len) != DPI_SUCCESS) {
+        STMT_ERR(stmt, "Oracle LOB setFromBytes(BLOB): %s", ora_get_error());
+        p_lob_release(lob);
+        return KDBC_ERROR;
+    }
+    dpiData *dd = ora_create_and_bind_var(stmt, idx, DPI_ORACLE_TYPE_BLOB,
+                                          DPI_NATIVE_TYPE_LOB, 0);
+    if (!dd) { p_lob_release(lob); return KDBC_ERROR; }
+    if (p_var_setFromLob(sd->vars[idx - 1], 0, lob) != DPI_SUCCESS) {
+        STMT_ERR(stmt, "Oracle setFromLob(BLOB): %s", ora_get_error());
+        p_lob_release(lob);
+        return KDBC_ERROR;
+    }
+    p_lob_release(lob);
+    return KDBC_OK;
+}
+
 static int ora_bind_blob(kdbc_stmt *stmt, int idx, const void *data, size_t len) {
+    if (len > ORA_RAW_MAX) return ora_bind_blob_lob(stmt, idx, data, len);
     ora_stmt_data *sd = (ora_stmt_data *)stmt->native;
     dpiData *dd = ora_create_and_bind_var(stmt, idx, DPI_ORACLE_TYPE_RAW,
                                           DPI_NATIVE_TYPE_BYTES, (unsigned int)len);
@@ -635,7 +732,17 @@ static int64_t ora_rs_get_long(kdbc_result *rs, int col) {
     switch (nt) {
         case DPI_NATIVE_TYPE_INT64:    return data->value.asInt64;
         case DPI_NATIVE_TYPE_UINT64:   return (int64_t)data->value.asUint64;
-        case DPI_NATIVE_TYPE_DOUBLE:   return (int64_t)data->value.asDouble;
+        case DPI_NATIVE_TYPE_DOUBLE: {
+            /* ODPI-C returns NUMBER columns whose precision > 18 as DOUBLE, even if
+             * the stored value would fit in int64. For values near Long.MAX_VALUE,
+             * the double representation loses low bits and the cast (int64)double
+             * overflows to Long.MIN_VALUE. Round-trip via text to keep precision. */
+            char buf[64];
+            snprintf(buf, sizeof(buf), "%.0f", data->value.asDouble);
+            long long v = 0;
+            sscanf(buf, "%lld", &v);
+            return v;
+        }
         case DPI_NATIVE_TYPE_FLOAT:    return (int64_t)data->value.asFloat;
         case DPI_NATIVE_TYPE_BYTES: {
             char buf[64];
@@ -674,6 +781,35 @@ static double ora_rs_get_double(kdbc_result *rs, int col) {
     }
 }
 
+/* Read the entire contents of a dpiLob into rs->str_buf. Returns number of bytes
+ * written (not including null terminator) or -1 on error.
+ *
+ * For CLOBs, dpiLob_getSize returns the size in characters and dpiLob_readBytes
+ * takes offset/amount in characters. The output buffer must accommodate the UTF-8
+ * encoding of those characters — worst case 4 bytes per character. BLOBs are
+ * byte-oriented so size == byte count directly. */
+static long ora_read_lob_into_strbuf(kdbc_result *rs, dpiLob *lob) {
+    uint64_t size = 0;
+    if (p_lob_getSize(lob, &size) != DPI_SUCCESS) {
+        RS_ERR(rs, "Oracle LOB getSize: %s", ora_get_error());
+        return -1;
+    }
+    /* Allocate enough for CLOB worst case (4 bytes per char, UTF-8 max) plus NUL. */
+    size_t buf_size = (size_t)size * 4 + 1;
+    if (kdbc_ensure_strbuf(rs, buf_size) != 0) return -1;
+    if (size == 0) {
+        rs->str_buf[0] = '\0';
+        return 0;
+    }
+    uint64_t len = buf_size - 1;  /* bytes available in buffer */
+    if (p_lob_readBytes(lob, 1, size, rs->str_buf, &len) != DPI_SUCCESS) {
+        RS_ERR(rs, "Oracle LOB readBytes: %s", ora_get_error());
+        return -1;
+    }
+    rs->str_buf[len] = '\0';
+    return (long)len;
+}
+
 static const char *ora_rs_get_string(kdbc_result *rs, int col) {
     ora_result_set *ors = (ora_result_set *)rs->native;
     unsigned int nt;
@@ -687,6 +823,10 @@ static const char *ora_rs_get_string(kdbc_result *rs, int col) {
             if (kdbc_ensure_strbuf(rs, n + 1) != 0) return NULL;
             memcpy(rs->str_buf, data->value.asBytes.ptr, n);
             rs->str_buf[n] = '\0';
+            return rs->str_buf;
+        }
+        case DPI_NATIVE_TYPE_LOB: {
+            if (ora_read_lob_into_strbuf(rs, data->value.asLOB) < 0) return NULL;
             return rs->str_buf;
         }
         case DPI_NATIVE_TYPE_INT64:
@@ -717,6 +857,12 @@ static const void *ora_rs_get_blob(kdbc_result *rs, int col, size_t *out_len) {
     if (nt == DPI_NATIVE_TYPE_BYTES) {
         *out_len = data->value.asBytes.length;
         return data->value.asBytes.ptr;
+    }
+    if (nt == DPI_NATIVE_TYPE_LOB) {
+        long n = ora_read_lob_into_strbuf(rs, data->value.asLOB);
+        if (n < 0) { *out_len = 0; return NULL; }
+        *out_len = (size_t)n;
+        return rs->str_buf;
     }
     *out_len = 0;
     return NULL;
