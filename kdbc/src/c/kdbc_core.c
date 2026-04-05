@@ -27,7 +27,7 @@ static void kdbc_init_impl(void) {
     kdbc_register_postgres();
     kdbc_register_mariadb();
     kdbc_register_oracle();
-    kdbc_register_freetds();
+    kdbc_register_mssql();
 }
 
 void kdbc_init(void) {
@@ -258,7 +258,7 @@ int kdbc_savepoint(kdbc_conn *conn, const char *name) {
     if (!conn || !name) return KDBC_ERROR;
     if (validate_savepoint_name(conn, name) != KDBC_OK) return KDBC_ERROR;
     char sql[256];
-    if (conn->driver == KDBC_FREETDS) {
+    if (conn->driver == KDBC_MSSQL) {
         snprintf(sql, sizeof(sql), "SAVE TRANSACTION %s", name);
     } else {
         snprintf(sql, sizeof(sql), "SAVEPOINT %s", name);
@@ -270,7 +270,7 @@ int kdbc_rollback_to(kdbc_conn *conn, const char *name) {
     if (!conn || !name) return KDBC_ERROR;
     if (validate_savepoint_name(conn, name) != KDBC_OK) return KDBC_ERROR;
     char sql[256];
-    if (conn->driver == KDBC_FREETDS) {
+    if (conn->driver == KDBC_MSSQL) {
         snprintf(sql, sizeof(sql), "ROLLBACK TRANSACTION %s", name);
     } else {
         snprintf(sql, sizeof(sql), "ROLLBACK TO SAVEPOINT %s", name);
@@ -282,7 +282,7 @@ int kdbc_release_savepoint(kdbc_conn *conn, const char *name) {
     if (!conn || !name) return KDBC_ERROR;
     if (validate_savepoint_name(conn, name) != KDBC_OK) return KDBC_ERROR;
     /* Oracle and MSSQL don't support RELEASE SAVEPOINT */
-    if (conn->driver == KDBC_ORACLE || conn->driver == KDBC_FREETDS)
+    if (conn->driver == KDBC_ORACLE || conn->driver == KDBC_MSSQL)
         return KDBC_OK;
     char sql[256];
     snprintf(sql, sizeof(sql), "RELEASE SAVEPOINT %s", name);
@@ -342,7 +342,8 @@ static char *translate_sql(kdbc_driver d, const char *sql) {
  * ======================================================================== */
 
 static kdbc_stmt *prepare_impl(kdbc_conn *conn, const char *sql,
-                               const char **col_names, int n_cols) {
+                               const char **col_names, int n_cols,
+                               int generated_keys_requested) {
     if (!conn || !sql) return NULL;
     conn->error[0] = '\0';
 
@@ -365,6 +366,7 @@ static kdbc_stmt *prepare_impl(kdbc_conn *conn, const char *sql,
     stmt->native_sql = native_sql;
     stmt->param_count = param_count;
     stmt->has_generated_key = 0;
+    stmt->generated_keys_requested = generated_keys_requested;
 
     if (param_count > 0) {
         stmt->params = (kdbc_param *)calloc(param_count, sizeof(kdbc_param));
@@ -409,12 +411,12 @@ static kdbc_stmt *prepare_impl(kdbc_conn *conn, const char *sql,
 }
 
 kdbc_stmt *kdbc_prepare(kdbc_conn *conn, const char *sql) {
-    return prepare_impl(conn, sql, NULL, 0);
+    return prepare_impl(conn, sql, NULL, 0, 0);
 }
 
 kdbc_stmt *kdbc_prepare_returning(kdbc_conn *conn, const char *sql,
                                   const char **col_names, int n_cols) {
-    return prepare_impl(conn, sql, col_names, n_cols);
+    return prepare_impl(conn, sql, col_names, n_cols, 1);
 }
 
 static void free_batches(kdbc_stmt *stmt) {
@@ -799,7 +801,7 @@ kdbc_stmt *kdbc_prepare_call(kdbc_conn *conn, const char *sql) {
             call_sql = (char *)malloc(strlen(clean) + 16);
             if (call_sql) sprintf(call_sql, "BEGIN %s; END;", clean);
             break;
-        case KDBC_FREETDS:
+        case KDBC_MSSQL:
             /* MSSQL: EXEC proc ?, ? */
             call_sql = (char *)malloc(strlen(clean) + 8);
             if (call_sql) sprintf(call_sql, "EXEC %s", clean);
@@ -815,7 +817,7 @@ kdbc_stmt *kdbc_prepare_call(kdbc_conn *conn, const char *sql) {
     if (!call_sql) { CONN_ERR(conn, "Out of memory"); return NULL; }
 
     /* Prepare as a regular statement */
-    kdbc_stmt *stmt = prepare_impl(conn, call_sql, NULL, 0);
+    kdbc_stmt *stmt = prepare_impl(conn, call_sql, NULL, 0, 0);
     free(call_sql);
 
     if (stmt) {

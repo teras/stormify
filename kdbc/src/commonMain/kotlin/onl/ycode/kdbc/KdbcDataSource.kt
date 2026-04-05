@@ -10,7 +10,7 @@ package onl.ycode.kdbc
  *
  * - **Native (Linux x64)**: backed by the unified kdbc C library (`libkdbc.a`). Parses
  *   the JDBC URL via [JdbcUrlParser] and dispatches to the appropriate C driver
- *   (SQLite, PostgreSQL, MariaDB/MySQL, Oracle, FreeTDS/MSSQL).
+ *   (SQLite, PostgreSQL, MariaDB/MySQL, Oracle, MSSQL).
  * - **JVM / Android**: not yet implemented — throws [SQLException] with a hint pointing
  *   to `JdbcDataSource` / `AndroidDataSource` which wrap an existing platform DataSource.
  *

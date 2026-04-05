@@ -49,7 +49,7 @@ internal fun KdbcDriverKind.toCValue(): kdbc_driver = when (this) {
     KdbcDriverKind.POSTGRES -> KDBC_POSTGRES
     KdbcDriverKind.MARIADB -> KDBC_MARIADB
     KdbcDriverKind.ORACLE -> KDBC_ORACLE
-    KdbcDriverKind.FREETDS -> KDBC_FREETDS
+    KdbcDriverKind.MSSQL -> KDBC_MSSQL
 }
 
 /**

@@ -24,6 +24,9 @@ object TestDDL {
     fun blobType() = when (dialect) {
         SqlDialect.POSTGRESQL -> "BYTEA"
         SqlDialect.SQL_SERVER_NEW, SqlDialect.SQL_SERVER_OLD -> "VARBINARY(MAX)"
+        // MySQL/MariaDB BLOB caps at 64KB; use LONGBLOB to hold multi-MB values.
+        SqlDialect.MYSQL_OLD, SqlDialect.MYSQL_NEW,
+        SqlDialect.MARIA_DB_OLD, SqlDialect.MARIA_DB_NEW -> "LONGBLOB"
         else -> "BLOB"
     }
 
@@ -111,6 +114,25 @@ object TestDDL {
                     executeUpdate("DROP TABLE IF EXISTS $name")
                     executeUpdate("SET FOREIGN_KEY_CHECKS = 1")
                 }
+            }
+            isMssql -> {
+                // SQL Server has no `DROP TABLE ... CASCADE`; drop referencing FK
+                // constraints first via sys.foreign_keys, then drop the table.
+                try {
+                    val dropFks = """
+                        DECLARE @sql NVARCHAR(MAX) = N'';
+                        SELECT @sql = @sql + N'ALTER TABLE ' + QUOTENAME(OBJECT_SCHEMA_NAME(fk.parent_object_id))
+                            + N'.' + QUOTENAME(OBJECT_NAME(fk.parent_object_id))
+                            + N' DROP CONSTRAINT ' + QUOTENAME(fk.name) + N';'
+                        FROM sys.foreign_keys fk
+                        WHERE fk.referenced_object_id = OBJECT_ID('$name');
+                        IF LEN(@sql) > 0 EXEC sp_executesql @sql;
+                    """.trimIndent()
+                    stormify.executeUpdate(dropFks)
+                } catch (_: Exception) { /* best-effort */ }
+                stormify.executeUpdate(
+                    "IF OBJECT_ID('$name', 'U') IS NOT NULL DROP TABLE $name"
+                )
             }
             else -> stormify.executeUpdate("DROP TABLE IF EXISTS $name")
         }

@@ -10,7 +10,7 @@ enum class KdbcDriverKind(val cValue: Int) {
     POSTGRES(1),
     MARIADB(2),
     ORACLE(3),
-    FREETDS(4);
+    MSSQL(4);
 }
 
 /**
@@ -19,7 +19,7 @@ enum class KdbcDriverKind(val cValue: Int) {
  * @property kind Which C driver to use.
  * @property nativeUrl URL in the simplified format consumed by `kdbc_connect`:
  *   - SQLite: file path or `:memory:` (with optional SQLite URI parameters)
- *   - PostgreSQL / MariaDB / MySQL / FreeTDS: `host:port/database`
+ *   - PostgreSQL / MariaDB / MySQL / MSSQL: `host:port/database`
  *   - Oracle: `host:port/service_name` (SID form is translated to service-name form)
  * @property user Explicit user (may come from URL query params or explicit override).
  * @property password Explicit password (same sources as [user]).
@@ -198,7 +198,7 @@ object JdbcUrlParser {
         return ParsedJdbcUrl(KdbcDriverKind.ORACLE, nativeUrl, user, password, extras)
     }
 
-    // ---------- SQL Server / FreeTDS ----------
+    // ---------- SQL Server / MSSQL ----------
 
     private fun parseSqlServer(
         body: String,
@@ -241,7 +241,7 @@ object JdbcUrlParser {
         val recognized = setOf("databasename", "database", "user", "username", "password")
         val extras = params.filterKeys { it !in recognized }
 
-        return ParsedJdbcUrl(KdbcDriverKind.FREETDS, "$host:$port/$database", user, password, extras)
+        return ParsedJdbcUrl(KdbcDriverKind.MSSQL, "$host:$port/$database", user, password, extras)
     }
 
     // ---------- helpers ----------

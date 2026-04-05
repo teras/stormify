@@ -128,7 +128,7 @@ class JdbcUrlParserTest {
 
     @Test fun sqlserverBasic() {
         val r = JdbcUrlParser.parse("jdbc:sqlserver://localhost:1433;databaseName=mydb;user=sa;password=secret")
-        assertEquals(KdbcDriverKind.FREETDS, r.kind)
+        assertEquals(KdbcDriverKind.MSSQL, r.kind)
         assertEquals("localhost:1433/mydb", r.nativeUrl)
         assertEquals("sa", r.user)
         assertEquals("secret", r.password)

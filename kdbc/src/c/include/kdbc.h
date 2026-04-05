@@ -2,7 +2,7 @@
  * KDBC Native - Unified Database Connectivity for Kotlin/Native
  *
  * A lightweight C library that provides a common API for multiple database
- * backends (SQLite, PostgreSQL, MariaDB/MySQL, Oracle, FreeTDS/MSSQL).
+ * backends (SQLite, PostgreSQL, MariaDB/MySQL, Oracle, MSSQL).
  * Libraries are loaded at runtime via dlopen, so missing backends are
  * handled gracefully - only the drivers you actually use need to be installed.
  *
@@ -30,7 +30,7 @@ typedef enum {
     KDBC_POSTGRES = 1,
     KDBC_MARIADB  = 2,
     KDBC_ORACLE   = 3,
-    KDBC_FREETDS  = 4,
+    KDBC_MSSQL    = 4,
     KDBC_DRIVER_COUNT = 5
 } kdbc_driver;
 
@@ -116,7 +116,7 @@ const char *kdbc_global_error(void);
  * For Postgres:  url = "host:port/database"
  * For MariaDB:   url = "host:port/database"
  * For Oracle:    url = "host:port/service_name"
- * For FreeTDS:   url = "host:port/database"
+ * For MSSQL:     url = "host:port/database"
  *
  * Returns NULL on failure. Call kdbc_global_error() for details.
  */

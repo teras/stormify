@@ -74,6 +74,7 @@ struct kdbc_stmt {
     /* For returning generated keys */
     char      **ret_col_names;
     int         ret_col_count;
+    int         generated_keys_requested; /* prepare_returning was called, even if col_names is NULL */
     /* Generated key after INSERT */
     int64_t     generated_key;
     int         has_generated_key;
@@ -354,7 +355,7 @@ static inline char *kdbc_translate_params_colon(const char *sql) {
 }
 
 /**
- * Duplicate SQL as-is (for SQLite, MariaDB, FreeTDS which use ? natively).
+ * Duplicate SQL as-is (for SQLite, MariaDB, MSSQL which use ? natively).
  */
 static inline char *kdbc_translate_params_native(const char *sql) {
     return strdup(sql);
@@ -379,7 +380,7 @@ void kdbc_register_sqlite(void);
 void kdbc_register_postgres(void);
 void kdbc_register_mariadb(void);
 void kdbc_register_oracle(void);
-void kdbc_register_freetds(void);
+void kdbc_register_mssql(void);
 
 /* Ensure result string buffer can hold at least `needed` bytes */
 static inline int kdbc_ensure_strbuf(kdbc_result *rs, size_t needed) {

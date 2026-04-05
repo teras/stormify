@@ -155,4 +155,25 @@ class TypesTest {
         assertNull(nulled.clobAsChars)
         assertNull(nulled.clobAsString)
     }
+
+    @Test
+    fun testLargeBlobs() = withDb("LARGE-BLOB") { s ->
+        TestDDL.dropTable("blob_test")
+        s.executeUpdate(TestDDL.createTable("blob_test",
+            "${TestDDL.intPrimaryKey("id")}, blob_data ${TestDDL.blobType()}, clob_as_chars ${TestDDL.textType()}, clob_as_string ${TestDDL.textType()}"))
+
+        // Exercise different size buckets: below/around/above the typical VARBINARY
+        // inline-vs-LOB threshold (8000 bytes on SQL Server) and well into MB range.
+        val sizes = listOf(1_024, 7_999, 8_000, 8_001, 100_000, 1_048_576, 10_485_760)
+        for ((i, size) in sizes.withIndex()) {
+            val id = 100 + i
+            // Deterministic non-repeating pattern so any single-byte corruption is
+            // detected by contentEquals below. Covers full 0..255 range.
+            val data = ByteArray(size) { idx -> ((idx * 31 + 7) and 0xFF).toByte() }
+            s.create(BlobEntity(id = id, blobData = data))
+            val found = s.findById<BlobEntity>(id)!!
+            assertEquals(size, found.blobData!!.size, "size for $size-byte blob")
+            assertTrue(data.contentEquals(found.blobData!!), "content for $size-byte blob")
+        }
+    }
 }

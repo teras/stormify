@@ -44,7 +44,7 @@ SRC_DRIVERS = drivers/driver_sqlite.c \
               drivers/driver_postgres.c \
               drivers/driver_mariadb.c \
               drivers/driver_oracle.c \
-              drivers/driver_freetds.c
+              drivers/driver_mssql.c
 
 OBJ_DRIVERS = $(SRC_DRIVERS:.c=.o)
 OBJECTS     = $(OBJ_CORE) $(OBJ_DRIVERS)

@@ -101,7 +101,7 @@ static const char  *g_password = NULL;
 /* Is the test database SQLite? (some tests are SQLite-specific) */
 static int is_sqlite(void) { return g_driver == KDBC_SQLITE; }
 static int is_oracle(void) { return g_driver == KDBC_ORACLE; }
-static int is_mssql(void)  { return g_driver == KDBC_FREETDS; }
+static int is_mssql(void)  { return g_driver == KDBC_MSSQL; }
 
 /* ========================================================================
  * Helper: open a connection using global config
@@ -144,7 +144,7 @@ static const char *auto_inc_col(void) {
         case KDBC_POSTGRES:  return "id SERIAL PRIMARY KEY";
         case KDBC_MARIADB:   return "id INT AUTO_INCREMENT PRIMARY KEY";
         case KDBC_ORACLE:    return "id NUMBER GENERATED ALWAYS AS IDENTITY PRIMARY KEY";
-        case KDBC_FREETDS:   return "id INT IDENTITY(1,1) PRIMARY KEY";
+        case KDBC_MSSQL:   return "id INT IDENTITY(1,1) PRIMARY KEY";
         default:             return "id INTEGER PRIMARY KEY AUTOINCREMENT";
     }
 }
@@ -171,7 +171,7 @@ static const char *float_type(void) {
 static const char *text_type(void) {
     switch (g_driver) {
         case KDBC_ORACLE:  return "VARCHAR2(4000)";
-        case KDBC_FREETDS: return "NVARCHAR(4000)";
+        case KDBC_MSSQL: return "NVARCHAR(4000)";
         default:           return "TEXT";
     }
 }
@@ -180,7 +180,7 @@ static const char *text_type(void) {
 static const char *timestamp_type(void) {
     switch (g_driver) {
         case KDBC_ORACLE:   return "TIMESTAMP";
-        case KDBC_FREETDS:  return "DATETIME";
+        case KDBC_MSSQL:  return "DATETIME";
         default:            return "TIMESTAMP";
     }
 }
@@ -204,7 +204,7 @@ static const char *blob_type(void) {
     switch (g_driver) {
         case KDBC_POSTGRES: return "BYTEA";
         case KDBC_ORACLE:   return "RAW(2000)";
-        case KDBC_FREETDS:  return "VARBINARY(4000)";
+        case KDBC_MSSQL:  return "VARBINARY(4000)";
         default:            return "BLOB";
     }
 }
@@ -220,7 +220,7 @@ static void test_driver_available(void) {
     ASSERT(strlen(kdbc_driver_name(KDBC_POSTGRES)) > 0, "pg name");
     ASSERT(strlen(kdbc_driver_name(KDBC_MARIADB)) > 0, "mariadb name");
     ASSERT(strlen(kdbc_driver_name(KDBC_ORACLE)) > 0, "oracle name");
-    ASSERT(strlen(kdbc_driver_name(KDBC_FREETDS)) > 0, "freetds name");
+    ASSERT(strlen(kdbc_driver_name(KDBC_MSSQL)) > 0, "mssql name");
 }
 
 static void test_driver_capabilities(void) {
@@ -235,7 +235,7 @@ static void test_driver_capabilities(void) {
     if (is_oracle())
         ASSERT(!kdbc_driver_supports_release_savepoint(KDBC_ORACLE), "oracle no release sp");
     if (is_mssql())
-        ASSERT(!kdbc_driver_supports_release_savepoint(KDBC_FREETDS), "mssql no release sp");
+        ASSERT(!kdbc_driver_supports_release_savepoint(KDBC_MSSQL), "mssql no release sp");
 }
 
 /* ========================================================================
@@ -1034,8 +1034,8 @@ static kdbc_driver parse_driver(const char *name) {
     if (strcmp(name, "mariadb") == 0)      return KDBC_MARIADB;
     if (strcmp(name, "mysql") == 0)        return KDBC_MARIADB;
     if (strcmp(name, "oracle") == 0)       return KDBC_ORACLE;
-    if (strcmp(name, "mssql") == 0)        return KDBC_FREETDS;
-    if (strcmp(name, "freetds") == 0)      return KDBC_FREETDS;
+    if (strcmp(name, "mssql") == 0)        return KDBC_MSSQL;
+    if (strcmp(name, "sqlserver") == 0)    return KDBC_MSSQL;
     fprintf(stderr, "Unknown driver: %s\n", name);
     exit(1);
 }

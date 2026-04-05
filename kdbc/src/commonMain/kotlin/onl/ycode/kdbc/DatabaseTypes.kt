@@ -7,7 +7,7 @@ import kotlin.reflect.KClass
  *
  * These interfaces provide a unified, multiplatform-compatible API for database operations:
  * - JVM: Wraps JDBC types (java.sql.*)
- * - Native: Implements native database drivers (Oracle ODPI, PostgreSQL libpq, MariaDB/MySQL, FreeTDS)
+ * - Native: Implements native database drivers (Oracle ODPI, PostgreSQL libpq, MariaDB/MySQL, MSSQL via FreeTDS db-lib)
  */
 
 interface Statement : AutoCloseable {
