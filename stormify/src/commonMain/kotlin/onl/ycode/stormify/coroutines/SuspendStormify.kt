@@ -2,6 +2,7 @@
 // (C) Panayotis Katsaloulis
 package onl.ycode.stormify.coroutines
 
+import kotlinx.atomicfu.atomic
 import kotlinx.coroutines.InternalCoroutinesApi
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.withContext
@@ -109,12 +110,23 @@ public class SuspendStormify internal constructor(
                 // cancelling state. The public `invokeOnCompletion(handler)` would fire
                 // only after the coroutine has fully completed — too late to interrupt
                 // a blocking C call.
+                // Track whether the async cancel primitive fired. After OCIBreak
+                // (Oracle) or similar driver-level cancel, the connection may be in a
+                // state where subsequent synchronous calls (rollback, setAutoCommit)
+                // block indefinitely — Oracle 11g requires OCIReset after OCIBreak,
+                // which ODPI-C does not expose. Skipping rollback is safe because the
+                // pool evicts the connection on failure anyway (releaseEntry with
+                // success=false closes it).
+                val cancelled = atomic(false)
                 val job = coroutineContext[Job]!!
                 val cancelHandle = job.invokeOnCompletion(
                     onCancelling = true,
                     invokeImmediately = true,
                 ) { throwable ->
-                    if (throwable != null) runCatching { conn.cancel() }
+                    if (throwable != null) {
+                        cancelled.value = true
+                        runCatching { conn.cancel() }
+                    }
                 }
 
                 try {
@@ -124,10 +136,10 @@ public class SuspendStormify internal constructor(
                     conn.commit()
                     result
                 } catch (e: Throwable) {
-                    runCatching { conn.rollback() }
+                    if (!cancelled.value) runCatching { conn.rollback() }
                     throw e
                 } finally {
-                    runCatching { conn.setAutoCommit(true) }
+                    if (!cancelled.value) runCatching { conn.setAutoCommit(true) }
                     cancelHandle.dispose()
                 }
             }

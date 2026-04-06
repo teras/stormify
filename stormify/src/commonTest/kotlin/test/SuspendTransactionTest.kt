@@ -172,11 +172,6 @@ class SuspendTransactionTest {
         assertEquals(0L, s.evictedCount, "No evictions expected on a clean pool")
     }
 
-    // TODO: hangs for ~114s on Oracle 11g (EL8ISO8859P7) — the cancelAndJoin()
-    //  never returns promptly. Likely a bug in the cancel/rollback/pool-release
-    //  path of SuspendStormify when the underlying Oracle connection is slow to
-    //  clean up after CancellationException. Investigate in a separate session.
-    @Ignore
     @Test
     fun cancellationRollsBackTransaction() = runBlocking {
         if (!::runner.isInitialized) return@runBlocking
