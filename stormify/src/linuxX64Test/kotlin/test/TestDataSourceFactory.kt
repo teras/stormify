@@ -39,10 +39,14 @@ actual fun createTestDatabases(): List<TestDatabase> {
             unlink(path) // start clean
             "SQLite (file: $path)" to "jdbc:sqlite:$path"
         }
-        "postgresql", "postgres" -> "PostgreSQL Native" to
+        "postgresql", "postgres" -> "PostgreSQL 16 Native" to
                 "jdbc:postgresql://localhost:15432/stormify_test"
-        "mysql" -> "MySQL Native" to
+        "postgresql9" -> "PostgreSQL 9.6 Native" to
+                "jdbc:postgresql://localhost:15431/stormify_test"
+        "mysql" -> "MySQL 8.0 Native" to
                 "jdbc:mysql://localhost:13306/stormify_test"
+        "mysql5" -> "MySQL 5.7 Native" to
+                "jdbc:mysql://localhost:13305/stormify_test"
         "mariadb" -> "MariaDB Native" to
                 "jdbc:mariadb://localhost:13307/stormify_test"
         "oracle" -> "Oracle Native" to

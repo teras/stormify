@@ -46,6 +46,7 @@ typedef int    (*fn_sqlite3_libversion_number)(void);
 typedef int    (*fn_sqlite3_exec)(sqlite3 *, const char *, void *, void *, char **);
 typedef void   (*fn_sqlite3_interrupt)(sqlite3 *);
 typedef void   (*fn_sqlite3_free)(void *);
+typedef int    (*fn_sqlite3_get_autocommit)(sqlite3 *);
 
 /* ========================================================================
  * Loaded function pointers
@@ -83,6 +84,7 @@ static fn_sqlite3_libversion_number p_libversion_number;
 static fn_sqlite3_exec              p_exec;
 static fn_sqlite3_interrupt         p_interrupt;
 static fn_sqlite3_free              p_sq_free;
+static fn_sqlite3_get_autocommit   p_get_autocommit;
 
 /* ========================================================================
  * Driver-specific result set structure
@@ -146,6 +148,8 @@ static void sq_load_impl(void) {
      * (p_free would collide with POSIX free), so load it manually. */
     p_sq_free = (fn_sqlite3_free)kdbc_dl_sym(lib_handle, "sqlite3_free");
     if (!p_sq_free) { kdbc_dl_close(lib_handle); lib_handle = NULL; return; }
+    p_get_autocommit = (fn_sqlite3_get_autocommit)kdbc_dl_sym(lib_handle, "sqlite3_get_autocommit");
+    if (!p_get_autocommit) { kdbc_dl_close(lib_handle); lib_handle = NULL; return; }
 
     sq_load_ok = 1;
 }
@@ -215,9 +219,13 @@ static int sq_exec_sql(kdbc_conn *conn, const char *sql) {
 }
 
 static int sq_set_autocommit(kdbc_conn *conn, int enabled) {
+    sqlite3 *db = (sqlite3 *)conn->native;
     if (enabled && !conn->autocommit) {
-        /* Was in manual mode, commit outstanding transaction */
-        return sq_exec_sql(conn, "COMMIT");
+        /* Was in manual mode — only COMMIT if a transaction is actually open.
+         * After commit()/rollback() SQLite is already in autocommit mode,
+         * so the COMMIT here would be redundant (and harmless but wasteful). */
+        if (!p_get_autocommit(db))
+            return sq_exec_sql(conn, "COMMIT");
     } else if (!enabled && conn->autocommit) {
         /* Entering manual mode, begin transaction */
         return sq_exec_sql(conn, "BEGIN");
@@ -226,20 +234,11 @@ static int sq_set_autocommit(kdbc_conn *conn, int enabled) {
 }
 
 static int sq_commit(kdbc_conn *conn) {
-    int rc = sq_exec_sql(conn, "COMMIT");
-    if (rc != KDBC_OK) return rc;
-    /* If still in manual mode, start new transaction */
-    if (!conn->autocommit)
-        return sq_exec_sql(conn, "BEGIN");
-    return KDBC_OK;
+    return sq_exec_sql(conn, "COMMIT");
 }
 
 static int sq_rollback(kdbc_conn *conn) {
-    int rc = sq_exec_sql(conn, "ROLLBACK");
-    if (rc != KDBC_OK) return rc;
-    if (!conn->autocommit)
-        return sq_exec_sql(conn, "BEGIN");
-    return KDBC_OK;
+    return sq_exec_sql(conn, "ROLLBACK");
 }
 
 /* ========================================================================

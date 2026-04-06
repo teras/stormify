@@ -6,7 +6,7 @@ PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 LOG_DIR="$SCRIPT_DIR/.logs"
 RESULTS_FILE="$LOG_DIR/_results"
 
-ALL_DBS=(sqlite postgresql mysql mariadb oracle oracle11 mssql)
+ALL_DBS=(sqlite postgresql postgresql9 mysql mysql5 mariadb oracle oracle11 mssql)
 SESSION="stormify-tests"
 
 usage() {
@@ -37,7 +37,7 @@ EOF
 # ========================================================================
 
 cleanup() {
-    # Stop any remaining containers
+    # Stop all containers at once
     docker compose -f "$SCRIPT_DIR/docker-compose.yml" down -v 2>/dev/null || true
 }
 
@@ -53,7 +53,7 @@ run_one() {
 
     echo "[$db] Starting $target tests..." | tee "$log_file"
 
-    "$SCRIPT_DIR/test.sh" "$target" "$db" >> "$log_file" 2>&1 || rc=$?
+    STORMIFY_KEEP_CONTAINERS=1 "$SCRIPT_DIR/test.sh" "$target" "$db" >> "$log_file" 2>&1 || rc=$?
 
     if [ $rc -eq 0 ]; then
         echo "PASS" > "$LOG_DIR/${target}_${db}.result"
@@ -144,6 +144,7 @@ target="$2"
 SCRIPT_DIR="$3"
 LOG_DIR="$4"
 log_file="$LOG_DIR/${target}_${db}.log"
+export STORMIFY_KEEP_CONTAINERS=1
 
 # Show live output directly in the pane (tee to log file)
 echo "=== $db ($target) ==="
@@ -375,6 +376,7 @@ trap cleanup EXIT
 
 case "$TARGET" in
     native|jvm|linux)
+
         if [ "$MODE" = "tmux" ]; then
             run_tmux_grid "$TARGET"
             echo ""
@@ -385,6 +387,7 @@ case "$TARGET" in
         ;;
 
     all)
+
         if [ "$MODE" = "tmux" ]; then
             echo "=== Phase 1: Native tests ==="
             run_tmux_grid "native"

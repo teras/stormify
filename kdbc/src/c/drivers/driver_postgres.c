@@ -85,6 +85,7 @@ typedef PGcancel  *(*fn_PQgetCancel)(PGconn *);
 typedef int        (*fn_PQcancel)(PGcancel *, char *, int);
 typedef void       (*fn_PQfreeCancel)(PGcancel *);
 typedef int        (*fn_PQsetClientEncoding)(PGconn *, const char *);
+typedef PGTransactionStatusType (*fn_PQtransactionStatus)(const PGconn *);
 
 /* ========================================================================
  * Loaded function pointers
@@ -116,6 +117,7 @@ static fn_PQgetCancel          p_getCancel;
 static fn_PQcancel             p_cancel;
 static fn_PQfreeCancel         p_freeCancel;
 static fn_PQsetClientEncoding  p_setClientEncoding;
+static fn_PQtransactionStatus  p_transactionStatus;
 
 /* ========================================================================
  * Driver-specific structures
@@ -195,6 +197,7 @@ static void pg_load_impl(void) {
     PG_LOAD(cancel);
     PG_LOAD(freeCancel);
     PG_LOAD(setClientEncoding);
+    PG_LOAD(transactionStatus);
 
     pg_load_ok = 1;
 }
@@ -291,25 +294,24 @@ static int pg_exec_simple(kdbc_conn *conn, const char *sql) {
 }
 
 static int pg_set_autocommit(kdbc_conn *conn, int enabled) {
-    if (enabled && !conn->autocommit)
-        return pg_exec_simple(conn, "COMMIT");
-    else if (!enabled && conn->autocommit)
+    PGconn *pg = (PGconn *)conn->native;
+    if (enabled && !conn->autocommit) {
+        /* Only COMMIT if a transaction is actually open.
+         * After commit()/rollback() PG is already idle. */
+        if (p_transactionStatus(pg) != PQTRANS_IDLE)
+            return pg_exec_simple(conn, "COMMIT");
+    } else if (!enabled && conn->autocommit) {
         return pg_exec_simple(conn, "BEGIN");
+    }
     return KDBC_OK;
 }
 
 static int pg_commit(kdbc_conn *conn) {
-    int rc = pg_exec_simple(conn, "COMMIT");
-    if (rc != KDBC_OK) return rc;
-    if (!conn->autocommit) return pg_exec_simple(conn, "BEGIN");
-    return KDBC_OK;
+    return pg_exec_simple(conn, "COMMIT");
 }
 
 static int pg_rollback(kdbc_conn *conn) {
-    int rc = pg_exec_simple(conn, "ROLLBACK");
-    if (rc != KDBC_OK) return rc;
-    if (!conn->autocommit) return pg_exec_simple(conn, "BEGIN");
-    return KDBC_OK;
+    return pg_exec_simple(conn, "ROLLBACK");
 }
 
 /* ========================================================================
@@ -704,13 +706,14 @@ static int pg_execute_update(kdbc_stmt *stmt) {
         return KDBC_ERROR;
     pg_exec_args args = pg_build_args(sd);
 
-    /* Binary result only if RETURNING clause (need to decode generated key).
-     * Otherwise use text result since PQcmdTuples requires it. */
-    int result_binary = (stmt->ret_col_count > 0) ? 1 : 0;
+    /* Always request text results for RETURNING clause — this gives a
+     * universal text representation of the generated key regardless of type
+     * (integer, UUID, VARCHAR, etc.), matching the Oracle RETURNING INTO
+     * approach. PQcmdTuples also requires text format for non-RETURNING. */
     PGresult *res = p_execPrepared(sd->pg, sd->stmt_name,
                                     sd->param_count,
                                     args.values, args.lengths, args.formats,
-                                    result_binary);
+                                    0 /* text result */);
     pg_free_args(&args);
 
     if (!res) {
@@ -720,33 +723,23 @@ static int pg_execute_update(kdbc_stmt *stmt) {
 
     int status = p_resultStatus(res);
     if (status == PGRES_TUPLES_OK) {
-        /* RETURNING clause - extract generated key from binary result */
+        /* RETURNING clause — extract generated key from text result */
         if (p_ntuples(res) > 0 && p_nfields(res) > 0) {
             if (!p_getisnull(res, 0, 0)) {
-                int len = p_getlength(res, 0, 0);
-                const char *raw = p_getvalue(res, 0, 0);
-                if (len == 4) {
-                    int32_t v;
-                    memcpy(&v, raw, 4);
-                    stmt->generated_key = pg_be32toh(v);
-                    stmt->has_generated_key = 1;
-                } else if (len == 8) {
-                    int64_t v;
-                    memcpy(&v, raw, 8);
-                    stmt->generated_key = pg_be64toh(v);
-                    stmt->has_generated_key = 1;
-                } else {
-                    /* Fallback: text format or unusual size, parse as string */
-                    /* This happens if the column type is not int4/int8 */
-                    char buf[64];
-                    int blen = len < 63 ? len : 63;
-                    memcpy(buf, raw, blen);
-                    buf[blen] = '\0';
-                    long long k = 0;
-                    sscanf(buf, "%lld", &k);
-                    stmt->generated_key = k;
-                    stmt->has_generated_key = 1;
+                const char *txt = p_getvalue(res, 0, 0);
+                int tlen = p_getlength(res, 0, 0);
+                /* Always keep text form for non-numeric PKs (UUID, etc.) */
+                free(stmt->generated_key_str);
+                stmt->generated_key_str = (char *)malloc((size_t)tlen + 1);
+                if (stmt->generated_key_str) {
+                    memcpy(stmt->generated_key_str, txt, tlen);
+                    stmt->generated_key_str[tlen] = '\0';
                 }
+                /* Also parse as int64 for numeric PKs */
+                long long k = 0;
+                sscanf(txt, "%lld", &k);
+                stmt->generated_key = k;
+                stmt->has_generated_key = 1;
             }
         }
         int rows = p_ntuples(res);

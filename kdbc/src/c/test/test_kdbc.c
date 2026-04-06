@@ -668,6 +668,13 @@ static void test_generated_keys(void) {
     if (gk == KDBC_GK_NONE) SKIP("driver doesn't support generated keys");
 
     kdbc_conn *conn = open_db();
+
+    /* Oracle IDENTITY columns require 12c+; skip on 11g and earlier. */
+    if (is_oracle() && kdbc_major_version(conn) < 12) {
+        kdbc_close(conn);
+        SKIP("Oracle < 12c has no IDENTITY columns");
+    }
+
     drop_table(conn, "kdbc_gk");
     char ddl[256];
     snprintf(ddl, sizeof(ddl), "CREATE TABLE kdbc_gk (%s, val %s)", auto_inc_col(), text_type());

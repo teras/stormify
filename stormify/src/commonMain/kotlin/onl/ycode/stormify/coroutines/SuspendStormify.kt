@@ -2,7 +2,8 @@
 // (C) Panayotis Katsaloulis
 package onl.ycode.stormify.coroutines
 
-import kotlinx.atomicfu.atomic
+import kotlin.concurrent.atomics.AtomicInt
+import kotlin.concurrent.atomics.ExperimentalAtomicApi
 import kotlinx.coroutines.InternalCoroutinesApi
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.withContext
@@ -101,7 +102,7 @@ public class SuspendStormify internal constructor(
         return topLevelTransaction(block)
     }
 
-    @OptIn(InternalCoroutinesApi::class)
+    @OptIn(InternalCoroutinesApi::class, ExperimentalAtomicApi::class)
     private suspend fun <R> topLevelTransaction(block: suspend TransactionContext.() -> R): R =
         pool.use { conn ->
             withContext(ioDispatcher + ConnectionElement(conn, stormify)) {
@@ -117,14 +118,14 @@ public class SuspendStormify internal constructor(
                 // which ODPI-C does not expose. Skipping rollback is safe because the
                 // pool evicts the connection on failure anyway (releaseEntry with
                 // success=false closes it).
-                val cancelled = atomic(false)
+                val cancelled = AtomicInt(0)
                 val job = coroutineContext[Job]!!
                 val cancelHandle = job.invokeOnCompletion(
                     onCancelling = true,
                     invokeImmediately = true,
                 ) { throwable ->
                     if (throwable != null) {
-                        cancelled.value = true
+                        cancelled.store(1)
                         runCatching { conn.cancel() }
                     }
                 }
@@ -136,10 +137,10 @@ public class SuspendStormify internal constructor(
                     conn.commit()
                     result
                 } catch (e: Throwable) {
-                    if (!cancelled.value) runCatching { conn.rollback() }
+                    if (cancelled.load() == 0) runCatching { conn.rollback() }
                     throw e
                 } finally {
-                    if (!cancelled.value) runCatching { conn.setAutoCommit(true) }
+                    if (cancelled.load() == 0) runCatching { conn.setAutoCommit(true) }
                     cancelHandle.dispose()
                 }
             }

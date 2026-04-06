@@ -221,7 +221,6 @@ static int tds_loaded(void) { return lib_handle != NULL; }
 
 typedef struct {
     DBPROCESS *dbproc;
-    int autocommit;
     int in_transaction;
     int major_version;
     int minor_version;
@@ -324,7 +323,6 @@ static void *tds_connect(const char *url, const char *user, const char *password
         return NULL;
     }
     tc->dbproc = dbproc;
-    tc->autocommit = 1;
     tc->in_transaction = 0;
 
     /* Default TEXTSIZE is 4096 bytes on db-lib, truncating NVARCHAR(MAX) /
@@ -394,17 +392,16 @@ static void tds_close(void *native) {
 
 static int tds_set_autocommit(kdbc_conn *conn, int enabled) {
     tds_conn *tc = (tds_conn *)conn->native;
-    if (enabled && !tc->autocommit) {
+    if (enabled && !conn->autocommit) {
+        /* Only COMMIT if a transaction is actually open. */
         if (tc->in_transaction) {
             int rc = tds_exec_direct(conn, "COMMIT TRANSACTION");
             if (rc != KDBC_OK) return rc;
             tc->in_transaction = 0;
         }
-        tc->autocommit = 1;
-    } else if (!enabled && tc->autocommit) {
-        tc->autocommit = 0;
+    } else if (!enabled && conn->autocommit) {
         int rc = tds_exec_direct(conn, "BEGIN TRANSACTION");
-        if (rc != KDBC_OK) { tc->autocommit = 1; return rc; }
+        if (rc != KDBC_OK) return rc;
         tc->in_transaction = 1;
     }
     return KDBC_OK;
@@ -416,11 +413,6 @@ static int tds_commit(kdbc_conn *conn) {
     int rc = tds_exec_direct(conn, "COMMIT TRANSACTION");
     if (rc != KDBC_OK) return rc;
     tc->in_transaction = 0;
-    if (!tc->autocommit) {
-        rc = tds_exec_direct(conn, "BEGIN TRANSACTION");
-        if (rc == KDBC_OK) tc->in_transaction = 1;
-        return rc;
-    }
     return KDBC_OK;
 }
 
@@ -430,11 +422,6 @@ static int tds_rollback(kdbc_conn *conn) {
     int rc = tds_exec_direct(conn, "ROLLBACK TRANSACTION");
     if (rc != KDBC_OK) return rc;
     tc->in_transaction = 0;
-    if (!tc->autocommit) {
-        rc = tds_exec_direct(conn, "BEGIN TRANSACTION");
-        if (rc == KDBC_OK) tc->in_transaction = 1;
-        return rc;
-    }
     return KDBC_OK;
 }
 
@@ -1063,10 +1050,19 @@ static int tds_execute_update(kdbc_stmt *stmt) {
                         case SYBINT4: k = *(int32_t *)data; break;
                         case SYBINT8: k = *(int64_t *)data; break;
                         default: {
-                            char buf[64];
+                            char buf[128];
                             DBINT n = p_dbconvert(dbproc, ctype, data, len,
                                                    SYBCHAR, (BYTE *)buf, sizeof(buf) - 1);
-                            if (n > 0) { buf[n] = '\0'; sscanf(buf, "%lld", &k); }
+                            if (n > 0) {
+                                buf[n] = '\0';
+                                /* Keep text form for non-numeric PKs (GUID, etc.) */
+                                free(stmt->generated_key_str);
+                                stmt->generated_key_str = (char *)malloc((size_t)n + 1);
+                                if (stmt->generated_key_str) {
+                                    memcpy(stmt->generated_key_str, buf, (size_t)n + 1);
+                                }
+                                sscanf(buf, "%lld", &k);
+                            }
                             else ok = 0;
                         }
                     }

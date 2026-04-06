@@ -189,7 +189,6 @@ static const char *ora_get_error(void) {
 
 typedef struct {
     dpiConn *conn;
-    int      autocommit;
     volatile int broken;    /* set by ora_cancel (OCIBreak); guards close/rollback */
 } ora_conn;
 
@@ -197,7 +196,6 @@ static void *ora_connect(const char *url, const char *user, const char *password
                          char *err, size_t err_size) {
     ora_conn *oc = (ora_conn *)calloc(1, sizeof(ora_conn));
     if (!oc) { snprintf(err, err_size, "Out of memory"); return NULL; }
-    oc->autocommit = 1;
 
     /* Pin the session to UTF-8 for both CHAR (encoding) and NCHAR (nencoding)
      * data so that VARCHAR2/NVARCHAR2/CLOB round-trip Kotlin's UTF-8 strings
@@ -263,8 +261,10 @@ static int ora_cancel(kdbc_conn *conn) {
  * ======================================================================== */
 
 static int ora_set_autocommit(kdbc_conn *conn, int enabled) {
-    ora_conn *oc = (ora_conn *)conn->native;
-    oc->autocommit = enabled;
+    (void)conn; (void)enabled;
+    /* Oracle has no BEGIN TRANSACTION — autocommit is enforced per-execute
+     * via DPI_MODE_EXEC_COMMIT_ON_SUCCESS using conn->autocommit from the
+     * core layer. Nothing to do here. */
     return KDBC_OK;
 }
 
@@ -704,7 +704,7 @@ static int ora_rs_get_time(kdbc_result *rs, int col,
 
 static int ora_execute_update(kdbc_stmt *stmt) {
     ora_stmt_data *sd = (ora_stmt_data *)stmt->native;
-    unsigned int mode = sd->oc->autocommit ?
+    unsigned int mode = stmt->conn->autocommit ?
         DPI_MODE_EXEC_COMMIT_ON_SUCCESS : DPI_MODE_EXEC_DEFAULT;
 
     unsigned int numQueryCols = 0;
@@ -768,7 +768,7 @@ typedef struct {
 static void *ora_execute_query(kdbc_stmt *stmt, int *out_col_count,
                                char *err, size_t err_size) {
     ora_stmt_data *sd = (ora_stmt_data *)stmt->native;
-    unsigned int mode = sd->oc->autocommit ?
+    unsigned int mode = stmt->conn->autocommit ?
         DPI_MODE_EXEC_COMMIT_ON_SUCCESS : DPI_MODE_EXEC_DEFAULT;
 
     unsigned int numQueryCols = 0;
@@ -1155,7 +1155,7 @@ static int ora_call_execute(kdbc_stmt *stmt) {
         }
     }
 
-    unsigned int mode = sd->oc->autocommit ?
+    unsigned int mode = stmt->conn->autocommit ?
         DPI_MODE_EXEC_COMMIT_ON_SUCCESS : DPI_MODE_EXEC_DEFAULT;
     unsigned int numQueryCols = 0;
     if (p_stmt_execute(sd->stmt, mode, &numQueryCols) != DPI_SUCCESS) {

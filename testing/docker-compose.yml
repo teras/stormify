@@ -17,6 +17,24 @@ services:
       timeout: 3s
       retries: 30
 
+  mysql5:
+    image: mysql:5.7
+    profiles: ["mysql5", "all"]
+    environment:
+      MYSQL_ROOT_PASSWORD: "Stormify1!"
+      MYSQL_DATABASE: stormify_test
+      MYSQL_USER: stormify
+      MYSQL_PASSWORD: "Stormify1!"
+    ports:
+      - "13305:3306"
+    volumes:
+      - ./config/mysql/init.sql:/docker-entrypoint-initdb.d/init.sql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+
   mariadb:
     image: mariadb:11
     profiles: ["mariadb", "all"]
@@ -44,6 +62,23 @@ services:
       POSTGRES_PASSWORD: "Stormify1!"
     ports:
       - "15432:5432"
+    volumes:
+      - ./config/postgresql/init.sql:/docker-entrypoint-initdb.d/init.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U stormify -d stormify_test"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+
+  postgresql9:
+    image: postgres:9.6
+    profiles: ["postgresql9", "all"]
+    environment:
+      POSTGRES_DB: stormify_test
+      POSTGRES_USER: stormify
+      POSTGRES_PASSWORD: "Stormify1!"
+    ports:
+      - "15431:5432"
     volumes:
       - ./config/postgresql/init.sql:/docker-entrypoint-initdb.d/init.sql
     healthcheck:
