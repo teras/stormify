@@ -31,8 +31,9 @@ Usage: ./test.sh <target> [database]
 
 Targets:
   jvm [database]       Run JVM tests (Gradle)
+  linux [database]     Run Kotlin/Native linuxX64 tests (Gradle)
   native [database]    Run C native tests
-  all                  Run everything (JVM + native, all databases)
+  all                  Run everything (JVM + linux + native, all databases)
 
 Databases:
   sqlite               SQLite (no Docker needed)
@@ -49,6 +50,7 @@ Examples:
   ./test.sh native sqlite        # Quick: C tests with SQLite only
   ./test.sh native               # C tests against all databases
   ./test.sh jvm postgresql       # JVM tests against PostgreSQL
+  ./test.sh linux oracle         # Kotlin/Native tests against Oracle
   ./test.sh all                  # Everything
 EOF
     exit 1
@@ -157,6 +159,36 @@ run_jvm_one() {
 }
 
 # ========================================================================
+# Run Kotlin/Native linuxX64 tests for one database
+# ========================================================================
+
+run_linux_one() {
+    local db="$1"
+
+    echo "========================================="
+    echo "Kotlin/Native linuxX64 tests: $db"
+    echo "========================================="
+
+    start_db "$db"
+
+    local rc=0
+    cd "$PROJECT_DIR"
+
+    STORMIFY_TEST_DB="$db" gradle :stormify:linuxX64Test \
+        --console=plain 2>&1 || rc=$?
+
+    stop_db "$db"
+
+    if [ $rc -eq 0 ]; then
+        echo "PASSED: linux $db"
+    else
+        echo "FAILED: linux $db (exit code: $rc)"
+    fi
+    echo ""
+    return $rc
+}
+
+# ========================================================================
 # Run tests for multiple databases
 # ========================================================================
 
@@ -207,6 +239,14 @@ case "$TARGET" in
         fi
         ;;
 
+    linux)
+        if [ -n "$DB" ]; then
+            run_linux_one "$DB"
+        else
+            run_for_dbs run_linux_one $ALL_DBS
+        fi
+        ;;
+
     all)
         build_native
         failed=0
@@ -218,6 +258,10 @@ case "$TARGET" in
         echo "############### JVM TESTS ###############"
         echo ""
         run_for_dbs run_jvm_one $ALL_DBS || failed=$((failed + $?))
+        echo ""
+        echo "############### KOTLIN/NATIVE LINUX TESTS ###############"
+        echo ""
+        run_for_dbs run_linux_one $ALL_DBS || failed=$((failed + $?))
         exit $failed
         ;;
 

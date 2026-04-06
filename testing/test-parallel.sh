@@ -16,7 +16,8 @@ Usage: ./test-parallel.sh <target> [options]
 Targets:
   native       Run C native tests for all databases in parallel
   jvm          Run JVM tests for all databases in parallel
-  all          Run native then JVM, each phase in parallel
+  linux        Run Kotlin/Native linuxX64 tests for all databases in parallel
+  all          Run native, JVM, and linux tests, each phase in parallel
   clean        Remove test logs
   results      Show results from a previous run
 
@@ -373,7 +374,7 @@ mkdir -p "$LOG_DIR"
 trap cleanup EXIT
 
 case "$TARGET" in
-    native|jvm)
+    native|jvm|linux)
         if [ "$MODE" = "tmux" ]; then
             run_tmux_grid "$TARGET"
             echo ""
@@ -394,9 +395,15 @@ case "$TARGET" in
             run_tmux_grid "jvm"
             echo ""
             collect_results "jvm"
+            echo ""
+            echo "=== Phase 3: Kotlin/Native Linux tests ==="
+            run_tmux_grid "linux"
+            echo ""
+            collect_results "linux"
         else
             run_parallel_bg "native"
             run_parallel_bg "jvm"
+            run_parallel_bg "linux"
         fi
         ;;
 
