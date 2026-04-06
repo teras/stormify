@@ -190,6 +190,7 @@ static const char *ora_get_error(void) {
 typedef struct {
     dpiConn *conn;
     int      autocommit;
+    volatile int broken;    /* set by ora_cancel (OCIBreak); guards close/rollback */
 } ora_conn;
 
 static void *ora_connect(const char *url, const char *user, const char *password,
@@ -226,7 +227,12 @@ static void *ora_connect(const char *url, const char *user, const char *password
 static void ora_close(void *native) {
     ora_conn *oc = (ora_conn *)native;
     if (!oc) return;
-    p_conn_close(oc->conn, DPI_MODE_CONN_CLOSE_DEFAULT, NULL, 0);
+    /* After OCIBreak (cancel), dpiConn_close calls OCISessionEnd which may
+     * hang indefinitely on Oracle 11g (requires OCIReset first, which ODPI-C
+     * does not expose). Skip the server round-trip; the server will clean up
+     * the session when the TCP socket closes. */
+    if (!oc->broken)
+        p_conn_close(oc->conn, DPI_MODE_CONN_CLOSE_DEFAULT, NULL, 0);
     free(oc);
 }
 
@@ -234,10 +240,17 @@ static void ora_close(void *native) {
  * dpiConn_breakExecution is explicitly documented as thread-safe: it uses
  * OCIBreak to signal the server to interrupt the current operation,
  * causing the blocking dpiStmt_execute on the other thread to return
- * with an error. */
+ * with an error.
+ *
+ * After OCIBreak the OCI client-side state may be inconsistent (Oracle 11g
+ * requires OCIReset before further operations; ODPI-C does not expose it).
+ * We mark the connection as `broken` so that ora_close skips
+ * dpiConn_close — which would otherwise call OCISessionEnd and hang. The
+ * server-side session is cleaned up when the TCP connection drops. */
 static int ora_cancel(kdbc_conn *conn) {
     if (!conn || !conn->native) return KDBC_ERROR;
     ora_conn *oc = (ora_conn *)conn->native;
+    oc->broken = 1;
     if (p_conn_breakExecution(oc->conn) != DPI_SUCCESS) {
         CONN_ERR(conn, "Oracle cancel failed: %s", ora_get_error());
         return KDBC_ERROR;
