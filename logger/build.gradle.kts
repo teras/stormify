@@ -2,6 +2,7 @@ plugins {
     id("maven-publish")
     kotlin("multiplatform")
     id("com.android.library")
+    id("org.jetbrains.dokka")
 }
 
 group = parent?.group ?: IllegalStateException("Group is not defined")

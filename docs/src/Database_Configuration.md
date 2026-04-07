@@ -157,7 +157,7 @@ Example Logback configuration in `logback.xml`:
         </encoder>
     </appender>
 
-    <logger name="onl.ycode.stormify" level="DEBUG" additivity="false">
+    <logger name="Stormify" level="DEBUG" additivity="false">
         <appender-ref ref="STDOUT" />
     </logger>
 
@@ -168,6 +168,34 @@ Example Logback configuration in `logback.xml`:
 ```
 
 This configuration sets Stormify to log SQL statements at the DEBUG level.
+
+### Custom Logger
+
+You can replace the default logger:
+
+=== "Kotlin"
+
+    ```kotlin
+    // Suppress all logging
+    stormify.logger = SilentLogger()
+
+    // Intercept log messages
+    stormify.logger = WatchLogger(existingLogger) { level, message, throwable ->
+        // Custom handling
+    }
+    ```
+
+=== "Java"
+
+    ```java
+    // Suppress all logging
+    stormify.setLogger(new SilentLogger());
+
+    // Intercept log messages
+    stormify.setLogger(new WatchLogger(existingLogger, (level, message, throwable) -> {
+        // Custom handling
+    }));
+    ```
 
 ## Other Configuration Options
 

@@ -55,8 +55,9 @@ nav:
     - Overview: KDBC_Overview.md
     - C Guide: KDBC_C_Guide.md
     - Kotlin Guide: KDBC_Kotlin_Guide.md
-    - C API Reference: kdbc-c/html/index.html
   - V1 to V2: Migration_V1_to_V2.md
   - Contributing: Contributing.md
-  - JavaDoc: javadoc/index.html
-  - Kotlin API: kotlin/index.html
+  - API Reference:
+    - Stormify API: api-stormify/index.html
+    - KDBC Kotlin API: api-kdbc-kotlin/index.html
+    - KDBC C API: kdbc-c/html/index.html

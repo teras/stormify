@@ -4,6 +4,7 @@ plugins {
     id("com.android.library")
     id("org.jetbrains.kotlinx.atomicfu") version "0.30.0-beta"
     id("com.google.devtools.ksp") version "2.2.20-2.0.2"
+    id("org.jetbrains.dokka")
 }
 
 group = parent?.group ?: IllegalStateException("Group is not defined")

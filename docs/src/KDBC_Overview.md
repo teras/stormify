@@ -55,7 +55,7 @@ This means:
 | SQLite | `KDBC_SQLITE` | libsqlite3 | Linux, macOS, iOS, Android |
 | PostgreSQL | `KDBC_POSTGRES` | libpq | Linux |
 | MariaDB / MySQL | `KDBC_MARIADB` | libmariadb | Linux |
-| Oracle | `KDBC_ORACLE` | ODPI-C (libdpic) | Linux |
+| Oracle | `KDBC_ORACLE` | ODPI-C | Linux |
 | MS SQL Server | `KDBC_MSSQL` | FreeTDS (libsybdb) | Linux |
 
 ## Key Design Decisions

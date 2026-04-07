@@ -117,10 +117,10 @@ The global singleton is gone. Create `Stormify` instances via constructor.
 === "V2 (Java — JVM)"
 
     ```java
-    import onl.ycode.stormify.Stormify;
+    import onl.ycode.stormify.StormifyJ;
 
     HikariDataSource dataSource = new HikariDataSource(config);
-    Stormify stormify = new Stormify(dataSource);
+    StormifyJ stormify = new StormifyJ(dataSource);
 
     stormify.create(user);
     ```
@@ -193,7 +193,7 @@ stormify.transaction {
 **Changes:**
 - No `Class<T>` parameter — V2 uses Kotlin reified generics
 - `create()` and `update()` now **return** the item (useful for generated IDs)
-- For Java callers, V2 provides overloads that accept `KClass<T>`
+- For Java callers, use `StormifyJ` which accepts `Class<T>` parameters
 
 ### findById
 
@@ -244,8 +244,8 @@ The stored procedure API is redesigned for type safety.
 === "V2 (Java)"
 
     ```java
-    Sp.Out<Integer> count = Sp.outParam(Integer.class);
-    Sp.Out<String> msg = Sp.outParam(String.class);
+    Sp.Out<Integer> count = SpKt.outParam(Integer.class);
+    Sp.Out<String> msg = SpKt.outParam(String.class);
     stormify.procedure("tally", 42, count, msg);
     Integer result = count.getValue();
     ```
@@ -359,20 +359,33 @@ JDBC types.
 V2 adds optional coroutine support with connection pooling:
 
 ```kotlin
-val pool = DefaultSuspendConnectionPool(dataSource, PoolConfig(
+val stormify = Stormify(dataSource)
+val pool = DefaultSuspendConnectionPool(stormify.dataSource, PoolConfig(
     minConnections = 2,
     maxConnections = 10,
-    connectionTimeout = 5.seconds,
+    acquireTimeout = 5.seconds,
     idleTimeout = 10.minutes,
 ))
-val stormify = SuspendStormify(pool)
+val async = stormify.suspending(pool)
 
 // All operations are suspend functions
-val users = stormify.read<User>("SELECT * FROM users")
-stormify.transaction {
-    create(user)
+async.transaction {
+    val user = create(User(email = "test@example.com"))
 }
 ```
+
+## Removed APIs
+
+The following V1 APIs no longer exist in V2:
+
+- **`onInit()` callbacks** — not needed; use constructor-based initialization instead.
+- **`closeDataSource()`** — Stormify no longer owns the DataSource. Close it directly.
+  `Stormify.close()` exists but is deprecated.
+- **`CRUDTable.populate()`** and **`CRUDTable.tableName()`** — removed. Use
+  `stormify.populate(entity)` or `AutoTable.populate()` instead.
+- **`User::class.db`** (Kotlin table name extension) — removed. Use
+  `stormify.getTableInfo(User::class).tableName` instead.
+- **`storedProcedure()`** — renamed to `procedure()`.
 
 ## Quick Migration Checklist
 
@@ -382,6 +395,6 @@ stormify.transaction {
 4. **Update transactions**: `TransactionContext.begin()` → `stormify.transaction { }`
 5. **Remove Class parameters**: `read(User.class, sql)` → `read<User>(sql)`
 6. **Update exception handling**: `QueryException` → `SQLException`
-7. **Update stored procedures**: `SPParam` → `Sp.In`/`Sp.Out<T>`/`Sp.InOut<T>`
+7. **Update stored procedures**: `storedProcedure()` → `procedure()`, `SPParam` → `Sp` API
 8. **Add KSP** if targeting native platforms
 9. **Optional**: adopt coroutine API for async workloads

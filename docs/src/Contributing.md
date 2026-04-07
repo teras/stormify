@@ -20,7 +20,7 @@ To contribute code, you'll need to set up your local development environment:
 
    ```
    cd stormify
-   ./gradlew clean build
+   gradle clean build
    ```
 
    Ensure all tests pass before making changes.
@@ -36,12 +36,12 @@ To contribute code, you'll need to set up your local development environment:
 6. **Run Tests**: Verify that your changes pass all tests:
 
    ```
-   ./gradlew test
+   gradle test
    ```
 
 ### Guidelines for Contributing Code
 
-- **Code Style**: Follow the coding style used in the project. Ensure your code is well-documented and adheres to Java best practices.
+- **Code Style**: Follow the coding style used in the project. Ensure your code is well-documented and adheres to Kotlin best practices.
 - **Commit Messages**: Write clear and descriptive commit messages. Each commit should represent a logical unit of work.
 - **Testing**: Include tests for any new features or bug fixes. Ensure that all tests pass before submitting your changes.
 

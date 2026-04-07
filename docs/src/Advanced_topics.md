@@ -135,6 +135,131 @@ For more structured applications, encapsulate transaction logic in service class
 
 Both patterns ensure that all operations share the same database connection and participate in the same transaction.
 
+## Kotlin Extension Functions
+
+Stormify provides Kotlin extension functions that allow a more idiomatic, concise syntax.
+These require a **default Stormify instance** set via `stormify.asDefault()`.
+
+### Setup
+
+```kotlin
+val stormify = Stormify(dataSource)
+stormify.asDefault()  // Register as the default instance
+```
+
+### Entity Extensions
+
+Any entity can call `create()`, `update()`, `delete()` directly — no need to implement
+`CRUDTable`:
+
+```kotlin
+val user = User(name = "Alice").create()   // INSERT, returns the created entity
+user.name = "Bob"
+user.update()                               // UPDATE
+user.delete()                               // DELETE
+```
+
+### String Extensions (SQL)
+
+Execute SQL directly from string literals:
+
+```kotlin
+// Read
+val users = "SELECT * FROM users WHERE age > ?".read<User>(25)
+val user = "SELECT * FROM users WHERE id = ?".readOne<User>(1)
+
+// Cursor-based (streaming)
+"SELECT * FROM users".readCursor<User> { user -> processUser(user) }
+
+// Execute DML
+"DELETE FROM users WHERE age < ?".executeUpdate(18)
+
+// Stored procedure
+"my_procedure".storedProcedure(arg1, spOut<Int>(), arg3)
+```
+
+### Query Helpers
+
+```kotlin
+val all = findAll<User>("WHERE status = ?", "active")
+val user = findById<User>(42)
+val items = order.details<OrderItem>()  // Parent-child query
+```
+
+### Transactions
+
+```kotlin
+transaction {
+    val user = create(User(email = "test@example.com"))
+    create(Profile(userId = user.id))
+}
+```
+
+## AutoTable: Lazy Loading
+
+`AutoTable` is an abstract base class that provides automatic lazy-loading of entity fields.
+When you read a list of entities whose reference fields point to `AutoTable` subclasses,
+those references are created with only their primary key set. When you access any non-key
+field, the full entity is loaded from the database on demand.
+
+### How It Works in Java
+
+Subclasses must call `populate()` in every getter/setter of non-primary-key fields:
+
+```java
+public class User extends AutoTable {
+    private Integer id;
+    private String name;
+
+    public Integer getId() { return id; }
+    public void setId(Integer id) { this.id = id; }
+
+    public String getName() {
+        populate();  // Triggers lazy load if needed
+        return name;
+    }
+    public void setName(String name) {
+        populate();
+        this.name = name;
+    }
+}
+```
+
+### How It Works in Kotlin
+
+In Kotlin, the `db` property delegate eliminates the need to call `populate()` manually:
+
+```kotlin
+class User : AutoTable() {
+    @DbField(primaryKey = true)
+    var id: Int? = null
+    var name: String by db("")       // Auto-populated on first access
+    var email: String by db("")      // Auto-populated on first access
+}
+```
+
+Every non-key property that needs lazy loading uses `by db(defaultValue)`.
+
+### Sibling Batch Optimization
+
+When multiple `AutoTable` references of the same type are created during a single read
+operation (e.g., many `Order` rows each referencing a `Customer`), those references are
+grouped into a **sibling group**. When any one of them triggers `populate()`, all
+siblings in the group are loaded in a single `SELECT ... WHERE id IN (...)` query.
+
+### Lazy Details (Child Records)
+
+For parent-child relationships, the `lazyDetails` delegate loads child records on first access:
+
+```kotlin
+class Order : AutoTable() {
+    @DbField(primaryKey = true)
+    var id: Int? = null
+    var total: Double by db(0.0)
+    var items: List<OrderItem> by lazyDetails()  // Loaded on first access
+}
+```
+
 ## Handling Auto-Increment Fields
 
 Stormify can manage auto-increment fields automatically by leveraging database sequences or letting the database handle the generation of primary key values. You can specify this behavior using the `@DbField` annotation's `primaryKey` and `primarySequence` attributes.
@@ -246,3 +371,226 @@ When strict mode is disabled, Stormify operates in lenient mode, logging warning
     ```java
     stormify.setStrictMode(false);
     ```
+
+## Batch CRUD Operations
+
+Pass a collection to create, update, or delete multiple entities:
+
+=== "Kotlin"
+
+    ```kotlin
+    val users = listOf(User(name = "Alice"), User(name = "Bob"), User(name = "Carol"))
+    stormify.create(users)     // Batch INSERT
+    stormify.update(users)     // Batch UPDATE
+    stormify.delete(users)     // Batch DELETE
+    ```
+
+=== "Java"
+
+    ```java
+    List<User> users = List.of(new User("Alice"), new User("Bob"), new User("Carol"));
+    stormify.create(users);
+    stormify.update(users);
+    stormify.delete(users);
+    ```
+
+!!! note "Generated keys in batch insert"
+    When batch-inserting entities with auto-generated keys, the generated key is populated
+    back to the entity **only if a single item** is inserted. For batch inserts, use
+    database sequences (`primarySequence`) instead of auto-increment to ensure keys are
+    assigned before insertion.
+
+## Collection Parameter Expansion
+
+When a `?` placeholder receives a `Collection` or array, Stormify automatically expands
+it into multiple placeholders:
+
+=== "Kotlin"
+
+    ```kotlin
+    val ids = listOf(1, 2, 3)
+    val users = stormify.read<User>("SELECT * FROM users WHERE id IN ?", ids)
+    // Expands to: SELECT * FROM users WHERE id IN (?, ?, ?)
+    ```
+
+=== "Java"
+
+    ```java
+    List<Integer> ids = List.of(1, 2, 3);
+    List<User> users = stormify.read(User.class, "SELECT * FROM users WHERE id IN ?", ids);
+    // Expands to: SELECT * FROM users WHERE id IN (?, ?, ?)
+    ```
+
+This also works with entity collections — Stormify extracts each entity's primary key
+automatically:
+
+=== "Kotlin"
+
+    ```kotlin
+    val admins = stormify.findAll<User>("WHERE role = ?", "admin")
+    val tasks = stormify.read<Task>("SELECT * FROM task WHERE user_id IN ?", admins)
+    // Expands to: SELECT * FROM task WHERE user_id IN (?, ?, ...) with user PKs
+    ```
+
+=== "Java"
+
+    ```java
+    List<User> admins = stormify.findAll(User.class, "WHERE role = ?", "admin");
+    List<Task> tasks = stormify.read(Task.class, "SELECT * FROM task WHERE user_id IN ?", admins);
+    // Expands to: SELECT * FROM task WHERE user_id IN (?, ?, ...) with user PKs
+    ```
+
+This works with any `Iterable` or array type.
+
+## Stored Procedures
+
+Stormify supports calling stored procedures with IN, OUT, and INOUT parameters:
+
+=== "Kotlin"
+
+    ```kotlin
+    val count = spOut<Int>()
+    val msg = spOut<String>()
+    stormify.procedure("tally", 42, count, msg)
+    println("count=${count.value}, msg=${msg.value}")
+    ```
+
+=== "Java"
+
+    ```java
+    Sp.Out<Integer> count = SpKt.outParam(Integer.class);
+    Sp.Out<String> msg = SpKt.outParam(String.class);
+    stormify.procedure("tally", 42, count, msg);
+    System.out.println("count=" + count.getValue() + ", msg=" + msg.getValue());
+    ```
+
+Parameter types:
+
+| Type | Kotlin | Java |
+|------|--------|------|
+| Input | `spIn(value)` or raw value | `Sp.In(value)` or raw value |
+| Output | `spOut<T>()` | `SpKt.outParam(Type.class)` |
+| Bidirectional | `spInOut(value)` | `SpKt.inOutParam(Type.class, value)` |
+
+## Coroutines (Suspend API)
+
+Stormify provides an optional suspend-based transaction API for Kotlin coroutine projects.
+All database operations run on the IO dispatcher, and coroutine cancellation is wired to
+the underlying database cancel primitive.
+
+### Extra Dependency
+
+The coroutines API requires `kotlinx-coroutines-core` as a runtime dependency. It is
+**not** pulled transitively — you must add it yourself:
+
+=== "Kotlin (Gradle)"
+
+    ```kotlin
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.10.2")
+    ```
+
+=== "Maven"
+
+    ```xml
+    <dependency>
+        <groupId>org.jetbrains.kotlinx</groupId>
+        <artifactId>kotlinx-coroutines-core</artifactId>
+        <version>1.10.2</version>
+    </dependency>
+    ```
+
+### Setup
+
+Create a `SuspendStormify` from an existing `Stormify` instance and a connection pool:
+
+```kotlin
+import onl.ycode.stormify.Stormify
+import onl.ycode.stormify.coroutines.*
+
+val stormify = Stormify(dataSource)
+val pool = DefaultSuspendConnectionPool(stormify.dataSource, PoolConfig(
+    minConnections = 2,
+    maxConnections = 10,
+))
+val async = stormify.suspending(pool)
+```
+
+The blocking `Stormify` instance continues to work independently — `SuspendStormify`
+is purely additive. You can use both APIs side-by-side.
+
+### Suspend Transactions
+
+```kotlin
+async.transaction {
+    val user = create(User(email = "test@example.com"))
+    create(Profile(userId = user.id, name = "Test User"))
+}
+```
+
+All operations inside the block are suspend functions that run on the IO dispatcher.
+The transaction commits on success and rolls back on any exception.
+
+### Nested Transactions
+
+Calling `transaction` from within another `transaction` on the same coroutine reuses the
+outer connection via a savepoint:
+
+```kotlin
+async.transaction {
+    create(record1)
+    transaction {
+        // Uses savepoint — rollback only affects this inner block
+        create(record2)
+    }
+}
+```
+
+### Cancellation
+
+When a coroutine running a transaction is cancelled, the pool dispatches `Connection.cancel()`
+which maps to the driver's native async-cancel primitive:
+
+| Platform | Cancel mechanism |
+|----------|-----------------|
+| Native (PostgreSQL) | `PQcancel` |
+| Native (SQLite) | `sqlite3_interrupt` |
+| Native (MariaDB) | `mariadb_cancel` |
+| Native (Oracle) | `dpiConn_breakExecution` |
+| Native (MSSQL) | `dbcancel` |
+| JVM | `Statement.cancel()` (JDBC) |
+
+The blocked query returns with an error, the transaction rolls back, and the connection
+is evicted from the pool.
+
+### Pool Configuration
+
+`PoolConfig` controls pool behavior:
+
+```kotlin
+PoolConfig(
+    minConnections = 2,          // Pre-warmed connections
+    maxConnections = 10,         // Hard upper bound
+    acquireTimeout = 30.seconds, // Wait time when pool is saturated
+    idleTimeout = 5.minutes,     // Evict idle connections
+    maxLifetime = 30.minutes,    // Retire long-lived connections
+    validationQuery = "SELECT 1" // Optional health check
+)
+```
+
+When the pool is saturated, callers **suspend** (not block) until a connection is released.
+
+### Pool Statistics
+
+Monitor pool health via `pool.stats`:
+
+```kotlin
+val stats = pool.stats
+println("total=${stats.total} inUse=${stats.inUse} idle=${stats.idle}")
+```
+
+### Shutdown
+
+```kotlin
+pool.close()  // Waits up to shutdownTimeout (default 30s), then force-closes remaining
+```
+
