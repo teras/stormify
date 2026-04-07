@@ -73,7 +73,7 @@ LIB_SHARED  = libkdbc.so
 TEST_SRC    = test/test_kdbc.c
 TEST_BIN    = test/test_kdbc
 
-.PHONY: all clean test lib
+.PHONY: all clean test lib docs
 
 all: lib
 
@@ -93,6 +93,9 @@ test: $(TEST_BIN)
 
 $(TEST_BIN): $(TEST_SRC) $(LIB_STATIC)
 	$(CC) $(CFLAGS) -o $@ $< $(LIB_STATIC) $(LDFLAGS) -lm
+
+docs:
+	doxygen Doxyfile
 
 clean:
 	rm -f $(OBJECTS) $(LIB_STATIC) $(LIB_SHARED) $(TEST_BIN)

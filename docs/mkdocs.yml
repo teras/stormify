@@ -9,6 +9,8 @@ extra:
   homepage: https://stormify.org/
 
 markdown_extensions:
+  - admonition
+  - pymdownx.details
   - pymdownx.highlight:
       anchor_linenums: true
       line_spans: __span
@@ -41,11 +43,20 @@ theme:
     - navigation.top
     - content.tabs.link
 
+extra_javascript:
+  - js/tab-fallback.js
+
 nav:
   - Welcome: README.md
   - Core: Core_concepts.md
   - Advanced: Advanced_topics.md
   - Configuration: Database_Configuration.md
+  - KDBC:
+    - Overview: KDBC_Overview.md
+    - C Guide: KDBC_C_Guide.md
+    - Kotlin Guide: KDBC_Kotlin_Guide.md
+    - C API Reference: kdbc-c/html/index.html
+  - V1 to V2: Migration_V1_to_V2.md
   - Contributing: Contributing.md
   - JavaDoc: javadoc/index.html
-  - Kotlin Bindings: kotlin/index.html
+  - Kotlin API: kotlin/index.html

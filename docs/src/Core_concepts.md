@@ -2,33 +2,44 @@
 
 ## Entity Mapping and Requirements
 
-Stormify maps Kotlin classes to database tables using field names that match the corresponding database column names. This approach minimizes the need for extensive configurations or annotations, allowing you to work directly with your Kotlin classes.
+Stormify maps Kotlin classes to database tables using field names that match the corresponding database column names. This approach minimizes the need for extensive configurations or annotations, allowing you to work directly with your classes.
 
 ### Field Name Matching
 
-- **Automatic Mapping**: Fields in your Kotlin classes are automatically mapped to database columns with matching names. No annotations are required as long as the field names correspond to the column names.
+- **Automatic Mapping**: Fields in your classes are automatically mapped to database columns with matching names. No annotations are required as long as the field names correspond to the column names.
 - **Optional Annotations**: You can use the `@DbTable` and `@DbField` annotations to provide additional information or to customize the mapping between your classes and the database.
 
 ### Naming Policy
 
 Stormify provides flexible naming policies to convert class names to table names and field names to column names,
-ensuring consistency across your database schema. You can set the naming policy using the `setNamingPolicy` method in
-the Stormify manager. By default, the naming policy is set to `LOWER_CASE_WITH_UNDERSCORES` (snake_case). This policy
-will only affect tables and fields that are not already registered.
+ensuring consistency across your database schema. By default, the naming policy is set to
+`LOWER_CASE_WITH_UNDERSCORES` (snake_case).
+
+=== "Kotlin"
+
+    ```kotlin
+    stormify.namingPolicy = NamingPolicy.CAMEL_CASE
+    ```
+
+=== "Java"
+
+    ```java
+    stormify.setNamingPolicy(NamingPolicy.CAMEL_CASE);
+    ```
 
 #### NamingPolicy Enum Options
 
 1. **CAMEL_CASE**
-    - **Description**: Uses class and field names as they are, preserving camel case.
-    - **Example**: A class named `UserAccount` remains `UserAccount`, and a field named `userName` remains `userName`.
+    - Database columns use the same name as Kotlin/Java fields, preserving camel case.
+    - Example: Kotlin field `userName` → DB column `userName`, class `UserAccount` → table `UserAccount`.
 
-2. **LOWER_CASE_WITH_UNDERSCORES**
-    - **Description**: Converts class and field names to lower case with underscores (snake_case).
-    - **Example**: A class named `UserAccount` becomes `user_account`, and a field named `userName` becomes `user_name`.
+2. **LOWER_CASE_WITH_UNDERSCORES** (default)
+    - Kotlin/Java camelCase names are converted to snake_case for the database.
+    - Example: Kotlin field `userName` → DB column `user_name`, class `UserAccount` → table `user_account`.
 
 3. **UPPER_CASE_WITH_UNDERSCORES**
-    - **Description**: Converts class and field names to upper case with underscores (SCREAMING_SNAKE_CASE).
-    - **Example**: A class named `UserAccount` becomes `USER_ACCOUNT`, and a field named `userName` becomes `USER_NAME`.
+    - Kotlin/Java camelCase names are converted to SCREAMING_SNAKE_CASE for the database.
+    - Example: Kotlin field `userName` → DB column `USER_NAME`, class `UserAccount` → table `USER_ACCOUNT`.
 
 ### Custom Primary Key Resolvers
 
@@ -38,32 +49,43 @@ Primary keys in databases commonly follow a naming convention. If this is the ca
 
 To set up a primary key resolver, use the `registerPrimaryKeyResolver` method. You provide:
 
-- **Priority**: Determines which resolver is used first if multiple are registered. Higher values mean higher priority.
-- **Resolver Function**: A simple function that checks the table and field names to decide if a field is a primary key.
+- **Priority**: A numeric value that determines execution order when multiple resolvers are registered. Higher values are checked earlier. The default priority is 0; use values like 10, 20, etc. to run before the default.
+- **Resolver Function**: A function that receives the table name and field name, and returns `true` if the field should be treated as a primary key.
 
 #### Example
 
-If your primary keys follow a specific naming pattern, you can register a resolver that uses your own criteria:
+=== "Kotlin"
 
-```kotlin
-// Register a resolver that identifies fields named "id" as primary keys
-stormify.registerPrimaryKeyResolver(10) { tableName, fieldName ->
-    fieldName.equals("id", ignoreCase = true)
-}
-```
+    ```kotlin
+    // Register a resolver that identifies fields named "id" as primary keys
+    stormify.registerPrimaryKeyResolver(10) { tableName, fieldName ->
+        fieldName.equals("id", ignoreCase = true)
+    }
+    ```
+
+=== "Java"
+
+    ```java
+    // Register a resolver that identifies fields named "id" as primary keys
+    stormify.registerPrimaryKeyResolver(10, (tableName, fieldName) ->
+        fieldName.equalsIgnoreCase("id")
+    );
+    ```
 
 In this example:
 
 - The resolver checks if the field name is `id`, a common but not universal pattern.
-- The priority is set to `10`, indicating this resolver should be checked early.
+- The priority `10` means this resolver runs earlier than any default (priority 0) resolvers.
 
 By setting up custom primary key resolvers, Stormify can accurately identify primary keys without relying on annotations for every class.
 
 ## Annotations
 
+Stormify supports both its own annotations (`@DbTable`, `@DbField`) and standard JPA annotations (`@Id`, `@Table`, `@Column`, etc.) — see [JPA annotations](#other-supported-annotations) below.
+
 ### `@DbTable` Annotation
 
-The `@DbTable` annotation is used to specify the database table name associated with a class. This annotation is
+The `@DbTable` annotation specifies the database table name associated with a class. This annotation is
 optional and is only needed if the table name differs from the class name.
 
 #### Attributes
@@ -73,21 +95,41 @@ optional and is only needed if the table name differs from the class name.
 
 #### Example
 
-```kotlin
-import onl.ycode.stormify.DbTable
+=== "Kotlin"
 
-@DbTable(name = "custom_table_name")
-data class User(
-    var id: Int = 0,
-    var name: String = ""
-)
-```
+    ```kotlin
+    import onl.ycode.stormify.DbTable
+    import onl.ycode.stormify.DbField
+
+    @DbTable(name = "custom_table_name")
+    data class User(
+        @DbField(primaryKey = true)
+        var id: Int = 0,
+        var name: String = ""
+    )
+    ```
+
+=== "Java"
+
+    ```java
+    import onl.ycode.stormify.DbTable;
+    import onl.ycode.stormify.DbField;
+
+    @DbTable(name = "custom_table_name")
+    public class User {
+        @DbField(primaryKey = true)
+        private int id;
+        private String name;
+
+        // getters and setters
+    }
+    ```
 
 In this example, the `User` class maps to the `custom_table_name` table in the database.
 
 ### `@DbField` Annotation
 
-The `@DbField` annotation is used to provide additional information about a specific field in a class. This annotation
+The `@DbField` annotation provides additional information about a specific field. This annotation
 is optional and allows you to customize how fields are mapped to database columns.
 
 #### Attributes
@@ -102,17 +144,35 @@ is optional and allows you to customize how fields are mapped to database column
 
 #### Example
 
-```kotlin
-import onl.ycode.stormify.DbField
+=== "Kotlin"
 
-data class User(
-    @DbField(name = "custom_id", primaryKey = true, primarySequence = "id_seq")
-    var id: Int = 0,
+    ```kotlin
+    import onl.ycode.stormify.DbField
 
-    @DbField(creatable = false, updatable = true)
-    var name: String = ""
-)
-```
+    data class User(
+        @DbField(name = "custom_id", primaryKey = true, primarySequence = "id_seq")
+        var id: Int = 0,
+
+        @DbField(creatable = false, updatable = true)
+        var name: String = ""
+    )
+    ```
+
+=== "Java"
+
+    ```java
+    import onl.ycode.stormify.DbField;
+
+    public class User {
+        @DbField(name = "custom_id", primaryKey = true, primarySequence = "id_seq")
+        private int id;
+
+        @DbField(creatable = false, updatable = true)
+        private String name;
+
+        // getters and setters
+    }
+    ```
 
 In this example:
 
@@ -135,21 +195,22 @@ Stormify provides support for several standard annotations from the `javax.persi
 
 - **`@Transient`**: Marks a field to be ignored during database operations.
 
-### Note
-
-These annotations help bridge the gap between your Kotlin classes and database schema, enabling a smooth mapping experience with Stormify. By leveraging these standard JPA annotations, Stormify ensures compatibility with existing JPA setups while providing additional flexibility.
+These annotations help bridge the gap between your classes and the database schema. By leveraging standard JPA annotations, Stormify ensures compatibility with existing JPA setups while providing additional flexibility.
 
 ## Blacklist Management
 
-Stormify includes a feature to manage fields that should be ignored during database interactions. This is useful when you want to exclude certain fields from being creatable, updated, or retrieved.
+Stormify includes a feature to manage fields that should be ignored during database interactions. This is useful when you want to exclude certain fields from being created, updated, or retrieved.
 
 **Note**: If a field is marked as `@Transient`, it will be ignored by default.
 
-- **Add to Blacklist**: Use `addBlacklistField(fieldName: String)` to add a field to the blacklist.
-- **Remove from Blacklist**: Use `removeBlacklistField(fieldName: String)` to remove a field from the blacklist.
+=== "Kotlin"
 
-Example:
+    ```kotlin
+    stormify.addBlacklistField("temporaryField")
+    ```
 
-```kotlin
-stormify.addBlacklistField("temporaryField")
-```
+=== "Java"
+
+    ```java
+    stormify.addBlacklistField("temporaryField");
+    ```

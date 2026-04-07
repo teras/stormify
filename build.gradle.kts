@@ -7,7 +7,7 @@ allprojects {
 }
 
 group = "onl.ycode"
-version = "1.0.0"
+version = "2.0.0"
 
 plugins {
     (kotlin("multiplatform") version "2.2.20").apply(false)

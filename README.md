@@ -4,12 +4,14 @@
 
 # Stormify
 
-Stormify is a flexible ORM library for Kotlin that simplifies database interactions with minimal configuration. It operates and performs CRUD operations on plain Kotlin classes without requiring extensive annotations or XML setups, as long as field names match database columns. This makes Stormify ideal for both small and large projects.
+Stormify is a flexible ORM library for Kotlin Multiplatform that simplifies database interactions with minimal configuration. It operates and performs CRUD operations on plain Kotlin classes without requiring extensive annotations or XML setups, as long as field names match database columns.
 
 Designed for developers seeking a simple yet powerful ORM, Stormify excels in projects that favor convention over configuration, allowing for minimal setup and clean, straightforward code.
 
 ## Features
 
+- **Kotlin Multiplatform**: JVM and Linux native — same API, no JVM required on native.
+- **Native Database Access**: Direct access to PostgreSQL, MariaDB/MySQL, Oracle, MSSQL, and SQLite on Linux without JVM or JDBC.
 - **CRUD Operations**: Easily create, read, update, and delete records.
 - **Annotation-Free Classes**: Perform operations with plain Kotlin classes without the need for extensive annotations or XML files.
 - **Fine or Coarse Grain Definitions**: Define naming policies and primary key resolvers for standard naming patterns, or use annotations to handle special cases.
@@ -17,152 +19,152 @@ Designed for developers seeking a simple yet powerful ORM, Stormify excels in pr
 - **Flexible Query Execution**: Execute custom and complex SQL queries and map results to Kotlin objects.
 - **Transaction Management**: Support for nested transactions with rollback and commit capabilities via savepoints.
 - **Support for Composite Keys**: Handle tables with composite primary keys effortlessly.
-- **Kotlin Multiplatform**: Multiplatform support with JVM and Native targets.
-
-## About Async APIs
-
-Stormify (and the underlying KDBC drivers) currently expose blocking database calls. This isn’t a design preference so much as a constraint of the drivers we rely on: JDBC on the JVM and the native C clients (SQLite, libpq, MySQL/MariaDB, Oracle, FreeTDS) are all inherently blocking. A suspending wrapper would still have to pin a worker thread for each query, so there is no real non-blocking benefit to surface to consumers. When truly asynchronous database drivers become available for the supported platforms we can revisit the API, but for now keeping the interface synchronous aligns with the capabilities of the ecosystem.
 
 ## Installation
 
-To use Stormify in your Kotlin project, add the library dependency to your build file. Stormify is available through common package managers like Maven and Gradle.
+### Kotlin (Gradle)
 
-### Maven
+```kotlin
+implementation("onl.ycode:stormify-jvm:2.0.0")
+```
+
+### Java (Maven)
 
 ```xml
 <dependency>
     <groupId>onl.ycode</groupId>
     <artifactId>stormify-jvm</artifactId>
-    <version>1.0.0</version>
+    <version>2.0.0</version>
 </dependency>
 ```
 
-### Gradle
+### Native
+
+For native Linux applications (no JVM required):
 
 ```kotlin
-implementation("onl.ycode:stormify-jvm:1.0.0")
+implementation("onl.ycode:stormify-linuxx64:2.0.0")
+```
+
+Supported databases: **PostgreSQL, MariaDB/MySQL, Oracle, MSSQL, SQLite** — loaded at runtime via `dlopen`.
+
+Annotation processing via KSP is required on native:
+
+```kotlin
+plugins {
+    id("com.google.devtools.ksp")
+}
+
+dependencies {
+    ksp("onl.ycode:annproc:2.0.0")
+}
 ```
 
 ## Basic Usage
 
 ### Configure Your Database
 
-Ensure that your database is set up and accessible. Stormify supports any JDBC-compatible data source. For this example, we'll use HikariCP. Create a `databaseConfig.properties` file with the configuration parameters, add HikariCP to your classpath, and use the following code to initialize Stormify:
+**Kotlin (JVM):**
 
 ```kotlin
-import com.zaxxer.hikari.HikariConfig
-import com.zaxxer.hikari.HikariDataSource
-import onl.ycode.stormify.Stormify
-
 val config = HikariConfig("databaseConfig.properties")
 val dataSource = HikariDataSource(config)
 val stormify = Stormify(dataSource)
 ```
 
+**Java:**
+
+```java
+HikariConfig config = new HikariConfig("databaseConfig.properties");
+HikariDataSource dataSource = new HikariDataSource(config);
+StormifyJ stormify = new StormifyJ(dataSource);
+```
+
+**Native:**
+
+```kotlin
+val ds = KdbcDataSource("jdbc:postgresql://localhost:5432/mydb", "user", "pass")
+val stormify = Stormify(ds)
+```
+
 ### Creating an Entity Class
 
-To interact with the database, define a simple Kotlin class that does not need to extend any specific class. The library automatically maps fields based on their names. For example, for a table created as `CREATE TABLE test (id INT PRIMARY KEY, name VARCHAR(255));`, the corresponding class would be:
+Define a simple Kotlin class. The library automatically maps fields based on their names.
+For a table `CREATE TABLE test (id INT PRIMARY KEY, name VARCHAR(255))`:
 
 ```kotlin
 data class Test(
+    @DbField(primaryKey = true)
     var id: Int = 0,
     var name: String = ""
 )
 ```
 
+Mark primary keys with `@DbField(primaryKey = true)`, or register a primary key resolver to detect them by naming convention.
+
 ### Performing CRUD Operations
 
-**Create a Record**:
-
 ```kotlin
-val newRecord = Test(id = 1, name = "Test Entry")
-stormify.create(newRecord)
-```
+// Create
+val record = stormify.create(Test(id = 1, name = "Test Entry"))
 
-**Read Records**:
+// Read
+val results = stormify.read<Test>("SELECT * FROM test")
 
-```kotlin
-val results: List<Test> = stormify.read("SELECT * FROM test")
-println(results)
-```
+// Update
+record.name = "Updated Entry"
+stormify.update(record)
 
-**Update a Record**:
-
-```kotlin
-newRecord.name = "Updated Entry"
-stormify.update(newRecord)
-```
-
-**Delete a Record**:
-
-```kotlin
-stormify.delete(newRecord)
+// Delete
+stormify.delete(record)
 ```
 
 ### Using Transactions
+
+**Kotlin:**
 
 ```kotlin
 stormify.transaction {
     val user = create(User(email = "test@example.com"))
     create(Profile(userId = user.id, name = "Test User"))
     update(account)
-
-    // All operations share the same connection and transaction
 }
+```
+
+**Java:**
+
+```java
+stormify.transaction(tx -> {
+    User user = tx.create(new User("test@example.com"));
+    tx.create(new Profile(user.getId(), "Test User"));
+    tx.update(account);
+});
 ```
 
 ### Advanced Queries
 
-**Query with Parameters**:
-
 ```kotlin
-val users: List<User> = stormify.read("SELECT * FROM users WHERE age > ?", 25)
+// Query with parameters
+val users = stormify.read<User>("SELECT * FROM users WHERE age > ?", 25)
+
+// Single result
+val user = stormify.readOne<User>("SELECT * FROM users WHERE id = ?", 1)
+
+// Find by ID
+val user = stormify.findById<User>(1)
 ```
 
-**Query Single Result**:
+## Documentation
 
-```kotlin
-val user: User? = stormify.readOne("SELECT * FROM users WHERE id = ?", 1)
-```
-
-**Find All with Where Clause**:
-
-```kotlin
-val activeUsers: List<User> = stormify.findAll<User>("WHERE status = ?", "active")
-```
-
-**Find by ID**:
-
-```kotlin
-val user: User? = stormify.findById<User>(1)
-```
-
-## Native Builds
-
-**Build**:
-```bash
-gradle buildNativeDistribution
-gradle testNative
-```
-
-Or use script:
-```bash
-./docker/build-native.sh build
-./docker/build-native.sh test
-```
-
-**Requirements**:
-- Build: Docker
-- Runtime: glibc >= 2.31 (Ubuntu 20.04+, Debian 11+, RHEL 9+)
-- Database libraries: `libsqlite3`, `libpq`, `libmariadb`, Oracle Instant Client
+Full documentation is available at [stormify.org/docs](https://stormify.org/docs/).
 
 ## Contributing
 
-Contributions are welcome! Please check the [Contributing](Contributing.md) guide for instructions on how to get involved, report issues, or submit pull requests.
+Contributions are welcome! Please check the [Contributing](docs/src/Contributing.md) guide for instructions on how to get involved, report issues, or submit pull requests.
 
 ## License
 
-Stormify is licensed under the [Apache License 2.0](https://www.apache.org/licenses/LICENSE.2.0). You are free to use, modify, and distribute this library in accordance with the terms of the license.
+Stormify is licensed under the [Apache License 2.0](https://www.apache.org/licenses/LICENSE-2.0). You are free to use, modify, and distribute this library in accordance with the terms of the license.
 
 ---
 
