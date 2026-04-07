@@ -46,6 +46,8 @@ class StormifyJ(dataSource: DataSource, vararg registrars: EntityRegistrar) : Au
 
     fun <T : Any> findById(baseClass: Class<T>, id: Any) = stormify.findById(null, baseClass.kotlin, id)
 
+    fun procedure(name: String, vararg args: Any?) = stormify.procedure(name, *args)
+
     fun transaction(block: Consumer<TransactionContextJ>) =
         TransactionContextJ(TransactionContext(stormify)).start(block)
 

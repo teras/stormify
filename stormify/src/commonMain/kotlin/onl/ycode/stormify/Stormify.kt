@@ -57,7 +57,8 @@ open class Stormify(val dataSource: DataSource, vararg registrars: EntityRegistr
     private val configLock = kotlinx.atomicfu.locks.SynchronizedObject()
 
     var namingPolicy: NamingPolicy = NamingPolicy.LOWER_CASE_WITH_UNDERSCORES
-    private val blacklist = mutableSetOf<String>()
+    // Exclude common Java/JPA base-class fields that should never be mapped to database columns
+    private val blacklist = mutableSetOf("serialVersionUID", "idFieldValue", "transientId")
     private val pkResolvers = mutableMapOf<Int, (String, String) -> Boolean>()
 
     fun addBlacklistField(name: String) = synchronized(configLock) { blacklist.add(name) }
@@ -178,6 +179,14 @@ open class Stormify(val dataSource: DataSource, vararg registrars: EntityRegistr
     }
 
     @Suppress("UNCHECKED_CAST")
+    internal fun createReferenceStub(refType: KClass<*>, idValue: Any): Any {
+        val refInfo = resolveTableInfo(refType) as TableInfo<Any>
+        val wrapper = refInfo.create()
+        if (wrapper is StormifyEntity) wrapper.`!stormify` = this
+        refInfo.setField(wrapper, refInfo.idDbNames[0], idValue, this)
+        return wrapper
+    }
+
     private fun sqlData(value: Any?, recursively: Boolean): Any? {
         if (value == null || isScalarObject(value))
             return if (value is CharArray) value.concatToString() else value
@@ -313,15 +322,18 @@ open class Stormify(val dataSource: DataSource, vararg registrars: EntityRegistr
             val colType = info.getScalarType(col)
             val value =
                 transformResultValue(if (colType != null) rs.getObject(i, colType) else rs.getObject(i, Any::class))
-            // Reference deduplication: if field is an AutoTable type and we have a context
-            if (context != null && value != null && info.isReferenceField(col)) {
+            // Reference resolution: if field is a reference type, create a stub entity with just the FK ID set
+            if (value != null && info.isReferenceField(col)) {
                 val refType = info.getReferenceType(col)!!
                 try {
-                    val ref = context.getOrCreateReference(refType, value, this)
+                    val ref = if (context != null)
+                        context.getOrCreateReference(refType, value, this)
+                    else
+                        createReferenceStub(refType, value)
                     info.setField(item, col, ref, this, if (isStrictMode) null else logger)
                     continue
-                } catch (_: Exception) {
-                    // Fall through to normal setField
+                } catch (e: Exception) {
+                    logger.debug("Could not resolve reference for column '{}' (type {}): {}", col, refType.simpleName, e.message)
                 }
             }
             try {
@@ -499,7 +511,7 @@ open class Stormify(val dataSource: DataSource, vararg registrars: EntityRegistr
             for (item in itemList) {
                 val params = info.getUpdateValues(item)
                 for (i in params.indices)
-                    stmt.setObject(i + 1, params[i])
+                    stmt.setObject(i + 1, sqlData(params[i], false))
                 stmt.addBatch()
             }
             stmt.executeBatch()

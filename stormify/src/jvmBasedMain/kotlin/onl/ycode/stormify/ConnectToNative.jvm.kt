@@ -77,8 +77,33 @@ internal actual fun <T : Any> tryReflection(type: KClass<T>): EntityMeta<T>? {
     if (kProps.isEmpty()) return null
 
     val properties = kProps.mapNotNull { kProp ->
-        val jField = try { jClass.getDeclaredField(kProp.name) } catch (_: Exception) { null }
+        val propName = kProp.name
+        val capitalizedName = propName.replaceFirstChar { it.uppercase() }
+
+        // Resolve Java field (walk class hierarchy for inherited fields) and getter
+        val jField = run {
+            var cls: Class<*>? = jClass
+            while (cls != null) {
+                try { return@run cls.getDeclaredField(propName) } catch (_: Exception) {}
+                cls = cls.superclass
+            }
+            null
+        }
+        val javaGetter = try { jClass.getMethod("get$capitalizedName") } catch (_: Exception) {
+            try { jClass.getMethod("is$capitalizedName") } catch (_: Exception) {
+                // Boolean property named "isFoo" — getter is isFoo(), not getIsFoo()
+                if (propName.startsWith("is") && propName.length > 2)
+                    try { jClass.getMethod(propName) } catch (_: Exception) { null }
+                else null
+            }
+        }
+
+        // Collect annotations from all sources (JPA supports both field-access and property-access):
+        // 1. Java field annotations (standard Kotlin backing field or Java POJO field)
+        // 2. Java getter annotations (JPA property-access pattern: @Id on getId())
+        // 3. Kotlin property annotations (includes annotations on delegated properties like `by db()`)
         val annotations = (jField?.annotations?.toList() ?: emptyList()) +
+                (javaGetter?.annotations?.toList() ?: emptyList()) +
                 (kProp.annotations)
 
         // Check transient: Java keyword, Kotlin @Transient, JPA @Transient
@@ -127,25 +152,52 @@ internal actual fun <T : Any> tryReflection(type: KClass<T>): EntityMeta<T>? {
         if (Collection::class.java.isAssignableFrom(propType.java) || Map::class.java.isAssignableFrom(propType.java))
             return@mapNotNull null
         // Generic type variables (erased to Any) are not entity references
-        val getterName = "get" + kProp.name.replaceFirstChar { it.uppercase() }
-        val javaGetter = try { jClass.getMethod(getterName) } catch (_: Exception) { null }
         val isGenericTypeVar = javaGetter?.genericReturnType is java.lang.reflect.TypeVariable<*>
-        val isReference = !isGenericTypeVar && !isScalarClass(propType) && !isScalarObject(propType.java.kotlin)
+        val isReference = !isGenericTypeVar && !isScalarClass(propType)
                 && propType != ByteArray::class && propType != CharArray::class
 
-        // Build getter/setter via Kotlin reflection
+        // Build getter/setter — prefer Java getter/setter for interop with Java POJOs
+        // (Kotlin reflection on Java classes with private fields fails with IllegalAccessException)
         val mutableProp = kProp as? kotlin.reflect.KMutableProperty1<T, *>
+        // Resolve Java setter: try setXxx(), and for boolean "isFoo" properties try setFoo()
+        val javaSetter = run {
+            fun trySetters(name: String): java.lang.reflect.Method? =
+                try { jClass.getMethod("set$name", propType.java) } catch (_: Exception) {
+                    try { jClass.getMethod("set$name", propType.javaObjectType) } catch (_: Exception) { null }
+                }
+            trySetters(capitalizedName)
+                ?: if (propName.startsWith("is") && propName.length > 2)
+                    trySetters(propName.removePrefix("is"))
+                else null
+        }
+
+        val getter: (T) -> Any? = if (javaGetter != null) {
+            { entity: T -> javaGetter.invoke(entity) }
+        } else {
+            { entity: T -> kProp.get(entity) }
+        }
+
+        val setter: (T, Any?, Stormify) -> Unit = if (javaSetter != null) {
+            { entity: T, value: Any?, stormify: Stormify ->
+                javaSetter.invoke(entity, TypeUtils.castTo(propType, value, stormify))
+            }
+        } else if (mutableProp != null) {
+            @Suppress("UNCHECKED_CAST")
+            { entity: T, value: Any?, stormify: Stormify ->
+                (mutableProp as kotlin.reflect.KMutableProperty1<T, Any?>).set(entity, TypeUtils.castTo(propType, value, stormify))
+            }
+        } else {
+            { _: T, _: Any?, _: Stormify ->
+                throw onl.ycode.kdbc.SQLException("Property ${kProp.name} is not mutable in ${type.simpleName}")
+            }
+        }
 
         PropertyMeta<T>(
             name = kProp.name,
             type = propType,
             isReference = isReference,
-            getter = { entity: T -> kProp.get(entity) },
-            setter = { entity: T, value: Any?, stormify: Stormify ->
-                val converted = TypeUtils.castTo(propType, value, stormify)
-                (mutableProp as? kotlin.reflect.KMutableProperty1<T, Any?>)?.set(entity, converted)
-                    ?: throw onl.ycode.kdbc.SQLException("Property ${kProp.name} is not mutable in ${type.simpleName}")
-            },
+            getter = getter,
+            setter = setter,
             dbNameOverride = dbNameOverride,
             isPrimaryKey = isPrimaryKey,
             sequence = sequence,

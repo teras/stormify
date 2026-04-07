@@ -28,7 +28,7 @@ object TypeUtils {
                 throw SQLException("Unable to convert non-scalar object to " + targetClass.fullName + "; missing database context")
             val info = stormify.resolveTableInfo(givenClass)
             val item = info.create()
-            if (item is AutoTable) item.`!stormify` = stormify
+            if (item is StormifyEntity) item.`!stormify` = stormify
             info.setField(item, info.singleKeyDbName, value, stormify)
             return item as T
         }
