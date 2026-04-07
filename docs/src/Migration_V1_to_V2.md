@@ -379,8 +379,7 @@ async.transaction {
 The following V1 APIs no longer exist in V2:
 
 - **`onInit()` callbacks** — not needed; use constructor-based initialization instead.
-- **`closeDataSource()`** — Stormify no longer owns the DataSource. Close it directly.
-  `Stormify.close()` exists but is deprecated.
+- **`closeDataSource()`** / **`close()`** — Stormify no longer owns the DataSource. Close it directly.
 - **`CRUDTable.populate()`** and **`CRUDTable.tableName()`** — removed. Use
   `stormify.populate(entity)` or `AutoTable.populate()` instead.
 - **`User::class.db`** (Kotlin table name extension) — removed. Use

@@ -21,7 +21,7 @@ private class FixedParams(val query: String, val params: List<Any?>)
  * @param dataSource the data source for all database operations
  * @param registrars optional entity registrars to register at construction time
  */
-open class Stormify(val dataSource: DataSource, vararg registrars: EntityRegistrar) : AutoCloseable {
+open class Stormify(val dataSource: DataSource, vararg registrars: EntityRegistrar) {
 
     init {
         for (r in registrars) r.register()
@@ -41,15 +41,6 @@ open class Stormify(val dataSource: DataSource, vararg registrars: EntityRegistr
     fun asDefault(): Stormify {
         defaultInstance = this
         return this
-    }
-
-    @Deprecated(
-        "Stormify does not own the DataSource. Close the DataSource directly instead. Will be removed in the next major release.",
-        level = DeprecationLevel.WARNING
-    )
-    override fun close() {
-        logger.warn("Stormify.close() is deprecated and will be removed in the next major release — close the DataSource directly instead")
-        if (dataSource is AutoCloseable) dataSource.close()
     }
 
     // --- Policies ---

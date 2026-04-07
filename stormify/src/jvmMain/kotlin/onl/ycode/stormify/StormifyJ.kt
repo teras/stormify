@@ -4,7 +4,7 @@ import onl.ycode.kdbc.DataSource
 import onl.ycode.kdbc.JdbcDataSource
 import java.util.function.Consumer
 
-class StormifyJ(dataSource: DataSource, vararg registrars: EntityRegistrar) : AutoCloseable {
+class StormifyJ(dataSource: DataSource, vararg registrars: EntityRegistrar) {
     constructor(jdbcDataSource: javax.sql.DataSource, vararg registrars: EntityRegistrar) : this(JdbcDataSource(jdbcDataSource), *registrars)
 
     private val stormify = Stormify(dataSource, *registrars)
@@ -71,8 +71,5 @@ class StormifyJ(dataSource: DataSource, vararg registrars: EntityRegistrar) : Au
         set(value) { stormify.logger = value }
 
     fun asDefault(): StormifyJ { stormify.asDefault(); return this }
-    @Suppress("DEPRECATION")
-    @Deprecated("Stormify does not own the DataSource. Close the DataSource directly instead. Will be removed in the next major release.", level = DeprecationLevel.WARNING)
-    override fun close() = stormify.close()
 }
 
