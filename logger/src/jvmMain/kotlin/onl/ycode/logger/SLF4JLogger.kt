@@ -22,19 +22,19 @@ internal class SLF4JLogger : onl.ycode.logger.Logger {
     }
 
     override fun debug(message: String, throwable: Throwable?, vararg args: Any?) =
-        logger.debug(message, throwable, args)
+        logger.debug(format(message, *args), throwable)
 
     override fun info(message: String, throwable: Throwable?, vararg args: Any?) =
-        logger.info(message, throwable, args)
+        logger.info(format(message, *args), throwable)
 
     override fun warn(message: String, throwable: Throwable?, vararg args: Any?) =
-        logger.warn(message, throwable, args)
+        logger.warn(format(message, *args), throwable)
 
     override fun error(message: String, throwable: Throwable?, vararg args: Any?) =
-        logger.error(message, throwable, args)
+        logger.error(format(message, *args), throwable)
 
     override fun fatal(message: String, throwable: Throwable?, vararg args: Any?) =
-        logger.error(message, throwable, args)
+        logger.error(format(message, *args), throwable)
 
     private class DummyPrintStream : PrintStream(object : OutputStream() {
         override fun write(b: Int) {

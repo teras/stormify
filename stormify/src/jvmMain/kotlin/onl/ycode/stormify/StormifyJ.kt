@@ -71,5 +71,10 @@ class StormifyJ(dataSource: DataSource, vararg registrars: EntityRegistrar) {
         set(value) { stormify.logger = value }
 
     fun asDefault(): StormifyJ { stormify.asDefault(); return this }
+
+    companion object {
+        @JvmStatic
+        fun getDefault(): Stormify? = Stormify.defaultInstance
+    }
 }
 

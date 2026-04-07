@@ -15,7 +15,7 @@ abstract class AutoTable : StormifyEntity() {
     fun populate() {
         if (hasRun.value) return
         val ctr = `!stormify` ?: Stormify.defaultInstance ?: return LogManager.getLogger(AutoTable::class)
-            .error("Stormify is not set for class ${this::class.qualifiedName}.")
+            .error("Stormify is not set for class ${this::class.qualifiedName}. Use Stormify.asDefault() to set a default instance.")
         synchronized(lock) {
             if (!hasRun.value) {
                 hasRun.value = true

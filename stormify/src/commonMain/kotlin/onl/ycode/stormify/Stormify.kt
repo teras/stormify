@@ -154,7 +154,7 @@ open class Stormify(val dataSource: DataSource, vararg registrars: EntityRegistr
         code: (Statement) -> T
     ): T {
         val params = fixParams(givenQuery, givenParams)
-        `!dbLog`(params.query, params.params.toTypedArray())
+        `!dbLog`(params.query, *params.params.toTypedArray())
         val paramValues = if (params.params.isEmpty()) "" else " with values ${params.params}"
         return ConnectionMaker(conn).useWithException("Unable to execute query '${params.query}'$paramValues") { maker ->
             maker.connection.initStatement(

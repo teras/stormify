@@ -33,26 +33,26 @@ class WatchLogger
 
     override fun debug(message: String, throwable: Throwable?, vararg args: Any?) {
         logger.debug(message, throwable, *args)
-        watcher.watch(LogLevel.DEBUG.name, format(message, args), throwable)
+        watcher.watch(LogLevel.DEBUG.name, format(message, *args), throwable)
     }
 
     override fun info(message: String, throwable: Throwable?, vararg args: Any?) {
         logger.info(message, throwable, *args)
-        watcher.watch(LogLevel.INFO.name, format(message, args), throwable)
+        watcher.watch(LogLevel.INFO.name, format(message, *args), throwable)
     }
 
     override fun warn(message: String, throwable: Throwable?, vararg args: Any?) {
         logger.warn(message, throwable, *args)
-        watcher.watch(LogLevel.WARN.name, format(message, args), throwable)
+        watcher.watch(LogLevel.WARN.name, format(message, *args), throwable)
     }
 
     override fun error(message: String, throwable: Throwable?, vararg args: Any?) {
         logger.error(message, throwable, *args)
-        watcher.watch(LogLevel.ERROR.name, format(message, args), throwable)
+        watcher.watch(LogLevel.ERROR.name, format(message, *args), throwable)
     }
 
     override fun fatal(message: String, throwable: Throwable?, vararg args: Any?) {
         logger.fatal(message, throwable, *args)
-        watcher.watch(LogLevel.FATAL.name, format(message, args), throwable)
+        watcher.watch(LogLevel.FATAL.name, format(message, *args), throwable)
     }
 }

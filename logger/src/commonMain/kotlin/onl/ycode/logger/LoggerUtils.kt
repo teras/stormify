@@ -3,7 +3,7 @@ package onl.ycode.logger
 internal fun format(message: String, vararg args: Any?): String {
     var msg = message
     for (i in args.indices)
-        msg = msg.replaceFirst("\\{}".toRegex(), "{${i + 1}}")
+        msg = msg.replaceFirst("\\{}".toRegex(), "{$i}")
     return messageFormat(msg, args)
 }
 

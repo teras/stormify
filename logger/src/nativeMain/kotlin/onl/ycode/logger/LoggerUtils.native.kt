@@ -37,7 +37,7 @@ internal actual fun messageFormat(message: String, args: Array<out Any?>): Strin
     val regex = "\\{(\\d+)}".toRegex()
     return regex.replace(message) { matchResult ->
         // Extract the number inside the curly braces
-        val index = matchResult.groupValues[1].toInt() - 1
+        val index = matchResult.groupValues[1].toInt()
         // Replace with the corresponding array element or keep original if index is out of bounds
         if (index in args.indices) (args[index]?.toString() ?: "null") else matchResult.value
     }
