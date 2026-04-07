@@ -433,6 +433,15 @@ static void free_batches(kdbc_stmt *stmt) {
     stmt->batch_cap = 0;
 }
 
+static void clear_out_values(kdbc_stmt *stmt) {
+    if (stmt->out_values) {
+        for (int i = 0; i < stmt->param_count; i++) {
+            free(stmt->out_values[i]);
+            stmt->out_values[i] = NULL;
+        }
+    }
+}
+
 static void free_callable(kdbc_stmt *stmt) {
     free(stmt->out_params);
     if (stmt->out_values) {
@@ -463,16 +472,18 @@ void kdbc_stmt_close(kdbc_stmt *stmt) {
 
 int kdbc_stmt_reset(kdbc_stmt *stmt) {
     if (!stmt || !stmt->conn) return KDBC_ERROR;
-    /* Clear params */
     free_params(stmt);
-    for (int i = 0; i < stmt->param_count; i++) {
-        memset(&stmt->params[i], 0, sizeof(kdbc_param));
-    }
+    memset(stmt->params, 0, stmt->param_count * sizeof(kdbc_param));
+    free_batches(stmt);
+    clear_out_values(stmt);
     stmt->has_generated_key = 0;
+    stmt->generated_key = 0;
     free(stmt->generated_key_str);
     stmt->generated_key_str = NULL;
     stmt->error[0] = '\0';
-    /* Driver-level reset if available */
+    /* Driver-level reset if available (e.g. sqlite3_reset + sqlite3_clear_bindings).
+     * Drivers that rebind params before each execute do not need a native
+     * reset and leave this NULL. */
     if (stmt->conn->vt->stmt_reset)
         return stmt->conn->vt->stmt_reset(stmt->native);
     return KDBC_OK;

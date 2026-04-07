@@ -304,7 +304,9 @@ Behind the scenes, PostgreSQL sees `$1, $2` and Oracle sees `:1, :2`.
 
 ### Statement Reuse
 
-Use `kdbc_stmt_reset` to reuse a prepared statement with new parameters:
+Use `kdbc_stmt_reset` to reuse a prepared statement with new parameters.
+Reset clears bound parameters, pending batch entries, generated key state,
+cached OUT-parameter values, and the error buffer:
 
 ```c
 kdbc_stmt *stmt = kdbc_prepare(conn,

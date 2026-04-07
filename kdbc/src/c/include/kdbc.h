@@ -675,8 +675,12 @@ void kdbc_stmt_close(kdbc_stmt *stmt);
 /**
  * @brief Reset a prepared statement for re-execution.
  *
- * Clears all bound parameters so the statement can be reused with
- * new values.
+ * Clears all bound parameters, pending batch entries, generated key
+ * state, cached OUT-parameter values, and the error buffer so the
+ * statement can be reused with new values.  Any batches accumulated
+ * via kdbc_add_batch() are discarded — call kdbc_execute_batch()
+ * first if they should run.  OUT-parameter registrations are
+ * preserved; only their cached result values are cleared.
  *
  * @param stmt  A prepared statement.
  * @return ::KDBC_OK or ::KDBC_ERROR.
