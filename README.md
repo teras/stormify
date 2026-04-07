@@ -60,6 +60,8 @@ dependencies {
 }
 ```
 
+> **Upgrading from V1?** See the [V1 to V2 migration guide](docs/src/Migration_V1_to_V2.md).
+
 ## Basic Usage
 
 ### Configure Your Database

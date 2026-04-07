@@ -3,7 +3,7 @@
 PROJECT_NAME           = "KDBC"
 PROJECT_BRIEF          = "Unified C Database Connectivity — SQLite, PostgreSQL, MariaDB, Oracle, MSSQL"
 OUTPUT_DIRECTORY       = ../../../docs/build/docs/kdbc-c
-INPUT                  = include/kdbc.h
+INPUT                  = include/kdbc.h mainpage.md
 RECURSIVE              = NO
 
 # C-specific
@@ -37,6 +37,9 @@ SORT_BRIEF_DOCS        = NO
 ENABLE_PREPROCESSING   = YES
 MACRO_EXPANSION        = NO
 PREDEFINED             = __cplusplus
+
+# Main page
+USE_MDFILE_AS_MAINPAGE = mainpage.md
 
 # Warnings
 WARN_IF_UNDOCUMENTED   = YES
