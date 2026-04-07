@@ -37,8 +37,14 @@ EOF
 # ========================================================================
 
 cleanup() {
-    # Stop all containers at once
-    docker compose -f "$SCRIPT_DIR/docker-compose.yml" down -v 2>/dev/null || true
+    echo "Stopping database containers..."
+    docker compose -f "$SCRIPT_DIR/docker-compose.yml" --profile all down -v 2>/dev/null || true
+}
+
+# Pre-create the Docker network so parallel `docker compose up -d` calls
+# don't race on network creation.
+ensure_network() {
+    docker compose -f "$SCRIPT_DIR/docker-compose.yml" up --no-start 2>/dev/null || true
 }
 
 # ========================================================================
@@ -175,7 +181,8 @@ RUNNER
 SESSION="$1"
 LOG_DIR="$2"
 TOTAL="$3"
-shift 3
+TARGET="$4"
+shift 4
 ALL_DBS=("$@")
 
 while true; do
@@ -185,24 +192,18 @@ while true; do
     status=""
 
     for db in "${ALL_DBS[@]}"; do
-        result_file="$LOG_DIR"/*_"${db}.result"
-        found=false
-        for f in $result_file; do
-            if [ -f "$f" ]; then
-                found=true
-                r=$(cat "$f")
-                if [ "$r" = "PASS" ]; then
-                    pass_count=$((pass_count + 1))
-                    status="$status $db:OK"
-                else
-                    fail_count=$((fail_count + 1))
-                    status="$status #[bold]$db:FAIL#[nobold]"
-                fi
-                done_count=$((done_count + 1))
-                break
+        result_file="$LOG_DIR/${TARGET}_${db}.result"
+        if [ -f "$result_file" ]; then
+            r=$(cat "$result_file")
+            if [ "$r" = "PASS" ]; then
+                pass_count=$((pass_count + 1))
+                status="$status $db:OK"
+            else
+                fail_count=$((fail_count + 1))
+                status="$status #[bold]$db:FAIL#[nobold]"
             fi
-        done
-        if ! $found; then
+            done_count=$((done_count + 1))
+        else
             status="$status $db:..."
         fi
     done
@@ -269,7 +270,7 @@ MONITOR
     tmux bind-key -n '\;' kill-session
 
     # Start background monitor to update status bar
-    "$monitor_script" "$SESSION" "$LOG_DIR" "${#ALL_DBS[@]}" "${ALL_DBS[@]}" &
+    "$monitor_script" "$SESSION" "$LOG_DIR" "${#ALL_DBS[@]}" "$target" "${ALL_DBS[@]}" &
     local monitor_pid=$!
 
     echo ""
@@ -283,6 +284,25 @@ MONITOR
     # Cleanup monitor
     kill "$monitor_pid" 2>/dev/null || true
     wait "$monitor_pid" 2>/dev/null || true
+}
+
+# ========================================================================
+# Pre-compile Gradle targets so parallel runs use the binary directly
+# ========================================================================
+
+build_linux() {
+    echo "Compiling Kotlin/Native test binary..."
+    cd "$PROJECT_DIR"
+    gradle :stormify:linkDebugTestLinuxX64 --console=plain 2>&1
+    export STORMIFY_PREBUILT=1
+    echo ""
+}
+
+build_jvm() {
+    echo "Compiling JVM test classes..."
+    cd "$PROJECT_DIR"
+    gradle :stormify:jvmTestClasses --console=plain 2>&1
+    echo ""
 }
 
 # ========================================================================
@@ -373,10 +393,13 @@ rm -rf "$LOG_DIR"
 mkdir -p "$LOG_DIR"
 
 trap cleanup EXIT
+ensure_network
 
 case "$TARGET" in
     native|jvm|linux)
-
+        # Pre-compile Gradle targets so parallel runs use the binary directly
+        [ "$TARGET" = "linux" ] && build_linux
+        [ "$TARGET" = "jvm" ] && build_jvm
         if [ "$MODE" = "tmux" ]; then
             run_tmux_grid "$TARGET"
             echo ""
@@ -387,27 +410,66 @@ case "$TARGET" in
         ;;
 
     all)
-
+        all_failed=0
         if [ "$MODE" = "tmux" ]; then
-            echo "=== Phase 1: Native tests ==="
+            echo "=== Phase 1: Native C tests ==="
             run_tmux_grid "native"
             echo ""
-            collect_results "native"
+            collect_results "native" || all_failed=$((all_failed + $?))
             echo ""
             echo "=== Phase 2: JVM tests ==="
+            build_jvm
             run_tmux_grid "jvm"
             echo ""
-            collect_results "jvm"
+            collect_results "jvm" || all_failed=$((all_failed + $?))
             echo ""
-            echo "=== Phase 3: Kotlin/Native Linux tests ==="
+            echo "=== Phase 3: Kotlin/Native tests ==="
+            build_linux
             run_tmux_grid "linux"
             echo ""
-            collect_results "linux"
+            collect_results "linux" || all_failed=$((all_failed + $?))
         else
             run_parallel_bg "native"
+            build_jvm
             run_parallel_bg "jvm"
+            build_linux
             run_parallel_bg "linux"
         fi
+
+        # Grand summary
+        echo ""
+        echo "========================================="
+        echo "  GRAND TOTAL"
+        echo "========================================="
+        echo ""
+        grand_pass=0
+        grand_total=$((${#ALL_DBS[@]} * 3))
+        for phase in native jvm linux; do
+            p=0; f=0
+            for db in "${ALL_DBS[@]}"; do
+                rf="$LOG_DIR/${phase}_${db}.result"
+                if [ -f "$rf" ] && [ "$(cat "$rf")" = "PASS" ]; then
+                    p=$((p + 1))
+                else
+                    f=$((f + 1))
+                fi
+            done
+            grand_pass=$((grand_pass + p))
+            if [ $f -eq 0 ]; then
+                printf "  %-8s  %d/%d PASSED\n" "$phase" "$p" "$((p + f))"
+            else
+                printf "  %-8s  %d/%d PASSED, %d FAILED\n" "$phase" "$p" "$((p + f))" "$f"
+            fi
+        done
+        echo ""
+        echo "-----------------------------------------"
+        grand_fail=$((grand_total - grand_pass))
+        if [ $grand_fail -eq 0 ]; then
+            echo "  ALL $grand_total PASSED"
+        else
+            echo "  $grand_pass/$grand_total passed, $grand_fail failed"
+        fi
+        echo "-----------------------------------------"
         ;;
 
     results)

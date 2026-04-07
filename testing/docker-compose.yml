@@ -12,11 +12,13 @@ services:
     volumes:
       - ./config/mysql/init.sql:/docker-entrypoint-initdb.d/init.sql
     healthcheck:
-      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      test: ["CMD", "mysql", "-ustormify", "-pStormify1!", "-e", "SELECT 1"]
       interval: 5s
       timeout: 3s
       retries: 30
 
+  # MySQL 5.7 with Greek charset — legacy 8-bit charset test target
+  # (mirrors oracle11's EL8ISO8859P7 pattern for old-version coverage).
   mysql5:
     image: mysql:5.7
     profiles: ["mysql5", "all"]
@@ -29,8 +31,9 @@ services:
       - "13305:3306"
     volumes:
       - ./config/mysql/init.sql:/docker-entrypoint-initdb.d/init.sql
+    command: ["--character-set-server=greek", "--collation-server=greek_general_ci", "--max-allowed-packet=64M"]
     healthcheck:
-      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      test: ["CMD", "mysql", "-ustormify", "-pStormify1!", "-e", "SELECT 1"]
       interval: 5s
       timeout: 3s
       retries: 30
@@ -48,7 +51,7 @@ services:
     volumes:
       - ./config/mariadb/init.sql:/docker-entrypoint-initdb.d/init.sql
     healthcheck:
-      test: ["CMD", "mariadb-admin", "ping", "-h", "localhost"]
+      test: ["CMD", "mariadb", "-ustormify", "-pStormify1!", "-e", "SELECT 1"]
       interval: 5s
       timeout: 3s
       retries: 30
@@ -70,6 +73,8 @@ services:
       timeout: 3s
       retries: 30
 
+  # PostgreSQL 9.6 with ISO-8859-7 (Greek) encoding — legacy 8-bit charset
+  # test target (mirrors oracle11's EL8ISO8859P7 pattern).
   postgresql9:
     image: postgres:9.6
     profiles: ["postgresql9", "all"]
@@ -77,10 +82,9 @@ services:
       POSTGRES_DB: stormify_test
       POSTGRES_USER: stormify
       POSTGRES_PASSWORD: "Stormify1!"
+      POSTGRES_INITDB_ARGS: "--encoding=ISO_8859_7 --lc-collate=C --lc-ctype=C"
     ports:
       - "15431:5432"
-    volumes:
-      - ./config/postgresql/init.sql:/docker-entrypoint-initdb.d/init.sql
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U stormify -d stormify_test"]
       interval: 5s

@@ -101,17 +101,14 @@ class TypesTest {
             "${TestDDL.intPrimaryKey("id")}, value ${TestDDL.textType()}"))
 
         // Greek + ASCII — representable in every test target's DB charset
-        // (including legacy single-byte codepages like EL8ISO8859P7 on the
-        // oracle11 target).
+        // (all targets use either Unicode or a Greek 8-bit codepage).
         s.executeUpdate("INSERT INTO unicode_test (id, value) VALUES (?, ?)", 1, "Ελληνικά")
         s.executeUpdate("INSERT INTO unicode_test (id, value) VALUES (?, ?)", 3, "O'Brien")
         assertEquals("Ελληνικά", s.readOne<String>("SELECT value FROM unicode_test WHERE id = ?", 1))
         assertEquals("O'Brien", s.readOne<String>("SELECT value FROM unicode_test WHERE id = ?", 3))
 
-        // Non-Greek, non-Latin content: only makes sense on a DB whose
-        // character set can actually represent it. A legacy Greek single-
-        // byte codepage has no encoding for CJK characters, so we do not
-        // even attempt the round-trip there — see TestDDL.isUnicodeDatabase.
+        // CJK content: only on Unicode databases. Legacy 8-bit Greek charsets
+        // can't encode these characters.
         if (TestDDL.isUnicodeDatabase) {
             s.executeUpdate("INSERT INTO unicode_test (id, value) VALUES (?, ?)", 2, "日本語")
             assertEquals("日本語", s.readOne<String>("SELECT value FROM unicode_test WHERE id = ?", 2))
@@ -150,10 +147,8 @@ class TypesTest {
             "${TestDDL.intPrimaryKey("id")}, blob_data ${TestDDL.blobType()}, clob_as_chars ${TestDDL.textType()}, clob_as_string ${TestDDL.textType()}"))
 
         val binaryData = byteArrayOf(0, 1, 2, -1, 127, -128, 42)
-        // Use only characters representable in every target's DB charset
-        // (including single-byte Greek on the oracle11 target). Non-Greek
-        // non-Latin content (CJK) is exercised by testUnicodeAndSpecialChars,
-        // which skips those buckets on non-Unicode databases.
+        // Greek is safe on all targets (Unicode or Greek 8-bit codepage).
+        // CJK only on Unicode databases.
         val charData = "Hello char[] CLOB Ελληνικά".toCharArray()
         val stringData = if (TestDDL.isUnicodeDatabase)
             "Hello String CLOB 日本語"

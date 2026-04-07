@@ -183,8 +183,15 @@ run_linux_one() {
     local rc=0
     cd "$PROJECT_DIR"
 
-    STORMIFY_TEST_DB="$db" gradle :stormify:linuxX64Test \
-        --console=plain 2>&1 || rc=$?
+    # If pre-compiled binary exists (from build_linux), run it directly.
+    # Otherwise fall back to full Gradle build+test.
+    local test_bin="$PROJECT_DIR/stormify/build/bin/linuxX64/debugTest/test.kexe"
+    if [ "${STORMIFY_PREBUILT:-0}" = "1" ] && [ -x "$test_bin" ]; then
+        STORMIFY_TEST_DB="$db" "$test_bin" 2>&1 || rc=$?
+    else
+        STORMIFY_TEST_DB="$db" gradle :stormify:linuxX64Test \
+            --console=plain 2>&1 || rc=$?
+    fi
 
     stop_db "$db"
 

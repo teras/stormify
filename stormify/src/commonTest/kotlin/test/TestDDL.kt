@@ -7,8 +7,15 @@ import onl.ycode.stormify.Stormify
 
 object TestDDL {
     private lateinit var stormify: Stormify
+    var dbMajorVersion: Int = 0
+        private set
 
-    fun init(s: Stormify) { stormify = s }
+    fun init(s: Stormify) {
+        stormify = s
+        dbMajorVersion = try {
+            s.dataSource.getConnection().use { it.metaData.databaseMajorVersion }
+        } catch (_: Throwable) { 0 }
+    }
 
     val dialect get() = stormify.sqlDialect
     private val isOracle get() = dialect == SqlDialect.ORACLE_NEW || dialect == SqlDialect.ORACLE_OLD
@@ -34,6 +41,14 @@ object TestDDL {
      * true because we don't ship any non-Unicode targets for them.
      */
     val isUnicodeDatabase: Boolean by lazy {
+        if (isMysqlFamily) return@lazy try {
+            val cs = stormify.readOne<String>("SELECT @@character_set_server")
+            cs != null && (cs.startsWith("utf") || cs.startsWith("ucs"))
+        } catch (_: Throwable) { true }
+        if (isPostgres) return@lazy try {
+            val enc = stormify.readOne<String>("SHOW server_encoding")?.uppercase()
+            enc != null && enc.startsWith("UTF")
+        } catch (_: Throwable) { true }
         if (!isOracle) return@lazy true
         try {
             val charset = stormify.readOne<String>(
@@ -194,8 +209,9 @@ object TestDDL {
     fun supportsAutoIncrement() = autoIncrementPrimaryKey("x") != null
     fun supportsHighConcurrency() = !isSqlite
 
-    /** True when the current dialect supports user-defined stored procedures with OUT/INOUT params. */
-    fun supportsStoredProcedures() = !isSqlite
+    /** True when the current dialect supports user-defined stored procedures with OUT/INOUT params.
+     *  PostgreSQL gained CREATE PROCEDURE / CALL in version 11. */
+    fun supportsStoredProcedures() = !isSqlite && !(isPostgres && dbMajorVersion < 11)
 
     /**
      * DDL for a test stored procedure named [name] with signature
