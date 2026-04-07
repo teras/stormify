@@ -1,131 +1,153 @@
 # Database Configuration
 
-## Supported Databases
-
-Stormify auto-detects the database dialect from the JDBC connection metadata. The following databases are tested and
-supported:
-
-| Database | Versions | Dialect |
-|----------|----------|---------|
-| MySQL | 5.7+, 8.x | `MYSQL_OLD`, `MYSQL_NEW` |
-| MariaDB | 10.2+, 10.3+, 11.x | `MARIA_DB_OLD`, `MARIA_DB_NEW` |
-| PostgreSQL | 10+ | `POSTGRESQL` |
-| Oracle | 11g (11.2), 12c+ (12.1+), 21c | `ORACLE_OLD`, `ORACLE_NEW` |
-| SQL Server | 2012+, 2017+, 2022 | `SQL_SERVER_OLD`, `SQL_SERVER_NEW` |
-| SQLite | All versions | `SQLITE` |
-
-!!! tip "Dialect override"
-    If auto-detection fails (e.g., when using a database proxy), you can set the dialect manually:
-    ```java
-    stormify().setSqlDialect(SqlDialect.ORACLE_OLD);
-    ```
+Proper configuration of Stormify ensures optimal performance and seamless integration with your application. This section covers the essential configuration steps, including setting up the data source, configuring the environment, and adjusting logging and other settings.
 
 ## Data Source Configuration
 
-Stormify relies on a JDBC-compatible `javax.sql.DataSource` to connect to your database. You can use any connection
-pooling library such as HikariCP, Apache DBCP, or any other JDBC data source.
-
-!!! warning
-    The data source must be set before any database operations can be performed, and it can only be set once.
-    To release it, use `closeDataSource()`.
+Stormify connects to your database through a data source. On JVM, it accepts any JDBC-compatible data source. On native, it uses KDBC with JDBC-style connection URLs.
 
 ### Setting Up the Data Source
 
-**Using HikariCP**
+=== "Kotlin"
 
-HikariCP is a high-performance JDBC connection pool:
+    **Using HikariCP:**
 
-```java
-import com.zaxxer.hikari.HikariConfig;
-import com.zaxxer.hikari.HikariDataSource;
-import static onl.ycode.stormify.StormifyManager.stormify;
+    ```kotlin
+    import com.zaxxer.hikari.HikariConfig
+    import com.zaxxer.hikari.HikariDataSource
+    import onl.ycode.stormify.Stormify
 
-HikariConfig config = new HikariConfig();
-config.setJdbcUrl("jdbc:mysql://localhost:3306/yourdb");
-config.setUsername("username");
-config.setPassword("password");
+    val config = HikariConfig("databaseConfig.properties")
+    val dataSource = HikariDataSource(config)
+    val stormify = Stormify(dataSource)
+    ```
 
-HikariDataSource dataSource = new HikariDataSource(config);
-stormify().setDataSource(dataSource);
+    **Using Apache DBCP:**
+
+    ```kotlin
+    import org.apache.commons.dbcp2.BasicDataSource
+    import onl.ycode.stormify.Stormify
+
+    val dataSource = BasicDataSource().apply {
+        url = "jdbc:mysql://localhost:3306/yourdb"
+        username = "username"
+        password = "password"
+    }
+    val stormify = Stormify(dataSource)
+    ```
+
+=== "Java"
+
+    **Using HikariCP:**
+
+    ```java
+    import com.zaxxer.hikari.HikariConfig;
+    import com.zaxxer.hikari.HikariDataSource;
+    import onl.ycode.stormify.StormifyJ;
+
+    HikariConfig config = new HikariConfig("databaseConfig.properties");
+    HikariDataSource dataSource = new HikariDataSource(config);
+    StormifyJ stormify = new StormifyJ(dataSource);
+    ```
+
+    **Using Apache DBCP:**
+
+    ```java
+    import org.apache.commons.dbcp2.BasicDataSource;
+    import onl.ycode.stormify.StormifyJ;
+
+    BasicDataSource dataSource = new BasicDataSource();
+    dataSource.setUrl("jdbc:mysql://localhost:3306/yourdb");
+    dataSource.setUsername("username");
+    dataSource.setPassword("password");
+    StormifyJ stormify = new StormifyJ(dataSource);
+    ```
+
+=== "Native"
+
+    On native, use `KdbcDataSource` with standard JDBC URLs:
+
+    ```kotlin
+    import onl.ycode.stormify.Stormify
+    import onl.ycode.kdbc.KdbcDataSource
+
+    // PostgreSQL
+    val ds = KdbcDataSource("jdbc:postgresql://localhost:5432/mydb", "user", "pass")
+    val stormify = Stormify(ds)
+
+    // MariaDB / MySQL
+    val ds = KdbcDataSource("jdbc:mariadb://localhost:3306/mydb", "user", "pass")
+    val stormify = Stormify(ds)
+
+    // SQLite
+    val ds = KdbcDataSource("jdbc:sqlite:/tmp/mydb.db")
+    val stormify = Stormify(ds)
+
+    // Oracle
+    val ds = KdbcDataSource("jdbc:oracle:thin:@localhost:1521/XEPDB1", "user", "pass")
+    val stormify = Stormify(ds)
+
+    // MS SQL Server
+    val ds = KdbcDataSource("jdbc:sqlserver://localhost:1433;databaseName=mydb", "sa", "pass")
+    val stormify = Stormify(ds)
+    ```
+
+    Database client libraries are loaded at runtime via `dlopen` — only the ones you
+    actually use need to be installed.
+
+### Using Different Data Sources
+
+On JVM, Stormify is compatible with any JDBC data source. Simply configure the data source according to your requirements and create a `Stormify` (Kotlin) or `StormifyJ` (Java) instance with it.
+
+## Environment Setup
+
+Stormify can be configured through configuration files or programmatically within your application code.
+
+### Configuration Files
+
+You can store configuration settings in files such as `application.properties`. Common configuration options include database URL, username, password, and connection pool settings.
+
+```properties
+database.url=jdbc:mysql://localhost:3306/yourdb
+database.username=username
+database.password=password
+database.pool.size=10
 ```
 
-You can also configure HikariCP from a properties file:
+### Programmatic Configuration
 
-```java
-HikariConfig config = new HikariConfig("databaseConfig.properties");
-HikariDataSource dataSource = new HikariDataSource(config);
-stormify().setDataSource(dataSource);
-```
+=== "Kotlin"
 
-**Using Apache DBCP**
+    ```kotlin
+    val config = HikariConfig().apply {
+        jdbcUrl = "jdbc:mysql://localhost:3306/yourdb"
+        username = "username"
+        password = "password"
+    }
+    val dataSource = HikariDataSource(config)
+    val stormify = Stormify(dataSource)
+    ```
 
-```java
-import org.apache.commons.dbcp2.BasicDataSource;
-import static onl.ycode.stormify.StormifyManager.stormify;
+=== "Java"
 
-BasicDataSource dataSource = new BasicDataSource();
-dataSource.setUrl("jdbc:mysql://localhost:3306/yourdb");
-dataSource.setUsername("username");
-dataSource.setPassword("password");
-
-stormify().setDataSource(dataSource);
-```
-
-Stormify is compatible with any `javax.sql.DataSource` implementation.
-
-### Configuration
-
-!!! tip
-    Naming policies and primary key resolvers can be set at any time before the first query.
-
-```java
-stormify().setNamingPolicy(NamingPolicy.camelCase);
-stormify().registerPrimaryKeyResolver(10, (table, field) -> field.equals("id"));
-stormify().setDataSource(dataSource);
-```
-
-### Deferred Initialization
-
-Use `onInit` to register callbacks that run when the data source is first accessed. This is useful when a framework
-manages the data source lifecycle and you need to run initialization code at startup:
-
-```java
-stormify().onInit(() -> {
-    // Runs once, on first getDataSource() call
-    System.out.println("Stormify initialized with dialect: " + stormify().getSqlDialect());
-});
-```
-
-### Closing the Data Source
-
-When the application shuts down, close the data source to release connections:
-
-```java
-stormify().closeDataSource();
-```
-
-!!! tip
-    If the data source implements `Closeable` or `AutoCloseable`, it will be closed automatically.
+    ```java
+    HikariConfig config = new HikariConfig();
+    config.setJdbcUrl("jdbc:mysql://localhost:3306/yourdb");
+    config.setUsername("username");
+    config.setPassword("password");
+    HikariDataSource dataSource = new HikariDataSource(config);
+    StormifyJ stormify = new StormifyJ(dataSource);
+    ```
 
 ## Logging Configuration
 
-Stormify uses a built-in logging abstraction that auto-detects the logging framework available at runtime. The
-detection order is:
-
-1. **SLF4J** (if a non-NOP implementation is present)
-2. **Log4J** (legacy v1)
-3. **Log4J2**
-4. **Apache Commons Logging**
-5. **System.out** (fallback)
-
-By default, Stormify creates a logger named `"Stormify"`. All SQL queries are logged at DEBUG level.
+Stormify includes logging capabilities to help monitor SQL queries and diagnose issues.
 
 ### Enabling SQL Logging
 
-To see the SQL statements Stormify executes, configure your logging framework to enable DEBUG for the `Stormify`
-logger.
+Stormify uses the logging framework configured for your application (SLF4J, Log4j, Log4j2, Commons Logging). The framework is auto-detected at runtime.
 
-Example SLF4J configuration in `logback.xml`:
+Example Logback configuration in `logback.xml`:
 
 ```xml
 <configuration>
@@ -135,7 +157,7 @@ Example SLF4J configuration in `logback.xml`:
         </encoder>
     </appender>
 
-    <logger name="Stormify" level="DEBUG" additivity="false">
+    <logger name="onl.ycode.stormify" level="DEBUG" additivity="false">
         <appender-ref ref="STDOUT" />
     </logger>
 
@@ -145,26 +167,35 @@ Example SLF4J configuration in `logback.xml`:
 </configuration>
 ```
 
-### Custom Logger
+This configuration sets Stormify to log SQL statements at the DEBUG level.
 
-You can replace the default logger with your own:
+## Other Configuration Options
 
-```java
-import onl.ycode.logger.LogManager;
+### Adjusting Connection Pooling Settings
 
-stormify().setLogger(LogManager.getLogger(MyApp.class));
-```
+Tuning connection pool settings such as the maximum pool size, idle connections, and connection timeout can greatly affect the performance of your application.
 
-Or use a `SilentLogger` to suppress all Stormify logging:
+=== "Kotlin"
 
-```java
-stormify().setLogger(new SilentLogger());
-```
+    ```kotlin
+    val config = HikariConfig().apply {
+        maximumPoolSize = 20
+        idleTimeout = 30000 // 30 seconds
+        connectionTimeout = 10000 // 10 seconds
+    }
+    ```
 
-Or use a `WatchLogger` to intercept log messages:
+=== "Java"
 
-```java
-stormify().setLogger(new WatchLogger(existingLogger, (level, message, throwable) -> {
-    // Custom handling of log messages
-}));
-```
+    ```java
+    HikariConfig config = new HikariConfig();
+    config.setMaximumPoolSize(20);
+    config.setIdleTimeout(30000); // 30 seconds
+    config.setConnectionTimeout(10000); // 10 seconds
+    ```
+
+### Performance Tuning Tips
+
+- **Optimize SQL Queries**: Ensure your queries are efficient and indexed properly.
+- **Adjust Pool Sizes**: Balance pool sizes to match your application's workload and database capacity.
+- **Monitor Connection Usage**: Use monitoring tools to keep an eye on connection usage and database performance.

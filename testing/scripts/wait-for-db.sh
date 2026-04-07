@@ -5,9 +5,10 @@ DB_NAME="${1:?Usage: wait-for-db.sh <db-name>}"
 COMPOSE_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 
 case "$DB_NAME" in
-    oracle) TIMEOUT=120 ;;
-    mssql)  TIMEOUT=60 ;;
-    *)      TIMEOUT=30 ;;
+    oracle)   TIMEOUT=120 ;;
+    oracle11) TIMEOUT=240 ;;
+    mssql)    TIMEOUT=60 ;;
+    *)        TIMEOUT=30 ;;
 esac
 
 echo "Waiting for $DB_NAME to be healthy (timeout: ${TIMEOUT}s)..."

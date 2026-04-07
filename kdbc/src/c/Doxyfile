@@ -1,0 +1,44 @@
+# KDBC C API — Doxygen Configuration
+
+PROJECT_NAME           = "KDBC"
+PROJECT_BRIEF          = "Unified C Database Connectivity — SQLite, PostgreSQL, MariaDB, Oracle, MSSQL"
+OUTPUT_DIRECTORY       = ../../../docs/build/docs/kdbc-c
+INPUT                  = include/kdbc.h
+RECURSIVE              = NO
+
+# C-specific
+OPTIMIZE_OUTPUT_FOR_C  = YES
+TYPEDEF_HIDES_STRUCT   = YES
+
+# Output
+GENERATE_HTML          = YES
+GENERATE_LATEX         = NO
+GENERATE_XML           = NO
+GENERATE_MAN           = NO
+
+# HTML settings
+HTML_OUTPUT            = html
+HTML_COLORSTYLE        = LIGHT
+SEARCHENGINE           = YES
+DISABLE_INDEX          = NO
+GENERATE_TREEVIEW      = YES
+FULL_SIDEBAR           = NO
+
+# Content
+EXTRACT_ALL            = YES
+EXTRACT_STATIC         = NO
+HIDE_UNDOC_MEMBERS     = NO
+BRIEF_MEMBER_DESC      = YES
+REPEAT_BRIEF           = YES
+SORT_MEMBER_DOCS       = NO
+SORT_BRIEF_DOCS        = NO
+
+# Preprocessing
+ENABLE_PREPROCESSING   = YES
+MACRO_EXPANSION        = NO
+PREDEFINED             = __cplusplus
+
+# Warnings
+WARN_IF_UNDOCUMENTED   = YES
+WARN_NO_PARAMDOC       = YES
+QUIET                  = NO

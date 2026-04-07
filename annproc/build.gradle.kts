@@ -1,39 +1,37 @@
-
-
 plugins {
+    id("maven-publish")
     kotlin("jvm")
-    id("com.google.devtools.ksp")
-    id("com.vanniktech.maven.publish")
+    id("com.google.devtools.ksp") version "2.2.20-2.0.2" // Use the latest KSP version
 }
 
 group = parent?.group ?: IllegalStateException("Group is not defined")
 version = parent?.version ?: IllegalStateException("Version is not defined")
-description = "Stormify Annotation Processor"
-
-mavenPublishing {
-    publishToMavenCentral()
-    signAllPublications()
-    coordinates(group.toString(), "annproc", version.toString())
-    pom {
-        name.set("Stormify Annotation Processor")
-        description.set(project.description)
-        url.set(rootProject.extra["pomUrl"] as String)
-        inceptionYear.set(rootProject.extra["pomInceptionYear"] as String)
-        licenses { license { name.set(rootProject.extra["pomLicenseName"] as String); url.set(rootProject.extra["pomLicenseUrl"] as String) } }
-        developers { developer { id.set(rootProject.extra["pomDeveloperId"] as String); name.set(rootProject.extra["pomDeveloperName"] as String); email.set(rootProject.extra["pomDeveloperEmail"] as String) } }
-        scm { url.set(rootProject.extra["pomScmUrl"] as String); connection.set(rootProject.extra["pomScmConnection"] as String); developerConnection.set(rootProject.extra["pomScmDevConnection"] as String) }
-    }
-}
+description = "Stormify Processor for Database Connectivity"
 
 java.sourceCompatibility = JavaVersion.VERSION_1_8
 java.targetCompatibility = JavaVersion.VERSION_1_8
 
 dependencies {
-    implementation("com.google.devtools.ksp:symbol-processing-api:2.2.21-2.0.5")
+    implementation("com.google.devtools.ksp:symbol-processing-api:2.2.20-2.0.2")
 }
 
 kotlin {
-    jvmToolchain(8)
+    compilerOptions {
+        jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_1_8)
+    }
+    jvmToolchain(11)
 }
 
-
+publishing {
+    publications {
+        create<MavenPublication>("mavenJava") {
+            from(components["java"])
+            groupId = project.group.toString()
+            artifactId = project.name
+            version = project.version.toString()
+        }
+    }
+    repositories {
+        mavenLocal()
+    }
+}

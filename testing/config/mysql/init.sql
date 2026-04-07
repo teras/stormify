@@ -1,2 +1,1 @@
--- MySQL init: database and user are created via environment variables
--- Add any additional grants or setup here if needed
+-- MySQL: database and user created via environment variables

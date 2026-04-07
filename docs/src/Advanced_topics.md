@@ -1,360 +1,248 @@
 # Advanced Topics
 
-## AutoTable: Lazy Loading
+## Transaction Management
 
-`AutoTable` is an abstract base class that provides automatic lazy-loading of entity fields. When you read a list of
-entities whose reference fields point to `AutoTable` subclasses, those references are created with only their primary
-key set. When you access any non-key field, the full entity is loaded from the database on demand.
+Stormify provides support for managing database transactions, allowing you to group multiple operations into a single transaction. This ensures data consistency and integrity, especially when dealing with complex operations that must all succeed or fail together.
 
-### How It Works in Java
+### Managing Transactions
 
-Subclasses must call `autoPopulate()` in every getter/setter of non-primary-key fields:
+Use the `transaction` method to group operations. All included operations are committed if they succeed, or rolled back if any operation fails. Stormify also supports nested transactions through savepoints.
 
-```java
-public class User extends AutoTable {
-    private Integer id;
-    private String name;
-
-    public Integer getId() {
-        return id;
-    }
-
-    public void setId(Integer id) {
-        this.id = id;
-    }
-
-    public String getName() {
-        autoPopulate();  // Triggers lazy load if needed
-        return name;
-    }
-
-    public void setName(String name) {
-        autoPopulate();  // Triggers lazy load if needed
-        this.name = name;
-    }
-}
-```
-
-!!! note "JPA comparison"
-    JPA provides similar lazy-loading behavior, but it does so behind the scenes by injecting bytecode into
-    your POJO classes at build time or runtime — hidden, generated code that modifies your classes without
-    being visible in your source. Stormify takes the opposite approach: the `autoPopulate()` call is explicit,
-    so you always see exactly where lazy loading happens.
-
-### How It Works in Kotlin
-
-In Kotlin, the `db` property delegate eliminates the need to call `autoPopulate()` manually. Simply extend
-`AutoTable` and use `by db(defaultValue)` on non-key properties:
-
-```kotlin
-class User : AutoTable() {
-    @DbField(primaryKey = true)
-    var id: Int? = null
-    var name: String by db("")      // Auto-populated on first access
-    var email: String by db("")     // Auto-populated on first access
-}
-```
-
-That's it — no boilerplate getters and setters, no manual `autoPopulate()` calls. When `user.name` is accessed,
-the delegate triggers population automatically. Every non-key property that needs lazy loading simply uses
-`by db(defaultValue)`, and `AutoTable` provides the sibling batch optimization, `equals()`, `hashCode()`, and
-`toString()` implementations.
-
-!!! warning
-    The `db` delegate requires extending `AutoTable`. Without it, there is no `isDirty` flag to track
-    whether the entity has already been loaded, so every property access would trigger a database query.
-
-For parent-child relationships, the `lazyDetails` delegate loads child records on first access:
-
-```kotlin
-class Order : AutoTable() {
-    @DbField(primaryKey = true)
-    var id: Int? = null
-    var total: Double by db(0.0)
-    var items: List<OrderItem> by lazyDetails()    // Loaded on first access
-}
-```
-
-For more details on Kotlin-specific delegates, see [Kotlin Integration](Kotlin.md#property-delegation).
-
-`AutoTable` also provides implementations of `equals()`, `hashCode()`, and `toString()` based on primary key values.
-
-### Sibling Batch Optimization
-
-When multiple `AutoTable` references of the same type are created during a single read operation (e.g., many `Order`
-rows each referencing a `Customer`), those references are grouped into a **sibling group**. When any one of them
-triggers `autoPopulate()`, all siblings in the group are loaded in a single `SELECT ... WHERE id IN (...)` query
-instead of individual queries per entity. Duplicate references (same type and ID) are also deduplicated automatically.
-
-### populate() vs autoPopulate()
-
-- **`autoPopulate()`** (called from within the entity): Uses sibling batch loading when available. This is the normal
-  lazy-loading path.
-- **`populate()`** (called from outside via `stormify().populate(entity)`): **Detaches** the entity from its sibling
-  group and loads it individually. Use this when you want to force a fresh load of a specific entity.
-
-### markPopulated()
-
-Call `markPopulated()` from a subclass constructor or initialization code to signal that the entity already has its
-data and does not need to be loaded from the database.
-
-## CRUDTable Interface
-
-`CRUDTable` is a convenience interface that adds CRUD methods directly to entity objects, reducing the need to call
-`stormify()` explicitly:
-
-=== "Java"
-
-    ```java
-    public class Test implements CRUDTable {
-        private int id;
-        private String name;
-        // Getters and setters
-    }
-
-    Test record = new Test();
-    record.setId(1);
-    record.setName("Entry");
-    record.create();       // INSERT
-    record.update();       // UPDATE
-    record.delete();       // DELETE
-    record.populate();     // Load from DB by ID
-    record.tableName();    // Get the mapped table name
-
-    // Parent-child:
-    List<Detail> details = record.getDetails(Detail.class);
-    ```
+#### Basic Transaction Example
 
 === "Kotlin"
 
     ```kotlin
-    class Test : CRUDTable {
-        var id: Int = 0
-        var name: String? = null
+    stormify.transaction {
+        val user = create(User(email = "test@example.com"))
+        create(Profile(userId = user.id, name = "Test User"))
+        update(account)
     }
-
-    val record = Test().apply { id = 1; name = "Entry" }
-    record.create()       // INSERT
-    record.update()       // UPDATE
-    record.delete()       // DELETE
-    record.populate()     // Load from DB by ID
-    record.tableName()    // Get the mapped table name
-
-    // Parent-child:
-    val details = record.getDetails(Detail::class.java)
     ```
-
-`CRUDTable` can be combined with `AutoTable`:
 
 === "Java"
 
     ```java
-    public class User extends AutoTable implements CRUDTable {
-        // Gets both lazy loading and direct CRUD methods
-    }
+    stormify.transaction(tx -> {
+        User user = tx.create(new User("test@example.com"));
+        tx.create(new Profile(user.getId(), "Test User"));
+        tx.update(account);
+    });
     ```
+
+### Nested Transactions
+
+Nested transactions use database savepoints. If an inner transaction fails, only operations within that savepoint are rolled back.
 
 === "Kotlin"
 
     ```kotlin
-    class User : AutoTable(), CRUDTable {
-        // Gets both lazy loading and direct CRUD methods
+    stormify.transaction {
+        create(record1)
+
+        transaction {  // Creates a savepoint
+            create(record2)
+            // If this fails, only record2 is rolled back
+        }
+
+        create(record3)  // This still executes
     }
     ```
+
+=== "Java"
+
+    ```java
+    stormify.transaction(tx -> {
+        tx.create(record1);
+
+        tx.transaction(() -> {  // Creates a savepoint
+            tx.create(record2);
+            // If this fails, only record2 is rolled back
+        });
+
+        tx.create(record3);  // This still executes
+    });
+    ```
+
+### Extracting Transaction Logic
+
+For complex business logic, you can extract operations into reusable functions:
+
+#### Pattern 1: Extension Functions (Kotlin)
+
+Extension functions on `TransactionContext` provide the cleanest syntax:
+
+```kotlin
+fun TransactionContext.registerUser(email: String, name: String) {
+    val user = create(User(email = email))
+    create(Profile(userId = user.id, name = name))
+    create(AuditLog(action = "User registered", userId = user.id))
+}
+
+fun TransactionContext.transferFunds(from: Account, to: Account, amount: Double) {
+    require(from.balance >= amount) { "Insufficient funds" }
+    update(from.copy(balance = from.balance - amount))
+    update(to.copy(balance = to.balance + amount))
+    create(Transaction(fromId = from.id, toId = to.id, amount = amount))
+}
+
+// Usage
+stormify.transaction {
+    registerUser("alice@example.com", "Alice")
+    transferFunds(accountA, accountB, 100.0)
+}
+```
+
+#### Pattern 2: Service Layer Classes
+
+For more structured applications, encapsulate transaction logic in service classes:
+
+=== "Kotlin"
+
+    ```kotlin
+    class UserService(private val tx: TransactionContext) {
+        fun registerUser(email: String, name: String) {
+            val user = tx.create(User(email = email))
+            tx.create(Profile(userId = user.id, name = name))
+        }
+    }
+
+    stormify.transaction {
+        val userService = UserService(this)
+        userService.registerUser("alice@example.com", "Alice")
+    }
+    ```
+
+=== "Java"
+
+    ```java
+    class UserService {
+        private final TransactionContextJ tx;
+
+        UserService(TransactionContextJ tx) { this.tx = tx; }
+
+        void registerUser(String email, String name) {
+            User user = tx.create(new User(email));
+            tx.create(new Profile(user.getId(), name));
+        }
+    }
+
+    stormify.transaction(tx -> {
+        UserService userService = new UserService(tx);
+        userService.registerUser("alice@example.com", "Alice");
+    });
+    ```
+
+Both patterns ensure that all operations share the same database connection and participate in the same transaction.
 
 ## Handling Auto-Increment Fields
 
+Stormify can manage auto-increment fields automatically by leveraging database sequences or letting the database handle the generation of primary key values. You can specify this behavior using the `@DbField` annotation's `primaryKey` and `primarySequence` attributes.
+
 ### Using Sequences
 
-If your database uses sequences for generating primary keys, specify the sequence name.
+If your database uses sequences for generating primary keys, you can specify the sequence name using the `primarySequence` attribute in the `@DbField` annotation.
 
-!!! warning
-    The primary key field must use a **boxed type** (e.g., `Integer` instead of `int`) so it can be `null`
-    before the sequence value is assigned.
-
-=== "Java"
-
-    ```java
-    public class Test {
-        @DbField(primaryKey = true, primarySequence = "id_seq")
-        private Integer id;  // Boxed type — null triggers sequence fetch
-
-        private String name;
-        // Getters and setters
-    }
-    ```
+#### Example
 
 === "Kotlin"
 
     ```kotlin
-    class Test : AutoTable() {
-        @DbField(primaryKey = true, primarySequence = "id_seq")
-        var id: Int? = null  // Nullable — null triggers sequence fetch
-
-        var name: String by db("")
-    }
+    data class User(
+        @DbField(name = "custom_id", primaryKey = true, primarySequence = "id_seq")
+        var id: Int = 0,
+        var name: String = ""
+    )
     ```
-
-When creating a new entity, if the primary key is `null`, Stormify fetches the next value from the sequence before
-inserting. For batch inserts, all sequence values are fetched in a single query.
-
-### Database Auto-Increment
-
-For databases that use auto-increment / identity columns, mark the field with `autoIncrement = true`:
 
 === "Java"
 
     ```java
-    public class Product {
-        @DbField(primaryKey = true, autoIncrement = true)
-        private int id;  // Excluded from INSERT, populated after insert
-
+    public class User {
+        @DbField(name = "custom_id", primaryKey = true, primarySequence = "id_seq")
+        private int id;
         private String name;
-        // Getters and setters
+
+        // getters and setters
     }
     ```
 
-=== "Kotlin"
-
-    ```kotlin
-    class Product : AutoTable() {
-        @DbField(primaryKey = true, autoIncrement = true)
-        var id: Int = 0  // Excluded from INSERT, populated after insert
-
-        var name: String by db("")
-    }
-    ```
-
-When `autoIncrement` is set, the field is automatically excluded from INSERT statements. After a single insert,
-the generated key is read back and populated to the entity.
-
-The JPA equivalent `@GeneratedValue(strategy = GenerationType.IDENTITY)` is also supported.
-
-!!! note
-    Auto-increment key retrieval is not available for batch inserts. Use database sequences instead.
+In this example, the `id` field uses the sequence named `id_seq` to generate its values.
 
 ## Working with Composite Keys
 
-Stormify supports tables with composite primary keys. Mark all fields involved in the key as primary keys:
+Stormify supports tables with composite primary keys, allowing you to define multiple fields as part of the primary key.
+
+### Defining Composite Keys
+
+To define a composite key, mark all fields involved in the key as primary keys using annotations or a resolver function.
+
+#### Example
+
+=== "Kotlin"
+
+    ```kotlin
+    data class CompositeKeyExample(
+        @DbField(name = "key_part1", primaryKey = true)
+        var part1: Int = 0,
+
+        @DbField(name = "key_part2", primaryKey = true)
+        var part2: Int = 0,
+
+        var data: String = ""
+    )
+    ```
 
 === "Java"
 
     ```java
     public class CompositeKeyExample {
-        @DbField(primaryKey = true)
+        @DbField(name = "key_part1", primaryKey = true)
         private int part1;
 
-        @DbField(primaryKey = true)
+        @DbField(name = "key_part2", primaryKey = true)
         private int part2;
 
         private String data;
-        // Getters and setters
+
+        // getters and setters
     }
     ```
+
+In this example, both `part1` and `part2` fields form the composite primary key.
+
+## Strict Mode vs. Lenient Mode
+
+### Strict Mode
+
+Strict mode enforces strict mapping between classes and database tables. When enabled, Stormify throws exceptions if fields are missing or do not match between the class and the database schema.
+
+By default, Stormify operates in strict mode.
 
 === "Kotlin"
 
     ```kotlin
-    class CompositeKeyExample {
-        @DbField(primaryKey = true)
-        var part1: Int = 0
-
-        @DbField(primaryKey = true)
-        var part2: Int = 0
-
-        var data: String? = null
-    }
+    stormify.isStrictMode = true
     ```
-
-!!! note
-    `findById` and sequence-based ID generation require a single primary key and are not available for
-    composite keys. Use `read` or `findAll` with a WHERE clause instead.
-
-## Stored Procedures
-
-Stormify supports calling stored procedures with IN, OUT, and INOUT parameters:
 
 === "Java"
 
     ```java
-    import static onl.ycode.stormify.SPParam.*;
-
-    SPParam<String> output = out(String.class);
-    stormify().storedProcedure("my_procedure",
-        in(Integer.class, 42),
-        output,
-        inout(String.class, "input_value")
-    );
-    String result = output.getResult();
+    stormify.setStrictMode(true);
     ```
+
+### Lenient Mode
+
+When strict mode is disabled, Stormify operates in lenient mode, logging warnings instead of throwing exceptions for mismatches between classes and database columns. This mode is useful for development or scenarios where flexibility is more important than strict validation.
 
 === "Kotlin"
 
     ```kotlin
-    import onl.ycode.stormify.*
-
-    val output = OUT<String>()
-    "my_procedure".storedProcedure(
-        IN(42),
-        output,
-        INOUT("input_value")
-    )
-    val result = output.result
+    stormify.isStrictMode = false
     ```
 
-## Supported Data Types
+=== "Java"
 
-Stormify automatically converts between the following types when reading from or writing to the database:
-
-| Category | Types |
-|----------|-------|
-| **Numeric** | `byte`, `short`, `int`, `long`, `float`, `double`, `BigInteger`, `BigDecimal` (and their boxed equivalents) |
-| **Boolean** | `boolean` / `Boolean` (also converts from numeric: 0=false, non-zero=true) |
-| **String** | `String`, `char` / `Character` |
-| **Binary** | `byte[]` (maps to BLOB), `char[]` |
-| **Date/Time** | `java.util.Date`, `java.sql.Date`, `Timestamp`, `Time`, `Instant`, `LocalDateTime`, `LocalDate`, `LocalTime`, `ZonedDateTime`, `OffsetDateTime` |
-| **LOB** | `CLOB` → automatically converted to `String`, `BLOB` → automatically converted to `byte[]` |
-
-All date/time types are interconvertible. For example, a `Timestamp` column can be read into a `LocalDateTime` field
-and vice versa.
-
-### Custom Type Conversions
-
-To register additional conversions between types:
-
-```java
-TypeUtils.registerConversion(MyType.class, String.class, obj -> obj.serialize());
-TypeUtils.registerConversion(String.class, MyType.class, str -> MyType.parse(str));
-```
-
-The first argument is the source type, the second is the target type, and the third is the conversion function.
-
-## TableInfo Introspection
-
-You can inspect the metadata Stormify generates for any entity class:
-
-```java
-TableInfo info = stormify().getTableInfo(Test.class);
-
-// Table name
-String tableName = info.getTableName();
-
-// All fields
-for (FieldInfo field : info.getFields()) {
-    String javaName = field.getName();       // Java property name
-    String dbName = field.getDbName();       // Database column name
-    Class<?> type = field.getType();         // Field type
-    boolean pk = field.isPrimaryKey();       // Is primary key?
-    boolean ref = field.isReference();       // Is foreign key reference?
-    String seq = field.getSequence();        // Sequence name (or null)
-    boolean ins = field.isInsertable();      // Included in INSERT?
-    boolean upd = field.isUpdatable();       // Included in UPDATE?
-}
-
-// Primary key(s)
-List<FieldInfo> pks = info.getPrimaryKeys();
-FieldInfo singlePk = info.getPrimaryKey();  // Throws if not exactly one
-
-// Validate consistency (no duplicate insertable/updatable columns)
-boolean valid = info.checkConsistency();
-```
+    ```java
+    stormify.setStrictMode(false);
+    ```
