@@ -146,25 +146,34 @@ open class Stormify(val dataSource: DataSource, vararg registrars: EntityRegistr
         return FixedParams(query.toString(), params)
     }
 
+    private fun bindAndLog(stmt: Statement, query: String, params: List<Any?>) {
+        `!dbLog`(query, *params.toTypedArray())
+        for (i in params.indices)
+            stmt.setObject(i + 1, params[i])
+    }
+
     private fun <T> performQuery(
         conn: Connection?,
         givenQuery: String,
         givenParams: List<Any?>,
-        generatedKeys: Boolean,
+        batchItems: List<*>? = null,
+        batchParamOf: ((Any?) -> List<Any?>)? = null,
+        generatedKeys: Boolean = false,
         code: (Statement) -> T
     ): T {
         val params = fixParams(givenQuery, givenParams)
-        `!dbLog`(params.query, *params.params.toTypedArray())
-        val paramValues = if (params.params.isEmpty()) "" else " with values ${params.params}"
-        return ConnectionMaker(conn).useWithException("Unable to execute query '${params.query}'$paramValues") { maker ->
-            maker.connection.initStatement(
-                params.query,
-                generatedKeys,
-                null
-            ).use { statement ->
-                for (i in params.params.indices)
-                    statement.setObject(i + 1, params.params[i])
-                code(statement)
+        val errorMsg = if (params.params.isEmpty()) "" else " with values ${params.params}"
+        return ConnectionMaker(conn).useWithException("Unable to execute query '${params.query}'$errorMsg") { maker ->
+            maker.connection.initStatement(params.query, generatedKeys, null).use { stmt ->
+                if (batchItems != null && batchParamOf != null) {
+                    for (item in batchItems) {
+                        bindAndLog(stmt, params.query, batchParamOf(item))
+                        stmt.addBatch()
+                    }
+                } else {
+                    bindAndLog(stmt, params.query, params.params)
+                }
+                code(stmt)
             }
         }
     }
@@ -206,7 +215,7 @@ open class Stormify(val dataSource: DataSource, vararg registrars: EntityRegistr
         executeUpdate(null, query, *params)
 
     internal fun executeUpdate(conn: Connection?, query: String, vararg params: Any?): Int {
-        return performQuery(conn, query, params.toList(), false, { it.executeUpdate() })
+        return performQuery(conn, query, params.toList(), code = { it.executeUpdate() })
     }
 
     /** Executes a SELECT query and processes results row-by-row via [consumer]. Returns row count. */
@@ -220,7 +229,7 @@ open class Stormify(val dataSource: DataSource, vararg registrars: EntityRegistr
         query: String,
         vararg params: Any?,
         consumer: (T) -> Unit
-    ) = performQuery(conn, query, params.toList(), false, { statement ->
+    ) = performQuery(conn, query, params.toList(), code = { statement ->
         val isMap = Map::class == baseClass
         val info = if (isScalarClass(baseClass) || isMap) null else resolveTableInfo(baseClass)
         val rs: ResultSet = statement.executeQuery()
@@ -293,7 +302,7 @@ open class Stormify(val dataSource: DataSource, vararg registrars: EntityRegistr
         val info = resolveTableInfo(entity::class) as TableInfo<T>
         val idValues = getValidIds(entity, info)
         if (idValues.any { it == null }) return entity  // null PK = nothing to populate
-        performQuery<Any>(conn, info.populateQuery, idValues, false, { statement ->
+        performQuery<Any>(conn, info.populateQuery, idValues, code = { statement ->
             val rs: ResultSet = statement.executeQuery()
             if (rs.next()) return@performQuery populate<T>(entity, rs)
             else throw SQLException("No data found for ${info.tableName}:${info.getIdValues(entity)}")
@@ -362,7 +371,7 @@ open class Stormify(val dataSource: DataSource, vararg registrars: EntityRegistr
 
         val pkDbName = info.idDbNames[0]
         val nestedContext = PopulationContext()
-        performQuery<Any>(null, query, uniqueIds, false, { statement ->
+        performQuery<Any>(null, query, uniqueIds, code = { statement ->
             val rs = statement.executeQuery()
             val meta = rs.getMetaData()
             var pkColIdx = 1
@@ -391,7 +400,7 @@ open class Stormify(val dataSource: DataSource, vararg registrars: EntityRegistr
         val result = mutableListOf<NativeBigInteger>()
         readCursor(conn, NativeBigInteger::class, sql) { result.add(it) }
         if (result.isNotEmpty())
-            `!dbLog`("Sequence $sequence incremented by ${result.size} to ${result.last()}", null)
+            `!dbLog`("Sequence $sequence incremented by ${result.size} to ${result.last()}")
         return result
     }
 
@@ -447,12 +456,9 @@ open class Stormify(val dataSource: DataSource, vararg registrars: EntityRegistr
             val fetchGeneratedKeys = hasGK && needsId.size == 1
             val pkColumn = if (hasSinglePk) info.singleKeyDbName else null
 
-            `!dbLog`("${info.createQuery} [batch: ${itemList.size}]", null)
             sqlDialect.prepareForInsert(maker.connection, info.createQuery, fetchGeneratedKeys, pkColumn).use { stmt ->
                 for (item in itemList) {
-                    val givenParams = info.getCreateValues(item)
-                    for (i in givenParams.indices)
-                        stmt.setObject(i + 1, sqlData(givenParams[i], false))
+                    bindAndLog(stmt, info.createQuery, info.getCreateValues(item).map { sqlData(it, false) })
                     if (fetchGeneratedKeys)
                         stmt.executeUpdate()
                     else
@@ -497,16 +503,11 @@ open class Stormify(val dataSource: DataSource, vararg registrars: EntityRegistr
         val itemList = if (items is List) items else items.toList()
         itemList.forEach { attachStormify(it) }
         val info = resolveTableInfo(itemList[0]::class) as TableInfo<T>
-        `!dbLog`("${info.updateQuery} [batch: ${itemList.size}]", null)
-        performQuery(conn, info.updateQuery, emptyList(), false) { stmt ->
-            for (item in itemList) {
-                val params = info.getUpdateValues(item)
-                for (i in params.indices)
-                    stmt.setObject(i + 1, sqlData(params[i], false))
-                stmt.addBatch()
-            }
-            stmt.executeBatch()
-        }
+        @Suppress("UNCHECKED_CAST")
+        performQuery(conn, info.updateQuery, emptyList(),
+            batchItems = itemList,
+            batchParamOf = { (info as TableInfo<Any>).getUpdateValues(it!!).map { v -> sqlData(v, false) } }
+        ) { it.executeBatch() }
         return itemList
     }
 
@@ -537,7 +538,7 @@ open class Stormify(val dataSource: DataSource, vararg registrars: EntityRegistr
         }
 
         val query = "DELETE FROM ${info.tableName} WHERE ${conditions.joinToString(" OR ")}"
-        performQuery<Any>(conn, query, allParams, false, Statement::executeUpdate)
+        performQuery<Any>(conn, query, allParams, code = Statement::executeUpdate)
     }
 
     // --- Detail retrieval ---
