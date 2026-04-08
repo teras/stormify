@@ -4,6 +4,55 @@ on:
   push:
   pull_request:
 
+# ---------------------------------------------------------------------------
+# CI environment notes (Ubuntu 24.04 / ubuntu-latest as of 2026-04)
+#
+# JDK 17:
+#   Gradle 9.3.1 requires JVM 17+ to run. The project itself targets JVM 8
+#   (jvmTarget = JVM_1_8 in build.gradle.kts) — JDK 17 is only needed as
+#   the Gradle host JVM, not as a compilation target.
+#
+# Native database libraries:
+#   The native C tests (kdbc/src/c) and Kotlin/Native linuxX64 tests both
+#   need database client headers at compile time and shared libraries at
+#   runtime. All drivers use dlopen, so missing runtime libraries cause
+#   graceful "driver not available" errors rather than link failures.
+#
+#   Packages installed via apt:
+#     - libsqlite3-dev     → sqlite3.h + libsqlite3.so
+#     - libpq-dev          → libpq-fe.h + libpq.so (PostgreSQL)
+#     - libmariadb-dev     → mysql.h + libmariadb.so (MariaDB/MySQL)
+#     - libmariadb-dev-compat → creates /usr/include/mysql/ symlinks and
+#       provides legacy typedefs (my_bool etc.) that the C driver uses.
+#       Without this package, #include <mysql/mysql.h> fails on Ubuntu.
+#     - freetds-dev        → sybdb.h + libsybdb.so (MS SQL Server)
+#     - libaio1t64         → async I/O library required by Oracle IC
+#
+#   libaio symlink:
+#     Ubuntu 24.04 transitioned to 64-bit time_t, renaming the library to
+#     libaio.so.1t64. Oracle Instant Client still looks for libaio.so.1,
+#     so we create a compatibility symlink. Without this, libclntsh.so
+#     fails to load and ODPI-C's dpiContext_create returns an error,
+#     causing the native Oracle driver to report "library not found".
+#
+#   ODPI-C (Oracle Database Programming Interface for C):
+#     Not available as an Ubuntu apt package. Built from source
+#     (github.com/oracle/odpi, Apache 2.0 license). Provides:
+#       - dpi.h header (needed at compile time for driver_oracle.c)
+#       - libodpic.so shared library (loaded via dlopen at runtime)
+#     ODPI-C itself loads libclntsh.so from Oracle Instant Client.
+#
+#   Oracle Instant Client (basic-lite):
+#     Free download from Oracle (~72MB, no login required). Provides
+#     libclntsh.so (the OCI library that ODPI-C wraps). Installed to
+#     /opt/oracle/ and registered via ldconfig so dlopen finds it.
+#
+# Example jobs:
+#   All example jobs need native libraries because `publishToMavenLocal`
+#   compiles all targets (JVM + Native), not just the one the example uses.
+#   Without native headers, the Kotlin/Native cinterop step fails.
+# ---------------------------------------------------------------------------
+
 jobs:
   jvm-test:
     runs-on: ubuntu-latest
@@ -20,7 +69,7 @@ jobs:
       - name: Set up JDK
         uses: actions/setup-java@v4
         with:
-          java-version: '11'
+          java-version: '17'
           distribution: 'temurin'
 
       - name: Set up Gradle
@@ -46,7 +95,20 @@ jobs:
       - name: Install database client libraries
         run: |
           sudo apt-get update
-          sudo apt-get install -y libsqlite3-dev libpq-dev libmariadb-dev freetds-dev
+          sudo apt-get install -y libsqlite3-dev libpq-dev libmariadb-dev libmariadb-dev-compat freetds-dev libaio1t64
+          # libaio compat symlink (see header comment)
+          sudo ln -sf /lib/x86_64-linux-gnu/libaio.so.1t64 /lib/x86_64-linux-gnu/libaio.so.1
+          # ODPI-C: build from source (see header comment)
+          git clone --depth 1 --branch v5.6.4 https://github.com/oracle/odpi.git /tmp/odpi
+          make -C /tmp/odpi -j4
+          sudo make -C /tmp/odpi install PREFIX=/usr/local
+          sudo cp /tmp/odpi/include/dpi.h /usr/include/dpi.h
+          rm -rf /tmp/odpi
+          # Oracle Instant Client basic-lite (see header comment)
+          wget -q https://download.oracle.com/otn_software/linux/instantclient/instantclient-basiclite-linuxx64.zip -O /tmp/ic.zip
+          sudo unzip -q /tmp/ic.zip -d /opt/oracle
+          echo /opt/oracle/instantclient_* | sudo tee /etc/ld.so.conf.d/oracle.conf
+          sudo ldconfig
 
       - name: Run tests
         run: testing/test.sh native ${{ matrix.db }}
@@ -66,7 +128,7 @@ jobs:
       - name: Set up JDK
         uses: actions/setup-java@v4
         with:
-          java-version: '11'
+          java-version: '17'
           distribution: 'temurin'
 
       - name: Set up Gradle
@@ -77,7 +139,17 @@ jobs:
       - name: Install database client libraries
         run: |
           sudo apt-get update
-          sudo apt-get install -y libsqlite3-dev libpq-dev libmariadb-dev freetds-dev
+          sudo apt-get install -y libsqlite3-dev libpq-dev libmariadb-dev libmariadb-dev-compat freetds-dev libaio1t64
+          sudo ln -sf /lib/x86_64-linux-gnu/libaio.so.1t64 /lib/x86_64-linux-gnu/libaio.so.1
+          git clone --depth 1 --branch v5.6.4 https://github.com/oracle/odpi.git /tmp/odpi
+          make -C /tmp/odpi -j4
+          sudo make -C /tmp/odpi install PREFIX=/usr/local
+          sudo cp /tmp/odpi/include/dpi.h /usr/include/dpi.h
+          rm -rf /tmp/odpi
+          wget -q https://download.oracle.com/otn_software/linux/instantclient/instantclient-basiclite-linuxx64.zip -O /tmp/ic.zip
+          sudo unzip -q /tmp/ic.zip -d /opt/oracle
+          echo /opt/oracle/instantclient_* | sudo tee /etc/ld.so.conf.d/oracle.conf
+          sudo ldconfig
 
       - name: Run tests
         run: testing/test.sh linux ${{ matrix.db }}
@@ -97,7 +169,7 @@ jobs:
       - name: Set up JDK
         uses: actions/setup-java@v4
         with:
-          java-version: '11'
+          java-version: '17'
           distribution: 'temurin'
 
       - name: Set up Gradle
@@ -105,11 +177,21 @@ jobs:
         with:
           gradle-version: '9.3.1'
 
+      # All examples need native libs for publishToMavenLocal (see header comment)
       - name: Install database client libraries
-        if: matrix.example == 'kotlin-linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libsqlite3-dev libpq-dev libmariadb-dev freetds-dev
+          sudo apt-get install -y libsqlite3-dev libpq-dev libmariadb-dev libmariadb-dev-compat freetds-dev libaio1t64
+          sudo ln -sf /lib/x86_64-linux-gnu/libaio.so.1t64 /lib/x86_64-linux-gnu/libaio.so.1
+          git clone --depth 1 --branch v5.6.4 https://github.com/oracle/odpi.git /tmp/odpi
+          make -C /tmp/odpi -j4
+          sudo make -C /tmp/odpi install PREFIX=/usr/local
+          sudo cp /tmp/odpi/include/dpi.h /usr/include/dpi.h
+          rm -rf /tmp/odpi
+          wget -q https://download.oracle.com/otn_software/linux/instantclient/instantclient-basiclite-linuxx64.zip -O /tmp/ic.zip
+          sudo unzip -q /tmp/ic.zip -d /opt/oracle
+          echo /opt/oracle/instantclient_* | sudo tee /etc/ld.so.conf.d/oracle.conf
+          sudo ldconfig
 
       - name: Publish to Maven Local
         run: gradle publishToMavenLocal --console=plain

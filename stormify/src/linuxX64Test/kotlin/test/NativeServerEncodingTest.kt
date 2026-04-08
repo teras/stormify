@@ -111,9 +111,14 @@ class NativeServerEncodingTest {
             Triple("UTF8",       "stormify_enc_utf8",   "$utf8Bmp $utf16Surrogates")
         )
 
+        val pgPort = when ((getenv("STORMIFY_TEST_DB")?.toKString() ?: "").lowercase()) {
+            "postgresql9" -> "15431"
+            else -> "15432"
+        }
+
         for ((encoding, dbName, value) in cases) {
             val ds = KdbcDataSource(
-                "jdbc:postgresql://localhost:15432/$dbName",
+                "jdbc:postgresql://localhost:$pgPort/$dbName",
                 "stormify",
                 "Stormify1!"
             )

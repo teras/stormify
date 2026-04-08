@@ -91,8 +91,8 @@ stop_db() {
 
 build_native() {
     echo "Building C test binary..."
-    make -C "$C_SRC_DIR" lib 2>&1 | tail -1
-    make -C "$C_SRC_DIR" test/test_kdbc 2>&1 | tail -1
+    make -C "$C_SRC_DIR" lib 2>&1
+    make -C "$C_SRC_DIR" test/test_kdbc 2>&1
     echo ""
 }
 

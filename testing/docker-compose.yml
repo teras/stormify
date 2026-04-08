@@ -85,6 +85,8 @@ services:
       POSTGRES_INITDB_ARGS: "--encoding=ISO_8859_7 --lc-collate=C --lc-ctype=C"
     ports:
       - "15431:5432"
+    volumes:
+      - ./config/postgresql/init.sql:/docker-entrypoint-initdb.d/init.sql
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U stormify -d stormify_test"]
       interval: 5s
