@@ -258,6 +258,19 @@ Mark primary keys with `@DbField(primaryKey = true)`, or register a
     User user = stormify.findById(User.class, 1);
     ```
 
+## Examples
+
+The `examples/` directory contains self-contained demo applications:
+
+| Example | Description | Run |
+|---------|-------------|-----|
+| **java** | Java POJOs with JPA + Stormify annotations | `mvn compile exec:java` |
+| **kotlin-jvm** | Kotlin JVM with `by db()` delegates | `gradle run` |
+| **kotlin-linux** | Native Linux binary (no JVM) | `gradle runDebugExecutableLinuxX64` |
+| **kotlin-multiplatform** | Shared code running on JVM and native | `gradle jvmRun` |
+
+Each example demonstrates CRUD operations, entity references with lazy loading, transactions with rollback, and raw SQL queries using an in-memory SQLite database.
+
 ## Contributing
 
 Contributions are welcome! Please check the [Contributing](Contributing.md) guide for instructions on how to get involved, report issues, or submit pull requests.
