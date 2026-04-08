@@ -89,6 +89,23 @@ kotlin {
             }
         }
 
+        // Common JVM-based source set for both Desktop JVM and Android
+        val jvmBasedMain by creating {
+            dependsOn(commonMain)
+            dependencies {
+                compileOnly("org.jetbrains.kotlinx:kotlinx-datetime:0.7.1")
+                compileOnly("com.ionspin.kotlin:bignum:0.3.9")
+            }
+        }
+
+        val jvmMain by getting {
+            dependsOn(jvmBasedMain)
+        }
+
+        val androidMain by getting {
+            dependsOn(jvmBasedMain)
+        }
+
         val nativeMain by getting {
             dependencies {
                 implementation("org.jetbrains.kotlinx:kotlinx-datetime:0.7.1")

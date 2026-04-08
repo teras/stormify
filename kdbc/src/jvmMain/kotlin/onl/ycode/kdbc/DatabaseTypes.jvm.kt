@@ -15,115 +15,27 @@ import kotlin.reflect.KClass
  */
 
 /**
- * Cached reflective converters for Kotlin Multiplatform types → standard Java types.
- *
- * JDBC drivers only understand java.math, java.sql, and java.time types. Kotlin
- * multiplatform libraries (ionspin bignum, kotlinx-datetime) are invisible to them.
- * We resolve the conversion method once per type and cache it for subsequent calls.
+ * Map of KMP types to their JDBC-compatible Java equivalents.
+ * Used by [toJdbcValue] to convert KMP values before passing to JDBC's setObject().
  */
-private val kmpConverters = HashMap<String, ((Any) -> Any)?>()
-private val UNRESOLVED: (Any) -> Any = { it } // sentinel for "no converter"
+private val kmpToJdbcTarget = mapOf<String, KClass<*>>(
+    "com.ionspin.kotlin.bignum.decimal.BigDecimal" to java.math.BigDecimal::class,
+    "com.ionspin.kotlin.bignum.integer.BigInteger" to java.math.BigDecimal::class, // BigDecimal, not BigInteger (MySQL truncates BigInteger)
+    "kotlinx.datetime.LocalDate" to java.sql.Date::class,
+    "kotlinx.datetime.LocalDateTime" to java.sql.Timestamp::class,
+    "kotlinx.datetime.LocalTime" to java.sql.Time::class,
+    "kotlin.time.Instant" to java.sql.Timestamp::class,
+)
 
-private fun resolveConverter(qualifiedName: String, value: Any): ((Any) -> Any)? {
-    val cached = kmpConverters[qualifiedName]
-    if (cached != null) return if (cached === UNRESOLVED) null else cached
-    val converter: ((Any) -> Any)? = try {
-        val cls = value::class.java
-        when (qualifiedName) {
-            "com.ionspin.kotlin.bignum.decimal.BigDecimal" -> {
-                val biClass = Class.forName("com.ionspin.kotlin.bignum.integer.BigInteger")
-                val mSig = cls.getMethod("getSignificand")
-                val mExp = cls.getMethod("getExponent")
-                val mPrec = cls.getMethod("getPrecision")
-                val mSignum = biClass.getMethod("signum")
-                val mBytes = biClass.getMethod("toByteArray")
-                val fn: (Any) -> Any = { v ->
-                    val sig = mSig.invoke(v)
-                    val signum = mSignum.invoke(sig) as Int
-                    if (signum == 0) java.math.BigDecimal.ZERO
-                    else {
-                        val jSig = java.math.BigInteger(signum, mBytes.invoke(sig) as ByteArray)
-                        val scale = (mPrec.invoke(v) as Long).toInt() - 1 - (mExp.invoke(v) as Long).toInt()
-                        java.math.BigDecimal(jSig, scale)
-                    }
-                }
-                fn
-            }
-            "com.ionspin.kotlin.bignum.integer.BigInteger" -> {
-                val mSignum = cls.getMethod("signum")
-                val mBytes = cls.getMethod("toByteArray")
-                val fn: (Any) -> Any = { v ->
-                    val signum = mSignum.invoke(v) as Int
-                    if (signum == 0) java.math.BigDecimal.ZERO
-                    else java.math.BigDecimal(java.math.BigInteger(signum, mBytes.invoke(v) as ByteArray))
-                }
-                fn
-            }
-            "kotlinx.datetime.LocalDate" -> {
-                val getYear = cls.getMethod("getYear")
-                val getMonth = cls.getMethod("getMonthNumber")
-                val getDay = cls.getMethod("getDayOfMonth")
-                val fn: (Any) -> Any = { v ->
-                    java.sql.Date.valueOf(java.time.LocalDate.of(
-                        getYear.invoke(v) as Int, getMonth.invoke(v) as Int, getDay.invoke(v) as Int
-                    ))
-                }
-                fn
-            }
-            "kotlinx.datetime.LocalDateTime" -> {
-                val getYear = cls.getMethod("getYear")
-                val getMonth = cls.getMethod("getMonthNumber")
-                val getDay = cls.getMethod("getDayOfMonth")
-                val getHour = cls.getMethod("getHour")
-                val getMin = cls.getMethod("getMinute")
-                val getSec = cls.getMethod("getSecond")
-                val getNano = cls.getMethod("getNanosecond")
-                val fn: (Any) -> Any = { v ->
-                    java.sql.Timestamp.valueOf(java.time.LocalDateTime.of(
-                        getYear.invoke(v) as Int, getMonth.invoke(v) as Int, getDay.invoke(v) as Int,
-                        getHour.invoke(v) as Int, getMin.invoke(v) as Int, getSec.invoke(v) as Int,
-                        getNano.invoke(v) as Int
-                    ))
-                }
-                fn
-            }
-            "kotlinx.datetime.LocalTime" -> {
-                val getHour = cls.getMethod("getHour")
-                val getMin = cls.getMethod("getMinute")
-                val getSec = cls.getMethod("getSecond")
-                val getNano = cls.getMethod("getNanosecond")
-                val fn: (Any) -> Any = { v ->
-                    java.sql.Time.valueOf(java.time.LocalTime.of(
-                        getHour.invoke(v) as Int, getMin.invoke(v) as Int, getSec.invoke(v) as Int,
-                        getNano.invoke(v) as Int
-                    ))
-                }
-                fn
-            }
-            "kotlin.time.Instant" -> {
-                val getEpochSec = cls.getMethod("getEpochSeconds")
-                val getNanoAdj = cls.getMethod("getNanosecondsOfSecond")
-                val fn: (Any) -> Any = { v ->
-                    val secs = getEpochSec.invoke(v) as Long
-                    val nanos = getNanoAdj.invoke(v) as Int
-                    java.sql.Timestamp.from(java.time.Instant.ofEpochSecond(secs, nanos.toLong()))
-                }
-                fn
-            }
-            else -> null
-        }
-    } catch (_: Throwable) {
-        null
-    }
-    kmpConverters[qualifiedName] = converter ?: UNRESOLVED
-    return converter
-}
-
+/**
+ * Convert a value to a JDBC-compatible type using the [TypeConversion] registry.
+ * KMP types (ionspin, kotlinx-datetime) are converted to their java equivalents.
+ * Standard Java types and Kotlin primitives pass through unchanged.
+ */
 private fun toJdbcValue(value: Any?): Any? {
     if (value == null) return null
-    val qn = value::class.qualifiedName ?: return value
-    val converter = resolveConverter(qn, value) ?: return value
-    return try { converter(value) } catch (_: Throwable) { value }
+    val targetClass = kmpToJdbcTarget[value::class.qualifiedName] ?: return value
+    return try { TypeConversion.castScalar(targetClass, value) } catch (_: Throwable) { value }
 }
 
 // Wrapper class for PreparedStatement with lazy preparation.
@@ -349,20 +261,10 @@ private class JdbcSavepoint(val jdbc: java.sql.Savepoint) : Savepoint {
 }
 
 // Wrapper class for ResultSet
-// Map KMP types to Java equivalents for JDBC ResultSet.getObject()
-private val kmpToJavaType = mapOf(
-    "com.ionspin.kotlin.bignum.decimal.BigDecimal" to java.math.BigDecimal::class.java,
-    "com.ionspin.kotlin.bignum.integer.BigInteger" to java.math.BigInteger::class.java,
-    "kotlinx.datetime.LocalDate" to java.sql.Date::class.java,
-    "kotlinx.datetime.LocalDateTime" to java.sql.Timestamp::class.java,
-    "kotlinx.datetime.LocalTime" to java.sql.Time::class.java,
-    "kotlin.time.Instant" to java.sql.Timestamp::class.java,
-)
-
 private class JdbcResultSet(private val jdbc: java.sql.ResultSet) : ResultSet {
     override fun next(): Boolean = jdbc.next()
     override fun getObject(columnIndex: Int, type: KClass<*>): Any? = try {
-        val javaType = kmpToJavaType[type.qualifiedName] ?: type.java
+        val javaType = kmpToJdbcTarget[type.qualifiedName]?.java ?: type.java
         if (type == Any::class) jdbc.getObject(columnIndex)
         else jdbc.getObject(columnIndex, javaType)
     } catch (_: java.sql.SQLException) {
