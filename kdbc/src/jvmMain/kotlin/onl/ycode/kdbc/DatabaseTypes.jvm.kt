@@ -67,8 +67,11 @@ private class JdbcStatement(
         return directStatement!!
     }
 
-    override fun setObject(parameterIndex: Int, value: Any?) =
-        ensurePrepared().setObject(parameterIndex, toJdbcValue(value))
+    override fun setObject(parameterIndex: Int, value: Any?) {
+        val v = toJdbcValue(value)
+        if (v == null) ensurePrepared().setNull(parameterIndex, java.sql.Types.NULL)
+        else ensurePrepared().setObject(parameterIndex, v)
+    }
 
     override fun executeUpdate(): Int =
         preparedStatement?.executeUpdate()

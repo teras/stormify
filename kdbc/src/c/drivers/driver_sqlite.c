@@ -331,6 +331,10 @@ static int sq_bind_double(kdbc_stmt *stmt, int idx, double val) {
     return KDBC_OK;
 }
 
+static int sq_bind_bool(kdbc_stmt *stmt, int idx, int val) {
+    return sq_bind_int(stmt, idx, val);
+}
+
 static int sq_bind_string(kdbc_stmt *stmt, int idx, const char *val) {
     int rc = p_bind_text((sqlite3_stmt *)stmt->native, idx, val, -1, SQLITE_TRANSIENT);
     if (rc != SQLITE_OK) {
@@ -636,6 +640,7 @@ static const kdbc_driver_vtable sqlite_vtable = {
     .prepare            = sq_prepare,
     .stmt_close         = sq_stmt_close,
     .bind_null          = sq_bind_null,
+    .bind_bool          = sq_bind_bool,
     .bind_int           = sq_bind_int,
     .bind_long          = sq_bind_long,
     .bind_double        = sq_bind_double,

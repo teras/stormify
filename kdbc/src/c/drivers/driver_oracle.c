@@ -557,6 +557,10 @@ static int ora_bind_double(kdbc_stmt *stmt, int idx, double val) {
     return KDBC_OK;
 }
 
+static int ora_bind_bool(kdbc_stmt *stmt, int idx, int val) {
+    return ora_bind_int(stmt, idx, val);
+}
+
 /* Oracle VARCHAR2 bind parameters cap at 4000 bytes (32767 with MAX_STRING_SIZE=EXTENDED).
  * For larger strings we must bind via a temporary CLOB. */
 #define ORA_VARCHAR_MAX 4000u
@@ -1222,6 +1226,7 @@ static const kdbc_driver_vtable oracle_vtable = {
     .prepare            = ora_prepare,
     .stmt_close         = ora_stmt_close_fn,
     .bind_null          = ora_bind_null,
+    .bind_bool          = ora_bind_bool,
     .bind_int           = ora_bind_int,
     .bind_long          = ora_bind_long,
     .bind_double        = ora_bind_double,

@@ -523,6 +523,19 @@ int kdbc_bind_null(kdbc_stmt *stmt, int idx);
 int kdbc_bind_int(kdbc_stmt *stmt, int idx, int val);
 
 /**
+ * @brief Bind a boolean parameter.
+ *
+ * On databases with native BOOLEAN support (e.g. PostgreSQL), this binds as a
+ * true boolean. On all others, it binds as an integer (0 or 1).
+ *
+ * @param stmt  A prepared statement.
+ * @param idx   Parameter index (1-indexed).
+ * @param val   The boolean value (0 = false, non-zero = true).
+ * @return ::KDBC_OK or ::KDBC_ERROR.
+ */
+int kdbc_bind_bool(kdbc_stmt *stmt, int idx, int val);
+
+/**
  * @brief Bind a 64-bit integer parameter.
  * @param stmt  A prepared statement.
  * @param idx   Parameter index (1-indexed).

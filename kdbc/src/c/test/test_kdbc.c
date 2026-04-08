@@ -168,6 +168,16 @@ static const char *float_type(void) {
     }
 }
 
+/* Boolean type */
+static const char *bool_type(void) {
+    switch (g_driver) {
+        case KDBC_ORACLE:  return "NUMBER(1)";
+        case KDBC_SQLITE:  return "INTEGER";
+        case KDBC_MSSQL:   return "BIT";
+        default:           return "BOOLEAN";
+    }
+}
+
 /* Text type */
 static const char *text_type(void) {
     switch (g_driver) {
@@ -400,6 +410,31 @@ static void test_double_type(void) {
     kdbc_stmt_close(stmt);
 
     drop_table(conn, "kdbc_dbl");
+    kdbc_close(conn);
+}
+
+static void test_bool_type(void) {
+    kdbc_conn *conn = open_db();
+    drop_table(conn, "kdbc_bool");
+    char ddl[128];
+    snprintf(ddl, sizeof(ddl), "CREATE TABLE kdbc_bool (a %s, b %s)", bool_type(), bool_type());
+    exec_sql(conn, ddl);
+
+    kdbc_stmt *stmt = kdbc_prepare(conn, "INSERT INTO kdbc_bool (a, b) VALUES (?, ?)");
+    kdbc_bind_bool(stmt, 1, 1);
+    kdbc_bind_bool(stmt, 2, 0);
+    kdbc_execute_update_stmt(stmt);
+    kdbc_stmt_close(stmt);
+
+    stmt = kdbc_prepare(conn, "SELECT a, b FROM kdbc_bool");
+    kdbc_result *rs = kdbc_execute_query_stmt(stmt);
+    ASSERT(kdbc_next(rs), "has row");
+    ASSERT_EQ_INT(kdbc_get_long(rs, 1), 1, "true");
+    ASSERT_EQ_INT(kdbc_get_long(rs, 2), 0, "false");
+    kdbc_result_close(rs);
+    kdbc_stmt_close(stmt);
+
+    drop_table(conn, "kdbc_bool");
     kdbc_close(conn);
 }
 
@@ -1177,6 +1212,7 @@ int main(int argc, char **argv) {
     printf("\nTypes:\n");
     RUN_TEST(test_integer_types);
     RUN_TEST(test_double_type);
+    RUN_TEST(test_bool_type);
     RUN_TEST(test_string_type);
     RUN_TEST(test_blob_type);
     RUN_TEST(test_null_handling);

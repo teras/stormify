@@ -491,7 +491,7 @@ private fun bindValue(stmt: CPointer<kdbc_stmt>, idx: Int, value: Any?) {
         is Long -> kdbc_bind_long(stmt, idx, value)
         is Float -> kdbc_bind_double(stmt, idx, value.toDouble())
         is Double -> kdbc_bind_double(stmt, idx, value)
-        is Boolean -> kdbc_bind_int(stmt, idx, if (value) 1 else 0)
+        is Boolean -> kdbc_bind_bool(stmt, idx, if (value) 1 else 0)
         is String -> kdbc_bind_string(stmt, idx, value)
         is ByteArray -> bindBlob(stmt, idx, value)
         is CharArray -> kdbc_bind_string(stmt, idx, value.concatToString())

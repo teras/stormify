@@ -575,6 +575,13 @@ static int pg_bind_double(kdbc_stmt *stmt, int idx, double val) {
     return KDBC_OK;
 }
 
+static int pg_bind_bool(kdbc_stmt *stmt, int idx, int val) {
+    /* PostgreSQL BOOLEAN: 1 byte, 0x00=false, 0x01=true, Oid=BOOL. */
+    char b = val ? 1 : 0;
+    pg_param_set_binary((pg_stmt_data *)stmt->native, idx, &b, 1, PG_BOOL_OID);
+    return KDBC_OK;
+}
+
 static int pg_bind_string(kdbc_stmt *stmt, int idx, const char *val) {
     /* Strings sent as text format with Oid=0 (unspecified) so the server
      * parses them via its normal type coercion path. This matters for
@@ -1385,6 +1392,7 @@ static const kdbc_driver_vtable postgres_vtable = {
     .prepare            = pg_prepare,
     .stmt_close         = pg_stmt_close,
     .bind_null          = pg_bind_null,
+    .bind_bool          = pg_bind_bool,
     .bind_int           = pg_bind_int,
     .bind_long          = pg_bind_long,
     .bind_double        = pg_bind_double,

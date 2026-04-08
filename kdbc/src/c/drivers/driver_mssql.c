@@ -618,6 +618,10 @@ static int tds_bind_double(kdbc_stmt *stmt, int idx, double val) {
     return KDBC_OK;
 }
 
+static int tds_bind_bool(kdbc_stmt *stmt, int idx, int val) {
+    return tds_bind_int(stmt, idx, val);
+}
+
 static int tds_bind_string(kdbc_stmt *stmt, int idx, const char *val) {
     tds_stmt_data *sd = (tds_stmt_data *)stmt->native;
     tds_param *p = &sd->params[idx - 1];
@@ -1517,6 +1521,7 @@ static const kdbc_driver_vtable mssql_vtable = {
     .prepare                = tds_prepare_fn,
     .stmt_close             = tds_stmt_close_fn,
     .bind_null              = tds_bind_null,
+    .bind_bool              = tds_bind_bool,
     .bind_int               = tds_bind_int,
     .bind_long              = tds_bind_long,
     .bind_double            = tds_bind_double,

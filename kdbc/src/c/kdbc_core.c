@@ -522,6 +522,13 @@ int kdbc_bind_int(kdbc_stmt *stmt, int idx, int val) {
     return stmt->conn->vt->bind_int(stmt, idx, val);
 }
 
+int kdbc_bind_bool(kdbc_stmt *stmt, int idx, int val) {
+    CHECK_BIND(stmt, idx);
+    stmt->params[idx - 1].type = KDBC_TYPE_BOOL;
+    stmt->params[idx - 1].val.i64 = val ? 1 : 0;
+    return stmt->conn->vt->bind_bool(stmt, idx, val ? 1 : 0);
+}
+
 int kdbc_bind_long(kdbc_stmt *stmt, int idx, int64_t val) {
     CHECK_BIND(stmt, idx);
     stmt->params[idx - 1].type = KDBC_TYPE_LONG;

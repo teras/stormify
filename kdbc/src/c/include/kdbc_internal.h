@@ -172,6 +172,7 @@ struct kdbc_driver_vtable {
 
     /* Parameter binding */
     int (*bind_null)(kdbc_stmt *stmt, int idx);
+    int (*bind_bool)(kdbc_stmt *stmt, int idx, int val);
     int (*bind_int)(kdbc_stmt *stmt, int idx, int val);
     int (*bind_long)(kdbc_stmt *stmt, int idx, int64_t val);
     int (*bind_double)(kdbc_stmt *stmt, int idx, double val);

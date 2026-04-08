@@ -629,6 +629,10 @@ static int my_bind_double(kdbc_stmt *stmt, int idx, double val) {
     return KDBC_OK;
 }
 
+static int my_bind_bool(kdbc_stmt *stmt, int idx, int val) {
+    return my_bind_int(stmt, idx, val);
+}
+
 static int my_bind_string(kdbc_stmt *stmt, int idx, const char *val) {
     my_stmt_data *sd = (my_stmt_data *)stmt->native;
     my_param *p = &sd->params[idx - 1];
@@ -1402,6 +1406,7 @@ static const kdbc_driver_vtable mariadb_vtable = {
     .prepare            = my_prepare,
     .stmt_close         = my_stmt_close_fn,
     .bind_null          = my_bind_null,
+    .bind_bool          = my_bind_bool,
     .bind_int           = my_bind_int,
     .bind_long          = my_bind_long,
     .bind_double        = my_bind_double,
