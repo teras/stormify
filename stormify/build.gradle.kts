@@ -113,6 +113,7 @@ kotlin {
                     testDb.startsWith("mysql") -> implementation("com.mysql:mysql-connector-j:9.2.0")
                     testDb.startsWith("mariadb") -> implementation("org.mariadb.jdbc:mariadb-java-client:3.5.3")
                     testDb.startsWith("postgresql") -> implementation("org.postgresql:postgresql:42.7.5")
+                    testDb == "oracle11" -> implementation("com.oracle.database.jdbc:ojdbc8:19.3.0.0")
                     testDb.startsWith("oracle") -> implementation("com.oracle.database.jdbc:ojdbc8:21.9.0.0")
                     testDb.startsWith("mssql") -> implementation("com.microsoft.sqlserver:mssql-jdbc:12.8.1.jre8")
                     testDb == "spring-jdbc" -> {

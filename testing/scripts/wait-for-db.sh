@@ -19,6 +19,20 @@ while [ $elapsed -lt $TIMEOUT ]; do
         | grep -o '"Health":"[^"]*"' | head -1 | cut -d'"' -f4 || true)
 
     if [ "$status" = "healthy" ]; then
+        # Oracle 11g init scripts bounce the instance after healthcheck passes;
+        # wait until we can actually run a query before declaring ready.
+        if [[ "$DB_NAME" == oracle* ]]; then
+            for attempt in $(seq 1 30); do
+                if docker compose -f "$COMPOSE_DIR/docker-compose.yml" exec -T "$DB_NAME" \
+                    bash -c 'printf "SELECT 1 FROM dual;\nEXIT\n" | sqlplus -s stormify/Stormify1! 2>&1 | grep -q "1"'; then
+                    break
+                fi
+                echo "  $DB_NAME healthcheck passed but not yet connectable (attempt $attempt/30)..."
+                sleep 2
+                elapsed=$((elapsed + 2))
+            done
+        fi
+
         echo "$DB_NAME is ready (took ${elapsed}s)"
 
         # MSSQL needs init script run after healthy

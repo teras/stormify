@@ -26,6 +26,7 @@
  */
 #include "../include/kdbc_internal.h"
 #include "../include/kdbc_dl.h"
+#define MSDBLIB  /* Use Microsoft-style DBDATEREC field names (year/month/…) */
 #include <sybfront.h>
 #include <sybdb.h>
 

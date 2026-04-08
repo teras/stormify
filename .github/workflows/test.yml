@@ -20,7 +20,7 @@ jobs:
       - name: Set up JDK
         uses: actions/setup-java@v4
         with:
-          java-version: '11'
+          java-version: '17'
           distribution: 'temurin'
 
       - name: Set up Gradle
@@ -46,7 +46,21 @@ jobs:
       - name: Install database client libraries
         run: |
           sudo apt-get update
-          sudo apt-get install -y libsqlite3-dev libpq-dev libmariadb-dev freetds-dev
+          sudo apt-get install -y libsqlite3-dev libpq-dev libmariadb-dev libmariadb-dev-compat freetds-dev libaio1t64
+          # Ubuntu 24.04 ships libaio.so.1t64 (64-bit time_t); Oracle IC expects libaio.so.1
+          sudo ln -sf /lib/x86_64-linux-gnu/libaio.so.1t64 /lib/x86_64-linux-gnu/libaio.so.1
+          # ODPI-C: build from source (header + shared library)
+          git clone --depth 1 --branch v5.6.4 https://github.com/oracle/odpi.git /tmp/odpi
+          make -C /tmp/odpi -j4
+          sudo make -C /tmp/odpi install PREFIX=/usr/local
+          sudo cp /tmp/odpi/include/dpi.h /usr/include/dpi.h
+          rm -rf /tmp/odpi
+          # Oracle Instant Client (basic-lite, ~72MB, no login required)
+          wget -q https://download.oracle.com/otn_software/linux/instantclient/instantclient-basiclite-linuxx64.zip -O /tmp/ic.zip
+          sudo unzip -q /tmp/ic.zip -d /opt/oracle
+          echo /opt/oracle/instantclient_* | sudo tee /etc/ld.so.conf.d/oracle.conf
+          sudo ldconfig
+          ldconfig -p | grep -E 'odpic|clntsh'
 
       - name: Run tests
         run: testing/test.sh native ${{ matrix.db }}
@@ -66,7 +80,7 @@ jobs:
       - name: Set up JDK
         uses: actions/setup-java@v4
         with:
-          java-version: '11'
+          java-version: '17'
           distribution: 'temurin'
 
       - name: Set up Gradle
@@ -77,7 +91,21 @@ jobs:
       - name: Install database client libraries
         run: |
           sudo apt-get update
-          sudo apt-get install -y libsqlite3-dev libpq-dev libmariadb-dev freetds-dev
+          sudo apt-get install -y libsqlite3-dev libpq-dev libmariadb-dev libmariadb-dev-compat freetds-dev libaio1t64
+          # Ubuntu 24.04 ships libaio.so.1t64 (64-bit time_t); Oracle IC expects libaio.so.1
+          sudo ln -sf /lib/x86_64-linux-gnu/libaio.so.1t64 /lib/x86_64-linux-gnu/libaio.so.1
+          # ODPI-C: build from source (header + shared library)
+          git clone --depth 1 --branch v5.6.4 https://github.com/oracle/odpi.git /tmp/odpi
+          make -C /tmp/odpi -j4
+          sudo make -C /tmp/odpi install PREFIX=/usr/local
+          sudo cp /tmp/odpi/include/dpi.h /usr/include/dpi.h
+          rm -rf /tmp/odpi
+          # Oracle Instant Client (basic-lite, ~72MB, no login required)
+          wget -q https://download.oracle.com/otn_software/linux/instantclient/instantclient-basiclite-linuxx64.zip -O /tmp/ic.zip
+          sudo unzip -q /tmp/ic.zip -d /opt/oracle
+          echo /opt/oracle/instantclient_* | sudo tee /etc/ld.so.conf.d/oracle.conf
+          sudo ldconfig
+          ldconfig -p | grep -E 'odpic|clntsh'
 
       - name: Run tests
         run: testing/test.sh linux ${{ matrix.db }}
@@ -97,7 +125,7 @@ jobs:
       - name: Set up JDK
         uses: actions/setup-java@v4
         with:
-          java-version: '11'
+          java-version: '17'
           distribution: 'temurin'
 
       - name: Set up Gradle
@@ -106,10 +134,23 @@ jobs:
           gradle-version: '9.3.1'
 
       - name: Install database client libraries
-        if: matrix.example == 'kotlin-linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libsqlite3-dev libpq-dev libmariadb-dev freetds-dev
+          sudo apt-get install -y libsqlite3-dev libpq-dev libmariadb-dev libmariadb-dev-compat freetds-dev libaio1t64
+          # Ubuntu 24.04 ships libaio.so.1t64 (64-bit time_t); Oracle IC expects libaio.so.1
+          sudo ln -sf /lib/x86_64-linux-gnu/libaio.so.1t64 /lib/x86_64-linux-gnu/libaio.so.1
+          # ODPI-C: build from source (header + shared library)
+          git clone --depth 1 --branch v5.6.4 https://github.com/oracle/odpi.git /tmp/odpi
+          make -C /tmp/odpi -j4
+          sudo make -C /tmp/odpi install PREFIX=/usr/local
+          sudo cp /tmp/odpi/include/dpi.h /usr/include/dpi.h
+          rm -rf /tmp/odpi
+          # Oracle Instant Client (basic-lite, ~72MB, no login required)
+          wget -q https://download.oracle.com/otn_software/linux/instantclient/instantclient-basiclite-linuxx64.zip -O /tmp/ic.zip
+          sudo unzip -q /tmp/ic.zip -d /opt/oracle
+          echo /opt/oracle/instantclient_* | sudo tee /etc/ld.so.conf.d/oracle.conf
+          sudo ldconfig
+          ldconfig -p | grep -E 'odpic|clntsh'
 
       - name: Publish to Maven Local
         run: gradle publishToMavenLocal --console=plain
