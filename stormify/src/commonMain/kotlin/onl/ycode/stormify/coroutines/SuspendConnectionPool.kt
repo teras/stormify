@@ -34,7 +34,7 @@ import onl.ycode.kdbc.Connection
  *    are forcibly closed.
  *  - After [close] returns, any further `use { }` call throws [PoolClosedException].
  */
-public interface SuspendConnectionPool {
+internal interface SuspendConnectionPool {
     /**
      * Borrow a connection for the duration of [block], then release it back to the pool.
      *
@@ -43,22 +43,22 @@ public interface SuspendConnectionPool {
      *   becomes available within [PoolConfig.acquireTimeout].
      * @throws Throwable whatever [block] throws — the connection is evicted in that case.
      */
-    public suspend fun <R> use(block: suspend (Connection) -> R): R
+    suspend fun <R> use(block: suspend (Connection) -> R): R
 
     /**
      * Returns a snapshot of the pool's counters. Cheap — atomic reads only, no locking.
      */
-    public val stats: PoolStats
+    val stats: PoolStats
 
     /**
      * Graceful shutdown. See contract on the interface doc.
      * Safe to call multiple times; only the first call has effect.
      */
-    public suspend fun close()
+    suspend fun close()
 }
 
 /** Thrown by [SuspendConnectionPool.use] when the pool has been [SuspendConnectionPool.close]d. */
-public class PoolClosedException(message: String = "Connection pool is closed") : IllegalStateException(message)
+class PoolClosedException(message: String = "Connection pool is closed") : IllegalStateException(message)
 
 /** Thrown by [SuspendConnectionPool.use] when [PoolConfig.acquireTimeout] elapses. */
-public class PoolAcquireTimeoutException(message: String) : RuntimeException(message)
+class PoolAcquireTimeoutException(message: String) : RuntimeException(message)

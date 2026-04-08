@@ -59,7 +59,7 @@ kotlin {
         val commonMain by getting {
             dependencies {
                 implementation(project(":logger"))
-                implementation(project(":kdbc"))
+                api(project(":kdbc"))
                 // kotlinx.coroutines is used only by the optional suspend API in the
                 // `onl.ycode.stormify.coroutines` subpackage. Marked compileOnly so
                 // that consumers who only use the blocking API never pull it as a
@@ -85,10 +85,9 @@ kotlin {
             dependencies {
                 compileOnly("org.jetbrains.kotlinx:kotlinx-datetime:0.7.1")
                 compileOnly("com.ionspin.kotlin:bignum:0.3.9")
-                // kotlin-reflect is used at compile time by tryReflection() for the
-                // reflection-based entity discovery path. Marked compileOnly so consumers
-                // using only the annproc path don't pull it transitively.
-                compileOnly(kotlin("reflect"))
+                // kotlin-reflect powers the reflection-based entity discovery path
+                // (tryReflection). Consumers using only annproc can exclude it.
+                implementation(kotlin("reflect"))
             }
         }
 

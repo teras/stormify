@@ -338,11 +338,15 @@ In this example, both `part1` and `part2` fields form the composite primary key.
 
 ## Strict Mode vs. Lenient Mode
 
+### Lenient Mode (Default)
+
+By default, Stormify operates in lenient mode, logging warnings instead of throwing exceptions for mismatches between classes and database columns. This mode is useful for development or scenarios where flexibility is more important than strict validation.
+
 ### Strict Mode
 
 Strict mode enforces strict mapping between classes and database tables. When enabled, Stormify throws exceptions if fields are missing or do not match between the class and the database schema.
 
-By default, Stormify operates in strict mode.
+To enable strict mode:
 
 === "Kotlin"
 
@@ -354,22 +358,6 @@ By default, Stormify operates in strict mode.
 
     ```java
     stormify.setStrictMode(true);
-    ```
-
-### Lenient Mode
-
-When strict mode is disabled, Stormify operates in lenient mode, logging warnings instead of throwing exceptions for mismatches between classes and database columns. This mode is useful for development or scenarios where flexibility is more important than strict validation.
-
-=== "Kotlin"
-
-    ```kotlin
-    stormify.isStrictMode = false
-    ```
-
-=== "Java"
-
-    ```java
-    stormify.setStrictMode(false);
     ```
 
 ## Batch CRUD Operations
@@ -483,7 +471,7 @@ the underlying database cancel primitive.
 The coroutines API requires `kotlinx-coroutines-core` as a runtime dependency. It is
 **not** pulled transitively — you must add it yourself:
 
-=== "Kotlin (Gradle)"
+=== "Gradle (Kotlin)"
 
     ```kotlin
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.10.2")
@@ -501,20 +489,20 @@ The coroutines API requires `kotlinx-coroutines-core` as a runtime dependency. I
 
 ### Setup
 
-Create a `SuspendStormify` from an existing `Stormify` instance and a connection pool:
+Create a `SuspendStormify` from an existing `Stormify` instance:
 
 ```kotlin
 import onl.ycode.stormify.Stormify
 import onl.ycode.stormify.coroutines.*
 
 val stormify = Stormify(dataSource)
-val pool = DefaultSuspendConnectionPool(stormify.dataSource, PoolConfig(
+val async = stormify.suspending(PoolConfig(
     minConnections = 2,
     maxConnections = 10,
 ))
-val async = stormify.suspending(pool)
 ```
 
+The `suspending()` extension creates an internal connection pool configured by `PoolConfig`.
 The blocking `Stormify` instance continues to work independently — `SuspendStormify`
 is purely additive. You can use both APIs side-by-side.
 
@@ -581,16 +569,16 @@ When the pool is saturated, callers **suspend** (not block) until a connection i
 
 ### Pool Statistics
 
-Monitor pool health via `pool.stats`:
+Monitor pool health via `async.stats`:
 
 ```kotlin
-val stats = pool.stats
+val stats = async.stats
 println("total=${stats.total} inUse=${stats.inUse} idle=${stats.idle}")
 ```
 
 ### Shutdown
 
 ```kotlin
-pool.close()  // Waits up to shutdownTimeout (default 30s), then force-closes remaining
+async.close()  // Waits up to shutdownTimeout (default 30s), then force-closes remaining
 ```
 

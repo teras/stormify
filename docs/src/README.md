@@ -22,77 +22,60 @@ Designed for developers seeking a simple yet powerful ORM, Stormify excels in pr
 
 ## Installation
 
-=== "Kotlin"
-
-    **Gradle:**
+=== "Gradle (Kotlin)"
 
     ```kotlin
     implementation("onl.ycode:stormify-jvm:2.0.0")
+    ksp("onl.ycode:annproc:2.0.0")          // optional on JVM
     ```
 
-    **Maven:**
-
-    ```xml
-    <dependency>
-        <groupId>onl.ycode</groupId>
-        <artifactId>stormify-jvm</artifactId>
-        <version>2.0.0</version>
-    </dependency>
-    ```
-
-=== "Java"
-
-    **Gradle:**
-
-    ```groovy
-    implementation 'onl.ycode:stormify-jvm:2.0.0'
-    ```
-
-    **Maven:**
-
-    ```xml
-    <dependency>
-        <groupId>onl.ycode</groupId>
-        <artifactId>stormify-jvm</artifactId>
-        <version>2.0.0</version>
-    </dependency>
-    ```
-
-    Java users should use `StormifyJ` and `TransactionContextJ` for idiomatic Java APIs
-    with `Class<T>` parameters and `Consumer` callbacks.
-
-=== "Native"
-
-    For native Linux applications (no JVM required):
+=== "Gradle (Native)"
 
     ```kotlin
     implementation("onl.ycode:stormify-linuxx64:2.0.0")
+    ksp("onl.ycode:annproc:2.0.0")          // required (no reflection on native)
     ```
 
-    Supported databases: **PostgreSQL, MariaDB/MySQL, Oracle, MSSQL, SQLite**.
+=== "Gradle (Java)"
 
-    Database client libraries are loaded at runtime via `dlopen` — only install the
-    ones you need:
-
-    ```bash
-    # Debian / Ubuntu
-    sudo apt install libsqlite3-0 libpq5 libmariadb3
-
-    # Arch Linux
-    sudo pacman -S sqlite postgresql-libs mariadb-libs
+    ```groovy
+    implementation 'onl.ycode:stormify-jvm:2.0.0'
+    ksp 'onl.ycode:annproc:2.0.0'  // optional on JVM
     ```
 
-    Annotation processing via KSP is **required** on native (no reflection):
+=== "Maven"
 
-    ```kotlin
-    plugins {
-        id("com.google.devtools.ksp")
-    }
-
-    dependencies {
-        ksp("onl.ycode:annproc:2.0.0")
-    }
+    ```xml
+    <dependency>
+        <groupId>onl.ycode</groupId>
+        <artifactId>stormify-jvm</artifactId>
+        <version>2.0.0</version>
+    </dependency>
     ```
+
+**Entity metadata**: Stormify needs metadata (field names, types, primary keys) to perform
+ORM operations. On **JVM**, this is discovered at runtime via `kotlin-reflect` (included
+as a transitive dependency). On **Native/Android/iOS**, reflection is not available — use
+the `annproc` annotation processor (via KSP) to generate it at compile time. On JVM,
+`annproc` is optional but improves startup time and allows excluding `kotlin-reflect`.
+See [Annotation Processor](Core_concepts.md#annotation-processor-annproc) for setup
+details and how to exclude `kotlin-reflect`. When using `annproc`, pass the generated
+registrar to the constructor:
+
+```kotlin
+val stormify = Stormify(dataSource, GeneratedEntities)
+```
+
+**Native database libraries** are loaded at runtime via `dlopen` — install only the ones
+you need. Supported: PostgreSQL, MariaDB/MySQL, Oracle, MSSQL, SQLite.
+
+```bash
+# Debian / Ubuntu
+sudo apt install libsqlite3-0 libpq5 libmariadb3
+
+# Arch Linux
+sudo pacman -S sqlite postgresql-libs mariadb-libs
+```
 
 ## Basic Usage
 
@@ -110,18 +93,6 @@ Designed for developers seeking a simple yet powerful ORM, Stormify excels in pr
     val stormify = Stormify(dataSource)
     ```
 
-=== "Java"
-
-    ```java
-    import com.zaxxer.hikari.HikariConfig;
-    import com.zaxxer.hikari.HikariDataSource;
-    import onl.ycode.stormify.StormifyJ;
-
-    HikariConfig config = new HikariConfig("databaseConfig.properties");
-    HikariDataSource dataSource = new HikariDataSource(config);
-    StormifyJ stormify = new StormifyJ(dataSource);
-    ```
-
 === "Native"
 
     ```kotlin
@@ -135,6 +106,21 @@ Designed for developers seeking a simple yet powerful ORM, Stormify excels in pr
     // SQLite
     val ds = KdbcDataSource("jdbc:sqlite:/tmp/mydb.db")
     val stormify = Stormify(ds)
+    ```
+
+=== "Java"
+
+    Java users should use `StormifyJ` and `TransactionContextJ` for idiomatic Java APIs
+    with `Class<T>` parameters and `Consumer` callbacks.
+
+    ```java
+    import com.zaxxer.hikari.HikariConfig;
+    import com.zaxxer.hikari.HikariDataSource;
+    import onl.ycode.stormify.StormifyJ;
+
+    HikariConfig config = new HikariConfig("databaseConfig.properties");
+    HikariDataSource dataSource = new HikariDataSource(config);
+    StormifyJ stormify = new StormifyJ(dataSource);
     ```
 
 ### Creating an Entity Class

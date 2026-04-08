@@ -215,6 +215,95 @@ Stormify provides support for several standard annotations from the `javax.persi
 
 These annotations help bridge the gap between your classes and the database schema. By leveraging standard JPA annotations, Stormify ensures compatibility with existing JPA setups while providing additional flexibility.
 
+## Annotation Processor (annproc)
+
+Stormify needs entity metadata (field names, types, primary keys) to perform ORM operations.
+There are two ways to provide this metadata:
+
+- **Reflection** (JVM only): `kotlin-reflect` discovers metadata at runtime. This is the
+  default — `kotlin-reflect` is included as a transitive dependency of `stormify-jvm`.
+- **Annotation Processor**: The `annproc` KSP processor generates metadata at compile time
+  by scanning `@DbTable` and JPA `@Entity` annotations.
+
+On **Native/Android/iOS**, reflection is not available — `annproc` is required.
+On **JVM**, `annproc` is optional but offers faster startup since metadata is pre-computed.
+
+### Setup
+
+Add the KSP plugin and `annproc` dependency:
+
+=== "Gradle (Kotlin)"
+
+    ```kotlin
+    plugins {
+        id("com.google.devtools.ksp") version "2.2.20-2.0.2"
+    }
+
+    dependencies {
+        ksp("onl.ycode:annproc:2.0.0")
+    }
+    ```
+
+=== "Gradle (Java)"
+
+    ```groovy
+    plugins {
+        id 'com.google.devtools.ksp' version '2.2.20-2.0.2'
+    }
+
+    dependencies {
+        ksp 'onl.ycode:annproc:2.0.0'
+    }
+    ```
+
+KSP requires the Kotlin compiler, so pure Java/Maven projects without a Kotlin compilation
+step cannot use `annproc` — they rely on `kotlin-reflect` instead.
+
+The processor generates an `EntityRegistrar` object. Pass it to the `Stormify` constructor:
+
+```kotlin
+import db.stormify.GeneratedEntities
+
+val stormify = Stormify(dataSource, GeneratedEntities)
+```
+
+### Excluding kotlin-reflect
+
+When using `annproc` on JVM, `kotlin-reflect` is no longer needed at runtime. You can
+exclude it to reduce the dependency footprint:
+
+=== "Gradle (Kotlin)"
+
+    ```kotlin
+    implementation("onl.ycode:stormify-jvm:2.0.0") {
+        exclude(group = "org.jetbrains.kotlin", module = "kotlin-reflect")
+    }
+    ```
+
+=== "Gradle (Java)"
+
+    ```groovy
+    implementation('onl.ycode:stormify-jvm:2.0.0') {
+        exclude group: 'org.jetbrains.kotlin', module: 'kotlin-reflect'
+    }
+    ```
+
+=== "Maven"
+
+    ```xml
+    <dependency>
+        <groupId>onl.ycode</groupId>
+        <artifactId>stormify-jvm</artifactId>
+        <version>2.0.0</version>
+        <exclusions>
+            <exclusion>
+                <groupId>org.jetbrains.kotlin</groupId>
+                <artifactId>kotlin-reflect</artifactId>
+            </exclusion>
+        </exclusions>
+    </dependency>
+    ```
+
 ## Reference Fields (Foreign Keys)
 
 When a property's type is another entity (not a primitive, String, date, etc.), Stormify

@@ -13,7 +13,6 @@ import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.withContext
 import onl.ycode.stormify.Stormify
-import onl.ycode.stormify.coroutines.DefaultSuspendConnectionPool
 import onl.ycode.stormify.coroutines.PoolConfig
 import onl.ycode.stormify.coroutines.SuspendStormify
 import onl.ycode.stormify.coroutines.suspending
@@ -41,7 +40,6 @@ import kotlin.test.fail
 class SuspendTransactionTest {
 
     private lateinit var stormify: Stormify
-    private lateinit var pool: DefaultSuspendConnectionPool
     private lateinit var runner: SuspendStormify
     private val dbNameForTest = "suspend_tx"
 
@@ -65,19 +63,15 @@ class SuspendTransactionTest {
             )
         )
 
-        pool = DefaultSuspendConnectionPool(
-            testDb.dataSource,
-            PoolConfig(minConnections = 0, maxConnections = 4),
-        )
-        runner = stormify.suspending(pool)
+        runner = stormify.suspending(PoolConfig(minConnections = 0, maxConnections = 4))
     }
 
     @AfterTest
     fun teardown() {
-        if (::pool.isInitialized) {
+        if (::runner.isInitialized) {
             // runBlocking bridges the suspend close() to the blocking JUnit teardown.
             // kotlinx.coroutines.runBlocking is multiplatform (JVM + Native + JS) since 1.7.
-            runBlocking { pool.close() }
+            runBlocking { runner.close() }
         }
         if (::stormify.isInitialized) {
             TestDDL.dropTable(dbNameForTest)
@@ -167,7 +161,7 @@ class SuspendTransactionTest {
         assertEquals(List(4) { "seed" }, results)
 
         // Sanity check on pool stats: all 4 acquires landed, no one timed out, no evictions.
-        val s = pool.stats
+        val s = runner.stats
         assertTrue(s.acquireCount >= 4, "Expected at least 4 acquires, got ${s.acquireCount}")
         assertEquals(0L, s.evictedCount, "No evictions expected on a clean pool")
     }

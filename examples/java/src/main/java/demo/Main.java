@@ -55,15 +55,15 @@ public class Main {
             System.out.println("Created: " + bob);
 
             System.out.println("\n=== Creating Tasks ===");
-            Task t1 = new Task(0, "Buy groceries", "Milk, eggs, bread", false, alice);
+            Task t1 = new Task(0, "Set up database", "Configure schema and indexes", false, alice);
             tx.create(t1);
             System.out.println("Created: " + t1);
 
-            Task t2 = new Task(0, "Write report", "Q4 financial report", false, alice);
+            Task t2 = new Task(0, "Write documentation", "API reference and examples", false, alice);
             tx.create(t2);
             System.out.println("Created: " + t2);
 
-            Task t3 = new Task(0, "Fix bug #42", "NullPointerException in login", false, bob);
+            Task t3 = new Task(0, "Review pull request", "Check code style and tests", false, bob);
             tx.create(t3);
             System.out.println("Created: " + t3);
         });
@@ -76,9 +76,15 @@ public class Main {
         Task foundTask = stormify.findById(Task.class, 2);
         System.out.println("Found task: " + foundTask);
 
-        // === Lazy-loading demo ===
-        System.out.println("\n=== Lazy-Loading Reference ===");
-        System.out.println("Task's user (auto-populated): " + foundTask.getUser().getName());
+        // === Reference loading demo ===
+        // Task extends AutoTable, so accessing task.getUser() auto-populates the Task.
+        // But User is a plain class — it comes back with only the ID filled in.
+        // We must explicitly populate it to get the remaining fields.
+        System.out.println("\n=== Reference Loading ===");
+        User userRef = foundTask.getUser();           // auto-populated by Task (AutoTable)
+        System.out.println("Before populate: " + userRef);   // User(id=1, name=null, email=null)
+        stormify.populate(userRef);
+        System.out.println("After populate:  " + userRef);   // User(id=1, name=Alice, email=alice@example.com)
 
         System.out.println("\n=== Find All ===");
         List<Task> allTasks = stormify.findAll(Task.class);
@@ -105,9 +111,9 @@ public class Main {
         try {
             stormify.transaction(tx -> {
                 User u = stormify.findById(User.class, 1);
-                tx.create(new Task(0, "This will be rolled back", "...", false, u));
+                tx.create(new Task(0, "Temporary task", "...", false, u));
                 System.out.println("Task created inside transaction");
-                throw new RuntimeException("Simulated error!");
+                throw new RuntimeException("Something went wrong!");
             });
         } catch (RuntimeException e) {
             System.out.println("Transaction failed: " + e.getMessage());

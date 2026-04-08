@@ -1,19 +1,17 @@
 package demo;
 
-import onl.ycode.stormify.AutoTable;
 import javax.persistence.Id;
 import javax.persistence.GeneratedValue;
 import javax.persistence.GenerationType;
 
 /**
- * User entity using JPA annotations and AutoTable.
- * Stormify supports JPA annotations on the JVM, so you can use the same
- * entity classes you would use with Hibernate or any other JPA provider.
+ * User entity — a plain class without AutoTable.
+ * When obtained as a reference (e.g. from Task.user), only the ID is set.
+ * Call stormify.populate(user) explicitly to load the remaining fields.
  *
- * <p>Non-primary-key getters/setters call {@code populate()} to trigger lazy loading
- * when the entity was obtained as a reference from another entity's foreign key.
+ * <p>Compare with Task, which extends AutoTable and loads fields automatically.
  */
-public class User extends AutoTable {
+public class User {
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
@@ -29,14 +27,14 @@ public class User extends AutoTable {
     public Integer getId() { return id; }
     public void setId(Integer id) { this.id = id; }
 
-    public String getName() { populate(); return name; }
-    public void setName(String name) { populate(); this.name = name; }
+    public String getName() { return name; }
+    public void setName(String name) { this.name = name; }
 
-    public String getEmail() { populate(); return email; }
-    public void setEmail(String email) { populate(); this.email = email; }
+    public String getEmail() { return email; }
+    public void setEmail(String email) { this.email = email; }
 
     @Override
     public String toString() {
-        return "User(id=" + id + ", name=" + getName() + ", email=" + getEmail() + ")";
+        return "User(id=" + id + ", name=" + name + ", email=" + email + ")";
     }
 }

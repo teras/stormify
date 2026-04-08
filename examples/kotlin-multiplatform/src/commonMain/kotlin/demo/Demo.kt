@@ -30,22 +30,22 @@ fun runDemo(stormify: Stormify) {
     // === Create (ORM) ===
     println("=== Creating Users ===")
     stormify.transaction {
-        val alice = create(User().apply { name = "Alice"; email = "alice@example.com" })
+        val alice = create(User(name = "Alice", email = "alice@example.com"))
         println("Created: $alice")
 
-        val bob = create(User().apply { name = "Bob"; email = "bob@example.com" })
+        val bob = create(User(name = "Bob", email = "bob@example.com"))
         println("Created: $bob")
 
         println("\n=== Creating Tasks ===")
-        val t1 = Task().apply { title = "Buy groceries"; description = "Milk, eggs, bread"; user = alice }
+        val t1 = Task().apply { title = "Set up database"; description = "Configure schema and indexes"; user = alice }
         create(t1)
         println("Created: $t1")
 
-        val t2 = Task().apply { title = "Write report"; description = "Q4 financial report"; user = alice }
+        val t2 = Task().apply { title = "Write documentation"; description = "API reference and examples"; user = alice }
         create(t2)
         println("Created: $t2")
 
-        val t3 = Task().apply { title = "Fix bug #42"; description = "NullPointerException in login"; user = bob }
+        val t3 = Task().apply { title = "Review pull request"; description = "Check code style and tests"; user = bob }
         create(t3)
         println("Created: $t3")
     }
@@ -58,9 +58,15 @@ fun runDemo(stormify: Stormify) {
     val foundTask = stormify.findById<Task>(2)
     println("Found task: $foundTask")
 
-    // === Lazy-loading demo ===
-    println("\n=== Lazy-Loading Reference ===")
-    println("Task's user (auto-populated): ${foundTask!!.user?.name}")
+    // === Reference loading demo ===
+    // Task extends AutoTable, so accessing task.user auto-populates the Task.
+    // But User is a plain class — it comes back with only the ID filled in.
+    // We must explicitly populate it to get the remaining fields.
+    println("\n=== Reference Loading ===")
+    val userRef = foundTask!!.user           // auto-populated by Task (AutoTable)
+    println("Before populate: $userRef")     // User(id=1, name=, email=)
+    stormify.populate(userRef!!)
+    println("After populate:  $userRef")     // User(id=1, name=Alice, email=alice@example.com)
 
     println("\n=== Find All ===")
     val allTasks = stormify.findAll<Task>()
@@ -70,7 +76,7 @@ fun runDemo(stormify: Stormify) {
     println("\n=== Update Task ===")
     foundTask.isCompleted = true
     stormify.update(foundTask)
-    val updated = stormify.findById<Task>(foundTask.id)
+    val updated = stormify.findById<Task>(foundTask.id!!)
     println("Updated: $updated")
 
     // === Delete (ORM) ===
@@ -87,9 +93,9 @@ fun runDemo(stormify: Stormify) {
     try {
         stormify.transaction {
             val u = findById<User>(1)
-            create(Task().apply { title = "This will be rolled back"; description = "..."; user = u })
+            create(Task().apply { title = "Temporary task"; description = "..."; user = u })
             println("Task created inside transaction")
-            throw RuntimeException("Simulated error!")
+            throw RuntimeException("Something went wrong!")
         }
     } catch (e: RuntimeException) {
         println("Transaction failed: ${e.message}")

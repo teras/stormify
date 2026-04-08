@@ -30,8 +30,7 @@ import kotlin.coroutines.coroutineContext
  *
  * ```kotlin
  * val stormify = Stormify(KdbcDataSource("jdbc:sqlite:app.db"))
- * val pool = DefaultSuspendConnectionPool(stormify.dataSource, PoolConfig(maxConnections = 8))
- * val async = stormify.suspending(pool)
+ * val async = stormify.suspending(PoolConfig(maxConnections = 8))
  *
  * async.transaction {
  *     val user = create(User(email = "a@b.c"))
@@ -80,8 +79,19 @@ import kotlin.coroutines.coroutineContext
  */
 public class SuspendStormify internal constructor(
     public val stormify: Stormify,
-    public val pool: SuspendConnectionPool,
+    internal val pool: SuspendConnectionPool,
 ) {
+    /**
+     * Gracefully shuts down the underlying connection pool.
+     * See [SuspendConnectionPool.close] for semantics.
+     */
+    public suspend fun close() { pool.close() }
+
+    /**
+     * Returns a snapshot of the pool's counters.
+     */
+    public val stats: PoolStats get() = pool.stats
+
     /**
      * Execute [block] inside a transaction. Commits on success, rolls back on any throwable.
      *
@@ -167,8 +177,8 @@ public class SuspendStormify internal constructor(
 
 /**
  * Wraps this [Stormify] instance with a coroutine-aware transaction API backed by
- * [pool]. Safe to call multiple times with different pools; each returned
- * [SuspendStormify] is independent.
+ * a [DefaultSuspendConnectionPool] configured with [config]. Safe to call multiple
+ * times with different configs; each returned [SuspendStormify] is independent.
  */
-public fun Stormify.suspending(pool: SuspendConnectionPool): SuspendStormify =
-    SuspendStormify(this, pool)
+public fun Stormify.suspending(config: PoolConfig = PoolConfig()): SuspendStormify =
+    SuspendStormify(this, DefaultSuspendConnectionPool(dataSource, config))

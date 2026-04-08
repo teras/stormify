@@ -28,14 +28,12 @@ kotlin {
         }
     }
 
-    jvmToolchain(11)
+    jvmToolchain(8)
 
     sourceSets {
         val commonMain by getting {
             dependencies {
                 implementation("onl.ycode:stormify:2.0.0")
-                implementation("onl.ycode:kdbc:2.0.0")
-                implementation("onl.ycode:logger:2.0.0")
             }
         }
 

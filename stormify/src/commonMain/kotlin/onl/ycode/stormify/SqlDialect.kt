@@ -288,7 +288,7 @@ enum class SqlDialect(
         BY_INDEX, BY_NAME, NONE
     }
 
-    fun prepareForInsert(
+    internal fun prepareForInsert(
         conn: Connection,
         query: String,
         fetchGeneratedKeys: Boolean,
@@ -302,7 +302,7 @@ enum class SqlDialect(
         }
 
     companion object {
-        fun findDialect(dataSource: DataSource): SqlDialect {
+        internal fun findDialect(dataSource: DataSource): SqlDialect {
             dataSource.getConnection().use { conn ->
                 val metadata: DatabaseMetaData = conn.metaData
                 val productName: String = metadata.databaseProductName.lowercase()

@@ -35,7 +35,8 @@ Targets:
   jvm [database]       Run JVM tests (Gradle)
   linux [database]     Run Kotlin/Native linuxX64 tests (Gradle)
   native [database]    Run C native tests
-  all                  Run everything (JVM + linux + native, all databases)
+  examples             Build and run all example projects
+  all                  Run everything (JVM + linux + native + examples, all databases)
 
 Databases:
   sqlite               SQLite (no Docker needed)
@@ -205,6 +206,49 @@ run_linux_one() {
 }
 
 # ========================================================================
+# Run example projects
+# ========================================================================
+
+ALL_EXAMPLES="java kotlin-jvm kotlin-linux kotlin-multiplatform"
+
+run_example_one() {
+    local example="$1"
+    local example_dir="$PROJECT_DIR/examples/$example"
+
+    echo "========================================="
+    echo "Example: $example"
+    echo "========================================="
+
+    local rc=0
+    case "$example" in
+        java)
+            cd "$example_dir"
+            mvn clean compile exec:java -q 2>&1 || rc=$?
+            ;;
+        kotlin-jvm)
+            cd "$example_dir"
+            gradle clean run --console=plain 2>&1 || rc=$?
+            ;;
+        kotlin-linux)
+            cd "$example_dir"
+            gradle clean runDebugExecutableLinuxX64 --console=plain 2>&1 || rc=$?
+            ;;
+        kotlin-multiplatform)
+            cd "$example_dir"
+            gradle clean jvmRun -DmainClass=demo.MainKt --console=plain 2>&1 || rc=$?
+            ;;
+    esac
+
+    if [ $rc -eq 0 ]; then
+        echo "PASSED: example $example"
+    else
+        echo "FAILED: example $example (exit code: $rc)"
+    fi
+    echo ""
+    return $rc
+}
+
+# ========================================================================
 # Run tests for multiple databases
 # ========================================================================
 
@@ -263,6 +307,14 @@ case "$TARGET" in
         fi
         ;;
 
+    examples)
+        if [ -n "$DB" ]; then
+            run_example_one "$DB"
+        else
+            run_for_dbs run_example_one $ALL_EXAMPLES
+        fi
+        ;;
+
     all)
         build_native
         failed=0
@@ -278,6 +330,10 @@ case "$TARGET" in
         echo "############### KOTLIN/NATIVE LINUX TESTS ###############"
         echo ""
         run_for_dbs run_linux_one $ALL_DBS || failed=$((failed + $?))
+        echo ""
+        echo "############### EXAMPLES ###############"
+        echo ""
+        run_for_dbs run_example_one $ALL_EXAMPLES || failed=$((failed + $?))
         exit $failed
         ;;
 

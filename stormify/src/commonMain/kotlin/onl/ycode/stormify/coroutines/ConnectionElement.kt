@@ -29,9 +29,9 @@ import kotlin.coroutines.CoroutineContext
  * inherit this element by default. That inheritance is a double-edged sword — see the
  * launch-in-transaction notes on [SuspendStormify.transaction].
  */
-public class ConnectionElement internal constructor(
+internal class ConnectionElement(
     internal val conn: Connection,
     internal val stormify: Stormify,
 ) : AbstractCoroutineContextElement(Key) {
-    public companion object Key : CoroutineContext.Key<ConnectionElement>
+    companion object Key : CoroutineContext.Key<ConnectionElement>
 }

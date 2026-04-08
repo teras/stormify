@@ -23,24 +23,9 @@
             <version>${stormify.version}</version>
         </dependency>
         <dependency>
-            <groupId>onl.ycode</groupId>
-            <artifactId>kdbc-jvm</artifactId>
-            <version>${stormify.version}</version>
-        </dependency>
-        <dependency>
-            <groupId>onl.ycode</groupId>
-            <artifactId>logger-jvm</artifactId>
-            <version>${stormify.version}</version>
-        </dependency>
-        <dependency>
             <groupId>org.xerial</groupId>
             <artifactId>sqlite-jdbc</artifactId>
             <version>3.47.2.0</version>
-        </dependency>
-        <dependency>
-            <groupId>org.jetbrains.kotlin</groupId>
-            <artifactId>kotlin-reflect</artifactId>
-            <version>2.2.20</version>
         </dependency>
         <dependency>
             <groupId>org.slf4j</groupId>

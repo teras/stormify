@@ -22,13 +22,7 @@ Designed for developers seeking a simple yet powerful ORM, Stormify excels in pr
 
 ## Installation
 
-### Kotlin (Gradle)
-
-```kotlin
-implementation("onl.ycode:stormify-jvm:2.0.0")
-```
-
-### Java (Maven)
+### Maven
 
 ```xml
 <dependency>
@@ -38,26 +32,30 @@ implementation("onl.ycode:stormify-jvm:2.0.0")
 </dependency>
 ```
 
-### Native
+### Gradle (JVM)
 
-For native Linux applications (no JVM required):
+```kotlin
+implementation("onl.ycode:stormify-jvm:2.0.0")
+ksp("onl.ycode:annproc:2.0.0")              // optional on JVM
+```
+
+### Gradle (Native)
 
 ```kotlin
 implementation("onl.ycode:stormify-linuxx64:2.0.0")
+ksp("onl.ycode:annproc:2.0.0")              // required (no reflection on native)
 ```
 
-Supported databases: **PostgreSQL, MariaDB/MySQL, Oracle, MSSQL, SQLite** — loaded at runtime via `dlopen`.
+Supported native databases: **PostgreSQL, MariaDB/MySQL, Oracle, MSSQL, SQLite** — loaded at runtime via `dlopen`.
 
-Annotation processing via KSP is required on native:
+**Entity metadata**: On JVM, entity metadata is discovered at runtime via `kotlin-reflect`
+(included as a transitive dependency). On Native/Android/iOS, use the `annproc` annotation
+processor (via KSP) to generate it at compile time. On JVM, `annproc` is optional but
+improves startup time and allows excluding `kotlin-reflect`. When using `annproc`, pass
+the generated registrar to the constructor:
 
 ```kotlin
-plugins {
-    id("com.google.devtools.ksp")
-}
-
-dependencies {
-    ksp("onl.ycode:annproc:2.0.0")
-}
+val stormify = Stormify(dataSource, GeneratedEntities)
 ```
 
 > **Upgrading from V1?** See the [V1 to V2 migration guide](docs/src/Migration_V1_to_V2.md).

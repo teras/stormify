@@ -58,19 +58,7 @@ JVM-only V1. This guide covers all breaking changes and how to update your code.
 === "V2"
 
     ```kotlin
-    // JVM
     implementation("onl.ycode:stormify-jvm:2.0.0")
-
-    // Kotlin Multiplatform
-    kotlin {
-        sourceSets {
-            commonMain {
-                dependencies {
-                    implementation("onl.ycode:stormify:2.0.0")
-                }
-            }
-        }
-    }
     ```
 
 The separate `db` and `kotlin` modules are merged into a single `stormify` artifact.
@@ -102,16 +90,6 @@ The global singleton is gone. Create `Stormify` instances via constructor.
 
     // Pass instance explicitly
     stormify.create(user)
-    ```
-
-=== "V2 (Kotlin — Native)"
-
-    ```kotlin
-    import onl.ycode.stormify.Stormify
-    import onl.ycode.kdbc.KdbcDataSource
-
-    val ds = KdbcDataSource("jdbc:postgresql://localhost:5432/mydb", "user", "pass")
-    val stormify = Stormify(ds)
     ```
 
 === "V2 (Java — JVM)"
@@ -308,37 +286,14 @@ V2 uses a single unified exception type across all platforms.
 The naming policies and annotations (`@DbTable`, `@DbField`, `@Id`, `@Table`, `@Column`,
 `@Transient`, etc.) are unchanged.
 
-## Entity Registration on Native
+## Entity Registration
 
-On JVM, reflection-based entity discovery works the same as V1 (no changes needed).
+On JVM, reflection-based entity discovery works the same as V1 (no changes needed) —
+`kotlin-reflect` is now included as a transitive dependency.
 
-On **native platforms** (Linux, iOS, macOS, Android), reflection is limited. You must use
-the annotation processor (KSP) to generate entity metadata at compile time:
-
-```kotlin
-// build.gradle.kts
-plugins {
-    id("com.google.devtools.ksp")
-}
-
-dependencies {
-    ksp("onl.ycode:annproc:2.0.0")
-}
-```
-
-Annotate your entity classes with `@DbTable` or JPA `@Entity`:
-
-```kotlin
-@DbTable("users")
-data class User(
-    @DbField(primaryKey = true)
-    val id: Int = 0,
-    val name: String = "",
-    val age: Int = 0
-)
-```
-
-The annotation processor generates the required `TableInfo` registrations automatically.
+If you plan to target **native platforms** or want faster JVM startup, V2 offers the
+`annproc` annotation processor (via KSP) to generate entity metadata at compile time.
+See [Annotation Processor](Core_concepts.md#annotation-processor-annproc) for setup details.
 
 ## DataSource Wrapping (JVM)
 
@@ -360,13 +315,12 @@ V2 adds optional coroutine support with connection pooling:
 
 ```kotlin
 val stormify = Stormify(dataSource)
-val pool = DefaultSuspendConnectionPool(stormify.dataSource, PoolConfig(
+val async = stormify.suspending(PoolConfig(
     minConnections = 2,
     maxConnections = 10,
     acquireTimeout = 5.seconds,
     idleTimeout = 10.minutes,
 ))
-val async = stormify.suspending(pool)
 
 // All operations are suspend functions
 async.transaction {

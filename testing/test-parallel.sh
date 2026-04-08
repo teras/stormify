@@ -7,6 +7,7 @@ LOG_DIR="$SCRIPT_DIR/.logs"
 RESULTS_FILE="$LOG_DIR/_results"
 
 ALL_DBS=(sqlite postgresql postgresql9 mysql mysql5 mariadb oracle oracle11 mssql)
+ALL_EXAMPLES=(java kotlin-jvm kotlin-linux kotlin-multiplatform)
 SESSION="stormify-tests"
 
 usage() {
@@ -17,7 +18,8 @@ Targets:
   native       Run C native tests for all databases in parallel
   jvm          Run JVM tests for all databases in parallel
   linux        Run Kotlin/Native linuxX64 tests for all databases in parallel
-  all          Run native, JVM, and linux tests, each phase in parallel
+  examples     Build and run all example projects in parallel
+  all          Run native, JVM, linux, and examples, each phase in parallel
   clean        Remove test logs
   results      Show results from a previous run
 
@@ -88,13 +90,17 @@ collect_results() {
     local total=0
     local passed=0
 
+    local items_var="ALL_DBS"
+    [ "$target" = "examples" ] && items_var="ALL_EXAMPLES"
+    local -n cr_items="$items_var"
+
     echo ""
     echo "========================================="
     echo "  RESULTS: $target tests"
     echo "========================================="
     echo ""
 
-    for db in "${ALL_DBS[@]}"; do
+    for db in "${cr_items[@]}"; do
         total=$((total + 1))
         local result_file="$LOG_DIR/${target}_${db}.result"
         if [ -f "$result_file" ]; then
@@ -130,6 +136,9 @@ collect_results() {
 
 run_tmux_grid() {
     local target="$1"
+    local items_var="ALL_DBS"
+    [ "$target" = "examples" ] && items_var="ALL_EXAMPLES"
+    local -n items_ref="$items_var"
 
     if ! command -v tmux &>/dev/null; then
         echo "tmux not found. Install it or use --no-tmux"
@@ -227,17 +236,15 @@ done
 MONITOR
     chmod +x "$monitor_script"
 
-    # Create tmux session with first database
+    # Create tmux session with first item
     tmux new-session -d -s "$SESSION" -x 200 -y 50 \
-        "$runner_script ${ALL_DBS[0]} $target $SCRIPT_DIR $LOG_DIR"
+        "$runner_script ${items_ref[0]} $target $SCRIPT_DIR $LOG_DIR"
 
-    # Create remaining panes — one per database, letting tmux's "tiled"
-    # layout arrange them into a balanced grid (3x2 for 6 DBs, 4x2 for 7,
-    # 3x3 for 8-9, etc. — driven entirely by the number of entries in
-    # ALL_DBS).
-    for ((i = 1; i < ${#ALL_DBS[@]}; i++)); do
+    # Create remaining panes — one per item, letting tmux's "tiled"
+    # layout arrange them into a balanced grid.
+    for ((i = 1; i < ${#items_ref[@]}; i++)); do
         tmux split-window -t "$SESSION" \
-            "$runner_script ${ALL_DBS[$i]} $target $SCRIPT_DIR $LOG_DIR"
+            "$runner_script ${items_ref[$i]} $target $SCRIPT_DIR $LOG_DIR"
         # Rebalance after each split
         tmux select-layout -t "$SESSION" tiled
     done
@@ -253,15 +260,15 @@ MONITOR
     tmux set-option -t "$SESSION" pane-border-format " #{pane_index}: #{pane_title} "
 
     # Set pane titles
-    for i in "${!ALL_DBS[@]}"; do
-        tmux select-pane -t "$SESSION:0.$i" -T "${ALL_DBS[$i]}"
+    for i in "${!items_ref[@]}"; do
+        tmux select-pane -t "$SESSION:0.$i" -T "${items_ref[$i]}"
     done
 
     # Status bar style - override default green
     tmux set-option -t "$SESSION" status-style "bg=black,fg=brightwhite,bold"
 
     # Status bar initial state
-    tmux set-option -t "$SESSION" status-left " [0/${#ALL_DBS[@]}] Starting... "
+    tmux set-option -t "$SESSION" status-left " [0/${#items_ref[@]}] Starting... "
     tmux set-option -t "$SESSION" status-right " Running... "
     tmux set-option -t "$SESSION" status-interval 1
 
@@ -270,7 +277,7 @@ MONITOR
     tmux bind-key -n '\;' kill-session
 
     # Start background monitor to update status bar
-    "$monitor_script" "$SESSION" "$LOG_DIR" "${#ALL_DBS[@]}" "$target" "${ALL_DBS[@]}" &
+    "$monitor_script" "$SESSION" "$LOG_DIR" "${#items_ref[@]}" "$target" "${items_ref[@]}" &
     local monitor_pid=$!
 
     echo ""
@@ -314,11 +321,15 @@ run_parallel_bg() {
     local pids=()
     local dbs_for_pid=()
 
-    echo "Starting $target tests in parallel for all databases..."
+    local items_var="ALL_DBS"
+    [ "$target" = "examples" ] && items_var="ALL_EXAMPLES"
+    local -n bg_items="$items_var"
+
+    echo "Starting $target tests in parallel..."
     echo "Logs in: $LOG_DIR/"
     echo ""
 
-    for db in "${ALL_DBS[@]}"; do
+    for db in "${bg_items[@]}"; do
         run_one "$target" "$db" &
         pids+=($!)
         dbs_for_pid+=("$db")
@@ -341,8 +352,8 @@ run_parallel_bg() {
         if $any_running; then
             # Print status every 5 seconds
             local status=""
-            for i in "${!ALL_DBS[@]}"; do
-                local db="${ALL_DBS[$i]}"
+            for i in "${!bg_items[@]}"; do
+                local db="${bg_items[$i]}"
                 local result_file="$LOG_DIR/${target}_${db}.result"
                 if [ -f "$result_file" ]; then
                     local r=$(cat "$result_file")
@@ -396,7 +407,7 @@ trap cleanup EXIT
 ensure_network
 
 case "$TARGET" in
-    native|jvm|linux)
+    native|jvm|linux|examples)
         # Pre-compile Gradle targets so parallel runs use the binary directly
         [ "$TARGET" = "linux" ] && build_linux
         [ "$TARGET" = "jvm" ] && build_jvm
@@ -428,12 +439,18 @@ case "$TARGET" in
             run_tmux_grid "linux"
             echo ""
             collect_results "linux" || all_failed=$((all_failed + $?))
+            echo ""
+            echo "=== Phase 4: Examples ==="
+            run_tmux_grid "examples"
+            echo ""
+            collect_results "examples" || all_failed=$((all_failed + $?))
         else
             run_parallel_bg "native"
             build_jvm
             run_parallel_bg "jvm"
             build_linux
             run_parallel_bg "linux"
+            run_parallel_bg "examples"
         fi
 
         # Grand summary
@@ -443,10 +460,15 @@ case "$TARGET" in
         echo "========================================="
         echo ""
         grand_pass=0
-        grand_total=$((${#ALL_DBS[@]} * 3))
-        for phase in native jvm linux; do
+        grand_total=$((${#ALL_DBS[@]} * 3 + ${#ALL_EXAMPLES[@]}))
+        for phase in native jvm linux examples; do
+            if [ "$phase" = "examples" ]; then
+                phase_items=("${ALL_EXAMPLES[@]}")
+            else
+                phase_items=("${ALL_DBS[@]}")
+            fi
             p=0; f=0
-            for db in "${ALL_DBS[@]}"; do
+            for db in "${phase_items[@]}"; do
                 rf="$LOG_DIR/${phase}_${db}.result"
                 if [ -f "$rf" ] && [ "$(cat "$rf")" = "PASS" ]; then
                     p=$((p + 1))

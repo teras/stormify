@@ -1,19 +1,21 @@
 package demo
 
-import onl.ycode.stormify.AutoTable
 import onl.ycode.stormify.DbField
-import onl.ycode.stormify.db
+import onl.ycode.stormify.DbTable
 
 /**
- * User entity using Stormify annotations and AutoTable.
- * On JVM, JPA annotations are also supported — see the Java example.
+ * User entity — a plain class without AutoTable.
+ * When obtained as a reference (e.g. from Task.user), only the ID is set.
+ * Call stormify.populate(user) explicitly to load the remaining fields.
+ *
+ * Compare with Task, which extends AutoTable and loads fields automatically.
  */
+@DbTable("user")
 class User(
     @DbField(primaryKey = true, autoIncrement = true)
-    var id: Int? = null
-) : AutoTable() {
-    var name: String by db("")
-    var email: String by db("")
-
+    var id: Int? = null,
+    var name: String? = null,
+    var email: String? = null,
+) {
     override fun toString() = "User(id=$id, name=$name, email=$email)"
 }

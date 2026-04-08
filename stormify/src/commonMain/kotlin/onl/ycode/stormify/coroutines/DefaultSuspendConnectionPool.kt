@@ -56,7 +56,7 @@ import kotlin.time.TimeSource
  *  3. An entry in the `idle` deque always has `valid == true`; evicted entries are removed
  *     from the deque before `closeEntry` runs.
  */
-public class DefaultSuspendConnectionPool(
+internal class DefaultSuspendConnectionPool(
     private val dataSource: DataSource,
     private val config: PoolConfig = PoolConfig(),
 ) : SuspendConnectionPool {

@@ -96,7 +96,7 @@ open class Stormify(val dataSource: DataSource, vararg registrars: EntityRegistr
     // --- Configuration ---
 
     /** When enabled, throws on field/column mismatches; when disabled, logs warnings. */
-    var isStrictMode: Boolean = true
+    var isStrictMode: Boolean = false
 
     var logger = LogManager.getLogger("Stormify")
 

@@ -4,15 +4,15 @@ A self-contained Kotlin/Native application demonstrating Stormify ORM on Linux w
 
 ## Highlights
 
-This example runs as a **native Linux binary** — no JVM required at runtime. It uses Stormify's native SQLite driver via KDBC. Entity metadata is registered manually via an `EntityRegistrar` (in a real project, the KSP annotation processor generates this automatically).
+This example runs as a **native Linux binary** — no JVM required at runtime. It uses Stormify's native SQLite driver via KDBC. Entity metadata is generated at compile time by the KSP annotation processor (`annproc`), which is required on native platforms.
 
-Both entities extend `AutoTable` with `by db()` delegates for transparent lazy-loading of references.
+The `Task` entity extends `AutoTable` with `by db()` delegates for automatic lazy-loading. The `User` entity is a plain class — references to it must be populated explicitly via `stormify.populate()`.
 
 ## What it demonstrates
 
 - **Native binary** — compiles to a standalone Linux executable
-- **Manual entity registration** — shows what KSP generates under the hood
-- **Entity references** with lazy loading (`AutoTable` + `by db()`)
+- **KSP annotation processor** — generates entity metadata at compile time
+- **AutoTable vs plain class** — `Task` auto-populates references, `User` requires explicit `populate()`
 - **CRUD operations** — create, findById, findAll, update, delete
 - **Transaction DSL** with automatic rollback on exception
 - **Raw SQL JOIN query** returning `Map<String, Any?>` results
