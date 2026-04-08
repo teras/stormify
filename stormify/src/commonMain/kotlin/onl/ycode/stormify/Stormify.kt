@@ -205,6 +205,8 @@ open class Stormify(val dataSource: DataSource, vararg registrars: EntityRegistr
     private fun sqlData(value: Any?, recursively: Boolean): Any? {
         if (value == null || isScalarObject(value))
             return if (value is CharArray) value.concatToString() else value
+        if (value is Enum<*>)
+            return enumToInt(value)
         if (recursively) {
             if (value is Array<*>)
                 return sqlData(value.toList(), true)

@@ -64,6 +64,26 @@ actual val Any.isOtherPrimitive: Boolean
                     || this is kotlin.time.Instant))
 
 @Suppress("UNCHECKED_CAST")
+internal actual fun <T : Any> enumFromInt(enumClass: KClass<T>, value: Int): T? {
+    val constants = enumClass.java.enumConstants as? Array<out Enum<*>> ?: return null
+    return if (constants.firstOrNull() is DbValue) {
+        constants.firstOrNull { (it as DbValue).dbValue == value } as T?
+    } else {
+        constants.getOrNull(value) as T?
+    }
+}
+
+internal actual fun enumToInt(value: Enum<*>): Int =
+    if (value is DbValue) value.dbValue else value.ordinal
+
+@Suppress("UNCHECKED_CAST")
+internal actual fun <T : Any> enumFromName(enumClass: KClass<T>, name: String): T? {
+    val constants = enumClass.java.enumConstants as? Array<out Enum<*>> ?: return null
+    return constants.firstOrNull { it.name == name } as T?
+}
+
+internal actual fun isEnumClass(klass: KClass<*>): Boolean = klass.java.isEnum
+
 internal actual fun <T : Any> tryReflection(type: KClass<T>): EntityMeta<T>? {
     val jClass = type.java
     // Build table name override from @DbTable or JPA @Table/@Entity
@@ -161,6 +181,16 @@ internal actual fun <T : Any> tryReflection(type: KClass<T>): EntityMeta<T>? {
             try { ann.annotationClass.java.getMethod("updatable").invoke(ann) as? Boolean } catch (_: Exception) { null }
         } ?: true)
 
+        // Determine if enum should be stored as string
+        val enumAsString = dbField?.enumAsString ?: annotations.any { ann ->
+            if (ann.annotationClass.qualifiedName == "javax.persistence.Enumerated") {
+                try {
+                    val enumType = ann.annotationClass.java.getMethod("value").invoke(ann)
+                    enumType?.toString() == "STRING"
+                } catch (_: Exception) { false }
+            } else false
+        }
+
         // Determine if property type is a reference (entity type)
         // For generic type variables (T), classifier is null — use Any::class
         val propType = kProp.returnType.classifier as? KClass<*> ?: Any::class
@@ -169,7 +199,8 @@ internal actual fun <T : Any> tryReflection(type: KClass<T>): EntityMeta<T>? {
             return@mapNotNull null
         // Generic type variables (erased to Any) are not entity references
         val isGenericTypeVar = javaGetter?.genericReturnType is java.lang.reflect.TypeVariable<*>
-        val isReference = !isGenericTypeVar && !isScalarClass(propType)
+        val isEnum = propType.java.isEnum
+        val isReference = !isGenericTypeVar && !isEnum && !isScalarClass(propType)
                 && propType != ByteArray::class && propType != CharArray::class
 
         // Build getter/setter — prefer Java getter/setter for interop with Java POJOs
@@ -220,7 +251,9 @@ internal actual fun <T : Any> tryReflection(type: KClass<T>): EntityMeta<T>? {
             isAutoIncrement = isAutoIncrement,
             isCreatable = isCreatable,
             isUpdatable = isUpdatable,
-            isTransient = isTransient
+            isTransient = isTransient,
+            isEnum = isEnum,
+            enumAsString = enumAsString
         )
     }
 

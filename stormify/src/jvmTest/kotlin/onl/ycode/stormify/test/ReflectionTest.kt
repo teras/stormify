@@ -6,6 +6,7 @@ import test.TestHelper
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
+import kotlin.test.assertNull
 
 /**
  * Tests for JVM reflection-based entity discovery, covering:
@@ -181,6 +182,91 @@ class ReflectionTest {
         assertEquals(1, remaining.size)
         assertEquals("Bob", remaining[0].name)
     }
+
+    // --- Enum via reflection (no annproc) ---
+
+    @Test
+    fun enumViaReflection() = withDb("REFL-ENUM") { s ->
+        TestDDL.dropTable("refl_enum_test")
+        s.executeUpdate(TestDDL.createTable("refl_enum_test",
+            "${TestDDL.intPrimaryKey("id")}, ${TestDDL.intColumn("plain_status")}, ${TestDDL.intColumn("custom_status")}"))
+
+        // Create
+        s.create(ReflEnumEntity().apply { id = 1; plainStatus = ReflPlainStatus.BANNED; customStatus = ReflCustomStatus.INACTIVE })
+
+        // Read back
+        val found = s.findById<ReflEnumEntity>(1)
+        assertNotNull(found)
+        assertEquals(ReflPlainStatus.BANNED, found.plainStatus)
+        assertEquals(ReflCustomStatus.INACTIVE, found.customStatus)
+
+        // Verify stored values
+        assertEquals(2, s.readOne<Int>("SELECT plain_status FROM refl_enum_test WHERE id = ?", 1))   // ordinal
+        assertEquals(20, s.readOne<Int>("SELECT custom_status FROM refl_enum_test WHERE id = ?", 1))  // dbValue
+
+        // Update
+        found.plainStatus = ReflPlainStatus.ACTIVE
+        found.customStatus = ReflCustomStatus.BANNED
+        s.update(found)
+        val updated = s.findById<ReflEnumEntity>(1)!!
+        assertEquals(ReflPlainStatus.ACTIVE, updated.plainStatus)
+        assertEquals(ReflCustomStatus.BANNED, updated.customStatus)
+
+        // Query with enum param
+        val results = s.read<ReflEnumEntity>("SELECT * FROM refl_enum_test WHERE plain_status = ?", ReflPlainStatus.ACTIVE)
+        assertEquals(1, results.size)
+
+        // Null enum
+        s.create(ReflEnumEntity().apply { id = 2 })
+        val nullEntity = s.findById<ReflEnumEntity>(2)!!
+        assertNull(nullEntity.plainStatus)
+        assertNull(nullEntity.customStatus)
+    }
+
+    @Test
+    fun enumAsStringViaReflection() = withDb("REFL-ENUM-STRING") { s ->
+        TestDDL.dropTable("refl_enum_string_test")
+        s.executeUpdate(TestDDL.createTable("refl_enum_string_test",
+            "${TestDDL.intPrimaryKey("id")}, status ${TestDDL.textType()}, ${TestDDL.intColumn("priority")}"))
+
+        s.create(ReflEnumStringEntity().apply { id = 1; status = ReflPlainStatus.BANNED; priority = ReflPlainStatus.BANNED })
+
+        // Verify string vs ordinal storage
+        assertEquals("BANNED", s.readOne<String>("SELECT status FROM refl_enum_string_test WHERE id = ?", 1))
+        assertEquals(2, s.readOne<Int>("SELECT priority FROM refl_enum_string_test WHERE id = ?", 1))
+
+        // Read back
+        val found = s.findById<ReflEnumStringEntity>(1)!!
+        assertEquals(ReflPlainStatus.BANNED, found.status)
+        assertEquals(ReflPlainStatus.BANNED, found.priority)
+
+        // Update
+        found.status = ReflPlainStatus.ACTIVE
+        s.update(found)
+        assertEquals("ACTIVE", s.readOne<String>("SELECT status FROM refl_enum_string_test WHERE id = ?", 1))
+    }
+}
+
+// --- Enum test entities (reflection-only, no annproc) ---
+
+enum class ReflPlainStatus { ACTIVE, INACTIVE, BANNED }
+
+enum class ReflCustomStatus(override val dbValue: Int) : DbValue {
+    ACTIVE(10), INACTIVE(20), BANNED(99)
+}
+
+@DbTable(name = "refl_enum_test")
+class ReflEnumEntity {
+    @DbField(primaryKey = true) var id: Int = 0
+    var plainStatus: ReflPlainStatus? = null
+    var customStatus: ReflCustomStatus? = null
+}
+
+@DbTable(name = "refl_enum_string_test")
+class ReflEnumStringEntity {
+    @DbField(primaryKey = true) var id: Int = 0
+    @DbField(enumAsString = true) var status: ReflPlainStatus? = null
+    var priority: ReflPlainStatus? = null  // ordinal for comparison
 }
 
 // --- Test entity classes ---

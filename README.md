@@ -19,6 +19,7 @@ Designed for developers seeking a simple yet powerful ORM, Stormify excels in pr
 - **Flexible Query Execution**: Execute custom and complex SQL queries and map results to Kotlin objects, with automatic collection parameter expansion for `IN` clauses.
 - **Transaction Management**: Support for nested transactions with rollback and commit capabilities via savepoints.
 - **Coroutines**: Suspend-based transaction API with a built-in connection pool, coroutine cancellation wired to native database cancel primitives.
+- **Enum Properties**: Enum fields stored as integers (ordinal or custom values via `DbValue`) or strings (`@DbField(enumAsString = true)`).
 - **Lazy Loading**: Reference fields with `by db()` delegates for automatic lazy loading of related entities.
 - **Stored Procedures**: Call stored procedures with input, output, and bidirectional parameters.
 - **Support for Composite Keys**: Handle tables with composite primary keys effortlessly.

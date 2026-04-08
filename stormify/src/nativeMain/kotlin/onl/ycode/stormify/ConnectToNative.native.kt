@@ -51,3 +51,15 @@ actual val Any.isOtherPrimitive
             this is kotlin.time.Instant
 
 internal actual fun <T : Any> tryReflection(type: KClass<T>): EntityMeta<T>? = null
+
+internal actual fun <T : Any> enumFromInt(enumClass: KClass<T>, value: Int): T? =
+    EnumRegistry.fromInt(enumClass, value)
+
+internal actual fun enumToInt(value: Enum<*>): Int =
+    EnumRegistry.toInt(value) ?: value.ordinal
+
+internal actual fun <T : Any> enumFromName(enumClass: KClass<T>, name: String): T? =
+    EnumRegistry.fromName(enumClass, name)
+
+internal actual fun isEnumClass(klass: KClass<*>): Boolean =
+    EnumRegistry.isRegistered(klass)

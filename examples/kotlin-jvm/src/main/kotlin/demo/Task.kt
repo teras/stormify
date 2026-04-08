@@ -17,8 +17,9 @@ class Task(
     var description: String by db("")
     @DbField(name = "is_completed")
     var isCompleted: Boolean by db(false)
+    var priority: Priority? by db(null)
     @DbField(name = "user_id")
     var user: User? by db(null)
 
-    override fun toString() = "Task(id=$id, title=$title, completed=$isCompleted, user=$user)"
+    override fun toString() = "Task(id=$id, title=$title, completed=$isCompleted, priority=$priority, user=$user)"
 }

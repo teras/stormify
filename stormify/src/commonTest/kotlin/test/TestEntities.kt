@@ -166,3 +166,33 @@ data class GenericHolder<T>(
     @DbField(primaryKey = true) var id: Int = 0,
     var value: T? = null
 )
+
+// --- Enums ---
+
+enum class PlainStatus { ACTIVE, INACTIVE, BANNED }
+
+enum class CustomStatus(override val dbValue: Int) : DbValue {
+    ACTIVE(10),
+    INACTIVE(20),
+    BANNED(99)
+}
+
+@DbTable(name = "enum_test")
+data class EnumEntity(
+    @DbField(primaryKey = true) var id: Int = 0,
+    var plainStatus: PlainStatus? = null,
+    var customStatus: CustomStatus? = null
+)
+
+@DbTable(name = "enum_notnull_test")
+data class EnumNotNullEntity(
+    @DbField(primaryKey = true) var id: Int = 0,
+    var status: PlainStatus = PlainStatus.ACTIVE
+)
+
+@DbTable(name = "enum_string_test")
+data class EnumStringEntity(
+    @DbField(primaryKey = true) var id: Int = 0,
+    @DbField(enumAsString = true) var status: PlainStatus? = null,
+    var priority: PlainStatus? = null  // ordinal for comparison
+)

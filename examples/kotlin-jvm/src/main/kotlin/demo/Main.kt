@@ -26,6 +26,7 @@ fun main() {
             title TEXT NOT NULL,
             description TEXT,
             is_completed INTEGER NOT NULL DEFAULT 0,
+            priority INTEGER,
             user_id INTEGER NOT NULL REFERENCES user(id))"""
     )
     println("Tables created.\n")
@@ -40,15 +41,15 @@ fun main() {
         println("Created: $bob")
 
         println("\n=== Creating Tasks ===")
-        val t1 = Task().apply { title = "Set up database"; description = "Configure schema and indexes"; user = alice }
+        val t1 = Task().apply { title = "Set up database"; description = "Configure schema and indexes"; priority = Priority.HIGH; user = alice }
         create(t1)
         println("Created: $t1")
 
-        val t2 = Task().apply { title = "Write documentation"; description = "API reference and examples"; user = alice }
+        val t2 = Task().apply { title = "Write documentation"; description = "API reference and examples"; priority = Priority.MEDIUM; user = alice }
         create(t2)
         println("Created: $t2")
 
-        val t3 = Task().apply { title = "Review pull request"; description = "Check code style and tests"; user = bob }
+        val t3 = Task().apply { title = "Review pull request"; description = "Check code style and tests"; priority = Priority.LOW; user = bob }
         create(t3)
         println("Created: $t3")
     }
@@ -96,7 +97,7 @@ fun main() {
     try {
         stormify.transaction {
             val u = findById<User>(1)
-            create(Task().apply { title = "Temporary task"; description = "..."; user = u })
+            create(Task().apply { title = "Temporary task"; description = "..."; priority = Priority.LOW; user = u })
             println("Task created inside transaction")
             throw RuntimeException("Something went wrong!")
         }

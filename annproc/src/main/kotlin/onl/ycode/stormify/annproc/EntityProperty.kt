@@ -1,5 +1,6 @@
 package onl.ycode.stormify.annproc
 
+import com.google.devtools.ksp.symbol.ClassKind
 import com.google.devtools.ksp.symbol.KSClassDeclaration
 import com.google.devtools.ksp.symbol.KSPropertyDeclaration
 import com.google.devtools.ksp.symbol.KSType
@@ -16,6 +17,7 @@ private const val TRANSIENT = "javax.persistence.Transient"
 private const val COLUMN = "javax.persistence.Column"
 private const val JOIN_COLUMN = "javax.persistence.JoinColumn"
 private const val SEQUENCE = "javax.persistence.SequenceGenerator"
+private const val ENUMERATED = "javax.persistence.Enumerated"
 
 private const val AUTO_TABLE = "onl.ycode.stormify.AutoTable"
 
@@ -40,6 +42,8 @@ class EntityProperty(declaration: KSPropertyDeclaration, entity: KSClassDeclarat
     val primary: Boolean
     val autoIncrement: Boolean
     val isReference: Boolean
+    val isEnum: Boolean
+    val enumAsString: Boolean
     /**
      * True for properties that are `List<X>` where `X` is a `@DbTable`-annotated class,
      * or for properties backed by a delegate returning a collection (e.g. `lazyDetails`).
@@ -76,9 +80,12 @@ class EntityProperty(declaration: KSPropertyDeclaration, entity: KSClassDeclarat
         var _insertable = true
         var _primary = false
         var _autoIncrement = false
+        var _enumAsString = false
         allAnnotations.forEach { ann ->
             when (ann.annotationType.resolve().declaration.qualifiedName?.asString()) {
                 DB_FIELD -> {
+                    _enumAsString = ann.arguments.firstOrNull { it.name?.asString() == "enumAsString" }?.value?.toString()
+                        ?.toBoolean() ?: false
                     _dbname = ann.arguments.firstOrNull { it.name?.asString() == "name" }?.value?.toString() ?: ""
                     _primary = ann.arguments.firstOrNull { it.name?.asString() == "primaryKey" }?.value?.toString()
                         ?.toBoolean() ?: false
@@ -104,6 +111,10 @@ class EntityProperty(declaration: KSPropertyDeclaration, entity: KSClassDeclarat
 
                 SEQUENCE -> _sequence = ann.arguments.firstOrNull { it.name?.asString() == "name" }?.value?.toString() ?: ""
                 ID -> _primary = true
+                ENUMERATED -> {
+                    val enumType = ann.arguments.firstOrNull { it.name?.asString() == "value" }?.value?.toString() ?: ""
+                    if (enumType.endsWith("STRING")) _enumAsString = true
+                }
             }
         }
         dbname = _dbname.ifEmpty { name }
@@ -114,7 +125,9 @@ class EntityProperty(declaration: KSPropertyDeclaration, entity: KSClassDeclarat
         autoIncrement = _autoIncrement
 
         val typeDecl = resolved.declaration
-        isReference = typeDecl is KSClassDeclaration && (
+        isEnum = typeDecl is KSClassDeclaration && typeDecl.classKind == ClassKind.ENUM_CLASS
+        enumAsString = _enumAsString && isEnum
+        isReference = !isEnum && typeDecl is KSClassDeclaration && (
                 typeDecl.annotations.any { ann ->
                     ann.annotationType.resolve().declaration.qualifiedName?.asString() in setOf(DB_TABLE, ENTITY)
                 } || typeDecl.superTypes.any { sup ->

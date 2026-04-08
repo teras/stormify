@@ -43,6 +43,8 @@ class PropertyMeta<T : Any>(
     val isCreatable: Boolean = true,
     val isUpdatable: Boolean = true,
     val isTransient: Boolean = false,
+    val isEnum: Boolean = false,
+    val enumAsString: Boolean = false,
 )
 
 /**
@@ -76,4 +78,36 @@ class EntityMeta<T : Any>(
         fun <T : Any> find(type: KClass<T>): EntityMeta<T>? =
             registry[type] as? EntityMeta<T>
     }
+}
+
+/**
+ * Registry for enum classes, used by native targets where reflection is not available.
+ * On JVM, enum operations use reflection directly and this registry is not needed.
+ * On native, the annotation processor generates calls to [registerEnum] at startup.
+ */
+object EnumRegistry {
+    private data class EnumFunctions(
+        val fromInt: (Int) -> Any?,
+        val toInt: (Any) -> Int,
+        val fromName: (String) -> Any?
+    )
+
+    private val registry = mutableMapOf<KClass<*>, EnumFunctions>()
+
+    fun register(enumClass: KClass<*>, fromInt: (Int) -> Any?, toInt: (Any) -> Int, fromName: (String) -> Any?) {
+        registry[enumClass] = EnumFunctions(fromInt, toInt, fromName)
+    }
+
+    fun isRegistered(enumClass: KClass<*>): Boolean = registry.containsKey(enumClass)
+
+    @Suppress("UNCHECKED_CAST")
+    fun <T : Any> fromInt(enumClass: KClass<T>, value: Int): T? =
+        registry[enumClass]?.fromInt?.invoke(value) as T?
+
+    @Suppress("UNCHECKED_CAST")
+    fun <T : Any> fromName(enumClass: KClass<T>, name: String): T? =
+        registry[enumClass]?.fromName?.invoke(name) as T?
+
+    fun toInt(value: Any): Int? =
+        registry[value::class]?.toInt?.invoke(value)
 }

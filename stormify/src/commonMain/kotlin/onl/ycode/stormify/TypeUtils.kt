@@ -21,6 +21,18 @@ object TypeUtils {
     @Suppress("UNCHECKED_CAST")
     fun <F : Any, T : Any> castTo(targetClass: KClass<T>, value: F?, stormify: Stormify? = null): T? {
         if (value == null || targetClass.isInstance(value)) return value as T?
+        // Enum conversion: Int/Number → enum by ordinal/DbValue, String → enum by name
+        if (isEnumClass(targetClass)) {
+            return when (value) {
+                is Number -> enumFromInt(targetClass, value.toInt())
+                is String -> {
+                    val intVal = value.toIntOrNull()
+                    if (intVal != null) enumFromInt(targetClass, intVal)
+                    else enumFromName(targetClass, value)
+                }
+                else -> throw SQLException("Cannot convert ${value::class.fullName} to enum ${targetClass.fullName}")
+            }
+        }
         if (!isScalarObject(value)) {
             if (stormify == null)
                 throw SQLException("Unable to convert non-scalar object to " + targetClass.fullName + "; missing database context")

@@ -35,6 +35,7 @@ public class Main {
                         "title TEXT NOT NULL, " +
                         "description TEXT, " +
                         "is_completed INTEGER NOT NULL DEFAULT 0, " +
+                        "priority INTEGER, " +
                         "user_id INTEGER NOT NULL REFERENCES user(id))"
         );
         System.out.println("Tables created.\n");
@@ -55,15 +56,15 @@ public class Main {
             System.out.println("Created: " + bob);
 
             System.out.println("\n=== Creating Tasks ===");
-            Task t1 = new Task(0, "Set up database", "Configure schema and indexes", false, alice);
+            Task t1 = new Task(0, "Set up database", "Configure schema and indexes", false, Priority.HIGH, alice);
             tx.create(t1);
             System.out.println("Created: " + t1);
 
-            Task t2 = new Task(0, "Write documentation", "API reference and examples", false, alice);
+            Task t2 = new Task(0, "Write documentation", "API reference and examples", false, Priority.MEDIUM, alice);
             tx.create(t2);
             System.out.println("Created: " + t2);
 
-            Task t3 = new Task(0, "Review pull request", "Check code style and tests", false, bob);
+            Task t3 = new Task(0, "Review pull request", "Check code style and tests", false, Priority.LOW, bob);
             tx.create(t3);
             System.out.println("Created: " + t3);
         });
@@ -111,7 +112,7 @@ public class Main {
         try {
             stormify.transaction(tx -> {
                 User u = stormify.findById(User.class, 1);
-                tx.create(new Task(0, "Temporary task", "...", false, u));
+                tx.create(new Task(0, "Temporary task", "...", false, Priority.LOW, u));
                 System.out.println("Task created inside transaction");
                 throw new RuntimeException("Something went wrong!");
             });

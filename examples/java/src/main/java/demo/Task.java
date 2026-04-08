@@ -3,6 +3,7 @@ package demo;
 import onl.ycode.stormify.AutoTable;
 import onl.ycode.stormify.DbTable;
 import onl.ycode.stormify.DbField;
+import onl.ycode.stormify.DbValue;
 
 /**
  * Task entity using Stormify annotations and AutoTable for lazy-loaded references.
@@ -25,17 +26,20 @@ public class Task extends AutoTable {
     @DbField(name = "is_completed")
     private boolean isCompleted;
 
+    private Priority priority;
+
     @DbField(name = "user_id")
     private User user;
 
     public Task() {
     }
 
-    public Task(Integer id, String title, String description, boolean isCompleted, User user) {
+    public Task(Integer id, String title, String description, boolean isCompleted, Priority priority, User user) {
         this.id = id;
         this.title = title;
         this.description = description;
         this.isCompleted = isCompleted;
+        this.priority = priority;
         this.user = user;
     }
 
@@ -51,11 +55,15 @@ public class Task extends AutoTable {
     public boolean isCompleted() { populate(); return isCompleted; }
     public void setCompleted(boolean completed) { populate(); isCompleted = completed; }
 
+    public Priority getPriority() { populate(); return priority; }
+    public void setPriority(Priority priority) { populate(); this.priority = priority; }
+
     public User getUser() { populate(); return user; }
     public void setUser(User user) { populate(); this.user = user; }
 
     @Override
     public String toString() {
-        return "Task(id=" + id + ", title=" + getTitle() + ", completed=" + isCompleted() + ", user=" + getUser() + ")";
+        return "Task(id=" + id + ", title=" + getTitle() + ", completed=" + isCompleted() +
+                ", priority=" + getPriority() + ", user=" + getUser() + ")";
     }
 }

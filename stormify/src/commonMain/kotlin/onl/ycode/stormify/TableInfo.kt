@@ -26,6 +26,8 @@ data class FieldInfo(
     val type: KClass<*>,
     val isPrimaryKey: Boolean,
     val isReference: Boolean,
+    val isEnum: Boolean,
+    val enumAsString: Boolean,
     val sequence: String?,
     val isAutoIncrement: Boolean,
     val isInsertable: Boolean,
@@ -61,6 +63,7 @@ class TableInfo<T : Any> internal constructor(
     private val fieldTypeMap = resolved.associate { it.dbName.lowercase() to it.type }
     private val fieldByDbName = resolved.groupBy { it.dbName.lowercase() }
     private val referenceFieldMap = resolved.filter { it.isReference }.associate { it.dbName.lowercase() to it.type }
+    private val enumFieldSet = resolved.filter { it.isEnum }.mapTo(HashSet()) { it.dbName.lowercase() }
 
     internal fun getType(dbName: String): KClass<*> =
         fieldTypeMap[dbName.lowercase()] ?: Any::class
@@ -73,6 +76,9 @@ class TableInfo<T : Any> internal constructor(
 
     internal fun getReferenceType(dbName: String): KClass<*>? =
         referenceFieldMap[dbName.lowercase()]
+
+    internal fun isEnumField(dbName: String): Boolean =
+        enumFieldSet.contains(dbName.lowercase())
 
     internal fun setField(entity: T, dbName: String, value: Any?, stormify: Stormify, errorToLogger: Logger? = null) {
         val props = fieldByDbName[dbName.lowercase()]
@@ -115,14 +121,14 @@ class TableInfo<T : Any> internal constructor(
         "UPDATE $tableName SET $setClause WHERE $whereClause"
     }
     // Values for create/update queries (in query parameter order)
-    internal fun getCreateValues(entity: T): List<Any?> = insertableProps.map { it.getter(entity) }
+    internal fun getCreateValues(entity: T): List<Any?> = insertableProps.map { it.sqlValue(entity) }
     internal fun getUpdateValues(entity: T): List<Any?> =
-        updatableProps.map { it.getter(entity) } + getIdValues(entity)
+        updatableProps.map { it.sqlValue(entity) } + getIdValues(entity)
 
     /** All mapped fields of this entity, including primary keys and regular columns. */
     val fieldInfos: List<FieldInfo> by lazy {
         resolved.map {
-            FieldInfo(it.name, it.dbName, it.type, it.isPrimaryKey, it.isReference,
+            FieldInfo(it.name, it.dbName, it.type, it.isPrimaryKey, it.isReference, it.isEnum, it.enumAsString,
                 it.sequence, it.isAutoIncrement, it.isInsertable, it.isUpdatable)
         }
     }
@@ -162,7 +168,9 @@ class TableInfo<T : Any> internal constructor(
                 else pkResolvers.any { resolver -> resolver(tableName, prop.name) }
                 ResolvedProperty(
                     name = prop.name, dbName = dbName, type = prop.type,
-                    isReference = prop.isReference, isPrimaryKey = isPk,
+                    isReference = prop.isReference, isEnum = prop.isEnum,
+                    enumAsString = prop.enumAsString,
+                    isPrimaryKey = isPk,
                     sequence = prop.sequence, isAutoIncrement = prop.isAutoIncrement,
                     isInsertable = prop.isCreatable,
                     isUpdatable = prop.isUpdatable,
@@ -180,6 +188,8 @@ internal class ResolvedProperty<T : Any>(
     val dbName: String,
     val type: KClass<*>,
     val isReference: Boolean,
+    val isEnum: Boolean,
+    val enumAsString: Boolean,
     val isPrimaryKey: Boolean,
     val sequence: String?,
     val isAutoIncrement: Boolean,
@@ -189,4 +199,9 @@ internal class ResolvedProperty<T : Any>(
     val setter: (T, Any?, Stormify) -> Unit,
 ) {
     val isInsertable: Boolean = isInsertable && !isAutoIncrement
+
+    fun sqlValue(entity: T): Any? {
+        val value = getter(entity)
+        return if (value is Enum<*> && enumAsString) value.name else value
+    }
 }

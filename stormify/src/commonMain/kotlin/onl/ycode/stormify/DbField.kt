@@ -294,5 +294,25 @@ annotation class DbField(
      *
      * @return true if included in UPDATE (default), false to exclude
      */
-    val updatable: Boolean = true
+    val updatable: Boolean = true,
+
+    /**
+     * Whether enum values are stored as their string name instead of ordinal/[DbValue.dbValue].
+     *
+     * By default (`false`), enums are stored as integers (ordinal, or [DbValue.dbValue] for custom mappings).
+     * Set to `true` to store the enum constant's [name][Enum.name] as a string.
+     *
+     * This is equivalent to JPA's `@Enumerated(EnumType.STRING)`.
+     *
+     * **Examples:**
+     * ```kotlin
+     * @DbField(enumAsString = true)
+     * var status: Status   // Stores "ACTIVE", "INACTIVE", "BANNED"
+     *
+     * var priority: Priority  // Stores 0, 1, 2 (default ordinal)
+     * ```
+     *
+     * @return true to store enum name as string, false to store as integer (default)
+     */
+    val enumAsString: Boolean = false
 )
