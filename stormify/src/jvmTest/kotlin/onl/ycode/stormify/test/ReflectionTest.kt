@@ -94,10 +94,10 @@ class ReflectionTest {
         executeUpdate(TestDDL.createTable("ref_parent",
             "${TestDDL.intPrimaryKey("id")}, name ${TestDDL.textType()}"))
         executeUpdate(TestDDL.createTable("plain_child",
-            "${TestDDL.intPrimaryKey("id")}, name ${TestDDL.textType()}, is_active INTEGER, " +
+            "${TestDDL.intPrimaryKey("id")}, name ${TestDDL.textType()}, is_active ${TestDDL.booleanType()}, " +
                     "${TestDDL.intColumn("parent")}, ${TestDDL.foreignKey("parent", "ref_parent", "id")}"))
         executeUpdate(TestDDL.createTable("at_child",
-            "${TestDDL.intPrimaryKey("id")}, name ${TestDDL.textType()}, is_active INTEGER, " +
+            "${TestDDL.intPrimaryKey("id")}, name ${TestDDL.textType()}, is_active ${TestDDL.booleanType()}, " +
                     "${TestDDL.intColumn("parent")}, ${TestDDL.foreignKey("parent", "ref_parent", "id")}"))
     }
 

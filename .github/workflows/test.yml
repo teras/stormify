@@ -1,0 +1,118 @@
+name: Database Tests
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  jvm-test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        db: [sqlite, postgresql, postgresql9, mysql, mysql5, mariadb, oracle, oracle11, mssql]
+
+    name: jvm / ${{ matrix.db }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK
+        uses: actions/setup-java@v4
+        with:
+          java-version: '11'
+          distribution: 'temurin'
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '9.3.1'
+
+      - name: Run tests
+        run: testing/test.sh jvm ${{ matrix.db }}
+
+  native-test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        db: [sqlite, postgresql, postgresql9, mysql, mysql5, mariadb, oracle, oracle11, mssql]
+
+    name: native / ${{ matrix.db }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install database client libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libsqlite3-dev libpq-dev libmariadb-dev freetds-dev
+
+      - name: Run tests
+        run: testing/test.sh native ${{ matrix.db }}
+
+  linux-test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        db: [sqlite, postgresql, postgresql9, mysql, mysql5, mariadb, oracle, oracle11, mssql]
+
+    name: linux / ${{ matrix.db }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK
+        uses: actions/setup-java@v4
+        with:
+          java-version: '11'
+          distribution: 'temurin'
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '9.3.1'
+
+      - name: Install database client libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libsqlite3-dev libpq-dev libmariadb-dev freetds-dev
+
+      - name: Run tests
+        run: testing/test.sh linux ${{ matrix.db }}
+
+  example:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        example: [java, kotlin-jvm, kotlin-linux, kotlin-multiplatform]
+
+    name: example / ${{ matrix.example }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK
+        uses: actions/setup-java@v4
+        with:
+          java-version: '11'
+          distribution: 'temurin'
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '9.3.1'
+
+      - name: Install database client libraries
+        if: matrix.example == 'kotlin-linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libsqlite3-dev libpq-dev libmariadb-dev freetds-dev
+
+      - name: Publish to Maven Local
+        run: gradle publishToMavenLocal --console=plain
+
+      - name: Run example
+        run: testing/test.sh examples ${{ matrix.example }}

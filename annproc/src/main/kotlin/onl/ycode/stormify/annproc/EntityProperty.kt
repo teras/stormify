@@ -26,7 +26,7 @@ private val KOTLIN_BUILTINS = mapOf(
     "kotlin.ByteArray" to "ByteArray", "kotlin.CharArray" to "CharArray",
 )
 
-class EntityProperty(declaration: KSPropertyDeclaration) {
+class EntityProperty(declaration: KSPropertyDeclaration, entity: KSClassDeclaration) {
     val name = declaration.simpleName.getShortName()
     /** Raw class reference used with `castTo(Xxx::class, ...)` — no generic parameters. */
     val type: String
@@ -54,13 +54,29 @@ class EntityProperty(declaration: KSPropertyDeclaration) {
         type = rawTypeName(resolved)
         fullType = fullTypeName(resolved)
 
+        // Collect annotations from the property declaration AND constructor parameters
+        // (Kotlin 2.x defaults annotations on constructor `var`/`val` params to the parameter
+        // target, not the property — pick them up here so users don't need
+        // -Xannotation-default-target=param-property). Walk the class hierarchy for inherited props.
+        val ctorParamAnnotations = run {
+            val propName = declaration.simpleName.asString()
+            var cls: KSClassDeclaration? = entity
+            while (cls != null) {
+                val param = cls.primaryConstructor?.parameters?.find { it.name?.asString() == propName }
+                if (param != null) return@run param.annotations.toList()
+                cls = cls.superTypes.firstOrNull()?.resolve()?.declaration as? KSClassDeclaration
+            }
+            emptyList()
+        }
+        val allAnnotations = declaration.annotations.toList() + ctorParamAnnotations
+
         var _dbname = ""
         var _sequence = ""
         var _updt = true
         var _insertable = true
         var _primary = false
         var _autoIncrement = false
-        declaration.annotations.forEach { ann ->
+        allAnnotations.forEach { ann ->
             when (ann.annotationType.resolve().declaration.qualifiedName?.asString()) {
                 DB_FIELD -> {
                     _dbname = ann.arguments.firstOrNull { it.name?.asString() == "name" }?.value?.toString() ?: ""
@@ -123,10 +139,16 @@ class EntityProperty(declaration: KSPropertyDeclaration) {
 
     companion object {
         fun find(entity: KSClassDeclaration): Collection<EntityProperty> {
+            // Also check constructor parameter annotations for @Transient
+            val ctorParamNames = entity.primaryConstructor?.parameters
+                ?.filter { p -> p.annotations.any { it.annotationType.resolve().declaration.qualifiedName?.asString() == TRANSIENT } }
+                ?.mapNotNull { it.name?.asString() }?.toSet() ?: emptySet()
             return entity.getAllProperties().mapNotNull {
+                val propName = it.simpleName.asString()
+                if (propName in ctorParamNames) return@mapNotNull null
                 if (it.annotations.any { ann -> ann.annotationType.resolve().declaration.qualifiedName?.asString() == TRANSIENT })
                     return@mapNotNull null
-                EntityProperty(it).takeUnless { p -> p.skip }
+                EntityProperty(it, entity).takeUnless { p -> p.skip }
             }.toList()
         }
 

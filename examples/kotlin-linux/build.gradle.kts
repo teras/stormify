@@ -10,10 +10,6 @@ repositories {
 }
 
 kotlin {
-    compilerOptions {
-        freeCompilerArgs.add("-Xannotation-default-target=param-property")
-    }
-
     linuxX64 {
         binaries {
             executable {

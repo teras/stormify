@@ -10,9 +10,6 @@ repositories {
 
 kotlin {
     jvmToolchain(8)
-    compilerOptions {
-        freeCompilerArgs.add("-Xannotation-default-target=param-property")
-    }
 }
 
 dependencies {

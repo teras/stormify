@@ -10,10 +10,6 @@ repositories {
 }
 
 kotlin {
-    compilerOptions {
-        freeCompilerArgs.add("-Xannotation-default-target=param-property")
-    }
-
     jvm {
         mainRun {
             mainClass.set("demo.MainKt")

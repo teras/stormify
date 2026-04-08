@@ -25,26 +25,17 @@ typealias BDN = com.ionspin.kotlin.bignum.decimal.BigDecimal
 typealias BIN = com.ionspin.kotlin.bignum.integer.BigInteger
 
 internal actual fun registerNativeTargets(registry: MutableMap<KClass<*>, MutableMap<KClass<*>, (Any) -> Any>>) {
-    int.forEach { n ->
-        val tGroup = registry[n] ?: missingGroup(n)
-        tGroup[BigDecimal::class] = { val l = (it as Number).toLong(); tGroup[Long::class]?.let { conv -> conv(l) } ?: l }
-        tGroup[BigInteger::class] = { val l = (it as Number).toLong(); tGroup[Long::class]?.let { conv -> conv(l) } ?: l }
-    }
-    dec.forEach { n ->
-        val tGroup = registry[n] ?: missingGroup(n)
-        tGroup[BigDecimal::class] = { val l = (it as Number).toDouble(); tGroup[Double::class]?.let { conv -> conv(l) } ?: l }
-        tGroup[BigInteger::class] = { val l = (it as Number).toDouble(); tGroup[Double::class]?.let { conv -> conv(l) } ?: l }
-    }
-
     val toBigDecimal = mutableMapOf<KClass<*>, (Any) -> Any>().also { registry[BigDecimal::class] = it }
     int.forEach { t -> toBigDecimal[t] = { BigDecimal((it as Number).toLong()) } }
     dec.forEach { t -> toBigDecimal[t] = { BigDecimal((it as Number).toDouble()) } }
     toBigDecimal[BigInteger::class] = { (it as BigInteger).toBigDecimal() }
+    toBigDecimal[Boolean::class] = { if (it as Boolean) BigDecimal.ONE else BigDecimal.ZERO }
 
     val toBigInteger = mutableMapOf<KClass<*>, (Any) -> Any>().also { registry[BigInteger::class] = it }
     int.forEach { t -> toBigInteger[t] = { BigInteger.valueOf((it as Number).toLong()) } }
     dec.forEach { t -> toBigInteger[t] = { BigDecimal((it as Number).toDouble()).toBigInteger() } }
     toBigInteger[BigDecimal::class] = { (it as BigDecimal).toBigInteger() }
+    toBigInteger[Boolean::class] = { if (it as Boolean) BigInteger.ONE else BigInteger.ZERO }
 
     // Add date-related
     val supportsKotlinxTime = try {

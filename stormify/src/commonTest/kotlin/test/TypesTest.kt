@@ -15,7 +15,7 @@ class TypesTest {
             "${TestDDL.intPrimaryKey("id")}, byte_val ${TestDDL.smallIntType()}, short_val ${TestDDL.smallIntType()}, " +
                     "int_val ${TestDDL.intType()}, long_val ${TestDDL.bigIntType()}, " +
                     "float_val ${TestDDL.floatType()}, double_val ${TestDDL.doubleType()}, " +
-                    "bool_val ${TestDDL.smallIntType()}, string_val ${TestDDL.textType()}"))
+                    "bool_val ${TestDDL.booleanType()}, string_val ${TestDDL.textType()}"))
 
         val e = AllTypesEntity(id = 1, byteVal = 42, shortVal = 1000, intVal = 123456,
             longVal = 9876543210L, floatVal = 3.14f, doubleVal = 2.718281828,
@@ -40,7 +40,7 @@ class TypesTest {
             "${TestDDL.intPrimaryKey("id")}, byte_val ${TestDDL.smallIntType()}, short_val ${TestDDL.smallIntType()}, " +
                     "int_val ${TestDDL.intType()}, long_val ${TestDDL.bigIntType()}, " +
                     "float_val ${TestDDL.floatType()}, double_val ${TestDDL.doubleType()}, " +
-                    "bool_val ${TestDDL.smallIntType()}, string_val ${TestDDL.textType()}"))
+                    "bool_val ${TestDDL.booleanType()}, string_val ${TestDDL.textType()}"))
         s.create(AllTypesEntity(id = 2, intVal = Int.MAX_VALUE, longVal = Long.MAX_VALUE, stringVal = ""))
         val found = s.findById<AllTypesEntity>(2)!!
         assertEquals(Int.MAX_VALUE, found.intVal)
@@ -208,10 +208,18 @@ class TypesTest {
             "${TestDDL.intPrimaryKey("id")}, val ${TestDDL.decimalType(38, 0)}"))
 
         val values = listOf(
-            BigInteger.parseString("9223372036854775807"),            // Long.MAX
-            BigInteger.parseString("9223372036854775808"),            // Long.MAX + 1
-            BigInteger.parseString("99999999999999999999999999999999999999"), // 38-digit max
-            BigInteger.parseString("-9223372036854775808"),           // Long.MIN
+            BigInteger.parseString("0"),                                      // zero
+            BigInteger.parseString("1"),                                      // one
+            BigInteger.parseString("-1"),                                     // minus one
+            BigInteger.parseString("127"),                                    // Byte.MAX
+            BigInteger.parseString("-128"),                                   // Byte.MIN
+            BigInteger.parseString("255"),                                    // unsigned byte max
+            BigInteger.parseString("-255"),                                   // negative unsigned byte max
+            BigInteger.parseString("9223372036854775807"),                    // Long.MAX
+            BigInteger.parseString("-9223372036854775807"),                   // -(Long.MAX)
+            BigInteger.parseString("9223372036854775808"),                    // Long.MAX + 1
+            BigInteger.parseString("-9223372036854775808"),                   // Long.MIN
+            BigInteger.parseString("99999999999999999999999999999999999999"),  // 38-digit max
             BigInteger.parseString("-99999999999999999999999999999999999999"), // -38-digit max
         )
         for ((i, bi) in values.withIndex()) {

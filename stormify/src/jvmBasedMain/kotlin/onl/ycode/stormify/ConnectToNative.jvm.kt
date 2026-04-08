@@ -102,9 +102,25 @@ internal actual fun <T : Any> tryReflection(type: KClass<T>): EntityMeta<T>? {
         // 1. Java field annotations (standard Kotlin backing field or Java POJO field)
         // 2. Java getter annotations (JPA property-access pattern: @Id on getId())
         // 3. Kotlin property annotations (includes annotations on delegated properties like `by db()`)
+        // 4. Constructor parameter annotations (Kotlin 2.x defaults annotations on constructor
+        //    `var`/`val` params to the parameter target, not the property — pick them up here
+        //    so users don't need -Xannotation-default-target=param-property).
+        //    Walk the class hierarchy so inherited constructor properties are found too.
+        val ctorParamAnnotations: List<Annotation> = run {
+            var cls: Class<*>? = jClass
+            while (cls != null) {
+                for (ctor in cls.kotlin.constructors) {
+                    val param = ctor.parameters.find { it.name == propName }
+                    if (param != null) return@run param.annotations.toList()
+                }
+                cls = cls.superclass
+            }
+            emptyList()
+        }
         val annotations = (jField?.annotations?.toList() ?: emptyList()) +
                 (javaGetter?.annotations?.toList() ?: emptyList()) +
-                (kProp.annotations)
+                (kProp.annotations) +
+                ctorParamAnnotations
 
         // Check transient: Java keyword, Kotlin @Transient, JPA @Transient
         val isJavaTransient = jField != null && java.lang.reflect.Modifier.isTransient(jField.modifiers)

@@ -645,7 +645,7 @@ open class Stormify(val dataSource: DataSource, vararg registrars: EntityRegistr
             val placeholders: String = nCopies("?", ", ", params.size)
             val statement = "CALL $name($placeholders)"
             `!dbLog`(statement, params)
-            connection.prepareCall("{$statement}").use { cs ->
+            connection.prepareCall(statement).use { cs ->
                 for (i in params.indices) {
                     when (val p = params[i]) {
                         is Sp.In -> cs.setObject(i + 1, p.value)

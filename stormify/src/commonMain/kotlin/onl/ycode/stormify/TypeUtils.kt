@@ -32,8 +32,10 @@ object TypeUtils {
             info.setField(item, info.singleKeyDbName, value, stormify)
             return item as T
         }
-        val typeConv = (registry[targetClass]
-            ?: throw SQLException("Target class " + targetClass.fullName + " is not convertible"))[givenClass]
+        val converters = registry[targetClass]
+            ?: throw SQLException("Target class " + targetClass.fullName + " is not convertible")
+        val typeConv = converters[givenClass]
+            ?: (if (value is Number) converters[Number::class] else null)
             ?: throw SQLException("Unable to convert " + givenClass.fullName + " to " + targetClass.fullName)
         return try {
             typeConv(value) as T
@@ -64,6 +66,7 @@ object TypeUtils {
 
         toBoolean[String::class] = { (it as String).toBoolean() }
         toBoolean[Char::class] = { (it as Char) == '1' }
+        toBoolean[Number::class] = { (it as Number).toInt() != 0 }
 
         toString[Boolean::class] = { it.toString() }
         toString[Char::class] = { it.toString() }
@@ -95,6 +98,8 @@ object TypeUtils {
                 if (source != target)
                     fromGroup[source] = converter
             }
+            // Any Number subclass (fallback via castTo's Number::class lookup)
+            fromGroup[Number::class] = converter
             // from/to boolean
             fromGroup[Boolean::class] = { converter(if ((it as Boolean)) 1 else 0) }
             toBoolean[target] = { (it as Number).toInt() != 0 }

@@ -142,6 +142,12 @@ object TestDDL {
     // Some dialects lack SMALLINT/INT/BIGINT/REAL/DOUBLE PRECISION as native types
     // (notably Oracle, which maps everything through NUMBER / BINARY_*).
 
+    fun booleanType() = when {
+        isOracle -> "NUMBER(1)"
+        isSqlite -> "INTEGER"
+        isMssql -> "BIT"
+        else -> "BOOLEAN"
+    }
     fun smallIntType() = when {
         isOracle -> "NUMBER(5)"
         else -> "SMALLINT"

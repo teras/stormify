@@ -6,7 +6,7 @@ import com.zaxxer.hikari.HikariConfig
 import com.zaxxer.hikari.HikariDataSource
 import onl.ycode.kdbc.JdbcDataSource
 
-actual fun createTestDatabases(): List<TestDatabase> {
+private val cachedDatabases: List<TestDatabase> by lazy {
     val configPath = System.getProperty("stormify.test.config")?.ifEmpty { null }
     val dbName = System.getProperty("stormify.test.db") ?: "sqlite"
 
@@ -22,5 +22,7 @@ actual fun createTestDatabases(): List<TestDatabase> {
         })
     }
 
-    return listOf(TestDatabase(name = dbName, dataSource = JdbcDataSource(ds)))
+    listOf(TestDatabase(name = dbName, dataSource = JdbcDataSource(ds)))
 }
+
+actual fun createTestDatabases(): List<TestDatabase> = cachedDatabases
