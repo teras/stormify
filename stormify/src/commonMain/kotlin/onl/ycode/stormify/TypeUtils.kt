@@ -33,10 +33,12 @@ object TypeUtils {
         return TypeConversion.castScalar(targetClass, value)
     }
 
+    /** Throws a [SQLException] indicating that field [name] in class [cls] cannot be null. Used by generated code. */
     fun err(name: String, cls: String): Nothing = throw SQLException("$name cannot be null in class $cls")
 
     /**
-     * Register a custom conversion function.
+     * Registers a custom type conversion function from [sourceClass] to [targetClass].
+     * Delegates to [TypeConversion.register].
      */
     fun <F : Any, T : Any> register(
         sourceClass: KClass<F>,

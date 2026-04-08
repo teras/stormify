@@ -125,49 +125,68 @@ class TransactionContext internal constructor(
         }
     }
 
+    /** Executes an SQL UPDATE/INSERT/DELETE and returns the number of affected rows. */
     fun executeUpdate(query: String, vararg params: Any?) = stormify.executeUpdate(conn, query, *params)
 
+    /** Executes a SELECT query and returns all results as a list. */
     inline fun <reified T : Any> read(query: String, vararg params: Any?) =
         stormify.read(conn, T::class, query, *params)
 
+    /** Executes a SELECT query and returns exactly one result, or null if none found. */
     inline fun <reified T : Any> readOne(query: String, vararg params: Any?): T? =
         stormify.readOne(conn, T::class, query, *params)
 
+    /** Executes a SELECT query and processes results row-by-row via [consumer]. Returns the row count. */
     inline fun <reified T : Any> readCursor(query: String, vararg params: Any?, noinline consumer: (T) -> Unit) =
         stormify.readCursor(conn, T::class, query, *params, consumer = consumer)
 
+    /** Refreshes an entity with fresh data from the database based on its primary key. */
     fun <T : Any> populate(entity: T): T = stormify.populate(conn, entity)
 
+    /** Inserts a new entity into the database and returns it with generated values populated. */
     fun <T : Any> create(item: T): T = stormify.create(conn, item)
 
+    /** Inserts multiple entities in a batch. */
     fun <T : Any> create(items: Collection<T>): List<T> = stormify.create(conn, items)
 
+    /** Updates an existing entity in the database based on its primary key. */
     fun <T : Any> update(updatedItem: T): T = stormify.update(conn, updatedItem)
 
+    /** Updates multiple entities in a batch. */
     fun <T : Any> update(items: Collection<T>): List<T> = stormify.update(conn, items)
 
+    /** Deletes an entity from the database based on its primary key. */
     fun <T : Any> delete(deletedItem: T) = stormify.delete(conn, deletedItem)
 
+    /** Deletes multiple entities from the database. */
     fun <T : Any> delete(items: Collection<T>) = stormify.delete(conn, items)
 
+    /** Retrieves all detail (child) entities of type [D] related to a [parent] through a foreign key. */
     inline fun <reified D : Any> getDetails(parent: Any, propertyName: String? = null): List<D> =
         stormify.getDetails(conn, parent, D::class, propertyName)
 
+    /** Retrieves all detail (child) entities of [detailsClass] related to a [parent] through a foreign key. */
     fun <M : Any, D : Any> getDetails(parent: M, detailsClass: KClass<D>, propertyName: String? = null): List<D> =
         stormify.getDetails(conn, parent, detailsClass, propertyName)
 
+    /** Finds all entities of type [T], optionally filtered by a [whereClause]. */
     inline fun <reified T : Any> findAll(whereClause: String = "", vararg arguments: Any?): List<T> =
         stormify.findAll(conn, T::class, whereClause, *arguments)
 
+    /** Finds all entities of [kclass], optionally filtered by a [whereClause]. */
     fun <T : Any> findAll(kclass: KClass<T>, whereClause: String = "", vararg arguments: Any?): List<T> =
         stormify.findAll(conn, kclass, whereClause, *arguments)
 
+    /** Finds a single entity of type [T] by its primary key [id], or null if not found. */
     inline fun <reified T : Any> findById(id: Any) = stormify.findById(conn, T::class, id)
 
+    /** Finds a single entity of [kclass] by its primary key [id], or null if not found. */
     fun <T : Any> findById(kclass: KClass<T>, id: Any) = stormify.findById(conn, kclass, id)
 
+    /** Calls a stored procedure by [name]. OUT/INOUT parameters use [Sp.Out]/[Sp.InOut]. */
     fun procedure(name: String, vararg args: Any?) = stormify.procedure(conn, name, *args)
 
+    /** Executes a nested transaction using a database savepoint. */
     fun transaction(block: () -> Unit) {
         var savepoint: Savepoint? = null
         try {

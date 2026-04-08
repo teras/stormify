@@ -284,8 +284,14 @@ enum class SqlDialect(
         formatterLimitOffset, GeneratedKeyRetrieval.NONE
     );
 
+    /** Strategy for retrieving auto-generated keys after an INSERT. */
     enum class GeneratedKeyRetrieval {
-        BY_INDEX, BY_NAME, NONE
+        /** Retrieve generated keys by column index (MySQL, MariaDB, SQLite, H2). */
+        BY_INDEX,
+        /** Retrieve generated keys by column name (PostgreSQL, SQL Server, HSQLDB, Derby). */
+        BY_NAME,
+        /** No automatic generated key retrieval (Oracle, UNKNOWN). */
+        NONE
     }
 
     internal fun prepareForInsert(

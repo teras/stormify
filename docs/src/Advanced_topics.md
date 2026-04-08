@@ -175,7 +175,7 @@ val user = "SELECT * FROM users WHERE id = ?".readOne<User>(1)
 "DELETE FROM users WHERE age < ?".executeUpdate(18)
 
 // Stored procedure
-"my_procedure".storedProcedure(arg1, spOut<Int>(), arg3)
+"my_procedure".procedure(arg1, spOut<Int>(), arg3)
 ```
 
 ### Query Helpers

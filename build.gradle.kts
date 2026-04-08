@@ -26,6 +26,9 @@ subprojects {
             dokkaPublications.configureEach {
                 suppressInheritedMembers.set(true)
             }
+            dokkaSourceSets.configureEach {
+                reportUndocumented.set(true)
+            }
         }
     }
 }

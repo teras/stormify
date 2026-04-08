@@ -7,14 +7,17 @@ import onl.ycode.stormify.biglist.DefaultDataConverter.guessConverter
 
 abstract class GenericReference internal constructor(internal open val node: NodeField)
 
+/** A reference used to define a sorting column in a [PagedList] query. */
 class SortReference internal constructor(node: NodeField) : GenericReference(node) {
     /**
      * Determines whether this reference is activated, i.e. a join will be made in the SQL query.
      */
     var isActivated: Boolean = false
+    /** Whether the sort order is ascending (`true`, default) or descending (`false`). */
     var isAscending = true
 }
 
+/** A reference used to define a filter condition in a [PagedList] query. */
 class FilterReference internal constructor(node: NodeField) : GenericReference(node) {
 
     /**

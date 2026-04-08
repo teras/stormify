@@ -6,6 +6,20 @@ import onl.ycode.kdbc.SQLException
 import onl.ycode.logger.Logger
 import kotlin.reflect.KClass
 
+/**
+ * Describes a single mapped field (property) of an entity, including its database column name,
+ * type, and role in CRUD operations.
+ *
+ * @property name the Kotlin property name
+ * @property dbName the corresponding database column name (after [NamingPolicy] conversion)
+ * @property type the Kotlin type of the property
+ * @property isPrimaryKey whether this field is part of the entity's primary key
+ * @property isReference whether this field is a foreign key reference to another entity
+ * @property sequence the database sequence name used to generate values, or null if not sequence-backed
+ * @property isAutoIncrement whether the database auto-generates values for this field (e.g. IDENTITY columns)
+ * @property isInsertable whether this field is included in INSERT statements
+ * @property isUpdatable whether this field is included in UPDATE statements
+ */
 data class FieldInfo(
     val name: String,
     val dbName: String,
@@ -18,11 +32,21 @@ data class FieldInfo(
     val isUpdatable: Boolean,
 )
 
+/**
+ * Metadata container for a mapped entity class. Holds the table name, field mappings, primary key
+ * information, and pre-built SQL queries for CRUD operations.
+ *
+ * Instances are created internally by [Stormify] and cached per entity class. Use
+ * [Stormify.getTableInfo] to obtain the metadata for a given class.
+ *
+ * @property tableName the database table name this entity maps to
+ */
 class TableInfo<T : Any> internal constructor(
     private val meta: EntityMeta<T>,
     private val resolved: List<ResolvedProperty<T>>,
     val tableName: String,
 ) {
+    /** The Kotlin class this metadata describes. */
     val classType: KClass<T> get() = meta.type
 
     internal fun create(): T = meta.constructor()
@@ -95,7 +119,7 @@ class TableInfo<T : Any> internal constructor(
     internal fun getUpdateValues(entity: T): List<Any?> =
         updatableProps.map { it.getter(entity) } + getIdValues(entity)
 
-    // Public introspection API
+    /** All mapped fields of this entity, including primary keys and regular columns. */
     val fieldInfos: List<FieldInfo> by lazy {
         resolved.map {
             FieldInfo(it.name, it.dbName, it.type, it.isPrimaryKey, it.isReference,
@@ -103,12 +127,15 @@ class TableInfo<T : Any> internal constructor(
         }
     }
 
+    /** The primary key fields of this entity. May contain multiple entries for composite keys. */
     val primaryKeys: List<FieldInfo> get() = fieldInfos.filter { it.isPrimaryKey }
 
+    /** The single primary key field. Throws if the entity has zero or more than one primary key. */
     val primaryKey: FieldInfo
         get() = primaryKeys.singleOrNull()
             ?: throw SQLException("Expected exactly one primary key in $tableName, found ${primaryKeys.size}")
 
+    /** Finds a field by its Kotlin property [name] (case-insensitive), or null if not found. */
     fun getField(name: String): FieldInfo? =
         fieldInfos.find { it.name.equals(name, ignoreCase = true) }
 

@@ -254,7 +254,7 @@ appropriate C binding function based on the value's type:
 | `Byte`, `Short`, `Int` | `kdbc_bind_int` | INTEGER |
 | `Long` | `kdbc_bind_long` | BIGINT |
 | `Float`, `Double` | `kdbc_bind_double` | DOUBLE |
-| `Boolean` | `kdbc_bind_int` (0/1) | INTEGER |
+| `Boolean` | `kdbc_bind_bool` | BOOLEAN / BIT / INTEGER |
 | `String` | `kdbc_bind_string` | VARCHAR / TEXT |
 | `ByteArray` | `kdbc_bind_blob` | BLOB / BYTEA |
 | `CharArray` | `kdbc_bind_string` | CLOB / TEXT |
@@ -264,13 +264,6 @@ appropriate C binding function based on the value's type:
 | `LocalDate` | `kdbc_bind_date` | DATE |
 | `LocalTime` | `kdbc_bind_time` | TIME |
 | `Instant` | `kdbc_bind_timestamp` | TIMESTAMP |
-
-On JVM, `setObject` delegates directly to JDBC's `PreparedStatement.setObject`.
-
-!!! note "BigDecimal on native"
-    Native uses `com.ionspin.kotlin.bignum` for `BigDecimal` and `BigInteger`. Values are
-    bound as strings and retrieved by parsing the string representation returned by the
-    database, preserving full precision.
 
 ## Result Set Retrieval
 

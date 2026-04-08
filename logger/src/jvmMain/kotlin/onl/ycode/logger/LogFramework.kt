@@ -46,6 +46,7 @@ enum class LogFramework(
         Function<Class<*>?, Logger> { clazz: Class<*>? -> SystemOutLogger(clazz?.name ?: "") },
         Function<String?, Logger> { name: String? -> SystemOutLogger(name ?: "") });
 
+    /** Creates a [Logger] for the given [clazz], or null if the framework is unavailable. */
     fun getLogger(clazz: Class<*>?): Logger? {
         return try {
             byClass.apply(clazz)
@@ -55,6 +56,7 @@ enum class LogFramework(
         }
     }
 
+    /** Creates a [Logger] with the given [name], or null if the framework is unavailable. */
     fun getLogger(name: String?): Logger? {
         return try {
             byName.apply(name)

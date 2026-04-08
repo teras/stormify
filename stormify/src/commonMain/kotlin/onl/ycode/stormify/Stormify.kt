@@ -47,13 +47,27 @@ open class Stormify(val dataSource: DataSource, vararg registrars: EntityRegistr
 
     private val configLock = kotlinx.atomicfu.locks.SynchronizedObject()
 
+    /**
+     * The naming policy used to convert Kotlin property names to database column names.
+     * Default is [NamingPolicy.LOWER_CASE_WITH_UNDERSCORES] (snake_case).
+     * Changing this only affects entities resolved after the change.
+     */
     var namingPolicy: NamingPolicy = NamingPolicy.LOWER_CASE_WITH_UNDERSCORES
     // Exclude common Java/JPA base-class fields that should never be mapped to database columns
     private val blacklist = mutableSetOf("serialVersionUID", "idFieldValue", "transientId")
     private val pkResolvers = mutableMapOf<Int, (String, String) -> Boolean>()
 
+    /** Excludes a field name from all entity mappings (e.g. inherited fields that have no database column). */
     fun addBlacklistField(name: String) = synchronized(configLock) { blacklist.add(name) }
+
+    /** Removes a previously blacklisted field name, allowing it to be mapped again. */
     fun removeBlacklistField(name: String) = synchronized(configLock) { blacklist.remove(name) }
+
+    /**
+     * Registers a primary key resolver used when no `@Id` or `@DbField(primaryKey=true)` annotation is present.
+     * The [resolver] receives the table name and field name and returns `true` if the field is a primary key.
+     * Lower [priority] values are evaluated first.
+     */
     fun registerPrimaryKeyResolver(priority: Int, resolver: (String, String) -> Boolean) =
         synchronized(configLock) { pkResolvers[priority] = resolver }
 
@@ -98,6 +112,7 @@ open class Stormify(val dataSource: DataSource, vararg registrars: EntityRegistr
     /** When enabled, throws on field/column mismatches; when disabled, logs warnings. */
     var isStrictMode: Boolean = false
 
+    /** The logger used by this Stormify instance. Defaults to a logger named "Stormify". */
     var logger = LogManager.getLogger("Stormify")
 
     // --- Internal connection management ---
@@ -412,6 +427,7 @@ open class Stormify(val dataSource: DataSource, vararg registrars: EntityRegistr
     /** Inserts a new entity into the database and returns it with generated values populated. */
     fun <T : Any> create(item: T): T = create(null, listOf(item))[0]
 
+    /** Inserts multiple entities in a batch and returns them. Generated keys are only populated for single-item batches. */
     fun <T : Any> create(items: Collection<T>): List<T> = create(null, items)
 
     internal fun <T : Any> create(conn: Connection?, item: T) = create(conn, listOf(item))[0]
@@ -493,6 +509,7 @@ open class Stormify(val dataSource: DataSource, vararg registrars: EntityRegistr
     /** Updates an existing entity in the database based on its primary key. */
     fun <T : Any> update(updatedItem: T): T = update(null, listOf(updatedItem))[0]
 
+    /** Updates multiple entities in a batch based on their primary keys. */
     fun <T : Any> update(items: Collection<T>): List<T> = update(null, items)
 
     internal fun <T : Any> update(conn: Connection?, updatedItem: T): T = update(conn, listOf(updatedItem))[0]
@@ -516,6 +533,7 @@ open class Stormify(val dataSource: DataSource, vararg registrars: EntityRegistr
     /** Deletes an entity from the database based on its primary key. */
     fun <T : Any> delete(deletedItem: T) = delete(null, listOf(deletedItem))
 
+    /** Deletes multiple entities from the database based on their primary keys. */
     fun <T : Any> delete(items: Collection<T>) = delete(null, items)
 
     internal fun <T : Any> delete(conn: Connection?, deletedItem: T) = delete(conn, listOf(deletedItem))
@@ -676,6 +694,7 @@ open class Stormify(val dataSource: DataSource, vararg registrars: EntityRegistr
 
     // --- Public introspection ---
 
+    /** Returns the [TableInfo] metadata for the given entity class, resolving and caching it if necessary. */
     fun <T : Any> getTableInfo(kclass: KClass<T>): TableInfo<T> = resolveTableInfo(kclass)
 
     @Suppress("FunctionName")

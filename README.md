@@ -10,14 +10,17 @@ Designed for developers seeking a simple yet powerful ORM, Stormify excels in pr
 
 ## Features
 
-- **Kotlin Multiplatform**: JVM and Linux native — same API, no JVM required on native.
+- **Kotlin Multiplatform**: JVM (Java & Kotlin) and Linux native — same API, no JVM required on native.
 - **Native Database Access**: Direct access to PostgreSQL, MariaDB/MySQL, Oracle, MSSQL, and SQLite on Linux without JVM or JDBC.
-- **CRUD Operations**: Easily create, read, update, and delete records.
+- **CRUD Operations**: Easily create, read, update, and delete records, with batch variants for bulk operations.
 - **Annotation-Free Classes**: Perform operations with plain Kotlin classes without the need for extensive annotations or XML files.
 - **Fine or Coarse Grain Definitions**: Define naming policies and primary key resolvers for standard naming patterns, or use annotations to handle special cases.
 - **JPA Compatibility**: Support common JPA annotations to maintain compatibility and simplify integration.
-- **Flexible Query Execution**: Execute custom and complex SQL queries and map results to Kotlin objects.
+- **Flexible Query Execution**: Execute custom and complex SQL queries and map results to Kotlin objects, with automatic collection parameter expansion for `IN` clauses.
 - **Transaction Management**: Support for nested transactions with rollback and commit capabilities via savepoints.
+- **Coroutines**: Suspend-based transaction API with a built-in connection pool, coroutine cancellation wired to native database cancel primitives.
+- **Lazy Loading**: Reference fields with `by db()` delegates for automatic lazy loading of related entities.
+- **Stored Procedures**: Call stored procedures with input, output, and bidirectional parameters.
 - **Support for Composite Keys**: Handle tables with composite primary keys effortlessly.
 
 ## Installation
