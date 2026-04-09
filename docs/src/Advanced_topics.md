@@ -456,6 +456,7 @@ To store the enum name as a string instead of an integer, use `@DbField(enumAsSt
     ```
 
 You can mix ordinal and string fields in the same entity. The storage mode is per-field.
+String matching is **case-insensitive** — a database value of `"active"`, `"ACTIVE"`, or `"Active"` all resolve to the same enum constant.
 
 ### Unknown Database Values
 

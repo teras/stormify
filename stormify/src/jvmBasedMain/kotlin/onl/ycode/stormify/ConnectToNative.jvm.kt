@@ -79,7 +79,7 @@ internal actual fun enumToInt(value: Enum<*>): Int =
 @Suppress("UNCHECKED_CAST")
 internal actual fun <T : Any> enumFromName(enumClass: KClass<T>, name: String): T? {
     val constants = enumClass.java.enumConstants as? Array<out Enum<*>> ?: return null
-    return constants.firstOrNull { it.name == name } as T?
+    return constants.firstOrNull { it.name.equals(name, ignoreCase = true) } as T?
 }
 
 internal actual fun isEnumClass(klass: KClass<*>): Boolean = klass.java.isEnum

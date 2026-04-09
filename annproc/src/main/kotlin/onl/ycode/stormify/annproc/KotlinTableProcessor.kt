@@ -81,7 +81,7 @@ class KotlinTableProcessor(private val env: SymbolProcessorEnvironment) : Symbol
                 w.write("            $simpleName::class,\n")
                 w.write("            { v -> $simpleName.entries.let { e -> if (e.firstOrNull() is DbValue) e.firstOrNull { (it as DbValue).dbValue == v } else e.getOrNull(v) } },\n")
                 w.write("            { v -> if (v is DbValue) v.dbValue else (v as Enum<*>).ordinal },\n")
-                w.write("            { n -> $simpleName.entries.firstOrNull { it.name == n } }\n")
+                w.write("            { n -> $simpleName.entries.firstOrNull { it.name.equals(n, ignoreCase = true) } }\n")
                 w.write("        )\n\n")
             }
 
