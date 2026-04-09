@@ -39,7 +39,7 @@ internal object KotlinxTimeConverters {
 
         // kotlinx types → Long/Double/Float/String (to milliseconds)
         registerTimeSource(LocalDate::class, registry) {
-            LocalDateTime(it as LocalDate, LocalTime(0, 0))
+            LocalDateTime(it as LocalDate, LocalTime(12, 0))
                 .toInstant(TimeZone.currentSystemDefault()).toEpochMilliseconds()
         }
         registerTimeSource(LocalDateTime::class, registry) {
@@ -62,7 +62,7 @@ internal object KotlinxTimeConverters {
             KtInstant::class to { KtInstant.fromEpochMilliseconds(it) },
         )
         val toMillis = mapOf<KClass<*>, (Any) -> Long>(
-            LocalDate::class to { LocalDateTime(it as LocalDate, LocalTime(0, 0)).toInstant(TimeZone.currentSystemDefault()).toEpochMilliseconds() },
+            LocalDate::class to { LocalDateTime(it as LocalDate, LocalTime(12, 0)).toInstant(TimeZone.currentSystemDefault()).toEpochMilliseconds() },
             LocalDateTime::class to { (it as LocalDateTime).toInstant(TimeZone.currentSystemDefault()).toEpochMilliseconds() },
             LocalTime::class to { val d = Clock.System.now().toLocalDateTime(TimeZone.currentSystemDefault()).date; LocalDateTime(d, it as LocalTime).toInstant(TimeZone.currentSystemDefault()).toEpochMilliseconds() },
             KtInstant::class to { (it as KtInstant).toEpochMilliseconds() },
@@ -108,7 +108,7 @@ internal object KotlinxTimeConverters {
             LocalDateTime.parse(s).toInstant(TimeZone.currentSystemDefault()).toEpochMilliseconds()
         } catch (_: Exception) {
             try {
-                LocalDateTime(LocalDate.parse(s), LocalTime(0, 0))
+                LocalDateTime(LocalDate.parse(s), LocalTime(12, 0))
                     .toInstant(TimeZone.currentSystemDefault()).toEpochMilliseconds()
             } catch (e: Exception) {
                 throw SQLException("Unable to parse temporal string: $s", e)

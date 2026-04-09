@@ -43,13 +43,15 @@ class KotlinTableProcessor(private val env: SymbolProcessorEnvironment) : Symbol
             .toSet()
 
         val entities = (explicit + implicit).filter { it.classKind.name == "CLASS" }.toSet()
-        if (entities.isNotEmpty())
+        if (entities.isNotEmpty()) {
             generateRegistrar(entities)
+            generatePaths(entities)
+        }
         return emptyList()
     }
 
     private fun generateRegistrar(entities: Collection<KSClassDeclaration>) {
-        env.codeGenerator.createNewFile(Dependencies(false), "db.stormify", "Registrar").bufferedWriter().use { w ->
+        env.codeGenerator.createNewFile(Dependencies(true), "db.stormify", "Registrar").bufferedWriter().use { w ->
             w.write("package db.stormify\n\n")
             w.write("import kotlinx.atomicfu.atomic\n")
             w.write("import onl.ycode.stormify.EntityMeta\n")
@@ -75,6 +77,57 @@ class KotlinTableProcessor(private val env: SymbolProcessorEnvironment) : Symbol
             w.write("    }\n")
             w.write("}\n")
         }
+    }
+
+    private fun generatePaths(entities: Collection<KSClassDeclaration>) {
+        val entityQNames = entities.mapNotNull { it.qualifiedName?.asString() }.toSet()
+        val entityProps = entities.associate { it.simpleName.asString() to EntityProperty.find(it) }
+
+        env.codeGenerator.createNewFile(Dependencies(true), "db.stormify", "Paths").bufferedWriter().use { w ->
+            w.write("@file:Suppress(\"unused\")\n")
+            w.write("package db.stormify\n\n")
+            w.write("import onl.ycode.stormify.biglist.ScalarPath\n\n")
+
+            // Generate a Ref class per entity
+            for (entity in entities) {
+                val className = entity.simpleName.asString()
+                val props = entityProps[className] ?: continue
+                writeRefClass(w, className, props, entityQNames)
+            }
+
+            // Root objects inside Paths
+            w.write("object Paths {\n")
+            for (entity in entities) {
+                val className = entity.simpleName.asString()
+                w.write("    @JvmField val ${className}_ = ${className}Ref(\"\")\n")
+            }
+            w.write("}\n")
+        }
+    }
+
+    private fun writeRefClass(
+        w: Writer,
+        className: String,
+        props: Collection<EntityProperty>,
+        entityQNames: Set<String>
+    ) {
+        w.write("class ${className}Ref(private val p: String) {\n")
+
+        for (prop in props) {
+            if (prop.isReference) {
+                val refTypeName = prop.type
+                val shortName = refTypeName.substringAfterLast(".")
+                val isKnownEntity = entityQNames.any { it.endsWith(".$shortName") || it == refTypeName }
+                if (!isKnownEntity) continue
+
+                w.write("    @get:JvmName(\"${prop.name}\")\n")
+                w.write("    val ${prop.name} get() = ${shortName}Ref(\"\${p}${prop.name}.\")\n")
+            } else {
+                w.write("    @JvmField val ${prop.name} = ScalarPath(\"\${p}${prop.name}\")\n")
+            }
+        }
+
+        w.write("}\n\n")
     }
 
     private fun writeEntityMeta(

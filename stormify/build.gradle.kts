@@ -220,17 +220,25 @@ tasks.withType<Test> {
 // Run the annproc KSP processor against the commonTest entities so that native test targets
 // (which lack reflection-based entity discovery) get a generated EntityRegistrar. The generated
 // object is `db.stormify.GeneratedEntities` and is registered explicitly by the test factories.
+// Run the annproc KSP processor against test targets so that generated
+// EntityRegistrar and type-safe path classes are available everywhere.
 dependencies {
     add("kspCommonMainMetadata", project(":annproc"))
+    add("kspJvmTest", project(":annproc"))
     add("kspLinuxX64Test", project(":annproc"))
 }
 
-// Make the KSP-generated sources visible to the common test source set so entity classes
-// can see the GeneratedEntities object on native targets.
+// Make the KSP-generated sources visible to the test source sets.
+kotlin.sourceSets.named("jvmTest") {
+    kotlin.srcDir("build/generated/ksp/jvm/jvmTest/kotlin")
+}
 kotlin.sourceSets.named("linuxX64Test") {
     kotlin.srcDir("build/generated/ksp/linuxX64/linuxX64Test/kotlin")
 }
 
+tasks.matching { it.name == "compileTestKotlinJvm" }.configureEach {
+    dependsOn("kspTestKotlinJvm")
+}
 tasks.matching { it.name == "compileTestKotlinLinuxX64" }.configureEach {
     dependsOn("kspTestKotlinLinuxX64")
 }
