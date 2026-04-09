@@ -202,6 +202,7 @@ internal class ResolvedProperty<T : Any>(
 
     fun sqlValue(entity: T): Any? {
         val value = getter(entity)
-        return if (value is Enum<*> && enumAsString) value.name else value
+        if (value is Enum<*>) return if (enumAsString) value.name else enumToInt(value)
+        return value
     }
 }
