@@ -543,18 +543,24 @@ int kdbc_bind_double(kdbc_stmt *stmt, int idx, double val) {
     return stmt->conn->vt->bind_double(stmt, idx, val);
 }
 
-int kdbc_bind_string(kdbc_stmt *stmt, int idx, const char *val) {
-    CHECK_BIND(stmt, idx);
-    if (!val) return kdbc_bind_null(stmt, idx);
-
-    /* Take ownership of a copy */
+/* Record a heap-owned string copy in stmt->params[idx-1] as KDBC_TYPE_STRING
+ * (freeing any previous copy). Returns the owned pointer, or NULL on OOM. */
+static const char *store_string_param(kdbc_stmt *stmt, int idx, const char *val) {
     free(stmt->params[idx - 1].owned);
     char *copy = strdup(val);
-    if (!copy) { STMT_ERR(stmt, "Out of memory"); return KDBC_ERROR; }
+    if (!copy) { STMT_ERR(stmt, "Out of memory"); return NULL; }
     stmt->params[idx - 1].owned = copy;
     stmt->params[idx - 1].type = KDBC_TYPE_STRING;
     stmt->params[idx - 1].val.str.ptr = copy;
-    stmt->params[idx - 1].val.str.len = strlen(val);
+    stmt->params[idx - 1].val.str.len = strlen(copy);
+    return copy;
+}
+
+int kdbc_bind_string(kdbc_stmt *stmt, int idx, const char *val) {
+    CHECK_BIND(stmt, idx);
+    if (!val) return kdbc_bind_null(stmt, idx);
+    const char *copy = store_string_param(stmt, idx, val);
+    if (!copy) return KDBC_ERROR;
     return stmt->conn->vt->bind_string(stmt, idx, copy);
 }
 
@@ -574,37 +580,45 @@ int kdbc_bind_blob(kdbc_stmt *stmt, int idx, const void *data, size_t len) {
     return stmt->conn->vt->bind_blob(stmt, idx, copy, len);
 }
 
+/* Temporal binders: store the formatted ISO value via store_string_param (so batch
+ * replay can rebind via bind_string), then let the driver override with its native
+ * temporal binder when available. */
 int kdbc_bind_timestamp(kdbc_stmt *stmt, int idx,
                         int year, int month, int day,
                         int hour, int minute, int second, int usec) {
     CHECK_BIND(stmt, idx);
-    if (stmt->conn->vt->bind_timestamp)
-        return stmt->conn->vt->bind_timestamp(stmt, idx, year, month, day,
-                                              hour, minute, second, usec);
-    /* Fallback: send as ISO-8601 string */
     char buf[32];
     snprintf(buf, sizeof(buf), "%04d-%02d-%02d %02d:%02d:%02d.%06d",
              year, month, day, hour, minute, second, usec);
-    return kdbc_bind_string(stmt, idx, buf);
+    const char *copy = store_string_param(stmt, idx, buf);
+    if (!copy) return KDBC_ERROR;
+    if (stmt->conn->vt->bind_timestamp)
+        return stmt->conn->vt->bind_timestamp(stmt, idx, year, month, day,
+                                              hour, minute, second, usec);
+    return stmt->conn->vt->bind_string(stmt, idx, copy);
 }
 
 int kdbc_bind_date(kdbc_stmt *stmt, int idx, int year, int month, int day) {
     CHECK_BIND(stmt, idx);
-    if (stmt->conn->vt->bind_date)
-        return stmt->conn->vt->bind_date(stmt, idx, year, month, day);
     char buf[16];
     snprintf(buf, sizeof(buf), "%04d-%02d-%02d", year, month, day);
-    return kdbc_bind_string(stmt, idx, buf);
+    const char *copy = store_string_param(stmt, idx, buf);
+    if (!copy) return KDBC_ERROR;
+    if (stmt->conn->vt->bind_date)
+        return stmt->conn->vt->bind_date(stmt, idx, year, month, day);
+    return stmt->conn->vt->bind_string(stmt, idx, copy);
 }
 
 int kdbc_bind_time(kdbc_stmt *stmt, int idx,
                    int hour, int minute, int second, int usec) {
     CHECK_BIND(stmt, idx);
-    if (stmt->conn->vt->bind_time)
-        return stmt->conn->vt->bind_time(stmt, idx, hour, minute, second, usec);
     char buf[20];
     snprintf(buf, sizeof(buf), "%02d:%02d:%02d.%06d", hour, minute, second, usec);
-    return kdbc_bind_string(stmt, idx, buf);
+    const char *copy = store_string_param(stmt, idx, buf);
+    if (!copy) return KDBC_ERROR;
+    if (stmt->conn->vt->bind_time)
+        return stmt->conn->vt->bind_time(stmt, idx, hour, minute, second, usec);
+    return stmt->conn->vt->bind_string(stmt, idx, copy);
 }
 
 /* ========================================================================
@@ -775,8 +789,15 @@ int kdbc_execute_batch(kdbc_stmt *stmt) {
                 case KDBC_TYPE_BLOB:
                     stmt->conn->vt->bind_blob(stmt, idx, p->val.blob.ptr, p->val.blob.len);
                     break;
-                default:
+                case KDBC_TYPE_BOOL:
+                    stmt->conn->vt->bind_bool(stmt, idx, (int)p->val.i64);
                     break;
+                default:
+                    /* Fail loudly — old code silently `break`d which masked missing cases. */
+                    STMT_ERR(stmt, "Unsupported param type %d in batch rebind at idx %d",
+                             (int)p->type, idx);
+                    free_batches(stmt);
+                    return KDBC_ERROR;
             }
         }
         int rc = stmt->conn->vt->execute_update(stmt);

@@ -90,23 +90,32 @@ class EntityMeta<T : Any>(
  */
 object EnumRegistry {
     private data class EnumFunctions(
-        val fromInt: (Int) -> Any?,
-        val toInt: (Any) -> Int,
-        val fromName: (String) -> Any?
+        val entries: Array<out Enum<*>>,
+        val isDbValue: Boolean,
+        val toInt: (Any) -> Int
     )
 
     private val registry = mutableMapOf<KClass<*>, EnumFunctions>()
 
     /**
-     * Registers conversion lambdas for the given enum class. Called by annproc-generated
-     * code at startup; user code normally does not invoke this directly.
+     * Registers the enum constants and int encoder for the given enum class. Called
+     * by annproc-generated code at startup; user code normally does not invoke this
+     * directly. [fromInt] and [fromName] are derived from [entries] on each lookup.
      */
-    fun register(enumClass: KClass<*>, fromInt: (Int) -> Any?, toInt: (Any) -> Int, fromName: (String) -> Any?) {
-        registry[enumClass] = EnumFunctions(fromInt, toInt, fromName)
+    fun register(
+        enumClass: KClass<*>,
+        entries: Array<out Enum<*>>,
+        toInt: (Any) -> Int
+    ) {
+        registry[enumClass] = EnumFunctions(entries, entries.firstOrNull() is DbValue, toInt)
     }
 
     /** Returns `true` if [enumClass] has been registered via [register]. */
     fun isRegistered(enumClass: KClass<*>): Boolean = registry.containsKey(enumClass)
+
+    /** Returns the registered enum constants for [enumClass], or `null` if not registered. */
+    fun entriesOf(enumClass: KClass<*>): Array<out Enum<*>>? =
+        registry[enumClass]?.entries
 
     /**
      * Returns the enum constant of [enumClass] whose integer value (ordinal or
@@ -114,16 +123,24 @@ object EnumRegistry {
      * matching constant exists.
      */
     @Suppress("UNCHECKED_CAST")
-    fun <T : Any> fromInt(enumClass: KClass<T>, value: Int): T? =
-        registry[enumClass]?.fromInt?.invoke(value) as T?
+    fun <T : Any> fromInt(enumClass: KClass<T>, value: Int): T? {
+        val fns = registry[enumClass] ?: return null
+        val match = if (fns.isDbValue)
+            fns.entries.firstOrNull { (it as DbValue).dbValue == value }
+        else
+            fns.entries.getOrNull(value)
+        return match as T?
+    }
 
     /**
      * Returns the enum constant of [enumClass] whose name is [name] (case-insensitive),
      * or `null` if [enumClass] is not registered or no matching constant exists.
      */
     @Suppress("UNCHECKED_CAST")
-    fun <T : Any> fromName(enumClass: KClass<T>, name: String): T? =
-        registry[enumClass]?.fromName?.invoke(name) as T?
+    fun <T : Any> fromName(enumClass: KClass<T>, name: String): T? {
+        val entries = registry[enumClass]?.entries ?: return null
+        return entries.firstOrNull { it.name.equals(name, ignoreCase = true) } as T?
+    }
 
     /**
      * Returns the integer value (ordinal or [DbValue.dbValue]) for the given enum

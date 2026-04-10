@@ -12,7 +12,7 @@ import onl.ycode.stormify.db
  *
  * Properties delegated with `by db()` trigger lazy-loading when accessed.
  */
-@DbTable(name = "task")
+@DbTable
 class Task(
     @DbField(primaryKey = true, autoIncrement = true)
     var id: Int? = null

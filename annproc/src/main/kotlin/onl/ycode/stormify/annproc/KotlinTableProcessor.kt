@@ -23,6 +23,12 @@ class KotlinTableProcessorProvider : SymbolProcessorProvider {
 
 class KotlinTableProcessor(private val env: SymbolProcessorEnvironment) : SymbolProcessor {
 
+    // `@JvmField` / `@get:JvmName` are declared with `@OptionalExpectation` in kotlin.jvm
+    // and cannot be referenced from non-JVM source sets — gate their emission on the
+    // actual target platform. Android counts as JVM.
+    private val jvmTarget: Boolean = env.platforms.any { it is JvmPlatformInfo }
+    private val jvmFieldPrefix: String = if (jvmTarget) "@JvmField " else ""
+
     override fun process(resolver: Resolver): List<KSAnnotated> {
         // Classes explicitly marked as entities.
         val explicit = resolver.getSymbolsWithAnnotation(DB_TABLE).filterIsInstance<KSClassDeclaration>().toSet() +
@@ -76,14 +82,14 @@ class KotlinTableProcessor(private val env: SymbolProcessorEnvironment) : Symbol
             w.write("    override fun register() {\n")
             w.write("        if (!initialized.compareAndSet(false, true)) return\n\n")
 
-            // Register enum types
+            // Register enum types. fromInt/fromName are derived from the entries array
+            // inside EnumRegistry; we only need to pass the array and the toInt encoder.
             enumTypes.forEach { enumFqn ->
                 val simpleName = enumFqn.substringAfterLast('.')
                 w.write("        EnumRegistry.register(\n")
                 w.write("            $simpleName::class,\n")
-                w.write("            { v -> $simpleName.entries.let { e -> if (e.firstOrNull() is DbValue) e.firstOrNull { (it as DbValue).dbValue == v } else e.getOrNull(v) } },\n")
-                w.write("            { v -> if (v is DbValue) v.dbValue else (v as Enum<*>).ordinal },\n")
-                w.write("            { n -> $simpleName.entries.firstOrNull { it.name.equals(n, ignoreCase = true) } }\n")
+                w.write("            $simpleName.entries.toTypedArray(),\n")
+                w.write("            { v -> if (v is DbValue) v.dbValue else (v as Enum<*>).ordinal }\n")
                 w.write("        )\n\n")
             }
 
@@ -107,6 +113,10 @@ class KotlinTableProcessor(private val env: SymbolProcessorEnvironment) : Symbol
         env.codeGenerator.createNewFile(Dependencies(true), "db.stormify", "Paths").bufferedWriter().use { w ->
             w.write("@file:Suppress(\"unused\")\n")
             w.write("package db.stormify\n\n")
+            if (jvmTarget) {
+                w.write("import kotlin.jvm.JvmField\n")
+                w.write("import kotlin.jvm.JvmName\n")
+            }
             w.write("import onl.ycode.stormify.biglist.ScalarPath\n\n")
 
             // Generate a Ref class per entity
@@ -120,7 +130,7 @@ class KotlinTableProcessor(private val env: SymbolProcessorEnvironment) : Symbol
             w.write("object Paths {\n")
             for (entity in entities) {
                 val className = entity.simpleName.asString()
-                w.write("    @JvmField val ${className}_ = ${className}Ref(\"\")\n")
+                w.write("    ${jvmFieldPrefix}val ${className}_ = ${className}Ref(\"\")\n")
             }
             w.write("}\n")
         }
@@ -141,10 +151,10 @@ class KotlinTableProcessor(private val env: SymbolProcessorEnvironment) : Symbol
                 val isKnownEntity = entityQNames.any { it.endsWith(".$shortName") || it == refTypeName }
                 if (!isKnownEntity) continue
 
-                w.write("    @get:JvmName(\"${prop.name}\")\n")
+                if (jvmTarget) w.write("    @get:JvmName(\"${prop.name}\")\n")
                 w.write("    val ${prop.name} get() = ${shortName}Ref(\"\${p}${prop.name}.\")\n")
             } else {
-                w.write("    @JvmField val ${prop.name} = ScalarPath(\"\${p}${prop.name}\")\n")
+                w.write("    ${jvmFieldPrefix}val ${prop.name} = ScalarPath(\"\${p}${prop.name}\")\n")
             }
         }
 

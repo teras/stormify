@@ -14,6 +14,7 @@ data class TestC(
     override fun toString() = "TestC(id=$id, name=$name)"
 }
 
+@DbTable
 data class Child(
     var id: Int? = null,
     var name: String? = null,
@@ -71,7 +72,7 @@ class AutoChildEntity : AutoTable() {
     var parent: AutoParentEntity? by db(null)
 }
 
-@DbTable(name = "double_db_name")
+@DbTable
 data class DoubleDbName(
     var id: Int = 0,
     @DbField(name = "name", updatable = false) var name1: String = "",
@@ -153,7 +154,7 @@ open class BaseEntity(
     var createdBy: String? = null
 )
 
-@DbTable(name = "user_entity")
+@DbTable
 class UserEntity(
     var name: String? = null,
     var email: String? = null
@@ -171,34 +172,34 @@ data class GenericHolder<T>(
 
 // --- Tree / deep FK chain ---
 
-@DbTable(name = "tree_node")
+@DbTable
 data class TreeNode(
     @DbField(primaryKey = true) var id: Int = 0,
     var name: String? = null,
     var parent: TreeNode? = null
 )
 
-@DbTable(name = "country")
+@DbTable
 data class Country(
     @DbField(primaryKey = true) var id: Int = 0,
     var name: String? = null
 )
 
-@DbTable(name = "city")
+@DbTable
 data class City(
     @DbField(primaryKey = true) var id: Int = 0,
     var name: String? = null,
     var country: Country? = null
 )
 
-@DbTable(name = "person")
+@DbTable
 data class Person(
     @DbField(primaryKey = true) var id: Int = 0,
     var name: String? = null,
     var city: City? = null
 )
 
-@DbTable(name = "event")
+@DbTable
 data class Event(
     @DbField(primaryKey = true) var id: Int = 0,
     var title: String? = null,

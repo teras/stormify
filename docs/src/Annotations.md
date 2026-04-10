@@ -4,8 +4,12 @@ Stormify supports both its own annotations (`@DbTable`, `@DbField`) and standard
 
 ## `@DbTable` Annotation
 
-The `@DbTable` annotation specifies the database table name associated with a class. This annotation is
-optional and is only needed if the table name differs from the class name.
+The `@DbTable` annotation marks a Kotlin class as a Stormify entity. It serves two roles:
+
+1. **Signals the class to the [annotation processor](#annotation-processor-annproc)** so it emits the metadata registrar and type-safe [PagedList](PagedList.md) paths (`Foo_.name`). This is required on Native/Android/iOS (no runtime reflection) and on any target that uses typed paths.
+2. **Overrides the table name** when the database table doesn't match the class name under the current naming policy.
+
+When the table name already matches the policy (e.g. class `User` ↔ table `user`), use `@DbTable` without arguments as a pure marker. Provide `name = "..."` only when the database table name differs.
 
 ### Attributes
 
@@ -20,8 +24,17 @@ optional and is only needed if the table name differs from the class name.
     import onl.ycode.stormify.DbTable
     import onl.ycode.stormify.DbField
 
-    @DbTable(name = "custom_table_name")
+    // Marker only — table name is derived from the class name
+    @DbTable
     data class User(
+        @DbField(primaryKey = true)
+        var id: Int = 0,
+        var name: String = ""
+    )
+
+    // Explicit table name — different from what the naming policy would produce
+    @DbTable(name = "tbl_legacy_customer")
+    data class Customer(
         @DbField(primaryKey = true)
         var id: Int = 0,
         var name: String = ""
@@ -34,17 +47,24 @@ optional and is only needed if the table name differs from the class name.
     import onl.ycode.stormify.DbTable;
     import onl.ycode.stormify.DbField;
 
-    @DbTable(name = "custom_table_name")
+    // Marker only — table name is derived from the class name
+    @DbTable
     public class User {
         @DbField(primaryKey = true)
         private int id;
         private String name;
+        // getters and setters
+    }
 
+    // Explicit table name — different from what the naming policy would produce
+    @DbTable(name = "tbl_legacy_customer")
+    public class Customer {
+        @DbField(primaryKey = true)
+        private int id;
+        private String name;
         // getters and setters
     }
     ```
-
-In this example, the `User` class maps to the `custom_table_name` table in the database.
 
 ## `@DbField` Annotation
 

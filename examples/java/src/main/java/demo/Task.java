@@ -13,7 +13,7 @@ import onl.ycode.stormify.DbValue;
  * <p>Non-primary-key getters/setters call {@code populate()} to trigger lazy loading
  * when the entity was obtained as a reference (e.g. from another entity's foreign key).
  */
-@DbTable(name = "task")
+@DbTable
 public class Task extends AutoTable {
 
     @DbField(primaryKey = true, autoIncrement = true)

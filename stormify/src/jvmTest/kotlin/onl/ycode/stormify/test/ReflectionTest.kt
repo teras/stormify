@@ -271,14 +271,14 @@ class ReflEnumStringEntity {
 
 // --- Test entity classes ---
 
-@DbTable(name = "ref_parent")
+@DbTable
 class RefParent : AutoTable() {
     @DbField(primaryKey = true) var id: Int? = null
     var name: String? by db(null)
     override fun toString() = "RefParent(id=$id, name=$name)"
 }
 
-@DbTable(name = "ref_child")
+@DbTable
 class RefChild : AutoTable() {
     @DbField(primaryKey = true) var id: Int? = null
     var title: String? by db(null)
@@ -293,7 +293,7 @@ open class PlainBase {
     var isActive: Boolean = false
 }
 
-@DbTable(name = "plain_child")
+@DbTable
 class PlainChild : PlainBase() {
     var parent: RefParent? = null
 }
@@ -305,7 +305,7 @@ open class AtBase : AutoTable() {
     var isActive: Boolean? by db(null)
 }
 
-@DbTable(name = "at_child")
+@DbTable
 class AtChild : AtBase() {
     var parent: RefParent? by db(null)
 }

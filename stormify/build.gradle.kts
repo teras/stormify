@@ -219,13 +219,10 @@ tasks.withType<Test> {
     systemProperty("oracle.jdbc.timezoneAsRegion", "false")
 }
 
-// Run the annproc KSP processor against the commonTest entities so that native test targets
-// (which lack reflection-based entity discovery) get a generated EntityRegistrar. The generated
-// object is `db.stormify.GeneratedEntities` and is registered explicitly by the test factories.
-// Run the annproc KSP processor against test targets so that generated
-// EntityRegistrar and type-safe path classes are available everywhere.
+// Per-target annproc registration (not kspCommonMainMetadata): the generated Paths
+// emit @JvmField / @get:JvmName which are @OptionalExpectation in kotlin.jvm and
+// cannot be referenced from non-JVM source sets.
 dependencies {
-    add("kspCommonMainMetadata", project(":annproc"))
     add("kspJvmTest", project(":annproc"))
     add("kspLinuxX64Test", project(":annproc"))
 }
