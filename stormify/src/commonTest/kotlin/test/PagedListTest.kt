@@ -496,6 +496,25 @@ class PagedListTest {
         assertEquals(0, list.size)
     }
 
+    @Test
+    fun testEnumAutoDetect() = withDb("PAGED-ENUM-AUTO") { s ->
+        TestDDL.dropTable("enum_test")
+        s.executeUpdate(TestDDL.createTable("enum_test",
+            "${TestDDL.intPrimaryKey("id")}, ${TestDDL.intColumn("plain_status")}, ${TestDDL.intColumn("custom_status")}"))
+        s.create(listOf(
+            EnumEntity(1, PlainStatus.ACTIVE, CustomStatus.ACTIVE),
+            EnumEntity(2, PlainStatus.INACTIVE, CustomStatus.INACTIVE),
+            EnumEntity(3, PlainStatus.BANNED, CustomStatus.BANNED)
+        ))
+
+        val list = PagedList<EnumEntity>()
+        // No explicit type — auto-detects enum, auto-builds enumValues
+        val col = list.addColumn("plainStatus")
+        col.filter = "BANNED"
+
+        assertEquals(1, list.size)
+    }
+
     // --- Numeric filter details ---
 
     @Test
@@ -593,10 +612,11 @@ class PagedListTest {
 
     @Test
     fun testCaseSensitiveFilter() = withDb("PAGED-CS") { s ->
-        // SQLite/MySQL/MariaDB/MSSQL LIKE is case-insensitive by default — skip
         if (s.sqlDialect in setOf(SqlDialect.SQLITE, SqlDialect.MYSQL_OLD, SqlDialect.MYSQL_NEW,
                 SqlDialect.MARIA_DB_OLD, SqlDialect.MARIA_DB_NEW,
-                SqlDialect.SQL_SERVER_OLD, SqlDialect.SQL_SERVER_NEW)) return@withDb
+                SqlDialect.SQL_SERVER_OLD, SqlDialect.SQL_SERVER_NEW))
+            skipTest(SkipReason.DIALECT_QUIRK,
+                "LIKE is case-insensitive by default — working around it is out of scope")
 
         TestDDL.dropTable("test")
         s.executeUpdate(TestDDL.createTable("test",
@@ -954,5 +974,116 @@ class PagedListTest {
 
         assertEquals(1, list.size)
         assertEquals("Spring", list[0].title)
+    }
+
+    // --- Composite primary key error ---
+
+    @Test
+    fun testCompositeKeyRequiresExplicitSort() = withDb("PAGED-COMPOSITE-PK") { s ->
+        TestDDL.dropTable("dual_key")
+        s.executeUpdate(TestDDL.createTable("dual_key",
+            "${TestDDL.intColumn("id1")}, ${TestDDL.intColumn("id2")}, data ${TestDDL.textType()}, PRIMARY KEY (id1, id2)"))
+        s.create(listOf(DualKey(1, 1, "a"), DualKey(1, 2, "b")))
+
+        val list = PagedList<DualKey>()
+        // No explicit sort → should fail when fetching data (sortingPart is called)
+        assertFailsWith<IllegalStateException> { list[0] }
+    }
+
+    @Test
+    fun testCompositeKeyWithExplicitSort() = withDb("PAGED-COMPOSITE-PK-OK") { s ->
+        TestDDL.dropTable("dual_key")
+        s.executeUpdate(TestDDL.createTable("dual_key",
+            "${TestDDL.intColumn("id1")}, ${TestDDL.intColumn("id2")}, data ${TestDDL.textType()}, PRIMARY KEY (id1, id2)"))
+        s.create(listOf(DualKey(1, 1, "a"), DualKey(1, 2, "b")))
+
+        val list = PagedList<DualKey>()
+        list.addColumn("id1").sort = Column.ASCENDING
+        // With explicit sort it should work
+        assertEquals(2, list.size)
+    }
+
+    // --- Raw column TEMPORAL ---
+
+    @Test
+    fun testRawColumnTemporal() = withDb("PAGED-RAW-DATE") { s ->
+        if (s.sqlDialect == SqlDialect.SQLITE)
+            skipTest(SkipReason.LIBRARY_LIMITATION,
+                "SQLite stores LocalDate as epoch ms (kdbc choice) — raw ISO comparison mismatches")
+        setupDateTable(s)
+        val list = PagedList<Event>()
+        // Raw column — the default TEMPORAL converter wraps the placeholder with
+        // a dialect-aware cast (e.g., TO_DATE on Oracle, CAST on others)
+        val col = list.addRawColumn("event.event_date", Column.TEMPORAL)
+        col.inputParser = dateParser
+        // Use >= to avoid noon-vs-midnight edge case on Oracle (DATE includes time)
+        col.filter = ">= 02/06/2026"  // Sep 10, Dec 25 (strictly after June 1)
+
+        assertEquals(2, list.size)
+    }
+
+    // --- Selected + sort + filter ---
+
+    @Test
+    fun testSelectedWithSortAndFilter() = withDb("PAGED-SEL-SORT-FILTER") { s ->
+        setupTable(s, 10)
+        val list = PagedList<TestC>()
+        val col = list.addColumn("name")
+        col.sort = Column.DESCENDING
+        col.filter = "Item"
+
+        val item5 = s.read<TestC>("SELECT * FROM test WHERE id = ?", 5).first()
+        list.selected = item5
+
+        // Selected entity should still appear first even with sort + filter
+        assertEquals("Item5", list[0].name)
+        // Size should reflect the filter
+        assertEquals(10, list.size)
+    }
+
+    // --- HumanReadable enum ---
+
+    @Test
+    fun testEnumWithHumanReadable() = withDb("PAGED-HUMAN-READABLE") { s ->
+        TestDDL.dropTable("test")
+        s.executeUpdate(TestDDL.createTable("test",
+            "${TestDDL.intPrimaryKey("id")}, name ${TestDDL.textType()}"))
+        // Store enum names directly in the TEXT column
+        s.create(listOf(TestC(1, "ACTIVE"), TestC(2, "INACTIVE"), TestC(3, "BANNED")))
+
+        val list = PagedList<TestC>()
+        // Map: HumanReadable display name → DB value (enum name)
+        // The user types "Ενερ" — reverse substring lookup finds "Ενεργή" → "ACTIVE"
+        // Note: "Ενερ" also matches "Ανενεργή" (contains "ενερ"), so we get 2 results
+        val displayMap = HRStatus.entries.associate { it.displayName() to it.name }
+        val col = list.addColumn("name", type = Column.ENUM, enumValues = displayMap)
+        col.filter = "Ενεργή"  // exact substring — matches "Ενεργή" and "Ανενεργή"
+
+        // Should match both ACTIVE and INACTIVE (both contain "Ενεργή" in their display names)
+        assertEquals(2, list.size)
+    }
+
+    // --- Strong enum auto-detect with CustomStatus ---
+
+    @Test
+    fun testEnumAutoDetectWithDbValue() = withDb("PAGED-ENUM-DBVALUE") { s ->
+        TestDDL.dropTable("enum_test")
+        s.executeUpdate(TestDDL.createTable("enum_test",
+            "${TestDDL.intPrimaryKey("id")}, ${TestDDL.intColumn("plain_status")}, ${TestDDL.intColumn("custom_status")}"))
+        s.create(listOf(
+            EnumEntity(1, PlainStatus.ACTIVE, CustomStatus.ACTIVE),   // custom_status = 10
+            EnumEntity(2, PlainStatus.INACTIVE, CustomStatus.INACTIVE), // custom_status = 20
+            EnumEntity(3, PlainStatus.BANNED, CustomStatus.BANNED)    // custom_status = 99
+        ))
+
+        val list = PagedList<EnumEntity>()
+        // Auto-detect — for CustomStatus the map should be { name → dbValue(Int) }
+        val col = list.addColumn("customStatus")
+        col.filter = "BANNED"
+
+        // Verify correct row and correct DB value is sent
+        assertEquals(1, list.size)
+        assertEquals(3, list[0].id)
+        assertEquals(CustomStatus.BANNED, list[0].customStatus)
     }
 }

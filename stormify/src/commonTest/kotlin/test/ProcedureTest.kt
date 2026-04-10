@@ -32,6 +32,17 @@ import kotlin.test.assertNotNull
 class ProcedureTest {
     private fun withDb(name: String, test: (Stormify) -> Unit) = TestHelper.withDb(name, test)
 
+    /** Skip with the correct category depending on the DB. */
+    private fun skipStoredProcedures(s: Stormify): Nothing = when (s.sqlDialect) {
+        onl.ycode.stormify.SqlDialect.SQLITE ->
+            skipTest(SkipReason.DB_LIMITATION, "SQLite has no stored procedure support")
+        onl.ycode.stormify.SqlDialect.POSTGRESQL ->
+            skipTest(SkipReason.VERSION_LIMIT, "PostgreSQL < 11 has no CREATE PROCEDURE")
+        else ->
+            error("supportsStoredProcedures() returned false for ${s.sqlDialect} " +
+                    "but no skip category is defined — add one explicitly")
+    }
+
     private val procName = "kdbc_sp_test"
 
     private fun setupProcedure(s: Stormify) {
@@ -47,7 +58,7 @@ class ProcedureTest {
     @Test
     fun testProcedureAllPatterns() {
         withDb("PROCEDURE-ALL") { s ->
-            if (!TestDDL.supportsStoredProcedures()) return@withDb
+            if (!TestDDL.supportsStoredProcedures()) skipStoredProcedures(s)
             setupProcedure(s)
             try {
                 val z = spOut<Int>()           // OUT reference
@@ -75,7 +86,7 @@ class ProcedureTest {
     @Test
     fun testProcedureAutoWrapIn() {
         withDb("PROCEDURE-AUTO") { s ->
-            if (!TestDDL.supportsStoredProcedures()) return@withDb
+            if (!TestDDL.supportsStoredProcedures()) skipStoredProcedures(s)
             setupProcedure(s)
             try {
                 val z = spOut<Int>()
@@ -96,7 +107,7 @@ class ProcedureTest {
     @Test
     fun testProcedureExplicitSpIn() {
         withDb("PROCEDURE-EXPLICIT-IN") { s ->
-            if (!TestDDL.supportsStoredProcedures()) return@withDb
+            if (!TestDDL.supportsStoredProcedures()) skipStoredProcedures(s)
             setupProcedure(s)
             try {
                 val z = spOut<Int>()
@@ -121,7 +132,7 @@ class ProcedureTest {
     @Test
     fun testProcedureOutIsTyped() {
         withDb("PROCEDURE-TYPED-OUT") { s ->
-            if (!TestDDL.supportsStoredProcedures()) return@withDb
+            if (!TestDDL.supportsStoredProcedures()) skipStoredProcedures(s)
             setupProcedure(s)
             try {
                 val z = spOut<Int>()           // Sp.Out<Int>

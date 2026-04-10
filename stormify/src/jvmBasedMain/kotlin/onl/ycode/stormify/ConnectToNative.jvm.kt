@@ -84,6 +84,10 @@ internal actual fun <T : Any> enumFromName(enumClass: KClass<T>, name: String): 
 
 internal actual fun isEnumClass(klass: KClass<*>): Boolean = klass.java.isEnum
 
+@Suppress("UNCHECKED_CAST")
+internal actual fun enumEntries(klass: KClass<*>): Array<out Enum<*>>? =
+    klass.java.enumConstants as? Array<out Enum<*>>
+
 internal actual fun <T : Any> tryReflection(type: KClass<T>): EntityMeta<T>? {
     val jClass = type.java
     // Build table name override from @DbTable or JPA @Table/@Entity

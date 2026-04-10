@@ -46,3 +46,8 @@ internal expect fun <T : Any> enumFromName(enumClass: KClass<T>, name: String): 
  * Returns true if the given class is an enum class.
  */
 internal expect fun isEnumClass(klass: KClass<*>): Boolean
+
+/**
+ * Returns all enum entries for the given class, or null if not an enum.
+ */
+internal expect fun enumEntries(klass: KClass<*>): Array<out Enum<*>>?

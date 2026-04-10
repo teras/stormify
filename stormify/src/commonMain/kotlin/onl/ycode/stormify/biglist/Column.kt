@@ -38,10 +38,7 @@ class Column<T : Any> internal constructor(
         /** Numeric — supports exact match, comparisons (`>`, `<`, `>=`, `<=`), and ranges (`10 ... 20`). */
         NUMERIC,
 
-        /** Date — supports exact match, comparisons, and ranges with date parsing. */
-        DATE,
-
-        /** Temporal (time, timestamp) — supports exact match, comparisons, and ranges. */
+        /** Temporal — covers date, time, datetime, timestamp. Supports comparisons and ranges. */
         TEMPORAL,
 
         /** Enum/quantize — maps display names to DB values via reverse substring matching. */
@@ -56,9 +53,7 @@ class Column<T : Any> internal constructor(
         @JvmField val TEXT = Type.TEXT
         /** Numeric column type. */
         @JvmField val NUMERIC = Type.NUMERIC
-        /** Date column type. */
-        @JvmField val DATE = Type.DATE
-        /** Temporal column type. */
+        /** Temporal column type (date, time, datetime, timestamp). */
         @JvmField val TEMPORAL = Type.TEMPORAL
         /** Enum/quantize column type. */
         @JvmField val ENUM = Type.ENUM

@@ -109,4 +109,24 @@ class PagedListPathTest {
         assertEquals("city.name", Person_.city.name.toPath())
         assertEquals("city.country.name", Person_.city.country.name.toPath())
     }
+
+    @Test
+    fun testSelfReferentialPathWithDb() = withDb("PATH-SELF-REF-DB") { s ->
+        TestDDL.dropTable("tree_node")
+        s.executeUpdate(TestDDL.createTable("tree_node",
+            "${TestDDL.intPrimaryKey("id")}, name ${TestDDL.textType()}, ${TestDDL.intColumn("parent")}, " +
+                    "${TestDDL.foreignKey("parent", "tree_node", "id")}"))
+        // Build a chain: root(1) ← child(2) ← grandchild(3)
+        s.executeUpdate("INSERT INTO tree_node (id, name, parent) VALUES (?, ?, ?)", 1, "root", null)
+        s.executeUpdate("INSERT INTO tree_node (id, name, parent) VALUES (?, ?, ?)", 2, "child", 1)
+        s.executeUpdate("INSERT INTO tree_node (id, name, parent) VALUES (?, ?, ?)", 3, "grandchild", 2)
+
+        val list = PagedList<TreeNode>()
+        // Filter: grandchild → parent(child) → parent(root).name = "root"
+        val col = list.addColumn(TreeNode_.parent.parent.name)
+        col.filter = "root"
+
+        assertEquals(1, list.size)
+        assertEquals("grandchild", list[0].name)
+    }
 }

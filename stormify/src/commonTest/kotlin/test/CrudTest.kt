@@ -65,8 +65,10 @@ class CrudTest {
 
     @Test
     fun testAutoIncrement() = withDb("AUTO-INCREMENT") { s ->
-        if (!TestDDL.supportsAutoIncrement()) { println("Skipping"); return@withDb }
-        val autoPk = TestDDL.autoIncrementPrimaryKey("id") ?: return@withDb
+        if (!TestDDL.supportsAutoIncrement())
+            skipTest(SkipReason.DB_LIMITATION, "auto-increment not supported on this dialect")
+        val autoPk = TestDDL.autoIncrementPrimaryKey("id")
+            ?: skipTest(SkipReason.DB_LIMITATION, "no auto-increment PK syntax for this dialect")
         TestDDL.dropTable("auto_increment")
         s.executeUpdate(TestDDL.createTable("auto_increment", "$autoPk, name ${TestDDL.textType()}"))
 

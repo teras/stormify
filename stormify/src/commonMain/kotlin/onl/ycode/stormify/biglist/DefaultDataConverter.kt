@@ -14,11 +14,11 @@ internal object DefaultDataConverter {
      * Returns a filter converter based on column type.
      */
     fun guessConverter(type: Column.Type, dialect: SqlDialect, enumValues: Map<String, Any>? = null): (String, String, InputParser, (Any) -> Unit) -> String = when (type) {
-        Column.Type.TEXT -> wrapText(textConverter(dialect) { false })
+        Column.Type.TEXT -> withParser(textConverter(dialect) { false })
         Column.Type.NUMERIC -> numericConverter(Double::class)
-        Column.Type.DATE, Column.Type.TEMPORAL -> dateConverter(String::class)
-        Column.Type.ENUM -> wrapText(enumConverter(enumValues))
-        Column.Type.RAW -> wrapText(textConverter(dialect) { false })
+        Column.Type.TEMPORAL -> rawDateConverter(dialect)
+        Column.Type.ENUM -> withParser(enumConverter(enumValues))
+        Column.Type.RAW -> withParser(textConverter(dialect) { false })
     }
 
     /**
@@ -31,18 +31,21 @@ internal object DefaultDataConverter {
         caseSensitive: () -> Boolean,
         enumValues: Map<String, Any>? = null
     ): (String, String, InputParser, (Any) -> Unit) -> String = when (type) {
-        Column.Type.TEXT -> wrapText(textConverter(dialect, caseSensitive))
-        Column.Type.ENUM -> wrapText(enumConverter(enumValues))
-        Column.Type.DATE, Column.Type.TEMPORAL -> dateConverter(node.type)
-        else -> if (isTextualClass(node.type)) wrapText(textConverter(dialect, caseSensitive))
+        Column.Type.TEXT -> withParser(textConverter(dialect, caseSensitive))
+        Column.Type.ENUM -> withParser(enumConverter(enumValues))
+        Column.Type.TEMPORAL -> dateConverter(node.type)
+        else -> if (isTextualClass(node.type)) withParser(textConverter(dialect, caseSensitive))
         else numericConverter(node.type)
     }
 
-    /** Wraps a text/enum converter (which doesn't use InputParser) to match the 4-param signature. */
-    private fun wrapText(
+    /**
+     * Adapts a 3-arg converter (no operator breakdown) to the 4-arg signature.
+     * The InputParser is applied to the whole filter value before it reaches the converter.
+     */
+    private fun withParser(
         converter: (String, String, (Any) -> Unit) -> String
     ): (String, String, InputParser, (Any) -> Unit) -> String =
-        { col, input, _, args -> converter(col, input, args) }
+        { col, input, parser, args -> converter(col, parser(input, Column.Type.TEXT), args) }
 
     private fun textConverter(dialect: SqlDialect, caseSensitive: () -> Boolean): (String, String, (Any) -> Unit) -> String =
         { col: String, input: String, args: (Any) -> Unit ->
@@ -113,15 +116,71 @@ internal object DefaultDataConverter {
 
     private fun dateConverter(type: KClass<*>): (String, String, InputParser, (Any) -> Unit) -> String =
         { column: String, input: String, parser: InputParser, args: (Any) -> Unit ->
-            runCatching { breakdownParts(column, input, parser, Column.Type.DATE) { part -> args(castTo(type, part) ?: part) } }
-                .getOrElse { IMPOSSIBLE }
+            safeBreakdown(column, input, parser, Column.Type.TEMPORAL, type, args)
         }
+
+    /**
+     * Date converter for raw columns where we don't know the field type.
+     * Sends values as String and wraps the placeholder with a dialect-specific
+     * CAST so strict DBs (PostgreSQL, Oracle) can compare ISO strings to date columns.
+     */
+    private fun rawDateConverter(dialect: SqlDialect): (String, String, InputParser, (Any) -> Unit) -> String =
+        { column: String, input: String, parser: InputParser, args: (Any) -> Unit ->
+            safeBreakdownRaw(column, input, parser, Column.Type.TEMPORAL, args) { dialect.castToDate("?") }
+        }
+
+    /**
+     * Variant of [safeBreakdown] that does NOT cast values (keeps String) and
+     * substitutes the `?` placeholder in the generated SQL with a wrapped version.
+     */
+    private fun safeBreakdownRaw(
+        column: String,
+        input: String,
+        parser: InputParser,
+        columnType: Column.Type,
+        args: (Any) -> Unit,
+        placeholder: () -> String
+    ): String {
+        val staged = mutableListOf<Any>()
+        return runCatching {
+            breakdownParts(column, input, parser, columnType) { part -> staged.add(part) }
+        }.fold(
+            onSuccess = { sql -> staged.forEach(args); sql.replace("?", placeholder()) },
+            onFailure = { IMPOSSIBLE }
+        )
+    }
 
     private fun numericConverter(type: KClass<*>): (String, String, InputParser, (Any) -> Unit) -> String =
         { column: String, input: String, parser: InputParser, args: (Any) -> Unit ->
-            runCatching { breakdownParts(column, input, parser, Column.Type.NUMERIC) { part -> args(castTo(type, part) ?: part) } }
-                .getOrElse { IMPOSSIBLE }
+            safeBreakdown(column, input, parser, Column.Type.NUMERIC, type, args)
         }
+
+    /**
+     * Runs [breakdownParts] with a staging buffer — on error, no bind args leak to the caller
+     * and [IMPOSSIBLE] is returned. Successful casts are flushed to [args] at the end.
+     */
+    private fun safeBreakdown(
+        column: String,
+        input: String,
+        parser: InputParser,
+        columnType: Column.Type,
+        targetType: KClass<*>,
+        args: (Any) -> Unit
+    ): String {
+        val staged = mutableListOf<Any>()
+        return runCatching {
+            breakdownParts(column, input, parser, columnType) { part ->
+                staged.add(castOrFail(targetType, part))
+            }
+        }.fold(
+            onSuccess = { sql -> staged.forEach(args); sql },
+            onFailure = { IMPOSSIBLE }
+        )
+    }
+
+    /** Casts [value] to [type] or throws — never returns a fallback that could cause strict DB type errors. */
+    private fun castOrFail(type: KClass<*>, value: String): Any =
+        castTo(type, value) ?: throw SQLException("Cannot convert '$value' to ${type.simpleName}")
 
     /** Impossible SQL condition — produces 0 results for invalid input. */
     private const val IMPOSSIBLE = "1 = 0"

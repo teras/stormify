@@ -63,3 +63,5 @@ internal actual fun <T : Any> enumFromName(enumClass: KClass<T>, name: String): 
 
 internal actual fun isEnumClass(klass: KClass<*>): Boolean =
     EnumRegistry.isRegistered(klass)
+
+internal actual fun enumEntries(klass: KClass<*>): Array<out Enum<*>>? = null // native: use explicit enumValues

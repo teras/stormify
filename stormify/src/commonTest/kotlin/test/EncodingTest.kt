@@ -197,10 +197,9 @@ class EncodingTest {
      */
     @Test
     fun testWrongEncodingRejectedOrLossy() = withDb("ENC-WRONG") { s ->
-        if (!TestDDL.supportsPerColumnEncoding()) {
-            println("  skip: dialect has no per-column encoding")
-            return@withDb
-        }
+        if (!TestDDL.supportsPerColumnEncoding())
+            skipTest(SkipReason.FEATURE_NA,
+                "dialect has no per-column encoding — feature only exists on MySQL/MariaDB/MSSQL")
 
         TestDDL.dropTable("enc_bad")
         s.executeUpdate(

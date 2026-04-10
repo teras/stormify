@@ -9,6 +9,8 @@ import onl.ycode.stormify.NativeBigInteger
 import onl.ycode.stormify.Stormify
 import onl.ycode.stormify.TableInfo
 import onl.ycode.stormify.TypeUtils
+import onl.ycode.stormify.enumEntries
+import onl.ycode.stormify.enumToInt
 import kotlin.math.min
 import kotlin.reflect.KClass
 
@@ -137,7 +139,9 @@ class PagedList<T : Any>(val classType: KClass<T>, private val stormify: Stormif
             fp
         }
         val resolvedType = type ?: detectType(paths.first())
-        val column = Column(this, paths, resolvedType, enumValues, null, null)
+        val resolvedEnumValues = enumValues ?: if (resolvedType == Column.Type.ENUM)
+            buildEnumValues(resolveFieldPath(paths.first()).type) else null
+        val column = Column(this, paths, resolvedType, resolvedEnumValues, null, null)
         _columns.add(column)
         invalidate()
         return column
@@ -276,16 +280,21 @@ class PagedList<T : Any>(val classType: KClass<T>, private val stormify: Stormif
                         emptyList()
                 }
 
-            if (columnSorts.isNotEmpty()) return columnSorts.joinToString(", ")
+            // Selected entity always appears first (regardless of explicit sort)
+            val singlePk = info.primaryKeys.singleOrNull()?.dbName
+            val selectedPrefix = if (singlePk != null && selectedID != null)
+                stormify.sqlDialect.orderByIdDialect(singlePk, selectedID)?.let { "$it, " } ?: ""
+            else ""
 
-            // Default: selected entity first + PK
-            val pk = info.primaryKeys.singleOrNull()?.dbName
-                ?: throw IllegalStateException(
-                    "PagedList for ${info.tableName} requires explicit sorting via column.setSort() " +
-                            "because the entity has a composite primary key"
-                )
-            return (stormify.sqlDialect.orderByIdDialect(pk, selectedID)
-                ?.let { "$it, " } ?: "") + info.tableName + "." + pk
+            if (columnSorts.isNotEmpty())
+                return selectedPrefix + columnSorts.joinToString(", ")
+
+            // Default: selected first + PK
+            val pk = singlePk ?: throw IllegalStateException(
+                "PagedList for ${info.tableName} requires explicit sorting via column.setSort() " +
+                        "because the entity has a composite primary key"
+            )
+            return selectedPrefix + info.tableName + "." + pk
         }
 
     private val tablesPart: String
@@ -316,14 +325,18 @@ class PagedList<T : Any>(val classType: KClass<T>, private val stormify: Stormif
             val parser = resolveInputParser(column)
             val orParts = mutableListOf<String>()
 
+            // Wrap custom sqlGenerator to apply the InputParser before it sees the value
+            fun wrapGen(gen: (String, String, (Any) -> Unit) -> String):
+                    (String, String, InputParser, (Any) -> Unit) -> String =
+                { col, input, p, a -> gen(col, p(input, column.type), a) }
+
             if (column.rawExpression != null) {
                 // Raw column
                 if (isNullFilter) {
                     orParts.add("${column.rawExpression} IS NULL")
                 } else {
-                    val generator = column.sqlGenerator?.let { gen ->
-                        { col: String, input: String, _: InputParser, args: (Any) -> Unit -> gen(col, input, args) }
-                    } ?: DefaultDataConverter.guessConverter(column.type, stormify.sqlDialect, column.enumValues)
+                    val generator = column.sqlGenerator?.let(::wrapGen)
+                        ?: DefaultDataConverter.guessConverter(column.type, stormify.sqlDialect, column.enumValues)
                     orParts.add(generator(column.rawExpression, filterVal, parser, args::add))
                 }
             } else {
@@ -333,9 +346,8 @@ class PagedList<T : Any>(val classType: KClass<T>, private val stormify: Stormif
                     if (isNullFilter) {
                         orParts.add("${node.columnHandler} IS NULL")
                     } else {
-                        val generator = column.sqlGenerator?.let { gen ->
-                            { col: String, input: String, _: InputParser, args: (Any) -> Unit -> gen(col, input, args) }
-                        } ?: DefaultDataConverter.guessConverterForNode(node, column.type, stormify.sqlDialect, { column.isCaseSensitive }, column.enumValues)
+                        val generator = column.sqlGenerator?.let(::wrapGen)
+                            ?: DefaultDataConverter.guessConverterForNode(node, column.type, stormify.sqlDialect, { column.isCaseSensitive }, column.enumValues)
                         orParts.add(generator(node.columnHandler, filterVal, parser, args::add))
                     }
                 }
@@ -363,9 +375,10 @@ class PagedList<T : Any>(val classType: KClass<T>, private val stormify: Stormif
             lowBound = page * pageSize
             upperBound = min(size, (page + 1) * pageSize)
             val (query, arguments) = constraintPart
+            // Use `<table>.*` so JOINs with duplicate column names don't clobber entity mapping
             val result = stormify.read(
                 null, classType, stormify.sqlDialect.queryFormatter(
-                    "*", distinctPart, tablesPart, query, sortingPart, lowBound, upperBound
+                    "${info.tableName}.*", distinctPart, tablesPart, query, sortingPart, lowBound, upperBound
                 ), *arguments.toTypedArray()
             )
             // Silent re-count: if page returned fewer items than expected
@@ -416,15 +429,23 @@ class PagedList<T : Any>(val classType: KClass<T>, private val stormify: Stormif
 
     private fun detectType(fieldPath: FieldPath): Column.Type {
         val node = resolveFieldPath(fieldPath)
+        if (node.isEnum) return Column.Type.ENUM
         val typeName = node.type.simpleName ?: return Column.Type.TEXT
         return when {
             typeName in setOf("String", "Char", "StringBuilder") -> Column.Type.TEXT
             typeName in setOf("Int", "Long", "Short", "Byte", "Float", "Double",
                 "BigDecimal", "BigInteger") -> Column.Type.NUMERIC
-            typeName.contains("Date") || typeName == "LocalDate" -> Column.Type.DATE
-            typeName.contains("Time") || typeName.contains("Instant") ||
-                typeName.contains("Timestamp") -> Column.Type.TEMPORAL
+            typeName.contains("Date") || typeName.contains("Time") ||
+                typeName.contains("Instant") || typeName.contains("Timestamp") -> Column.Type.TEMPORAL
             else -> Column.Type.TEXT
+        }
+    }
+
+    private fun buildEnumValues(enumType: KClass<*>): Map<String, Any>? {
+        val entries = enumEntries(enumType) ?: return null
+        return entries.associate { e ->
+            val display = if (e is HumanReadable) e.displayName() else e.name
+            display to enumToInt(e)
         }
     }
 

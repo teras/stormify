@@ -24,7 +24,7 @@ while [ $elapsed -lt $TIMEOUT ]; do
         if [[ "$DB_NAME" == oracle* ]]; then
             for attempt in $(seq 1 30); do
                 if docker compose -f "$COMPOSE_DIR/docker-compose.yml" exec -T "$DB_NAME" \
-                    bash -c 'printf "SELECT 1 FROM dual;\nEXIT\n" | sqlplus -s stormify/Stormify1! 2>&1 | grep -q "1"'; then
+                    bash -c 'printf "SELECT 1 FROM dual;\nEXIT\n" | sqlplus -s stormify/Stormify1!@//localhost/XE 2>&1 | grep -q "1"'; then
                     break
                 fi
                 echo "  $DB_NAME healthcheck passed but not yet connectable (attempt $attempt/30)..."
