@@ -6,7 +6,7 @@ import kotlin.reflect.KClass
  * Shared empty ResultSet implementation for cases where no results are available.
  * Used by all database drivers.
  */
-class EmptyResultSet : ResultSet {
+internal class EmptyResultSet : ResultSet {
     override fun next(): Boolean = false
 
     override fun getObject(columnIndex: Int, type: KClass<*>): Any? {

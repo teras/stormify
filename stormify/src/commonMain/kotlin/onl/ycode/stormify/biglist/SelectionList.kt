@@ -37,6 +37,12 @@ class SelectionList<T : Any> internal constructor(
     private var upperBound = 0
     private var _size: Int? = null
 
+    /**
+     * Number of distinct values for the owning column under the parent list's current
+     * filter state (excluding the owning column's own filter). The first access issues
+     * a `COUNT(DISTINCT ...)` query; the result is cached until any filter or constraint
+     * on the parent list changes.
+     */
     override val size: Int
         get() = _size ?: run {
             val stormify = pagedList.getStormify()
@@ -48,6 +54,10 @@ class SelectionList<T : Any> internal constructor(
             ) ?: 0).also { _size = it }
         }
 
+    /**
+     * Returns the distinct value at [index] — a display string for use in pickers.
+     * Out-of-range indices propagate the underlying `IndexOutOfBoundsException`.
+     */
     override fun get(index: Int): String = ensurePage(index)[index - lowBound]
 
     private fun ensurePage(index: Int): List<String> {

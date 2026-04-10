@@ -293,7 +293,7 @@ On JVM, reflection-based entity discovery works the same as V1 (no changes neede
 
 If you plan to target **native platforms** or want faster JVM startup, V2 offers the
 `annproc` annotation processor (via KSP) to generate entity metadata at compile time.
-See [Annotation Processor](Core_concepts.md#annotation-processor-annproc) for setup details.
+See [Annotation Processor](Annotations.md#annotation-processor-annproc) for setup details.
 
 ## DataSource Wrapping (JVM)
 

@@ -47,7 +47,11 @@ import kotlin.reflect.KClass
  */
 sealed class Sp {
     /** IN parameter. The value is sent to the procedure as-is. */
-    class In(val value: Any?) : Sp() {
+    class In(
+        /** The value to send to the procedure. */
+        val value: Any?
+    ) : Sp() {
+        /** Debug representation: `IN:<value>`. */
         override fun toString() = "IN:$value"
     }
 
@@ -55,7 +59,10 @@ sealed class Sp {
      * OUT parameter. After `procedure(...)` returns, [value] holds the typed
      * value produced by the procedure, or `null` if it was not populated.
      */
-    class Out<T : Any>(val type: KClass<T>) : Sp() {
+    class Out<T : Any>(
+        /** The declared Kotlin type of the returned value. */
+        val type: KClass<T>
+    ) : Sp() {
         private var _value: T? = null
 
         @Suppress("UNCHECKED_CAST")
@@ -71,6 +78,7 @@ sealed class Sp {
             get() = _value
                 ?: error("Sp.Out<${type.simpleName}> was not populated by the procedure")
 
+        /** Debug representation: `OUT<Type>:<value>`. */
         override fun toString() = "OUT<${type.simpleName}>:${_value}"
     }
 
@@ -79,7 +87,12 @@ sealed class Sp {
      * call returns, [value] holds whatever the procedure left there (which may
      * differ from [input]).
      */
-    class InOut<T : Any>(val type: KClass<T>, val input: T) : Sp() {
+    class InOut<T : Any>(
+        /** The declared Kotlin type of the parameter. */
+        val type: KClass<T>,
+        /** The initial value sent to the procedure. Retained for reference after execute. */
+        val input: T
+    ) : Sp() {
         private var _value: T? = input
 
         @Suppress("UNCHECKED_CAST")
@@ -95,9 +108,11 @@ sealed class Sp {
             get() = _value
                 ?: error("Sp.InOut<${type.simpleName}> was cleared to NULL by the procedure")
 
+        /** Debug representation: `INOUT<Type>:<value>`. */
         override fun toString() = "INOUT<${type.simpleName}>:${_value}"
     }
 
+    /** Factory entry points for stored-procedure parameters. */
     companion object {
         /**
          * Factory for an IN parameter, equivalent to `Sp.In(value)`. Also the

@@ -14,6 +14,6 @@ expect object LogManager {
     /** Creates a [Logger] with the given [name]. */
     fun getLogger(name: String?): Logger
 
-    /** Creates a [Logger] named after the given [kclass]. */
+    /** Creates a [Logger] named after the given `kclass` qualified name. */
     fun getLogger(kclass: KClass<*>?): Logger
 }

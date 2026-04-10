@@ -63,7 +63,7 @@ ORM operations. On **JVM**, this is discovered at runtime via `kotlin-reflect` (
 as a transitive dependency). On **Native/Android/iOS**, reflection is not available — use
 the `annproc` annotation processor (via KSP) to generate it at compile time. On JVM,
 `annproc` is optional but improves startup time and allows excluding `kotlin-reflect`.
-See [Annotation Processor](Core_concepts.md#annotation-processor-annproc) for setup
+See [Annotation Processor](Annotations.md#annotation-processor-annproc) for setup
 details and how to exclude `kotlin-reflect`. When using `annproc`, pass the generated
 registrar to the constructor:
 
@@ -156,7 +156,7 @@ For a table `CREATE TABLE test (id INT PRIMARY KEY, name VARCHAR(255))`:
     ```
 
 Mark primary keys with `@DbField(primaryKey = true)`, or register a
-[primary key resolver](Core_concepts.md#custom-primary-key-resolvers) to detect them by naming convention.
+[primary key resolver](Primary_Keys.md#custom-primary-key-resolvers) to detect them by naming convention.
 
 ### Performing CRUD Operations
 

@@ -487,5 +487,6 @@ Stormify. Stormify accepts a KDBC `DataSource` directly:
     val stormify = Stormify(ds)
     ```
 
-Once you have a `Stormify` instance, all KDBC details are hidden behind the ORM API. See the
-[Core Concepts](Core_concepts.md) and [Advanced Topics](Advanced_topics.md) pages for ORM usage.
+Once you have a `Stormify` instance, all KDBC details are hidden behind the ORM API. See
+[Entity Mapping](Entity_Mapping.md), [CRUD Operations](CRUD.md), and
+[Transactions](Transactions.md) for ORM usage.

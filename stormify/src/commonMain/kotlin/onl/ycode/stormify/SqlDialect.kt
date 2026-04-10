@@ -136,9 +136,8 @@ enum class SqlDialect(
      */
     val orderByIdDialect: (String, NativeBigInteger?) -> String?,
     /**
-     * A query formatter that generates SQL queries with different pagination methods.
-     *
-     * @see QueryFormatter
+     * A query formatter that generates SQL queries with different pagination methods
+     * (LIMIT/OFFSET, FETCH FIRST, ROWNUM, TOP, etc.) based on the dialect's conventions.
      */
     val queryFormatter: (columns: String, distinct: String, tableName: String, constraints: String, sorting: String, lowBound: Int, upperBound: Int) -> String,
     /**
@@ -334,7 +333,7 @@ enum class SqlDialect(
 
     /**
      * Wraps a bind placeholder with a dialect-specific cast to DATE.
-     * Used by raw columns with [Column.Type.TEMPORAL] where the DB cannot
+     * Used by raw columns with [onl.ycode.stormify.biglist.Column.Type.TEMPORAL] where the DB cannot
      * implicitly convert an ISO string bind parameter to a date.
      *
      * - Oracle: `TO_DATE(?, 'YYYY-MM-DD')` — Oracle ignores `CAST(? AS DATE)` for strings
@@ -350,7 +349,7 @@ enum class SqlDialect(
 
     /**
      * Wraps a bind placeholder with a dialect-specific cast to TIMESTAMP.
-     * Used by raw columns with [Column.Type.TEMPORAL] for datetime values.
+     * Used by raw columns with [onl.ycode.stormify.biglist.Column.Type.TEMPORAL] for datetime values.
      */
     fun castToTimestamp(placeholder: String): String = when (this) {
         ORACLE_NEW, ORACLE_OLD -> "TO_TIMESTAMP($placeholder, 'YYYY-MM-DD\"T\"HH24:MI:SS')"
@@ -371,7 +370,7 @@ enum class SqlDialect(
             else -> conn.initStatement(query, false, null)
         }
 
-    companion object {
+    internal companion object {
         internal fun findDialect(dataSource: DataSource): SqlDialect {
             dataSource.getConnection().use { conn ->
                 val metadata: DatabaseMetaData = conn.metaData

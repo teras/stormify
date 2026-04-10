@@ -12,11 +12,13 @@ import onl.ycode.stormify.TableInfo
 import onl.ycode.stormify.TypeUtils
 import onl.ycode.stormify.enumEntries
 import onl.ycode.stormify.enumToInt
+import kotlin.jvm.JvmOverloads
+import kotlin.jvm.JvmStatic
 import kotlin.math.min
 import kotlin.reflect.KClass
 
 /**
- * Abstract base class for [PagedList] — contains the full column-based paginated-list
+ * Abstract base class for `PagedList` — contains the full column-based paginated-list
  * implementation. Users do not instantiate this directly; use the platform-specific
  * `PagedList` subclass instead (it provides language-idiomatic constructors for Kotlin
  * and Java).
@@ -260,6 +262,11 @@ abstract class PagedListBase<T : Any> internal constructor(
     private var upperBound = 0 // exclusive
     private var _size: Int? = null
 
+    /**
+     * Total number of rows that match the current filters and constraints. The first
+     * access issues a `COUNT(*)` (or `COUNT(DISTINCT ...)` if [isDistinct]) query; the
+     * result is cached until any filter, sort, constraint, or distinct setting changes.
+     */
     override val size: Int
         get() = _size ?: run {
             val (query, arguments) = constraintPart
@@ -269,6 +276,11 @@ abstract class PagedListBase<T : Any> internal constructor(
             ) ?: 0).also { _size = it }
         }
 
+    /**
+     * Returns the row at [index]. If the row is not in the currently cached page, a new
+     * page is loaded around that index. Out-of-range indices propagate the underlying
+     * `IndexOutOfBoundsException` from the loaded page.
+     */
     override fun get(index: Int): T = ensurePage(index)[index - lowBound]
 
     /**
@@ -528,6 +540,7 @@ abstract class PagedListBase<T : Any> internal constructor(
         else if (inputParser !== NoInputParser) inputParser
         else defaultInputParser
 
+    /** Global configuration shared by every `PagedList` instance. */
     companion object {
         /**
          * Global input parser for all PagedList instances. Overridden by

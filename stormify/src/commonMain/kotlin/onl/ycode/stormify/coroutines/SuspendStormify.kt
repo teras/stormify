@@ -78,6 +78,7 @@ import kotlin.coroutines.coroutineContext
  * from outside any `transaction { }` block — each gets its own pool connection.
  */
 public class SuspendStormify internal constructor(
+    /** The blocking [Stormify] instance this suspend API wraps. Use it when you need the non-suspending API alongside. */
     public val stormify: Stormify,
     internal val pool: SuspendConnectionPool,
 ) {

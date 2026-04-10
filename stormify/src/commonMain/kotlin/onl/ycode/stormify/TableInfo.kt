@@ -15,6 +15,8 @@ import kotlin.reflect.KClass
  * @property type the Kotlin type of the property
  * @property isPrimaryKey whether this field is part of the entity's primary key
  * @property isReference whether this field is a foreign key reference to another entity
+ * @property isEnum whether the property type is a Kotlin/Java enum
+ * @property enumAsString whether enum values are stored as their string name (`true`) or ordinal/custom integer (`false`)
  * @property sequence the database sequence name used to generate values, or null if not sequence-backed
  * @property isAutoIncrement whether the database auto-generates values for this field (e.g. IDENTITY columns)
  * @property isInsertable whether this field is included in INSERT statements
@@ -145,7 +147,7 @@ class TableInfo<T : Any> internal constructor(
     fun getField(name: String): FieldInfo? =
         fieldInfos.find { it.name.equals(name, ignoreCase = true) }
 
-    companion object {
+    internal companion object {
         @Suppress("UNCHECKED_CAST")
         internal fun <T : Any> build(
             meta: EntityMeta<T>,

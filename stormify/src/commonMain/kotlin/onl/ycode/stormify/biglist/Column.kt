@@ -4,18 +4,19 @@
 
 package onl.ycode.stormify.biglist
 
+import kotlin.jvm.JvmField
 
 /**
- * Represents a column in a [PagedList] — the unit of filtering and sorting.
+ * Represents a column in a [PagedListBase] — the unit of filtering and sorting.
  *
  * A column can contain one or more field paths. When multiple fields are present,
  * filtering uses OR logic between them (e.g., searching "firstName" OR "lastName"),
  * while filtering between different columns uses AND logic.
  *
- * Columns are defined at setup time via [PagedList.addColumn] or [PagedList.addRawColumn].
+ * Columns are defined at setup time via [PagedListBase.addColumn] or [PagedListBase.addRawColumn].
  * After setup, the user activates/deactivates filters and sorting at runtime.
  *
- * @param T The entity type of the parent [PagedList]
+ * @param T The entity type of the parent [PagedListBase]
  */
 class Column<T : Any> internal constructor(
     private val pagedList: PagedListBase<T>,
@@ -48,6 +49,7 @@ class Column<T : Any> internal constructor(
         RAW
     }
 
+    /** Exposes column [Type] and [SortState] constants as short aliases (e.g. `Column.TEXT`, `Column.ASCENDING`). */
     companion object {
         /** Text column type. */
         @JvmField val TEXT = Type.TEXT
@@ -118,8 +120,8 @@ class Column<T : Any> internal constructor(
      * Resolution order: column → list → global → identity (no transformation).
      * Set to [NoInputParser] (default) to fall through to the next level.
      *
-     * @see PagedList.inputParser
-     * @see PagedList.defaultInputParser
+     * @see PagedListBase.inputParser
+     * @see PagedListBase.defaultInputParser
      */
     var inputParser: InputParser = NoInputParser
 
@@ -153,16 +155,21 @@ class Column<T : Any> internal constructor(
  * - `"name"` — direct field on the entity
  * - `"contactPerson.firstName"` — FK traversal to related entity's field
  */
-data class FieldPath(val segments: List<String>) {
+data class FieldPath(
+    /** The ordered path segments, e.g. `["contactPerson", "firstName"]`. */
+    val segments: List<String>
+) {
     init {
         require(segments.isNotEmpty()) { "Field path cannot be empty" }
     }
 
+    /** Builds a path from a dot-notation string such as `"contactPerson.firstName"`. */
     constructor(dotPath: String) : this(dotPath.split("."))
 
     /** The full dot-notation path string. */
     val path: String get() = segments.joinToString(".")
 
+    /** Returns the dot-notation path string. */
     override fun toString() = path
 }
 
@@ -198,9 +205,9 @@ fun interface SqlArgsCollector {
 /**
  * Generates the SQL condition for a custom (raw) column's filter. Implementations receive
  * the column expression and the user-typed filter value, and must return a SQL fragment
- * (e.g. `"col = ?"`). Bind parameters are added via [args].
+ * (e.g. `"col = ?"`). Bind parameters are added via the [SqlArgsCollector] callback.
  */
 fun interface SqlGenerator {
-    /** Returns the SQL fragment and stages its parameters via [args]. */
+    /** Returns the SQL fragment and stages its parameters via the [SqlArgsCollector] callback. */
     fun generate(column: String, value: String, args: SqlArgsCollector): String
 }

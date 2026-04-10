@@ -199,7 +199,7 @@ internal object JavaTypeConverters {
         try {
             val vendorClass = Class.forName(vendorClassName).kotlin
             val method = Class.forName(vendorClassName).getMethod(methodName)
-            val toStandard: (Any) -> Any = { method.invoke(it) }
+            val toStandard: (Any) -> Any = { method.invoke(it)!! }
             registry.getOrPut(standardType) { mutableMapOf() }[vendorClass] = toStandard
             for ((targetClass, converters) in registry) {
                 val standardToTarget = converters[standardType]

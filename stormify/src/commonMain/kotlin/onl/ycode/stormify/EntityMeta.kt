@@ -29,6 +29,8 @@ fun interface EntityRegistrar {
  * @property isCreatable whether this property is included in INSERT statements
  * @property isUpdatable whether this property is included in UPDATE statements
  * @property isTransient whether this property should be excluded from all database operations
+ * @property isEnum whether the property type is a Kotlin/Java enum
+ * @property enumAsString whether enum values are stored as their string name (`true`) or ordinal/custom integer (`false`)
  */
 class PropertyMeta<T : Any>(
     val name: String,
@@ -65,6 +67,7 @@ class EntityMeta<T : Any>(
     val properties: List<PropertyMeta<T>>,
     val tableNameOverride: String?,
 ) {
+    /** Global registry of compile-time entity metadata, populated by [EntityRegistrar] callbacks. */
     companion object {
         private val registry = mutableMapOf<KClass<*>, EntityMeta<*>>()
 
@@ -83,7 +86,7 @@ class EntityMeta<T : Any>(
 /**
  * Registry for enum classes, used by native targets where reflection is not available.
  * On JVM, enum operations use reflection directly and this registry is not needed.
- * On native, the annotation processor generates calls to [registerEnum] at startup.
+ * On native, the annotation processor generates calls to [register] at startup.
  */
 object EnumRegistry {
     private data class EnumFunctions(
@@ -94,20 +97,38 @@ object EnumRegistry {
 
     private val registry = mutableMapOf<KClass<*>, EnumFunctions>()
 
+    /**
+     * Registers conversion lambdas for the given enum class. Called by annproc-generated
+     * code at startup; user code normally does not invoke this directly.
+     */
     fun register(enumClass: KClass<*>, fromInt: (Int) -> Any?, toInt: (Any) -> Int, fromName: (String) -> Any?) {
         registry[enumClass] = EnumFunctions(fromInt, toInt, fromName)
     }
 
+    /** Returns `true` if [enumClass] has been registered via [register]. */
     fun isRegistered(enumClass: KClass<*>): Boolean = registry.containsKey(enumClass)
 
+    /**
+     * Returns the enum constant of [enumClass] whose integer value (ordinal or
+     * [DbValue.dbValue]) is [value], or `null` if [enumClass] is not registered or no
+     * matching constant exists.
+     */
     @Suppress("UNCHECKED_CAST")
     fun <T : Any> fromInt(enumClass: KClass<T>, value: Int): T? =
         registry[enumClass]?.fromInt?.invoke(value) as T?
 
+    /**
+     * Returns the enum constant of [enumClass] whose name is [name] (case-insensitive),
+     * or `null` if [enumClass] is not registered or no matching constant exists.
+     */
     @Suppress("UNCHECKED_CAST")
     fun <T : Any> fromName(enumClass: KClass<T>, name: String): T? =
         registry[enumClass]?.fromName?.invoke(name) as T?
 
+    /**
+     * Returns the integer value (ordinal or [DbValue.dbValue]) for the given enum
+     * constant, or `null` if the constant's class has not been registered.
+     */
     fun toInt(value: Any): Int? =
         registry[value::class]?.toInt?.invoke(value)
 }

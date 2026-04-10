@@ -27,9 +27,15 @@ open class Stormify(val dataSource: DataSource, vararg registrars: EntityRegistr
         for (r in registrars) r.register()
     }
 
+    /** Holds the library-wide [defaultInstance] used when no instance is explicitly attached. */
     companion object {
-        /** The default Stormify instance, used by [AutoTable] when no explicit instance is set. */
         private val _defaultInstance = kotlinx.atomicfu.atomic<Stormify?>(null)
+
+        /**
+         * The default Stormify instance, used by [AutoTable], `PagedList`, and the
+         * Kotlin entity extensions when no instance is explicitly attached. Set this
+         * once at startup via [asDefault]; callers can then omit the receiver.
+         */
         var defaultInstance: Stormify?
             get() = _defaultInstance.value
             private set(value) {

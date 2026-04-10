@@ -499,16 +499,16 @@ private fun bindValue(stmt: CPointer<kdbc_stmt>, idx: Int, value: Any?) {
         is BigDecimal -> bindBigDecimal(stmt, idx, value)
         is LocalDateTime -> kdbc_bind_timestamp(
             stmt, idx,
-            value.year, value.monthNumber, value.day,
+            value.year, value.month.ordinal + 1, value.day,
             value.hour, value.minute, value.second, value.nanosecond / 1000
         )
-        is LocalDate -> kdbc_bind_date(stmt, idx, value.year, value.monthNumber, value.day)
+        is LocalDate -> kdbc_bind_date(stmt, idx, value.year, value.month.ordinal + 1, value.day)
         is LocalTime -> kdbc_bind_time(stmt, idx, value.hour, value.minute, value.second, value.nanosecond / 1000)
         is KtInstant -> {
             val ldt = value.toLocalDateTime(kotlinx.datetime.TimeZone.currentSystemDefault())
             kdbc_bind_timestamp(
                 stmt, idx,
-                ldt.year, ldt.monthNumber, ldt.day,
+                ldt.year, ldt.month.ordinal + 1, ldt.day,
                 ldt.hour, ldt.minute, ldt.second, ldt.nanosecond / 1000
             )
         }

@@ -82,6 +82,11 @@ fun String.procedure(vararg args: Any?) = stormify().procedure(this, *args)
 class db<T>(private val defaultValue: T) : ReadWriteProperty<Any?, T> {
     private var prop: T = defaultValue
 
+    /**
+     * Delegate read: triggers lazy-load from the database on first access when the
+     * entity is a [AutoTable] stub (i.e. only its primary key is set and no `db` field
+     * has been written yet). Otherwise returns the in-memory value.
+     */
     override fun getValue(thisRef: Any?, property: KProperty<*>): T {
         val entity = thisRef as? AutoTable
         if (entity != null && !entity.`!hasRun`.value && !entity.`!userTouched`) {
@@ -100,6 +105,11 @@ class db<T>(private val defaultValue: T) : ReadWriteProperty<Any?, T> {
         return prop
     }
 
+    /**
+     * Delegate write: marks the owning [AutoTable] as user-touched so it is no longer
+     * considered a stub (which prevents a subsequent read from triggering lazy-load),
+     * then stores the new value in memory. No immediate database write.
+     */
     override fun setValue(thisRef: Any?, property: KProperty<*>, value: T) {
         val entity = thisRef as? AutoTable
         entity?.populate()

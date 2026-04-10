@@ -25,6 +25,7 @@ class PagedList<T : Any> : PagedListBase<T> {
     /** Construct for the given Java class — the Java-friendly constructor. */
     constructor(entityClass: Class<T>) : super(entityClass.kotlin)
 
+    /** Java-facing re-exports of [PagedListBase] globals so callers can write `PagedList.NULL` / `PagedList.defaultInputParser` directly. */
     companion object {
         /**
          * Global input parser for all PagedList instances. Backed by

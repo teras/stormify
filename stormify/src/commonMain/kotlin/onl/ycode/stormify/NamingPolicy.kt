@@ -10,6 +10,7 @@ fun interface NamingPolicy {
     /** Converts a Kotlin name (e.g. `firstName`) to a database name (e.g. `first_name`). */
     fun convert(name: String): String
 
+    /** Built-in naming policies. Use as `NamingPolicy.LOWER_CASE_WITH_UNDERSCORES`, etc. */
     companion object {
         /** Keeps names as-is (camelCase). */
         val CAMEL_CASE: NamingPolicy = NamingPolicy { it }

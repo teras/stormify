@@ -8,7 +8,7 @@ import kotlin.reflect.KClass
  * This class is used by all KDBC drivers (Oracle, MariaDB, PostgreSQL, SQLite) to return
  * generated primary key values after INSERT operations.
  */
-class GeneratedKeysResultSet(private val generatedKey: Long) : ResultSet {
+internal class GeneratedKeysResultSet(private val generatedKey: Long) : ResultSet {
     private var consumed = false
 
     override fun next(): Boolean {

@@ -18,6 +18,7 @@ import kotlin.reflect.KClass
  * See [PagedListBase] for the full API (filtering, sorting, pagination, etc.).
  */
 class PagedList<T : Any>(classType: KClass<T>) : PagedListBase<T>(classType) {
+    /** Re-exports [PagedListBase] globals so native callers can write `PagedList.NULL` / `PagedList.defaultInputParser` directly. */
     companion object {
         /**
          * Global input parser for all PagedList instances. Backed by

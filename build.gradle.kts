@@ -71,10 +71,15 @@ tasks.register("publishDocs") {
     group = "documentation"
     description = "Deploy documentation site to stormify.org (run createDocs first)"
     dependsOn("createDocs")
+    // No declared outputs, so force execution on every invocation — otherwise Gradle
+    // caches this task as UP-TO-DATE and silently skips the rsync upload.
+    outputs.upToDateWhen { false }
     doLast {
-        ProcessBuilder(
+        val exitCode = ProcessBuilder(
             "rsync", "-ravz", "-e", "ssh -p 1971", "--delete",
             "docs/build/", "teras@yot.is:~/web/stormify.org/"
         ).inheritIO().start().waitFor()
+        if (exitCode != 0)
+            throw GradleException("rsync failed with exit code $exitCode — docs not uploaded")
     }
 }

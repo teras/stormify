@@ -11,7 +11,7 @@ import kotlin.reflect.KClass
  * Registers conversions between ionspin bignum types and Kotlin primitives.
  *
  * This class is loaded lazily — on JVM, if ionspin is not in the classpath,
- * the class fails to load with [NoClassDefFoundError] and registration is skipped.
+ * the class fails to load with `NoClassDefFoundError` and registration is skipped.
  * On native, ionspin is always available.
  */
 internal object IonspinConverters {

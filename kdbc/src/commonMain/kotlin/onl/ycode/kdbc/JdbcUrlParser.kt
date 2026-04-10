@@ -5,11 +5,19 @@ package onl.ycode.kdbc
 /**
  * Supported database kinds. Corresponds 1:1 with the `kdbc_driver` C enum.
  */
-enum class KdbcDriverKind(val cValue: Int) {
+enum class KdbcDriverKind(
+    /** The integer value used by the `kdbc_driver` C enum. Passed to `kdbc_connect` on native targets. */
+    val cValue: Int
+) {
+    /** SQLite (native libsqlite3 or JVM SQLite JDBC). */
     SQLITE(0),
+    /** PostgreSQL (native libpq or JVM JDBC). */
     POSTGRES(1),
+    /** MariaDB / MySQL — one driver serves both (native libmariadb or JVM JDBC). */
     MARIADB(2),
+    /** Oracle Database (native ODPI-C or JVM JDBC). */
     ORACLE(3),
+    /** Microsoft SQL Server (native FreeTDS or JVM JDBC). */
     MSSQL(4);
 }
 
@@ -51,7 +59,7 @@ data class ParsedJdbcUrl(
  * jdbc:sqlserver://host:port;databaseName=db;user=x;password=y
  * ```
  *
- * Explicit [user] / [password] arguments override any values in the URL.
+ * Explicit `user` / `password` arguments to [parse] override any values in the URL.
  * Unknown URL parameters are returned in [ParsedJdbcUrl.extraParams].
  *
  * @throws SQLException for malformed or unsupported URLs.
@@ -60,6 +68,11 @@ object JdbcUrlParser {
 
     private const val JDBC_PREFIX = "jdbc:"
 
+    /**
+     * Parses [url] into a [ParsedJdbcUrl]. See the class KDoc for supported JDBC prefixes
+     * and behaviour. Explicit `user` / `password` override any credentials embedded in
+     * the URL's query string.
+     */
     fun parse(url: String, user: String? = null, password: String? = null): ParsedJdbcUrl {
         if (!url.startsWith(JDBC_PREFIX))
             throw SQLException("JDBC URL must start with 'jdbc:': $url")

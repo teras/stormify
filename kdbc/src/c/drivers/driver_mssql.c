@@ -729,7 +729,7 @@ static int tds_bind_time(kdbc_stmt *stmt, int idx,
  * sp_executesql's inner statement references the named parameters. Uses the
  * shared sql_scan_char state machine so it respects single-quoted strings
  * (including escaped `''`), double-quoted identifiers (with QUOTED_IDENTIFIER
- * ON), `-- line comments`, and `/* block comments *​/`.
+ * ON), `-- line comments`, and C-style block comments.
  *
  * NULL params are inlined as literal `NULL` rather than declared in the
  * @params list: sp_executesql requires a concrete type for each declared
@@ -1087,7 +1087,7 @@ static int tds_execute_update(kdbc_stmt *stmt) {
     }
 
     if (failed) {
-        STMT_ERR(stmt, "MSSQL: %s", g_last_msg[0] ? g_last_msg : "command failed");
+        STMT_ERR(stmt, "MSSQL: %.1000s", g_last_msg[0] ? g_last_msg : "command failed");
         return KDBC_ERROR;
     }
 
