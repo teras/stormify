@@ -2,6 +2,7 @@
 // (C) Panayotis Katsaloulis
 package test
 
+import kotlinx.datetime.LocalDate
 import onl.ycode.stormify.*
 
 @DbTable(name = "test")
@@ -167,32 +168,38 @@ data class GenericHolder<T>(
     var value: T? = null
 )
 
-// --- Enums ---
+// --- Tree / deep FK chain ---
 
-enum class PlainStatus { ACTIVE, INACTIVE, BANNED }
-
-enum class CustomStatus(override val dbValue: Int) : DbValue {
-    ACTIVE(10),
-    INACTIVE(20),
-    BANNED(99)
-}
-
-@DbTable(name = "enum_test")
-data class EnumEntity(
+@DbTable(name = "tree_node")
+data class TreeNode(
     @DbField(primaryKey = true) var id: Int = 0,
-    var plainStatus: PlainStatus? = null,
-    var customStatus: CustomStatus? = null
+    var name: String? = null,
+    var parent: TreeNode? = null
 )
 
-@DbTable(name = "enum_notnull_test")
-data class EnumNotNullEntity(
+@DbTable(name = "country")
+data class Country(
     @DbField(primaryKey = true) var id: Int = 0,
-    var status: PlainStatus = PlainStatus.ACTIVE
+    var name: String? = null
 )
 
-@DbTable(name = "enum_string_test")
-data class EnumStringEntity(
+@DbTable(name = "city")
+data class City(
     @DbField(primaryKey = true) var id: Int = 0,
-    @DbField(enumAsString = true) var status: PlainStatus? = null,
-    var priority: PlainStatus? = null  // ordinal for comparison
+    var name: String? = null,
+    var country: Country? = null
+)
+
+@DbTable(name = "person")
+data class Person(
+    @DbField(primaryKey = true) var id: Int = 0,
+    var name: String? = null,
+    var city: City? = null
+)
+
+@DbTable(name = "event")
+data class Event(
+    @DbField(primaryKey = true) var id: Int = 0,
+    var title: String? = null,
+    var eventDate: LocalDate? = null
 )

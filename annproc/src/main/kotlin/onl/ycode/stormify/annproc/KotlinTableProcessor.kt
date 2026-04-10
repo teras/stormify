@@ -43,52 +43,33 @@ class KotlinTableProcessor(private val env: SymbolProcessorEnvironment) : Symbol
             .toSet()
 
         val entities = (explicit + implicit).filter { it.classKind.name == "CLASS" }.toSet()
-        if (entities.isNotEmpty())
+        if (entities.isNotEmpty()) {
             generateRegistrar(entities)
+            generatePaths(entities)
+        }
         return emptyList()
     }
 
     private fun generateRegistrar(entities: Collection<KSClassDeclaration>) {
-        // Collect all enum types used in entity properties
-        val enumTypes = mutableSetOf<String>()
-        val entityProps = entities.associateWith { EntityProperty.find(it) }
-        entityProps.values.forEach { props ->
-            props.filter { it.isEnum }.forEach { enumTypes.add(it.type) }
-        }
-
-        env.codeGenerator.createNewFile(Dependencies(false), "db.stormify", "Registrar").bufferedWriter().use { w ->
+        env.codeGenerator.createNewFile(Dependencies(true), "db.stormify", "Registrar").bufferedWriter().use { w ->
             w.write("package db.stormify\n\n")
             w.write("import kotlinx.atomicfu.atomic\n")
-            w.write("import onl.ycode.stormify.DbValue\n")
             w.write("import onl.ycode.stormify.EntityMeta\n")
             w.write("import onl.ycode.stormify.EntityRegistrar\n")
-            w.write("import onl.ycode.stormify.EnumRegistry\n")
             w.write("import onl.ycode.stormify.PropertyMeta\n")
             w.write("import onl.ycode.stormify.Stormify\n")
             w.write("import onl.ycode.stormify.TypeUtils.castTo\n\n")
             entities.forEach { w.write("import ${it.qualifiedName?.asString()}\n") }
-            enumTypes.forEach { w.write("import $it\n") }
 
             w.write("\nobject GeneratedEntities : EntityRegistrar {\n")
             w.write("    private val initialized = atomic(false)\n\n")
             w.write("    override fun register() {\n")
             w.write("        if (!initialized.compareAndSet(false, true)) return\n\n")
 
-            // Register enum types
-            enumTypes.forEach { enumFqn ->
-                val simpleName = enumFqn.substringAfterLast('.')
-                w.write("        EnumRegistry.register(\n")
-                w.write("            $simpleName::class,\n")
-                w.write("            { v -> $simpleName.entries.let { e -> if (e.firstOrNull() is DbValue) e.firstOrNull { (it as DbValue).dbValue == v } else e.getOrNull(v) } },\n")
-                w.write("            { v -> if (v is DbValue) v.dbValue else (v as Enum<*>).ordinal },\n")
-                w.write("            { n -> $simpleName.entries.firstOrNull { it.name.equals(n, ignoreCase = true) } }\n")
-                w.write("        )\n\n")
-            }
-
             entities.forEach { entity ->
                 val className = entity.simpleName.asString()
                 val tableName = EntityProperty.findTableName(entity)
-                val props = entityProps[entity]!!
+                val props = EntityProperty.find(entity)
                 val typeParams = entity.typeParameters.size
                 writeEntityMeta(w, className, tableName, props, typeParams)
             }
@@ -96,6 +77,57 @@ class KotlinTableProcessor(private val env: SymbolProcessorEnvironment) : Symbol
             w.write("    }\n")
             w.write("}\n")
         }
+    }
+
+    private fun generatePaths(entities: Collection<KSClassDeclaration>) {
+        val entityQNames = entities.mapNotNull { it.qualifiedName?.asString() }.toSet()
+        val entityProps = entities.associate { it.simpleName.asString() to EntityProperty.find(it) }
+
+        env.codeGenerator.createNewFile(Dependencies(true), "db.stormify", "Paths").bufferedWriter().use { w ->
+            w.write("@file:Suppress(\"unused\")\n")
+            w.write("package db.stormify\n\n")
+            w.write("import onl.ycode.stormify.biglist.ScalarPath\n\n")
+
+            // Generate a Ref class per entity
+            for (entity in entities) {
+                val className = entity.simpleName.asString()
+                val props = entityProps[className] ?: continue
+                writeRefClass(w, className, props, entityQNames)
+            }
+
+            // Root objects inside Paths
+            w.write("object Paths {\n")
+            for (entity in entities) {
+                val className = entity.simpleName.asString()
+                w.write("    @JvmField val ${className}_ = ${className}Ref(\"\")\n")
+            }
+            w.write("}\n")
+        }
+    }
+
+    private fun writeRefClass(
+        w: Writer,
+        className: String,
+        props: Collection<EntityProperty>,
+        entityQNames: Set<String>
+    ) {
+        w.write("class ${className}Ref(private val p: String) {\n")
+
+        for (prop in props) {
+            if (prop.isReference) {
+                val refTypeName = prop.type
+                val shortName = refTypeName.substringAfterLast(".")
+                val isKnownEntity = entityQNames.any { it.endsWith(".$shortName") || it == refTypeName }
+                if (!isKnownEntity) continue
+
+                w.write("    @get:JvmName(\"${prop.name}\")\n")
+                w.write("    val ${prop.name} get() = ${shortName}Ref(\"\${p}${prop.name}.\")\n")
+            } else {
+                w.write("    @JvmField val ${prop.name} = ScalarPath(\"\${p}${prop.name}\")\n")
+            }
+        }
+
+        w.write("}\n\n")
     }
 
     private fun writeEntityMeta(
@@ -136,8 +168,8 @@ class KotlinTableProcessor(private val env: SymbolProcessorEnvironment) : Symbol
             w.write("                    ${if (prop.dbname != prop.name) "\"${prop.dbname}\"" else "null"},\n")
             w.write("                    ${prop.primary},\n")
             w.write("                    ${if (prop.sequence.isNotBlank()) "\"${prop.sequence}\"" else "null"},\n")
-            // Order: isAutoIncrement, isCreatable, isUpdatable, isTransient, isEnum, enumAsString
-            w.write("                    ${prop.autoIncrement}, ${prop.insertable}, ${prop.updatable}, false, ${prop.isEnum}, ${prop.enumAsString}\n")
+            // Order: isAutoIncrement, isCreatable, isUpdatable, isTransient
+            w.write("                    ${prop.autoIncrement}, ${prop.insertable}, ${prop.updatable}, false\n")
             w.write("                )$comma\n")
         }
 

@@ -96,7 +96,7 @@ internal object JavaTypeConverters {
             java.sql.Timestamp::class to { (it as java.sql.Timestamp).time },
             java.sql.Time::class to { (it as java.sql.Time).time },
             java.time.LocalDateTime::class to { (it as java.time.LocalDateTime).atZone(ZoneId.systemDefault()).toInstant().toEpochMilli() },
-            java.time.LocalDate::class to { (it as java.time.LocalDate).atStartOfDay(ZoneId.systemDefault()).toInstant().toEpochMilli() },
+            java.time.LocalDate::class to { (it as java.time.LocalDate).atTime(12, 0).atZone(ZoneId.systemDefault()).toInstant().toEpochMilli() },
             java.time.LocalTime::class to { (it as java.time.LocalTime).atDate(java.time.LocalDate.now()).toInstant(ZonedDateTime.now().offset).toEpochMilli() },
         )
         val kotlinxFromMillis: List<Pair<KClass<*>, (Long) -> Any>> = listOf(
@@ -145,7 +145,7 @@ internal object JavaTypeConverters {
             toNative((it as java.time.LocalDateTime).atZone(ZoneId.systemDefault()).toInstant().toEpochMilli())
         }
         if (destClass != java.time.LocalDate::class) converters[java.time.LocalDate::class] = {
-            toNative((it as java.time.LocalDate).atStartOfDay(ZoneId.systemDefault()).toInstant().toEpochMilli())
+            toNative((it as java.time.LocalDate).atTime(12, 0).atZone(ZoneId.systemDefault()).toInstant().toEpochMilli())
         }
         if (destClass != java.time.LocalTime::class) converters[java.time.LocalTime::class] = {
             toNative(
@@ -156,7 +156,7 @@ internal object JavaTypeConverters {
         if (supportsKotlinxTime) {
             if (destClass != kotlinx.datetime.LocalDate::class) converters[kotlinx.datetime.LocalDate::class] = {
                 toNative(
-                    kotlinx.datetime.LocalDateTime(it as kotlinx.datetime.LocalDate, kotlinx.datetime.LocalTime(0, 0))
+                    kotlinx.datetime.LocalDateTime(it as kotlinx.datetime.LocalDate, kotlinx.datetime.LocalTime(12, 0))
                         .toInstant(kotlinx.datetime.TimeZone.currentSystemDefault()).toEpochMilliseconds()
                 )
             }
@@ -217,7 +217,7 @@ internal object JavaTypeConverters {
             java.time.LocalDateTime.parse(s).atZone(ZoneId.systemDefault()).toInstant().toEpochMilli()
         } catch (_: Exception) {
             try {
-                java.time.LocalDate.parse(s).atStartOfDay(ZoneId.systemDefault()).toInstant().toEpochMilli()
+                java.time.LocalDate.parse(s).atTime(12, 0).atZone(ZoneId.systemDefault()).toInstant().toEpochMilli()
             } catch (e: Exception) {
                 throw SQLException("Unable to parse temporal string: $s", e)
             }

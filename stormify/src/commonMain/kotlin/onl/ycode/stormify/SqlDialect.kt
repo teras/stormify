@@ -22,20 +22,23 @@ private val sequenceMariaDb = { it: String, count: Int -> "SELECT NEXTVAL($it) F
  ********************************************************************/
 
 private val formatterLimitOffset =
-    { distinct: String, tableName: String, constraints: String, sorting: String, lowBound: Int, upperBound: Int ->
-        "SELECT " + distinct + "* FROM " + tableName + constraints + " ORDER BY " + sorting + " LIMIT " + (upperBound - lowBound) + " OFFSET " + lowBound
+    { columns: String, distinct: String, tableName: String, constraints: String, sorting: String, lowBound: Int, upperBound: Int ->
+        "SELECT $distinct$columns FROM $tableName$constraints ORDER BY $sorting LIMIT ${upperBound - lowBound} OFFSET $lowBound"
     }
 
 private val formatterRowsFetch =
-    { distinct: String, tableName: String, constraints: String, sorting: String, lowBound: Int, upperBound: Int ->
-        "SELECT " + distinct + "* FROM " + tableName + constraints + " ORDER BY " + sorting + " OFFSET " + lowBound + " ROWS FETCH NEXT " + (upperBound - lowBound) + " ROWS ONLY"
+    { columns: String, distinct: String, tableName: String, constraints: String, sorting: String, lowBound: Int, upperBound: Int ->
+        "SELECT $distinct$columns FROM $tableName$constraints ORDER BY $sorting OFFSET $lowBound ROWS FETCH NEXT ${upperBound - lowBound} ROWS ONLY"
     }
 
 private val formatterRowNumber =
-    { distinct: String, tableName: String, constraints: String, sorting: String, lowBound: Int, upperBound: Int ->
-        ("SELECT * FROM (SELECT " + distinct + tableName
-                + ".*, ROW_NUMBER() OVER (ORDER BY " + sorting + ") rn from " + tableName + constraints
-                + ") b WHERE b.rn > " + lowBound + " AND b.rn <= " + upperBound + " ORDER BY rn")
+    { columns: String, distinct: String, tableName: String, constraints: String, sorting: String, lowBound: Int, upperBound: Int ->
+        // Oracle doesn't support `SELECT *, ROW_NUMBER()...` — use base table prefix
+        val baseTable = tableName.substringBefore(" ")
+        val innerColumns = if (columns == "*") "$baseTable.*" else columns
+        // Outer select uses unqualified column names (subquery alias scope)
+        val outerColumns = if (columns == "*") "*" else columns.substringAfterLast(".")
+        "SELECT $outerColumns FROM (SELECT $distinct$innerColumns, ROW_NUMBER() OVER (ORDER BY $sorting) rn FROM $tableName$constraints) b WHERE b.rn > $lowBound AND b.rn <= $upperBound ORDER BY rn"
     }
 
 /***********************************************************************
@@ -137,7 +140,7 @@ enum class SqlDialect(
      *
      * @see QueryFormatter
      */
-    val queryFormatter: (distinct: String, tableName: String, constraints: String, sorting: String, lowBound: Int, upperBound: Int) -> String,
+    val queryFormatter: (columns: String, distinct: String, tableName: String, constraints: String, sorting: String, lowBound: Int, upperBound: Int) -> String,
     /**
      * The method to create the query, how to retrieve the generated key from the database.
      */
@@ -292,6 +295,41 @@ enum class SqlDialect(
         BY_NAME,
         /** No automatic generated key retrieval (Oracle, UNKNOWN). */
         NONE
+    }
+
+    /**
+     * Returns the column expression and LIKE operator for case-insensitive matching.
+     * - PostgreSQL: uses `ILIKE` natively
+     * - MySQL, MariaDB, SQLite, SQL Server: `LIKE` is already case-insensitive
+     * - Oracle, H2, HSQLDB, Derby: wraps column in `LOWER()`
+     *
+     * @return Pair of (column expression, LIKE operator)
+     */
+    fun caseInsensitiveLike(column: String): Pair<String, String> = when (this) {
+        POSTGRESQL -> column to "ILIKE"
+        MYSQL_OLD, MYSQL_NEW, MARIA_DB_OLD, MARIA_DB_NEW,
+        SQL_SERVER_OLD, SQL_SERVER_NEW -> column to "LIKE"
+        else -> "LOWER($column)" to "LIKE"
+    }
+
+    /**
+     * Transforms the LIKE value for case-insensitive matching.
+     * Only lowercases on dialects that use `LOWER()` wrapping.
+     */
+    fun transformLikeValue(value: String): String = when (this) {
+        POSTGRESQL, MYSQL_OLD, MYSQL_NEW, MARIA_DB_OLD, MARIA_DB_NEW,
+        SQL_SERVER_OLD, SQL_SERVER_NEW -> value
+        else -> value.lowercase()
+    }
+
+    /**
+     * Returns the ESCAPE clause for LIKE expressions.
+     * MySQL/MariaDB treat `'\'` as an escape within string literals,
+     * so they need `'\\\\'` (double-escaped) while other databases use `'\\'.
+     */
+    fun likeEscapeClause(): String = when (this) {
+        MYSQL_OLD, MYSQL_NEW, MARIA_DB_OLD, MARIA_DB_NEW -> "ESCAPE '\\\\'"
+        else -> "ESCAPE '\\'"
     }
 
     internal fun prepareForInsert(
