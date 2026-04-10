@@ -158,6 +158,9 @@ class EntityProperty(declaration: KSPropertyDeclaration, entity: KSClassDeclarat
                 ?.mapNotNull { it.name?.asString() }?.toSet() ?: emptySet()
             return entity.getAllProperties().mapNotNull {
                 val propName = it.simpleName.asString()
+                // Skip library-internal backticked fields (convention: names starting with "!"
+                // are private/hidden storage — e.g. `!stormify`, `!hasRun`, `!siblingGroup`).
+                if (propName.startsWith("!")) return@mapNotNull null
                 if (propName in ctorParamNames) return@mapNotNull null
                 if (it.annotations.any { ann -> ann.annotationType.resolve().declaration.qualifiedName?.asString() == TRANSIENT })
                     return@mapNotNull null

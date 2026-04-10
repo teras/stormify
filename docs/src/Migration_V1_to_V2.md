@@ -309,25 +309,6 @@ val kdbcDataSource = JdbcDataSource(hikariDataSource)
 The `JdbcDataSource` wrapper has zero overhead — it delegates directly to the underlying
 JDBC types.
 
-## Coroutines (New)
-
-V2 adds optional coroutine support with connection pooling:
-
-```kotlin
-val stormify = Stormify(dataSource)
-val async = stormify.suspending(PoolConfig(
-    minConnections = 2,
-    maxConnections = 10,
-    acquireTimeout = 5.seconds,
-    idleTimeout = 10.minutes,
-))
-
-// All operations are suspend functions
-async.transaction {
-    val user = create(User(email = "test@example.com"))
-}
-```
-
 ## Removed APIs
 
 The following V1 APIs no longer exist in V2:

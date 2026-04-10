@@ -7,7 +7,6 @@ package onl.ycode.stormify
  * This allows entity-level operations (e.g. [AutoTable.populate]) to use the correct
  * Stormify instance without requiring it as an explicit parameter.
  */
-abstract class StormifyEntity {
-    @PublishedApi
-    internal var `!stormify`: Stormify? = null
+abstract class StormifyEntity : StormifyAware {
+    override var `!stormify`: Stormify? = null
 }

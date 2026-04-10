@@ -10,6 +10,7 @@ import kotlinx.datetime.toInstant
 import onl.ycode.stormify.SqlDialect
 import onl.ycode.stormify.Stormify
 import onl.ycode.stormify.biglist.Column
+import onl.ycode.stormify.biglist.InputParser
 import onl.ycode.stormify.biglist.PagedList
 import kotlin.test.*
 
@@ -459,7 +460,7 @@ class PagedListTest {
         val list = PagedList<TestC>()
         // Enum mapping: display name → DB value
         val nameMap = mapOf("Alice" to "Alice", "Bob" to "Bob", "Charlie" to "Charlie")
-        val col = list.addColumn("name", type = Column.ENUM, enumValues = nameMap)
+        val col = list.addEnumColumn(nameMap, "name")
         col.filter = "Ali"  // substring match → "Alice"
 
         assertEquals(1, list.size)
@@ -475,7 +476,7 @@ class PagedListTest {
 
         val list = PagedList<TestC>()
         val nameMap = mapOf("Active" to "Active", "Inactive" to "Inactive", "Archived" to "Archived")
-        val col = list.addColumn("name", type = Column.ENUM, enumValues = nameMap)
+        val col = list.addEnumColumn(nameMap, "name")
         col.filter = "active"  // case-insensitive → "Active", "Inactive"
 
         assertEquals(2, list.size)
@@ -490,7 +491,7 @@ class PagedListTest {
 
         val list = PagedList<TestC>()
         val nameMap = mapOf("Alice" to "Alice", "Bob" to "Bob")
-        val col = list.addColumn("name", type = Column.ENUM, enumValues = nameMap)
+        val col = list.addEnumColumn(nameMap, "name")
         col.filter = "xyz"  // no match → 0 results
 
         assertEquals(0, list.size)
@@ -826,12 +827,11 @@ class PagedListTest {
         setupTable(s, 10)
         val list = PagedList<TestC>()
         val isOracle = s.sqlDialect == SqlDialect.ORACLE_NEW || s.sqlDialect == SqlDialect.ORACLE_OLD
-        val col = list.addRawColumn("test.id", Column.RAW,
-            sqlGenerator = { column, value, args ->
-                val mod = value.toIntOrNull() ?: 0
-                args(mod)
-                if (isOracle) "MOD($column, ?) = 0" else "$column % ? = 0"
-            })
+        val col = list.addRawColumn("test.id", Column.RAW) { column, value, args ->
+            val mod = value.toIntOrNull() ?: 0
+            args.accept(mod)
+            if (isOracle) "MOD($column, ?) = 0" else "$column % ? = 0"
+        }
         col.filter = "3"
 
         assertEquals(3, list.size) // id 3, 6, 9
@@ -845,7 +845,7 @@ class PagedListTest {
         val list = PagedList<TestC>()
         val col = list.addColumn("id")
         // Simulate Greek locale: "1.000" means 1000, not 1.000
-        col.inputParser = { input, _ -> input.replace(".", "") }
+        col.inputParser = InputParser { input, _ -> input.replace(".", "") }
         col.filter = "> 1.000"
 
         // Without parser: "> 1.000" → "> 1.000" (error or wrong result)
@@ -858,7 +858,7 @@ class PagedListTest {
     fun testInputParserPerList() = withDb("PAGED-PARSER-LIST") { s ->
         setupTable(s, 20)
         val list = PagedList<TestC>()
-        list.inputParser = { input, type ->
+        list.inputParser = InputParser { input, type ->
             if (type == Column.NUMERIC) input.replace(".", "") else input
         }
         val col = list.addColumn("id")
@@ -872,7 +872,7 @@ class PagedListTest {
         val oldParser = PagedList.defaultInputParser
         try {
             // Simulate locale where dot is thousand separator
-            PagedList.defaultInputParser = { input, type ->
+            PagedList.defaultInputParser = InputParser { input, type ->
                 if (type == Column.NUMERIC) input.replace(".", "") else input
             }
             setupTable(s, 20)
@@ -891,16 +891,16 @@ class PagedListTest {
         val oldParser = PagedList.defaultInputParser
         try {
             // Global: replace comma
-            PagedList.defaultInputParser = { input, _ -> input.replace(",", ".") }
+            PagedList.defaultInputParser = InputParser { input, _ -> input.replace(",", ".") }
 
             setupTable(s, 20)
             val list = PagedList<TestC>()
             // List: replace dot
-            list.inputParser = { input, _ -> input.replace(".", "") }
+            list.inputParser = InputParser { input, _ -> input.replace(".", "") }
 
             val col = list.addColumn("id")
             // Column parser wins over list parser
-            col.inputParser = { input, _ -> input.replace("X", "1") }
+            col.inputParser = InputParser { input, _ -> input.replace("X", "1") }
             col.filter = "> X8"  // column parser: "X8" → "18"
 
             assertEquals(2, list.size) // ids 19, 20
@@ -911,7 +911,7 @@ class PagedListTest {
 
     // --- Date InputParser ---
 
-    private val dateParser: (String, Column.Type) -> String = { input, _ ->
+    private val dateParser: InputParser = InputParser { input, _ ->
         // InputParser receives individual values only (no operators)
         // Convert dd/MM/yyyy → yyyy-MM-dd
         val parts = input.split("/")
@@ -1056,7 +1056,7 @@ class PagedListTest {
         // The user types "Ενερ" — reverse substring lookup finds "Ενεργή" → "ACTIVE"
         // Note: "Ενερ" also matches "Ανενεργή" (contains "ενερ"), so we get 2 results
         val displayMap = HRStatus.entries.associate { it.displayName() to it.name }
-        val col = list.addColumn("name", type = Column.ENUM, enumValues = displayMap)
+        val col = list.addEnumColumn(displayMap, "name")
         col.filter = "Ενεργή"  // exact substring — matches "Ενεργή" and "Ανενεργή"
 
         // Should match both ACTIVE and INACTIVE (both contain "Ενεργή" in their display names)

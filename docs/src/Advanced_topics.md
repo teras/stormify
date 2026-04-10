@@ -240,12 +240,83 @@ class User : AutoTable() {
 
 Every non-key property that needs lazy loading uses `by db(defaultValue)`.
 
+### Fresh Construction vs. Lazy Stubs
+
+An `AutoTable` instance exists in one of three states, and `populate()` behaves accordingly.
+A `Stormify` instance is considered "available" when it is either directly attached to the
+entity (by a prior Stormify operation) **or** when a [default
+instance](Core_concepts.md#working-with-entities) has been registered via
+`Stormify.asDefault()`.
+
+| State | `Stormify` available? | User touched any `db` field? | Behavior on read |
+|-------|----------------------|-------------------------------|------------------|
+| **Fresh construct (detached)** — `User().apply { id=1; name="Alice" }` with no default instance | No | Yes (e.g., `name="Alice"`) | Returns in-memory value; no DB access |
+| **Manual stub / lazy reference** — `User().apply { id=1 }` where only the ID is set | Yes (via default instance) | No | First access triggers a `SELECT` to load the row |
+| **FK reference stub** — came from a foreign-key read; Stormify auto-attaches | Yes (directly) | No | First access triggers a `SELECT` to load the row |
+| **Populated** — came from `findById`/`findAll`/`create`, or has been lazy-loaded already | Yes | — | Returns in-memory value; no further DB access |
+| **Only-ID, no Stormify anywhere** — `User().apply { id=1 }` with no default instance | No | No | **Throws** `SQLException` — no way to load, and the library refuses to hand back silent defaults |
+
+Stormify distinguishes these states automatically. You don't need to mark anything — the
+combination of "is a Stormify reachable?" and "has the user written any delegated field?"
+is enough to pick the right behavior.
+
+#### Manual Stubs (Pattern)
+
+You can construct lazy stubs yourself — useful when you already have an ID in hand (e.g.
+from a URL parameter, a cache, or another table). Either attach a Stormify instance
+explicitly via `stormify.attach(...)`, or register a default via `asDefault()` and let
+the library pick it up:
+
+=== "Kotlin"
+
+    ```kotlin
+    // Explicit attach — works without a default instance
+    val user = stormify.attach(User().apply { id = userId })
+    println(user.name)    // triggers SELECT, returns the DB value
+    println(user.email)   // already loaded; no second query
+
+    // Or with a default instance — even simpler
+    stormify.asDefault()
+    val user2 = User().apply { id = userId }
+    println(user2.name)   // default instance picks up lazy-load
+    ```
+
+=== "Java"
+
+    ```java
+    // Explicit attach — works without a default instance
+    User user = stormify.attach(new User());
+    user.setId(userId);
+    System.out.println(user.getName());    // triggers SELECT
+    System.out.println(user.getEmail());   // already loaded
+
+    // Or with a default instance
+    stormify.asDefault();
+    User user2 = new User();
+    user2.setId(userId);
+    System.out.println(user2.getName());
+    ```
+
+This is exactly what `findById(userId)` does internally, with one difference: `findById`
+eagerly runs the `SELECT` and returns the populated entity, while the manual-stub pattern
+defers the query until the first field access. For "I might not actually read this" code
+paths, manual stubs save a round trip.
+
+The same `stormify.attach(target)` API works for any `StormifyAware` object — both
+entities and `PagedList` instances — so you only need to remember one pattern.
+
 ### Sibling Batch Optimization
 
 When multiple `AutoTable` references of the same type are created during a single read
 operation (e.g., many `Order` rows each referencing a `Customer`), those references are
 grouped into a **sibling group**. When any one of them triggers `populate()`, all
 siblings in the group are loaded in a single `SELECT ... WHERE id IN (...)` query.
+
+If any of the requested IDs are no longer present in the database at the time of the
+batch load, the whole call fails fast with an `SQLException("No data found for <table>
+with ids [<missing>]")`. This surfaces stale references (rows deleted in another session
+between when you obtained them and when you tried to access them) immediately instead of
+silently leaving affected entities empty.
 
 ### Lazy Details (Child Records)
 
@@ -588,6 +659,511 @@ Parameter types:
 | Input | `spIn(value)` or raw value | `Sp.In(value)` or raw value |
 | Output | `spOut<T>()` | `SpKt.outParam(Type.class)` |
 | Bidirectional | `spInOut(value)` | `SpKt.inOutParam(Type.class, value)` |
+
+## PagedList: Lazy Paginated Views
+
+`PagedList<T>` is a column-based, on-demand paginated list backed by the database. It
+targets UI scenarios — data grids, dropdown pickers, search screens — where you want to
+expose a potentially very large result set without materializing it in memory, while
+still supporting per-column filtering, sorting, and foreign-key traversal.
+
+It implements `kotlin.collections.AbstractList<T>` (and therefore Java's `List<T>`), so
+every `get(index)`, `size`, and `iterator()` call Just Works — the list loads pages
+behind the scenes.
+
+### Quick Start
+
+Construction takes only the entity type. The [Stormify] instance is attached separately
+(or resolved from [the default instance](Core_concepts.md#working-with-entities) if you
+have one registered), so the same class works identically from Kotlin and Java.
+
+=== "Kotlin"
+
+    ```kotlin
+    import onl.ycode.stormify.biglist.Column
+    import onl.ycode.stormify.biglist.PagedList
+    import db.stormify.Company_   // KSP-generated typed paths
+
+    // Construct and attach in one fluent call
+    val list = stormify.attach(PagedList<Company>())
+
+    list.addColumn(Company_.name)                                 // auto-detect TEXT
+    list.addColumn(Company_.contactPerson.firstName,              // OR across FK-traversed fields
+                   Company_.contactPerson.lastName)
+    list.addRawColumn("SUM(order_total)", Column.NUMERIC)
+
+    list.getColumn(0).filter = "Acme"
+    list.getColumn(1).sort = Column.ASCENDING
+
+    // Consume as a normal List
+    val firstCompany = list[0]                                    // triggers page load
+    val totalMatches = list.size                                  // triggers COUNT query
+    for (company in list) println(company.name)                   // streams page-by-page
+    ```
+
+=== "Java"
+
+    ```java
+    import onl.ycode.stormify.biglist.Column;
+    import onl.ycode.stormify.biglist.PagedList;
+    import db.stormify.Company_;   // KSP-generated typed paths
+
+    // Construct and attach in one fluent call
+    PagedList<Company> list = stormify.attach(new PagedList<>(Company.class));
+
+    list.addColumn(Company_.name);                                 // auto-detect TEXT
+    list.addColumn(Company_.contactPerson.firstName,               // OR across FK-traversed fields
+                   Company_.contactPerson.lastName);
+    list.addRawColumn("SUM(order_total)", Column.NUMERIC);
+
+    list.getColumn(0).setFilter("Acme");
+    list.getColumn(1).setSort(Column.ASCENDING);
+
+    // Consume as a normal List
+    Company firstCompany = list.get(0);                            // triggers page load
+    int totalMatches = list.size();                                // triggers COUNT query
+    for (Company c : list) System.out.println(c.getName());        // streams page-by-page
+    ```
+
+If you have set a default Stormify instance via `asDefault()`, you can skip the explicit
+`attach` — the list will pick up the default on first access:
+
+=== "Kotlin"
+
+    ```kotlin
+    stormify.asDefault()
+    val list = PagedList<Company>()        // no attach needed, uses default instance
+    ```
+
+=== "Java"
+
+    ```java
+    stormify.asDefault();
+    PagedList<Company> list = new PagedList<>(Company.class);
+    ```
+
+### Enabling Type-Safe Paths
+
+Typed paths like `Company_.name` are generated by the `annproc` KSP processor. Add it to
+your build (once; the same processor also generates entity metadata):
+
+=== "Gradle (Kotlin)"
+
+    ```kotlin
+    plugins {
+        id("com.google.devtools.ksp") version "2.2.20-2.0.2"
+    }
+
+    dependencies {
+        ksp("onl.ycode:annproc:2.0.0")
+    }
+    ```
+
+=== "Gradle (Java)"
+
+    ```groovy
+    plugins {
+        id 'com.google.devtools.ksp' version '2.2.20-2.0.2'
+    }
+
+    dependencies {
+        ksp 'onl.ycode:annproc:2.0.0'
+    }
+    ```
+
+For each entity class `Foo` the processor emits a `Foo_` object under the `db.stormify`
+package, with fields for each scalar property and nested objects for FK references. See
+[Annotation Processor](Core_concepts.md#annotation-processor-annproc) for the full setup.
+On Native/Android/iOS, `annproc` is **required** anyway (for entity metadata) — you get
+typed paths for free.
+
+### Columns
+
+A column is the unit of filtering and sorting. It can be backed by:
+
+- **A single entity field** — `addColumn(Company_.name)`
+- **Multiple fields with OR semantics** — `addColumn(Person_.firstName, Person_.lastName)`
+  filters with `firstName LIKE ? OR lastName LIKE ?`
+- **A foreign-key path** — `addColumn(Order_.customer.name)` auto-generates the JOIN
+- **A raw SQL expression** — `addRawColumn("SUM(total)", Column.NUMERIC)` for calculated columns
+
+Filters between different columns use AND semantics; multiple paths within the same
+column use OR.
+
+=== "Kotlin"
+
+    ```kotlin
+    val list = stormify.attach(PagedList<Order>())
+    val nameCol   = list.addColumn(Order_.customer.name)       // FK traversal
+    val statusCol = list.addColumn(Order_.status)              // scalar
+    val rawCol    = list.addRawColumn("total * tax_rate", Column.NUMERIC)
+
+    nameCol.filter = "Acme"
+    statusCol.filter = "ACTIVE"
+    // Both filters active → WHERE customer.name LIKE %Acme% AND status = 'ACTIVE'
+    ```
+
+=== "Java"
+
+    ```java
+    PagedList<Order> list = stormify.attach(new PagedList<>(Order.class));
+    Column<Order> nameCol   = list.addColumn(Order_.customer.name);
+    Column<Order> statusCol = list.addColumn(Order_.status);
+    Column<Order> rawCol    = list.addRawColumn("total * tax_rate", Column.NUMERIC);
+
+    nameCol.setFilter("Acme");
+    statusCol.setFilter("ACTIVE");
+    ```
+
+String paths with dot notation work too (`addColumn("customer.name")`) — useful for
+cross-cutting code where a field is chosen at runtime. Mix both styles freely.
+
+### Column Types and Filter Syntax
+
+Each column has a `Column.Type` that controls how the filter string is parsed. The type
+is auto-detected from the field's Kotlin type, or you can set it explicitly via the
+two-argument `addColumn(type, ...)` overload.
+
+#### Text (`Column.TEXT`)
+
+Case-insensitive by default. Supports several patterns:
+
+| Filter value  | Meaning |
+|--------------|---------|
+| `Alice`       | Substring match: `LIKE %Alice%` |
+| `*lice`       | Ends with: `LIKE %lice` |
+| `Ali*`        | Starts with: `LIKE Ali%` |
+| `"Alice"`     | Exact match (still case-insensitive unless `isCaseSensitive = true`) |
+
+Set `column.isCaseSensitive = true` for a case-sensitive column.
+
+#### Numeric (`Column.NUMERIC`)
+
+| Filter value  | Meaning |
+|--------------|---------|
+| `42`          | Equals |
+| `> 10`        | Greater than |
+| `>= 10`       | Greater than or equal |
+| `< 100`       | Less than |
+| `<= 100`      | Less than or equal |
+| `10 ... 20`   | Range (inclusive) |
+
+#### Temporal (`Column.TEMPORAL`)
+
+Covers `LocalDate`, `LocalTime`, `LocalDateTime`, `Instant`. Supports the same comparison
+operators and range syntax as `NUMERIC`. Values are parsed via the active [input
+parser](#input-parsing-and-locale).
+
+#### Enum (`Column.ENUM`)
+
+For enum-backed fields. Auto-detected when the field's Kotlin type is an enum. The filter
+string is matched (case-insensitively, as a substring) against the enum's display names.
+Multiple matching display names produce an `IN` clause of the corresponding DB values.
+
+=== "Kotlin"
+
+    ```kotlin
+    enum class Status { ACTIVE, INACTIVE, BANNED }
+
+    val list = stormify.attach(PagedList<User>())
+    list.addColumn(User_.status)            // auto-detects as ENUM
+    list.getColumn(0).filter = "active"     // matches ACTIVE and INACTIVE
+    ```
+
+=== "Java"
+
+    ```java
+    public enum Status { ACTIVE, INACTIVE, BANNED }
+
+    PagedList<User> list = stormify.attach(new PagedList<>(User.class));
+    list.addColumn(User_.status);
+    list.getColumn(0).setFilter("active");
+    ```
+
+To customize the display names (e.g., localized UI strings), implement the
+[`HumanReadable`](#humanreadable-display-names) interface on the enum. For non-enum
+fields that you want to treat as enums (or to override the auto-built map), use
+`addEnumColumn`:
+
+=== "Kotlin"
+
+    ```kotlin
+    val displayMap = mapOf("Ενεργός" to 1, "Ανενεργός" to 0)
+    list.addEnumColumn(displayMap, User_.statusCode)
+    ```
+
+=== "Java"
+
+    ```java
+    Map<String, Object> displayMap = Map.of("Ενεργός", 1, "Ανενεργός", 0);
+    list.addEnumColumn(displayMap, User_.statusCode);
+    ```
+
+#### NULL Filter
+
+Any column can filter for `NULL` using the sentinel constant `PagedList.NULL`:
+
+=== "Kotlin"
+
+    ```kotlin
+    list.getColumn(0).filter = PagedList.NULL   // → WHERE name IS NULL
+    ```
+
+=== "Java"
+
+    ```java
+    list.getColumn(0).setFilter(PagedList.NULL);
+    ```
+
+### Sorting
+
+Set `column.sort` to `Column.ASCENDING` or `Column.DESCENDING`. Any number of columns can
+be active sorts at once; the list sorts by them in the order they were defined:
+
+=== "Kotlin"
+
+    ```kotlin
+    list.getColumn(0).sort = Column.ASCENDING    // primary
+    list.getColumn(1).sort = Column.DESCENDING   // secondary
+    ```
+
+=== "Java"
+
+    ```java
+    list.getColumn(0).setSort(Column.ASCENDING);
+    list.getColumn(1).setSort(Column.DESCENDING);
+    ```
+
+`column.clearSort()` deactivates the sort for a single column; `list.reset()` clears
+all filters and sorts at once (but keeps constraints — see below).
+
+If no column has an active sort, rows are ordered by the entity's primary key. This
+requires a single-column PK; for composite keys you must explicitly set a sort on at
+least one column, otherwise the list throws `IllegalStateException`.
+
+### Constraints
+
+Constraints are a fixed `WHERE` clause that is always applied, independent of column
+filters. Use them to scope the list to a sub-query (e.g., "only orders for user 42"):
+
+=== "Kotlin"
+
+    ```kotlin
+    list.setConstraints("customer_id = ?", 42)
+    ```
+
+=== "Java"
+
+    ```java
+    list.setConstraints("customer_id = ?", 42);
+    ```
+
+Constraints and column filters combine with `AND`. Unlike filters, constraints are **not**
+cleared by `list.reset()` — they're considered part of the list's fundamental definition.
+
+### Pagination and Caching
+
+`PagedList` keeps one page of rows in memory at a time. `pageSize` defaults to 15 and
+can be changed:
+
+=== "Kotlin"
+
+    ```kotlin
+    list.pageSize = 50
+    ```
+
+=== "Java"
+
+    ```java
+    list.setPageSize(50);
+    ```
+
+Indexing outside the currently cached page triggers a new page load. The `size` property
+triggers a `COUNT(*)` query the first time it's read and caches the result. Any change to
+filters, sorting, or constraints invalidates both the page cache and the count.
+
+Stormify uses the underlying SQL dialect's pagination syntax (`LIMIT/OFFSET`, `FETCH
+FIRST`, `ROWNUM`, etc.) automatically.
+
+### Selected Entity
+
+You can mark one entity as **selected** — it appears as the first element of the list
+regardless of any sort order. This is useful for UI patterns like "show the currently
+highlighted row at the top":
+
+=== "Kotlin"
+
+    ```kotlin
+    list.selected = currentCompany
+    list[0]  // always currentCompany (when non-null)
+    ```
+
+=== "Java"
+
+    ```java
+    list.setSelected(currentCompany);
+    list.get(0);  // always currentCompany (when non-null)
+    ```
+
+The helpers `list.add(entity)` and `list.remove(entity)` set or clear the selection as a
+side effect. Use them when you create/delete an entity and want the list to reflect the
+change immediately without resetting the user's filters:
+
+=== "Kotlin"
+
+    ```kotlin
+    val company = stormify.create(Company(name = "Acme"))
+    list.add(company)        // appears first
+
+    stormify.delete(company)
+    list.remove(company)     // selection cleared
+    ```
+
+=== "Java"
+
+    ```java
+    Company company = stormify.create(new Company("Acme"));
+    list.add(company);
+
+    stormify.delete(company);
+    list.remove(company);
+    ```
+
+### Selection Values (Distinct Per-Column)
+
+For populating dropdown pickers, call `column.getSelectionValues()`. This returns a
+`SelectionList<T>` — another lazy paginated list, but of the distinct values of that
+column, filtered by the **other** columns' active filters. The user only sees values that
+would actually return results under the current filter state.
+
+=== "Kotlin"
+
+    ```kotlin
+    val statusCol = list.addColumn(User_.status)
+    val distinctStatuses = statusCol.getSelectionValues()
+    // Populate a dropdown; values are filtered by the other active filters
+    distinctStatuses.forEach { println(it) }
+    ```
+
+=== "Java"
+
+    ```java
+    Column<User> statusCol = list.addColumn(User_.status);
+    SelectionList<User> distinctStatuses = statusCol.getSelectionValues();
+    distinctStatuses.forEach(System.out::println);
+    ```
+
+`SelectionList` auto-invalidates whenever any filter or constraint changes on the parent
+list.
+
+### Input Parsing and Locale
+
+Raw user input (e.g., from a text field) often uses locale-specific formats — Greek
+numbers like `1.234,56`, European dates like `31/12/2026`. `PagedList` applies an
+`InputParser` (a SAM `fun interface`) that transforms the filter string before it reaches SQL.
+
+Resolution order: **column → list → global → identity (no transformation)**.
+
+=== "Kotlin"
+
+    ```kotlin
+    // Global — applies to all PagedList instances unless overridden
+    PagedList.defaultInputParser = InputParser { input, type ->
+        when (type) {
+            Column.NUMERIC -> input.replace(".", "").replace(",", ".")
+            Column.TEMPORAL -> flipDayMonthYear(input)
+            else -> input
+        }
+    }
+
+    // Per-list override
+    myList.inputParser = InputParser { input, type -> /* ... */ }
+
+    // Per-column override
+    myList.getColumn(0).inputParser = InputParser { input, type -> /* ... */ }
+    ```
+
+=== "Java"
+
+    ```java
+    // Global — applies to all PagedList instances unless overridden
+    PagedList.setDefaultInputParser((input, type) -> {
+        if (type == Column.NUMERIC) return input.replace(".", "").replace(",", ".");
+        if (type == Column.TEMPORAL) return flipDayMonthYear(input);
+        return input;
+    });
+
+    // Per-list override
+    myList.setInputParser((input, type) -> /* ... */);
+
+    // Per-column override
+    myList.getColumn(0).setInputParser((input, type) -> /* ... */);
+    ```
+
+Set to `NoInputParser` (the default) to fall through to the next level.
+
+### Custom SQL Generators for Raw Columns
+
+Raw columns can take a `SqlGenerator` — a SAM interface that produces the SQL fragment
+and stages bind parameters via a `SqlArgsCollector`. Use this to build non-trivial
+predicates over calculated expressions:
+
+=== "Kotlin"
+
+    ```kotlin
+    val col = list.addRawColumn("users.id", Column.NUMERIC) { column, value, args ->
+        val n = value.toIntOrNull() ?: 0
+        args.accept(n)
+        "$column % ? = 0"    // rows whose id is divisible by n
+    }
+    col.filter = "3"         // keep ids divisible by 3
+    ```
+
+=== "Java"
+
+    ```java
+    Column<User> col = list.addRawColumn("users.id", Column.NUMERIC, (column, value, args) -> {
+        int n = Integer.parseInt(value);
+        args.accept(n);
+        return column + " % ? = 0";
+    });
+    col.setFilter("3");
+    ```
+
+### `HumanReadable` (Display Names)
+
+Implement `HumanReadable` on enums (or any class) that participate in enum columns to
+provide localized display names:
+
+=== "Kotlin"
+
+    ```kotlin
+    enum class Status : HumanReadable {
+        ACTIVE    { override fun displayName() = "Ενεργή" },
+        INACTIVE  { override fun displayName() = "Ανενεργή" },
+        BANNED    { override fun displayName() = "Αποκλεισμένη" }
+    }
+    ```
+
+=== "Java"
+
+    ```java
+    public enum Status implements HumanReadable {
+        ACTIVE   { public String displayName() { return "Ενεργή"; } },
+        INACTIVE { public String displayName() { return "Ανενεργή"; } },
+        BANNED   { public String displayName() { return "Αποκλεισμένη"; } }
+    }
+    ```
+
+When the enum column auto-builds its display-name-to-DB-value map, it uses
+`displayName()` instead of `name`. This is also what `SelectionList` returns for enum
+columns — so your dropdown shows the localized labels instead of `ACTIVE`/`INACTIVE`/`BANNED`.
+
+### Distinct Mode
+
+Set `list.isDistinct = true` to make the underlying query use `SELECT DISTINCT`. This is
+useful when JOINs cause row duplication. Note that `DISTINCT` affects both `size` (which
+becomes `COUNT(DISTINCT ...)`) and page queries.
 
 ## Coroutines (Suspend API)
 

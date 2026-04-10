@@ -134,7 +134,10 @@ class AutoTableLazyLoadTest {
 
     /**
      * Reference stub: child.parent is a stub with only id set and stormify attached.
-     * Reading a field on the stub triggers lazy-load from DB.
+     * Reading a field on the stub triggers lazy-load from DB. This is the auto-attached
+     * counterpart of the "Manual Stubs" pattern documented in Advanced_topics.md — both
+     * go through the same `db` delegate path, the only difference is how the Stormify
+     * instance becomes reachable (FK auto-attach vs. `Stormify.defaultInstance`).
      */
     @Test
     fun referenceStubLazyLoads() = withDb("AUTO-LAZY-STUB") { s ->

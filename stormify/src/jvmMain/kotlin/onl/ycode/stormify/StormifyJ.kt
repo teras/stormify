@@ -72,6 +72,26 @@ class StormifyJ(dataSource: DataSource, vararg registrars: EntityRegistrar) {
 
     fun asDefault(): StormifyJ { stormify.asDefault(); return this }
 
+    /**
+     * Attaches the underlying Stormify instance to [target] so the target can use it for
+     * database operations without receiving it as an explicit parameter.
+     *
+     * Works for any [StormifyAware] — entity / [AutoTable] subclasses and
+     * [onl.ycode.stormify.biglist.PagedList] instances. Returns [target] for fluent chaining.
+     *
+     * ```java
+     * // Manual stub — user knows the ID, lets Stormify lazy-load the rest
+     * User user = stormify.attach(new User());
+     * user.setId(42);
+     * System.out.println(user.getName());  // triggers SELECT
+     *
+     * // Paged list — attach before use (or rely on Stormify.defaultInstance)
+     * PagedList<Company> list = stormify.attach(new PagedList<>(Company.class));
+     * list.addColumn("name");
+     * ```
+     */
+    fun <T : StormifyAware> attach(target: T): T = stormify.attach(target)
+
     companion object {
         @JvmStatic
         fun getDefault(): Stormify? = Stormify.defaultInstance

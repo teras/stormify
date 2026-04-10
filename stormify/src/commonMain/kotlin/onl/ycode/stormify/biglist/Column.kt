@@ -18,12 +18,12 @@ package onl.ycode.stormify.biglist
  * @param T The entity type of the parent [PagedList]
  */
 class Column<T : Any> internal constructor(
-    private val pagedList: PagedList<T>,
+    private val pagedList: PagedListBase<T>,
     internal val fields: List<FieldPath>,
     internal val type: Type,
     internal val enumValues: Map<String, Any>?,
     internal val rawExpression: String?,
-    internal val sqlGenerator: ((column: String, value: String, args: (Any) -> Unit) -> String)?
+    internal val sqlGenerator: SqlGenerator?
 ) {
     /**
      * The type of a column, which determines how filter values
@@ -175,10 +175,32 @@ data class FieldPath(val segments: List<String>) {
  *
  * Set at three levels (resolution order: column → list → global):
  * - [Column.inputParser] — per column
- * - [PagedList.inputParser] — per list
- * - [PagedList.defaultInputParser] — global for all lists
+ * - [PagedListBase.inputParser] — per list
+ * - [PagedListBase.defaultInputParser] — global for all lists
  */
-typealias InputParser = (input: String, type: Column.Type) -> String
+fun interface InputParser {
+    /** Transforms [input] — the raw filter text — into the form the database expects. */
+    fun parse(input: String, type: Column.Type): String
+}
 
 /** Sentinel value indicating no parser is set. Passes input through unchanged. */
-val NoInputParser: InputParser = { input, _ -> input }
+val NoInputParser: InputParser = InputParser { input, _ -> input }
+
+/**
+ * Callback used by [SqlGenerator] implementations to stage a bind parameter for the
+ * generated SQL placeholder. Each call adds one `?` value to the query in order.
+ */
+fun interface SqlArgsCollector {
+    /** Adds [arg] as a bind parameter. */
+    fun accept(arg: Any)
+}
+
+/**
+ * Generates the SQL condition for a custom (raw) column's filter. Implementations receive
+ * the column expression and the user-typed filter value, and must return a SQL fragment
+ * (e.g. `"col = ?"`). Bind parameters are added via [args].
+ */
+fun interface SqlGenerator {
+    /** Returns the SQL fragment and stages its parameters via [args]. */
+    fun generate(column: String, value: String, args: SqlArgsCollector): String
+}

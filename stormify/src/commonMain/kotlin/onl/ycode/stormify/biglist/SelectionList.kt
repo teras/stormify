@@ -18,7 +18,7 @@ import kotlin.math.min
  * Obtained via [Column.getSelectionValues].
  */
 class SelectionList<T : Any> internal constructor(
-    private val pagedList: PagedList<T>,
+    private val pagedList: PagedListBase<T>,
     private val column: Column<T>
 ) : AbstractList<String>() {
 

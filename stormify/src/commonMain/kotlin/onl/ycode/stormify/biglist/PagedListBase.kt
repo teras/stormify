@@ -7,6 +7,7 @@ package onl.ycode.stormify.biglist
 import kotlinx.atomicfu.atomic
 import onl.ycode.stormify.NativeBigInteger
 import onl.ycode.stormify.Stormify
+import onl.ycode.stormify.StormifyAware
 import onl.ycode.stormify.TableInfo
 import onl.ycode.stormify.TypeUtils
 import onl.ycode.stormify.enumEntries
@@ -15,21 +16,34 @@ import kotlin.math.min
 import kotlin.reflect.KClass
 
 /**
- * A lazy-loading, column-based paginated list backed by database queries.
+ * Abstract base class for [PagedList] — contains the full column-based paginated-list
+ * implementation. Users do not instantiate this directly; use the platform-specific
+ * `PagedList` subclass instead (it provides language-idiomatic constructors for Kotlin
+ * and Java).
  *
- * Elements are loaded in pages on demand. Filtering and sorting are defined
- * through [Column] objects, which are set up before data access.
+ * A `PagedList` implements [kotlin.collections.AbstractList], so it behaves as a normal
+ * `List<T>` while loading pages on demand from the database. Filtering and sorting are
+ * defined through [Column] objects set up at configuration time.
+ *
+ * The [Stormify] instance is not passed at construction. It is resolved lazily on first
+ * access via (in order):
+ *  1. The instance explicitly attached via [Stormify.attach]
+ *  2. The registered [Stormify.defaultInstance]
+ *
+ * If neither is available when the list first needs to touch the database, an error is
+ * thrown.
  *
  * ## Usage
  * ```kotlin
- * val list = PagedList<Company>()
- * list.addColumn("name")                                    // text filter
+ * val list = PagedList<Company>()        // no stormify yet
+ * stormify.attach(list)                   // binds the instance
+ * list.addColumn("name")                  // text filter + sort
  * list.addColumn("contactPerson.firstName",
- *                "contactPerson.lastName")                   // OR filter via FK
- * list.addRawColumn("SUM(amount)", Column.NUMERIC)          // calculated
+ *                "contactPerson.lastName") // OR filter via FK
+ * list.addRawColumn("SUM(amount)", Column.NUMERIC)
  *
- * list.getColumn(0).setFilter("Acme")
- * list.getColumn(1).setSort(true)
+ * list.getColumn(0).filter = "Acme"
+ * list.getColumn(1).sort = Column.ASCENDING
  *
  * val company = list[0]   // triggers page load
  * val total = list.size   // triggers COUNT query
@@ -37,12 +51,41 @@ import kotlin.reflect.KClass
  *
  * @param T The entity type
  * @param classType The KClass of the entity type
- * @param stormify The Stormify instance for database operations
  */
-class PagedList<T : Any>(val classType: KClass<T>, private val stormify: Stormify) : AbstractList<T>() {
-    private val info: TableInfo<T> = stormify.resolveTableInfo(classType)
+abstract class PagedListBase<T : Any> internal constructor(
+    val classType: KClass<T>
+) : AbstractList<T>(), StormifyAware {
+
+    override var `!stormify`: Stormify? = null
+
+    override fun onAttached() {
+        // The attached Stormify may have different naming policies or registered entities
+        // than whatever resolved the cached state previously. Drop everything and let it
+        // rebuild on next access.
+        _info = null
+        _root = null
+        invalidate()
+    }
+
+    /** Resolves the Stormify instance — explicitly attached, default, or error. */
+    private val stormify: Stormify
+        get() = `!stormify` ?: Stormify.defaultInstance
+            ?: error(
+                "No Stormify instance attached to this PagedList and no default instance " +
+                        "is configured. Call stormify.attach(list) or Stormify.asDefault() first."
+            )
+
+    // Lazy table metadata — resolved on first access so construction does not require Stormify
+    private var _info: TableInfo<T>? = null
+    internal val info: TableInfo<T>
+        get() = _info ?: @Suppress("UNCHECKED_CAST") (stormify.resolveTableInfo(classType) as TableInfo<T>)
+            .also { _info = it }
+
     private val tableCounter = atomic(0)
-    private val root = NodeTable("", "", classType, null, stormify)
+    private var _root: NodeTable? = null
+    private val root: NodeTable
+        get() = _root ?: NodeTable("", "", classType, null, stormify).also { _root = it }
+
     private val _columns = mutableListOf<Column<T>>()
     private var treeIsDirty = true
 
@@ -115,29 +158,56 @@ class PagedList<T : Any>(val classType: KClass<T>, private val stormify: Stormif
     // --- Column setup ---
 
     /**
-     * Adds a column with one or more field paths. Multiple paths use OR logic for filtering.
+     * Adds a column with one or more field paths. The column type is auto-detected
+     * from the field's Kotlin type. Multiple paths use OR logic for filtering.
      *
-     * Field paths use dot notation for FK traversal: `"contactPerson.firstName"`.
-     *
-     * The column type is auto-detected from the field type, or can be specified explicitly.
+     * Field paths use dot notation for foreign-key traversal:
+     * `"contactPerson.firstName"`.
      *
      * @param fieldPaths One or more field paths (dot notation)
-     * @param type The column type (auto-detected if null)
-     * @param enumValues Enum display-name-to-DB-value mapping (for [Column.ENUM] columns)
      * @return The created column
      */
-    @JvmOverloads
-    fun addColumn(
-        vararg fieldPaths: String,
-        type: Column.Type? = null,
-        enumValues: Map<String, Any>? = null
+    fun addColumn(vararg fieldPaths: String): Column<T> =
+        addColumnInternal(fieldPaths.map { FieldPath(it) }, null, null)
+
+    /**
+     * Adds a column with an explicit [type] override. Use this when the auto-detected
+     * type (based on the field's Kotlin type) is not what you want — for example, to
+     * treat a string zip-code column as numeric.
+     */
+    fun addColumn(type: Column.Type, vararg fieldPaths: String): Column<T> =
+        addColumnInternal(fieldPaths.map { FieldPath(it) }, type, null)
+
+    /**
+     * Adds an [ENUM][Column.Type.ENUM] column with a custom display-name-to-DB-value map.
+     * Use this when the field is not a Kotlin enum but logically represents one (e.g., a
+     * status integer column with human-readable labels), or to override the auto-built
+     * map for a real enum field.
+     */
+    fun addEnumColumn(enumValues: Map<String, Any>, vararg fieldPaths: String): Column<T> =
+        addColumnInternal(fieldPaths.map { FieldPath(it) }, Column.Type.ENUM, enumValues)
+
+    /**
+     * Adds a column using type-safe KSP-generated path objects.
+     */
+    fun addColumn(vararg paths: ScalarPath): Column<T> =
+        addColumnInternal(paths.map { FieldPath(it.toPath()) }, null, null)
+
+    /** Explicit-type variant of [addColumn] using typed paths. */
+    fun addColumn(type: Column.Type, vararg paths: ScalarPath): Column<T> =
+        addColumnInternal(paths.map { FieldPath(it.toPath()) }, type, null)
+
+    /** Enum-column variant using typed paths. */
+    fun addEnumColumn(enumValues: Map<String, Any>, vararg paths: ScalarPath): Column<T> =
+        addColumnInternal(paths.map { FieldPath(it.toPath()) }, Column.Type.ENUM, enumValues)
+
+    private fun addColumnInternal(
+        paths: List<FieldPath>,
+        type: Column.Type?,
+        enumValues: Map<String, Any>?
     ): Column<T> {
-        require(fieldPaths.isNotEmpty()) { "At least one field path is required" }
-        val paths = fieldPaths.map { path ->
-            val fp = FieldPath(path)
-            resolveFieldPath(fp) // validate + build tree
-            fp
-        }
+        require(paths.isNotEmpty()) { "At least one field path is required" }
+        paths.forEach { resolveFieldPath(it) } // validate + build tree
         val resolvedType = type ?: detectType(paths.first())
         val resolvedEnumValues = enumValues ?: if (resolvedType == Column.Type.ENUM)
             buildEnumValues(resolveFieldPath(paths.first()).type) else null
@@ -148,37 +218,34 @@ class PagedList<T : Any>(val classType: KClass<T>, private val stormify: Stormif
     }
 
     /**
-     * Adds a column using type-safe KSP-generated path objects.
-     *
-     * @param paths One or more [ScalarPath] objects from generated entity path classes
-     * @param type The column type (auto-detected if null)
-     * @param enumValues Enum display-name-to-DB-value mapping (for [Column.ENUM] columns)
-     * @return The created column
-     */
-    @JvmOverloads
-    fun addColumn(
-        vararg paths: ScalarPath,
-        type: Column.Type? = null,
-        enumValues: Map<String, Any>? = null
-    ): Column<T> {
-        require(paths.isNotEmpty()) { "At least one path is required" }
-        return addColumn(*paths.map { it.toPath() }.toTypedArray(), type = type, enumValues = enumValues)
-    }
-
-    /**
      * Adds a raw/custom column backed by an arbitrary SQL expression.
      *
      * @param expression The SQL expression (e.g., `"SUM(amount)"`, `"COALESCE(a, b)"`)
-     * @param type The column type, which determines how filter values are interpreted
-     * @param sqlGenerator Optional custom SQL generator for filtering. If null, the default
-     *        converter for the given type is used.
+     * @param type The column type, which determines how filter values are interpreted.
+     *             Defaults to [Column.Type.TEXT].
      * @return The created column
      */
     @JvmOverloads
     fun addRawColumn(
         expression: String,
-        type: Column.Type = Column.Type.TEXT,
-        sqlGenerator: ((column: String, value: String, args: (Any) -> Unit) -> String)? = null
+        type: Column.Type = Column.Type.TEXT
+    ): Column<T> = addRawColumnInternal(expression, type, null)
+
+    /**
+     * Adds a raw/custom column with a custom SQL generator. The [sqlGenerator] receives
+     * the column expression and the user's filter value, and returns a SQL fragment
+     * while staging bind parameters via [SqlArgsCollector].
+     */
+    fun addRawColumn(
+        expression: String,
+        type: Column.Type,
+        sqlGenerator: SqlGenerator
+    ): Column<T> = addRawColumnInternal(expression, type, sqlGenerator)
+
+    private fun addRawColumnInternal(
+        expression: String,
+        type: Column.Type,
+        sqlGenerator: SqlGenerator?
     ): Column<T> {
         val column = Column(this, emptyList(), type, null, expression, sqlGenerator)
         _columns.add(column)
@@ -291,7 +358,7 @@ class PagedList<T : Any>(val classType: KClass<T>, private val stormify: Stormif
 
             // Default: selected first + PK
             val pk = singlePk ?: throw IllegalStateException(
-                "PagedList for ${info.tableName} requires explicit sorting via column.setSort() " +
+                "PagedList for ${info.tableName} requires explicit sorting via column.sort = " +
                         "because the entity has a composite primary key"
             )
             return selectedPrefix + info.tableName + "." + pk
@@ -312,6 +379,7 @@ class PagedList<T : Any>(val classType: KClass<T>, private val stormify: Stormif
         resolveCurrentTree()
         val andOut = StringBuilder()
         val args = constraintArgs.toMutableList()
+        val argsCollector = SqlArgsCollector { args.add(it) }
 
         // Fixed constraints
         if (constraintClause.isNotEmpty())
@@ -326,18 +394,17 @@ class PagedList<T : Any>(val classType: KClass<T>, private val stormify: Stormif
             val orParts = mutableListOf<String>()
 
             // Wrap custom sqlGenerator to apply the InputParser before it sees the value
-            fun wrapGen(gen: (String, String, (Any) -> Unit) -> String):
-                    (String, String, InputParser, (Any) -> Unit) -> String =
-                { col, input, p, a -> gen(col, p(input, column.type), a) }
+            fun wrapUserGenerator(gen: SqlGenerator): (String, String, InputParser, SqlArgsCollector) -> String =
+                { col, input, p, a -> gen.generate(col, p.parse(input, column.type), a) }
 
             if (column.rawExpression != null) {
                 // Raw column
                 if (isNullFilter) {
                     orParts.add("${column.rawExpression} IS NULL")
                 } else {
-                    val generator = column.sqlGenerator?.let(::wrapGen)
+                    val generator = column.sqlGenerator?.let(::wrapUserGenerator)
                         ?: DefaultDataConverter.guessConverter(column.type, stormify.sqlDialect, column.enumValues)
-                    orParts.add(generator(column.rawExpression, filterVal, parser, args::add))
+                    orParts.add(generator(column.rawExpression, filterVal, parser, argsCollector))
                 }
             } else {
                 // Field-based column — OR between fields
@@ -346,9 +413,12 @@ class PagedList<T : Any>(val classType: KClass<T>, private val stormify: Stormif
                     if (isNullFilter) {
                         orParts.add("${node.columnHandler} IS NULL")
                     } else {
-                        val generator = column.sqlGenerator?.let(::wrapGen)
-                            ?: DefaultDataConverter.guessConverterForNode(node, column.type, stormify.sqlDialect, { column.isCaseSensitive }, column.enumValues)
-                        orParts.add(generator(node.columnHandler, filterVal, parser, args::add))
+                        val generator = column.sqlGenerator?.let(::wrapUserGenerator)
+                            ?: DefaultDataConverter.guessConverterForNode(
+                                node, column.type, stormify.sqlDialect,
+                                { column.isCaseSensitive }, column.enumValues
+                            )
+                        orParts.add(generator(node.columnHandler, filterVal, parser, argsCollector))
                     }
                 }
             }
@@ -433,10 +503,14 @@ class PagedList<T : Any>(val classType: KClass<T>, private val stormify: Stormif
         val typeName = node.type.simpleName ?: return Column.Type.TEXT
         return when {
             typeName in setOf("String", "Char", "StringBuilder") -> Column.Type.TEXT
-            typeName in setOf("Int", "Long", "Short", "Byte", "Float", "Double",
-                "BigDecimal", "BigInteger") -> Column.Type.NUMERIC
+            typeName in setOf(
+                "Int", "Long", "Short", "Byte", "Float", "Double",
+                "BigDecimal", "BigInteger"
+            ) -> Column.Type.NUMERIC
+
             typeName.contains("Date") || typeName.contains("Time") ||
-                typeName.contains("Instant") || typeName.contains("Timestamp") -> Column.Type.TEMPORAL
+                    typeName.contains("Instant") || typeName.contains("Timestamp") -> Column.Type.TEMPORAL
+
             else -> Column.Type.TEXT
         }
     }
@@ -457,7 +531,7 @@ class PagedList<T : Any>(val classType: KClass<T>, private val stormify: Stormif
     companion object {
         /**
          * Global input parser for all PagedList instances. Overridden by
-         * [PagedList.inputParser] (per-list) and [Column.inputParser] (per-column).
+         * [PagedListBase.inputParser] (per-list) and [Column.inputParser] (per-column).
          * @see InputParser
          */
         @JvmStatic
@@ -470,14 +544,3 @@ class PagedList<T : Any>(val classType: KClass<T>, private val stormify: Stormif
         const val NULL: String = "―"
     }
 }
-
-/**
- * Creates a new [PagedList] for the given entity type.
- */
-inline fun <reified T : Any> PagedList(stormify: Stormify) = PagedList(T::class, stormify)
-
-/**
- * Creates a new [PagedList] for the given entity type using the [default Stormify instance][Stormify.defaultInstance].
- */
-inline fun <reified T : Any> PagedList() =
-    PagedList(T::class, Stormify.defaultInstance ?: error("No default Stormify instance configured; call Stormify.asDefault() first"))

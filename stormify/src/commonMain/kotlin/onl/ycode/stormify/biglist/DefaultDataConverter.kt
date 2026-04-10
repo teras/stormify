@@ -8,12 +8,19 @@ import onl.ycode.stormify.TypeUtils.castTo
 import onl.ycode.stormify.isTextualClass
 import kotlin.reflect.KClass
 
+/** Internal converter signature: (column, input, parser, args) → SQL fragment. */
+private typealias Converter = (String, String, InputParser, SqlArgsCollector) -> String
+
 internal object DefaultDataConverter {
 
     /**
      * Returns a filter converter based on column type.
      */
-    fun guessConverter(type: Column.Type, dialect: SqlDialect, enumValues: Map<String, Any>? = null): (String, String, InputParser, (Any) -> Unit) -> String = when (type) {
+    fun guessConverter(
+        type: Column.Type,
+        dialect: SqlDialect,
+        enumValues: Map<String, Any>? = null
+    ): Converter = when (type) {
         Column.Type.TEXT -> withParser(textConverter(dialect) { false })
         Column.Type.NUMERIC -> numericConverter(Double::class)
         Column.Type.TEMPORAL -> rawDateConverter(dialect)
@@ -30,7 +37,7 @@ internal object DefaultDataConverter {
         dialect: SqlDialect,
         caseSensitive: () -> Boolean,
         enumValues: Map<String, Any>? = null
-    ): (String, String, InputParser, (Any) -> Unit) -> String = when (type) {
+    ): Converter = when (type) {
         Column.Type.TEXT -> withParser(textConverter(dialect, caseSensitive))
         Column.Type.ENUM -> withParser(enumConverter(enumValues))
         Column.Type.TEMPORAL -> dateConverter(node.type)
@@ -43,12 +50,15 @@ internal object DefaultDataConverter {
      * The InputParser is applied to the whole filter value before it reaches the converter.
      */
     private fun withParser(
-        converter: (String, String, (Any) -> Unit) -> String
-    ): (String, String, InputParser, (Any) -> Unit) -> String =
-        { col, input, parser, args -> converter(col, parser(input, Column.Type.TEXT), args) }
+        converter: (String, String, SqlArgsCollector) -> String
+    ): Converter =
+        { col, input, parser, args -> converter(col, parser.parse(input, Column.Type.TEXT), args) }
 
-    private fun textConverter(dialect: SqlDialect, caseSensitive: () -> Boolean): (String, String, (Any) -> Unit) -> String =
-        { col: String, input: String, args: (Any) -> Unit ->
+    private fun textConverter(
+        dialect: SqlDialect,
+        caseSensitive: () -> Boolean
+    ): (String, String, SqlArgsCollector) -> String =
+        { col: String, input: String, args: SqlArgsCollector ->
             val isCaseSensitive = caseSensitive()
             var text = input
 
@@ -57,10 +67,10 @@ internal object DefaultDataConverter {
                 text = text.substring(1, text.length - 1)
                 if (!isCaseSensitive) {
                     // Exact match always needs LOWER — `=` is case-sensitive on all DBs
-                    args(text.lowercase())
+                    args.accept(text.lowercase())
                     "LOWER($col) = ?"
                 } else {
-                    args(text)
+                    args.accept(text)
                     "$col = ?"
                 }
             } else {
@@ -85,16 +95,18 @@ internal object DefaultDataConverter {
                     .replace("%", "\\%")
                 // Convert wildcards
                 text = text.replace('*', '%')
-                args(text)
+                args.accept(text)
                 "$column $likeOp ? ${dialect.likeEscapeClause()}"
             }
         }
 
-    private fun enumConverter(enumValues: Map<String, Any>?): (String, String, (Any) -> Unit) -> String =
-        { column: String, input: String, args: (Any) -> Unit ->
+    private fun enumConverter(
+        enumValues: Map<String, Any>?
+    ): (String, String, SqlArgsCollector) -> String =
+        { column: String, input: String, args: SqlArgsCollector ->
             if (enumValues.isNullOrEmpty()) {
                 // No mapping available — fall back to exact match
-                args(input)
+                args.accept(input)
                 "$column = ?"
             } else {
                 val search = input.lowercase()
@@ -105,17 +117,17 @@ internal object DefaultDataConverter {
                     // No match — produce impossible condition
                     "1 = 0"
                 } else if (matched.size == 1) {
-                    args(matched[0])
+                    args.accept(matched[0])
                     "$column = ?"
                 } else {
-                    matched.forEach { args(it) }
+                    matched.forEach { args.accept(it) }
                     "$column IN (${matched.joinToString(", ") { "?" }})"
                 }
             }
         }
 
-    private fun dateConverter(type: KClass<*>): (String, String, InputParser, (Any) -> Unit) -> String =
-        { column: String, input: String, parser: InputParser, args: (Any) -> Unit ->
+    private fun dateConverter(type: KClass<*>): Converter =
+        { column: String, input: String, parser: InputParser, args: SqlArgsCollector ->
             safeBreakdown(column, input, parser, Column.Type.TEMPORAL, type, args)
         }
 
@@ -124,8 +136,8 @@ internal object DefaultDataConverter {
      * Sends values as String and wraps the placeholder with a dialect-specific
      * CAST so strict DBs (PostgreSQL, Oracle) can compare ISO strings to date columns.
      */
-    private fun rawDateConverter(dialect: SqlDialect): (String, String, InputParser, (Any) -> Unit) -> String =
-        { column: String, input: String, parser: InputParser, args: (Any) -> Unit ->
+    private fun rawDateConverter(dialect: SqlDialect): Converter =
+        { column: String, input: String, parser: InputParser, args: SqlArgsCollector ->
             safeBreakdownRaw(column, input, parser, Column.Type.TEMPORAL, args) { dialect.castToDate("?") }
         }
 
@@ -138,20 +150,20 @@ internal object DefaultDataConverter {
         input: String,
         parser: InputParser,
         columnType: Column.Type,
-        args: (Any) -> Unit,
+        args: SqlArgsCollector,
         placeholder: () -> String
     ): String {
         val staged = mutableListOf<Any>()
         return runCatching {
             breakdownParts(column, input, parser, columnType) { part -> staged.add(part) }
         }.fold(
-            onSuccess = { sql -> staged.forEach(args); sql.replace("?", placeholder()) },
+            onSuccess = { sql -> staged.forEach(args::accept); sql.replace("?", placeholder()) },
             onFailure = { IMPOSSIBLE }
         )
     }
 
-    private fun numericConverter(type: KClass<*>): (String, String, InputParser, (Any) -> Unit) -> String =
-        { column: String, input: String, parser: InputParser, args: (Any) -> Unit ->
+    private fun numericConverter(type: KClass<*>): Converter =
+        { column: String, input: String, parser: InputParser, args: SqlArgsCollector ->
             safeBreakdown(column, input, parser, Column.Type.NUMERIC, type, args)
         }
 
@@ -165,7 +177,7 @@ internal object DefaultDataConverter {
         parser: InputParser,
         columnType: Column.Type,
         targetType: KClass<*>,
-        args: (Any) -> Unit
+        args: SqlArgsCollector
     ): String {
         val staged = mutableListOf<Any>()
         return runCatching {
@@ -173,7 +185,7 @@ internal object DefaultDataConverter {
                 staged.add(castOrFail(targetType, part))
             }
         }.fold(
-            onSuccess = { sql -> staged.forEach(args); sql },
+            onSuccess = { sql -> staged.forEach(args::accept); sql },
             onFailure = { IMPOSSIBLE }
         )
     }
@@ -201,7 +213,7 @@ internal object DefaultDataConverter {
         if ((bigger || smaller || biggerOrEqual || smallerOrEqual) && dots >= 0)
             throw SQLException("Cannot use '...' together with '<' or '>'")
 
-        fun transform(raw: String) = parser(part(raw, userInput), type)
+        fun transform(raw: String) = parser.parse(part(raw, userInput), type)
 
         return when {
             bigger || smaller -> {
@@ -215,7 +227,7 @@ internal object DefaultDataConverter {
             }
 
             dots >= 0 -> {
-                val parts = input.split("\\.\\.\\."   .toRegex()).dropLastWhile { it.isEmpty() }.toTypedArray()
+                val parts = input.split("\\.\\.\\.".toRegex()).dropLastWhile { it.isEmpty() }.toTypedArray()
                 if (parts.size != 2) throw SQLException("Invalid range format")
                 args(transform(parts[0]))
                 args(transform(parts[1]))

@@ -221,8 +221,34 @@ open class Stormify(val dataSource: DataSource, vararg registrars: EntityRegistr
 
     // --- Attach stormify to entity ---
 
-    private fun attachStormify(entity: Any) {
-        if (entity is StormifyEntity) entity.`!stormify` = this
+    /**
+     * Attaches this Stormify instance to [target] so the target can use it for database
+     * operations without receiving it as an explicit parameter.
+     *
+     * Works for any [StormifyAware] — [StormifyEntity] subclasses (entities, [AutoTable])
+     * and `PagedList` instances. Returns [target] for fluent chaining.
+     *
+     * ```kotlin
+     * // Manual stub — user knows the ID, lets Stormify lazy-load the rest
+     * val user = stormify.attach(User().apply { id = 42 })
+     * println(user.name)  // triggers SELECT via the attached instance
+     *
+     * // Paged list — attach before use (or rely on Stormify.defaultInstance)
+     * val list = stormify.attach(PagedList<Company>())
+     * list.addColumn("name")
+     * ```
+     */
+    fun <T : StormifyAware> attach(target: T): T {
+        target.`!stormify` = this
+        target.onAttached()
+        return target
+    }
+
+    private fun attachStormify(target: Any) {
+        if (target is StormifyAware) {
+            target.`!stormify` = this
+            target.onAttached()
+        }
     }
 
     // --- Read operations ---
