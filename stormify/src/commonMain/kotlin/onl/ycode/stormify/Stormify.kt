@@ -342,16 +342,20 @@ open class Stormify(val dataSource: DataSource, vararg registrars: EntityRegistr
             // Reference resolution: if field is a reference type, create a stub entity with just the FK ID set
             if (value != null && info.isReferenceField(col)) {
                 val refType = info.getReferenceType(col)!!
-                try {
-                    val ref = if (context != null)
+                val ref = try {
+                    if (context != null)
                         context.getOrCreateReference(refType, value, this)
                     else
                         createReferenceStub(refType, value)
-                    info.setField(item, col, ref, this, if (isStrictMode) null else logger)
-                    continue
                 } catch (e: Exception) {
-                    logger.debug("Could not resolve reference for column '{}' (type {}): {}", col, refType.simpleName, e.message)
+                    throw SQLException(
+                        "Failed to resolve reference for column '$col' in ${item::class.simpleName}: " +
+                                "cannot create stub of type ${refType.simpleName} with id $value",
+                        e
+                    )
                 }
+                info.setField(item, col, ref, this, if (isStrictMode) null else logger)
+                continue
             }
             try {
                 info.setField(item, col, value, this, if (isStrictMode) null else logger)
@@ -406,8 +410,8 @@ open class Stormify(val dataSource: DataSource, vararg registrars: EntityRegistr
             0
         })
 
-        for ((key, _) in byId)
-            logger.warn("Batch populate: no data found for {} with id {}", info.tableName, key)
+        if (byId.isNotEmpty())
+            throw SQLException("No data found for ${info.tableName} with ids ${byId.keys}")
     }
 
     // --- Sequence support ---

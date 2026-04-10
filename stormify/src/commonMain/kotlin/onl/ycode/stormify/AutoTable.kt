@@ -5,7 +5,6 @@ package onl.ycode.stormify
 import kotlinx.atomicfu.atomic
 import kotlinx.atomicfu.locks.SynchronizedObject
 import kotlinx.atomicfu.locks.synchronized
-import onl.ycode.logger.LogManager
 
 /**
  * Base class for entities that support lazy auto-population from the database.
@@ -17,17 +16,33 @@ import onl.ycode.logger.LogManager
  */
 abstract class AutoTable : StormifyEntity() {
     private val lock = SynchronizedObject()
-    private val hasRun = atomic(false)
+    internal val `!hasRun` = atomic(false)
     internal var `!siblingGroup`: SiblingGroup? = null
 
-    /** Loads this entity's data from the database if it has not been populated yet. Thread-safe. */
+    /**
+     * Tracks whether any [db]-delegated property has been written on this entity.
+     * Set to `true` by [db.setValue] (both when the user explicitly writes a field and
+     * when an internal DB load fills fields via the same setter path). Used by [db.getValue]
+     * to distinguish "fresh entity with only ID set" (should attempt lazy-load, and fail
+     * loudly if no Stormify is available) from "user-constructed entity with some fields
+     * set" (should return in-memory values silently).
+     */
+    internal var `!userTouched` = false
+
+    /**
+     * Loads this entity's data from the database if it has not been populated yet. Thread-safe.
+     *
+     * Returns silently (no-op) when no [Stormify] instance is attached and no
+     * [Stormify.defaultInstance] is set — this is a legitimate state for freshly constructed
+     * entities that have no database row to load from. The check for missing stormify
+     * during unintended lazy-load lives in the [db] property delegate.
+     */
     fun populate() {
-        if (hasRun.value) return
-        val ctr = `!stormify` ?: Stormify.defaultInstance ?: return LogManager.getLogger(AutoTable::class)
-            .error("Stormify is not set for class ${this::class.qualifiedName}. Use Stormify.asDefault() to set a default instance.")
+        if (`!hasRun`.value) return
+        val ctr = `!stormify` ?: Stormify.defaultInstance ?: return
         synchronized(lock) {
-            if (!hasRun.value) {
-                hasRun.value = true
+            if (!`!hasRun`.value) {
+                `!hasRun`.value = true
                 val group = `!siblingGroup`
                 if (group != null)
                     group.batchPopulate(this)
@@ -39,6 +54,6 @@ abstract class AutoTable : StormifyEntity() {
 
     /** Marks this entity as already populated, preventing any future lazy-load. */
     fun markPopulated() {
-        hasRun.value = true
+        `!hasRun`.value = true
     }
 }

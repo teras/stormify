@@ -4,6 +4,7 @@
 
 package onl.ycode.stormify
 
+import onl.ycode.kdbc.SQLException
 import kotlin.properties.ReadWriteProperty
 import kotlin.reflect.KClass
 import kotlin.reflect.KProperty
@@ -82,13 +83,28 @@ class db<T>(private val defaultValue: T) : ReadWriteProperty<Any?, T> {
     private var prop: T = defaultValue
 
     override fun getValue(thisRef: Any?, property: KProperty<*>): T {
-        (thisRef as? AutoTable)?.populate()
+        val entity = thisRef as? AutoTable
+        if (entity != null && !entity.`!hasRun`.value && !entity.`!userTouched`) {
+            // Entity has never been populated from DB, and the user has not written any
+            // field on it. This means only the ID is set — a clear lazy-load attempt.
+            // If no Stormify instance is available, lazy-load is impossible — fail loudly
+            // so the user isn't silently handed the delegate's default value.
+            if (entity.`!stormify` == null && Stormify.defaultInstance == null)
+                throw SQLException(
+                    "Cannot lazy-load property '${property.name}' on ${entity::class.qualifiedName}: " +
+                            "no Stormify instance is attached to this entity and no default instance " +
+                            "has been set. Either attach an instance or call Stormify.asDefault()."
+                )
+            entity.populate()
+        }
         return prop
     }
 
     override fun setValue(thisRef: Any?, property: KProperty<*>, value: T) {
-        (thisRef as? AutoTable)?.populate()
+        val entity = thisRef as? AutoTable
+        entity?.populate()
         prop = value
+        if (entity != null) entity.`!userTouched` = true
     }
 }
 
