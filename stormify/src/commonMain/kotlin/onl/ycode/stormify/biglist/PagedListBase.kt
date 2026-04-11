@@ -641,7 +641,7 @@ abstract class PagedListBase<T : Any> internal constructor(
          */
         const val NULL: String = "―"
 
-        /** Classloader-leak cleanup hook. Invoked by [onl.ycode.stormify.StormifyLifecycle.clear]. */
+        /** Classloader-leak cleanup hook — on JVM, invoked by `StormifyLifecycle.clear()`. */
         internal fun clearDefaultInputParser() { defaultInputParser = NoInputParser }
     }
 }

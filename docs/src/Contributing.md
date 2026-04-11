@@ -12,13 +12,13 @@ To contribute code, you'll need to set up your local development environment:
 
 2. **Clone the Repository**: Clone your fork to your local machine:
 
-   ```
+   ```bash
    git clone https://github.com/your-username/stormify.git
    ```
 
 3. **Set Up the Project**: Navigate into the project directory and set up the project:
 
-   ```
+   ```bash
    cd stormify
    gradle clean build
    ```
@@ -27,7 +27,7 @@ To contribute code, you'll need to set up your local development environment:
 
 4. **Create a Branch**: Create a new branch for your work:
 
-   ```
+   ```bash
    git checkout -b feature/your-feature-name
    ```
 
@@ -35,7 +35,7 @@ To contribute code, you'll need to set up your local development environment:
 
 6. **Run Tests**: Verify that your changes pass all tests:
 
-   ```
+   ```bash
    gradle test
    ```
 
@@ -56,7 +56,7 @@ If you encounter a bug or have a feature request, please submit an issue on [Git
 
 Example issue template:
 
-```
+```text
 **Description**
 A clear and concise description of the bug or feature request.
 
@@ -80,7 +80,7 @@ To submit a pull request:
 
 1. **Push Your Changes**: Push your changes to your fork:
 
-   ```
+   ```bash
    git push origin feature/your-feature-name
    ```
 

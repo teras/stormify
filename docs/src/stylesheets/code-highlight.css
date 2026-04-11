@@ -1,0 +1,60 @@
+/*
+ * Richer syntax-highlighting palette for code blocks.
+ *
+ * Material for MkDocs ships a deliberately subtle default palette: in light
+ * mode almost every token ends up grey, which makes Kotlin / Java snippets
+ * hard to scan. The variables below override the Material CSS custom
+ * properties that drive Pygments tokens, once per colour scheme (default =
+ * light, slate = dark), so keywords, strings, classes, numbers, comments and
+ * friends each get a distinct hue.
+ *
+ * Values are picked to echo the familiar IntelliJ / VS Code light and dark
+ * themes — high contrast, recognisable, WCAG-AA against their respective
+ * backgrounds.
+ */
+
+/* Light mode (default palette) — every token a distinct hue */
+[data-md-color-scheme="default"] {
+  --md-code-hl-keyword-color:     #5a1f9b;  /* class, fun, val, public, static   */
+  --md-code-hl-function-color:    #795e26;  /* function / method names           */
+  --md-code-hl-name-color:        #001080;  /* type / class identifiers          */
+  --md-code-hl-constant-color:    #e36209;  /* true, false, null, constants      */
+  --md-code-hl-string-color:      #a31515;  /* "string literals"                 */
+  --md-code-hl-number-color:      #098658;  /* 42, 3.14                          */
+  --md-code-hl-operator-color:    #000000;  /* +, -, =, ::, .                    */
+  --md-code-hl-punctuation-color: #586069;  /* { } ( ) , ;                       */
+  --md-code-hl-comment-color:     #008000;  /* // comments                       */
+  --md-code-hl-special-color:     #b58900;  /* @Annotations                      */
+  --md-code-hl-variable-color:    #005cc5;  /* local vars, parameters            */
+  --md-code-hl-generic-color:     #267f99;  /* generic / template tokens         */
+}
+
+[data-md-color-scheme="default"] .highlight .c,
+[data-md-color-scheme="default"] .highlight .c1,
+[data-md-color-scheme="default"] .highlight .cm,
+[data-md-color-scheme="default"] .highlight .cs {
+  font-style: italic;
+}
+
+/* Dark mode (slate palette) — every token a distinct hue */
+[data-md-color-scheme="slate"] {
+  --md-code-hl-keyword-color:     #c792ea;  /* class, fun, val, public, static   */
+  --md-code-hl-function-color:    #dcdcaa;  /* function / method names           */
+  --md-code-hl-name-color:        #e1e4e8;  /* type / class identifiers (neutral)*/
+  --md-code-hl-constant-color:    #f78c6c;  /* true, false, null, constants      */
+  --md-code-hl-string-color:      #ce9178;  /* "string literals"                 */
+  --md-code-hl-number-color:      #b5cea8;  /* 42, 3.14                          */
+  --md-code-hl-operator-color:    #b0b0b0;  /* +, -, =, ::, .                    */
+  --md-code-hl-punctuation-color: #808080;  /* { } ( ) , ;                       */
+  --md-code-hl-comment-color:     #6a9955;  /* // comments                       */
+  --md-code-hl-special-color:     #d7ba7d;  /* @Annotations                      */
+  --md-code-hl-variable-color:    #9cdcfe;  /* local vars, parameters            */
+  --md-code-hl-generic-color:     #4ec9b0;  /* generic / template tokens         */
+}
+
+[data-md-color-scheme="slate"] .highlight .c,
+[data-md-color-scheme="slate"] .highlight .c1,
+[data-md-color-scheme="slate"] .highlight .cm,
+[data-md-color-scheme="slate"] .highlight .cs {
+  font-style: italic;
+}

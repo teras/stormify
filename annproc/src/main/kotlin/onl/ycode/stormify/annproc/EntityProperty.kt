@@ -21,6 +21,31 @@ private const val ENUMERATED = "javax.persistence.Enumerated"
 
 private const val AUTO_TABLE = "onl.ycode.stormify.AutoTable"
 
+/**
+ * Qualified names of the four **roots** of the Kotlin and Java collection hierarchies.
+ * Any type that is (or transitively extends) one of these is not persistable as a
+ * single column. We only need to know the roots — the recursive supertype walk in
+ * [isCollectionOrMap] naturally reaches them from any subtype (`List`, `ArrayList`,
+ * `HashMap`, `ConcurrentHashMap`, user-defined subclasses, …). This mirrors the JVM
+ * reflection path's `Collection.isAssignableFrom` / `Map.isAssignableFrom` filter.
+ */
+private val COLLECTION_OR_MAP_ROOTS = setOf(
+    "kotlin.collections.Iterable",
+    "kotlin.collections.Map",
+    "java.lang.Iterable",
+    "java.util.Map",
+)
+
+/** Returns `true` if [type] is, or transitively extends, a collection or map root. */
+private fun isCollectionOrMap(type: KSClassDeclaration): Boolean {
+    if (type.qualifiedName?.asString() in COLLECTION_OR_MAP_ROOTS) return true
+    for (sup in type.superTypes) {
+        val decl = sup.resolve().declaration
+        if (decl is KSClassDeclaration && isCollectionOrMap(decl)) return true
+    }
+    return false
+}
+
 private val KOTLIN_BUILTINS = mapOf(
     "kotlin.Int" to "Int", "kotlin.Long" to "Long", "kotlin.Short" to "Short",
     "kotlin.Byte" to "Byte", "kotlin.Float" to "Float", "kotlin.Double" to "Double",
@@ -45,10 +70,11 @@ class EntityProperty(declaration: KSPropertyDeclaration, entity: KSClassDeclarat
     val isEnum: Boolean
     val enumAsString: Boolean
     /**
-     * True for properties that are `List<X>` where `X` is a `@DbTable`-annotated class,
-     * or for properties backed by a delegate returning a collection (e.g. `lazyDetails`).
-     * Such properties are not persisted as columns on the owning entity — they are resolved
-     * lazily from a separate table via stormify's details/collection helpers.
+     * True for properties whose declared type is — or extends — any `Collection`/`Map`
+     * from either the Kotlin stdlib (`kotlin.collections.*`) or the Java standard
+     * library (`java.util.*`). Such properties cannot map to a single database column
+     * and are skipped from the generated [EntityMeta], matching the JVM reflection
+     * path's `Collection.isAssignableFrom` / `Map.isAssignableFrom` filter.
      */
     val skip: Boolean
 
@@ -134,20 +160,13 @@ class EntityProperty(declaration: KSPropertyDeclaration, entity: KSClassDeclarat
                     sup.resolve().declaration.qualifiedName?.asString() == AUTO_TABLE
                 })
 
-        // Delegated collection properties (e.g. `var children by lazyDetails<AutoChildEntity>()`)
-        // are not real columns — skip them entirely from the generated EntityMeta.
-        val baseQn = typeDecl.qualifiedName?.asString()
-        val isList = baseQn == "kotlin.collections.List" || baseQn == "kotlin.collections.MutableList"
-        val elementIsEntity = if (isList) {
-            val elemDecl = resolved.arguments.firstOrNull()?.type?.resolve()?.declaration
-            elemDecl is KSClassDeclaration && (
-                    elemDecl.annotations.any { ann ->
-                        ann.annotationType.resolve().declaration.qualifiedName?.asString() in setOf(DB_TABLE, ENTITY)
-                    } || elemDecl.superTypes.any { sup ->
-                        sup.resolve().declaration.qualifiedName?.asString() == AUTO_TABLE
-                    })
-        } else false
-        skip = isList && elementIsEntity
+        // Collection- and map-typed properties (e.g. `var children by lazyDetails<AutoChildEntity>()`,
+        // or any `List<X>` / `Set<X>` / `Map<K, V>` declared on an entity) cannot map to a
+        // single database column and are skipped entirely from the generated EntityMeta.
+        // This mirrors the JVM reflection path which uses `Collection.isAssignableFrom` /
+        // `Map.isAssignableFrom` at runtime, so both discovery paths agree on which fields
+        // are persistable.
+        skip = typeDecl is KSClassDeclaration && isCollectionOrMap(typeDecl)
     }
 
     companion object {

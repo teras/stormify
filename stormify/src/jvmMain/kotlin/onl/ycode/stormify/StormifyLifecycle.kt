@@ -5,7 +5,10 @@ package onl.ycode.stormify
 import onl.ycode.stormify.biglist.PagedListBase
 
 /**
- * Cleanup facade for Stormify's library-wide shared state.
+ * Cleanup facade for Stormify's library-wide shared state on the **desktop / JVM**
+ * target. Not available on Native, Android, or iOS / macOS — those platforms cannot
+ * encounter the problem this class is designed to solve, so it is intentionally
+ * absent from their APIs.
  *
  * ### When to call [clear]
  *
@@ -32,34 +35,39 @@ import onl.ycode.stormify.biglist.PagedListBase
  * but unnecessary.
  *
  * Standalone processes (CLI tools, desktop apps, Spring Boot fat-jars, Ktor
- * servers, Android, iOS, macOS, Linux native) never need this either — the
- * process ends and everything is reclaimed by the OS.
+ * servers) never need this either — the process ends and everything is
+ * reclaimed by the OS. On **Native / Android / iOS / macOS** this class does
+ * not exist at all: those runtimes either have a single-ClassLoader-per-process
+ * lifecycle (Android) or no ClassLoader concept whatsoever (AOT-compiled native
+ * binaries), so there is nothing to clear.
  *
  * ### What it clears
  *
  * - [Stormify.defaultInstance]
+ * - The cached `StormifyJ` wrapper exposed by [StormifyJ.getDefault]
  * - [EntityMeta] registry (compile-time entity metadata populated by annproc)
  * - [EnumRegistry] registry (native enum metadata populated by annproc)
  * - [PagedListBase.defaultInputParser] (resets to [onl.ycode.stormify.biglist.NoInputParser])
  *
  * After this call, the library returns to its initial state. To continue using
- * it in the same JVM, construct a fresh [Stormify] instance and call
- * [Stormify.asDefault]; annproc-generated `GeneratedEntities.register(...)`
- * will re-populate the registries on next use.
+ * it in the same JVM, construct a fresh [Stormify] or [StormifyJ] instance and
+ * call `asDefault()`; annproc-generated `GeneratedEntities.register(...)` will
+ * re-populate the registries on next use.
  *
  * ### Implementer's note
  *
- * This file is the **single audit point** for library-wide shared state. When
- * adding a new `object`, `companion object`, or top-level mutable property that
- * can hold classloader-bound references — such as `KClass<*>` keys or user-
- * supplied lambdas / instances — expose an `internal fun clearX()` on that type
- * and invoke it from [clear] below. Leaving out the call re-introduces the
+ * This file is the **single audit point** for library-wide shared state on JVM.
+ * When adding a new `object`, `companion object`, or top-level mutable property
+ * that can hold ClassLoader-bound references — such as `KClass<*>` keys or
+ * user-supplied lambdas / instances — expose an `internal fun clearX()` on that
+ * type and call it from [clear] below. Leaving out the call re-introduces the
  * leak, so keep this list exhaustive.
  */
 object StormifyLifecycle {
     /** Clears all registered library-wide shared state. See the class KDoc for when to call. */
     fun clear() {
         Stormify.clearDefault()
+        StormifyJ.clearDefaultWrapper()
         EntityMeta.clearRegistry()
         EnumRegistry.clearRegistry()
         PagedListBase.clearDefaultInputParser()

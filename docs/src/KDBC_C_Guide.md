@@ -134,7 +134,7 @@ int main(void) {
 
 Output:
 
-```
+```text
 id=1 name=Alice age=30
 ```
 

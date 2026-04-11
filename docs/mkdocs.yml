@@ -43,6 +43,9 @@ theme:
     - navigation.top
     - content.tabs.link
 
+extra_css:
+  - stylesheets/code-highlight.css
+
 extra_javascript:
   - js/tab-fallback.js
 

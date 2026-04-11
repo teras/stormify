@@ -81,7 +81,7 @@ class EntityMeta<T : Any>(
         fun <T : Any> find(type: KClass<T>): EntityMeta<T>? =
             registry[type] as? EntityMeta<T>
 
-        /** Classloader-leak cleanup hook. Invoked by [StormifyLifecycle.clear]. */
+        /** Classloader-leak cleanup hook — on JVM, invoked by `StormifyLifecycle.clear()`. */
         internal fun clearRegistry() = registry.clear()
     }
 }
@@ -152,6 +152,6 @@ object EnumRegistry {
     fun toInt(value: Any): Int? =
         registry[value::class]?.toInt?.invoke(value)
 
-    /** Classloader-leak cleanup hook. Invoked by [StormifyLifecycle.clear]. */
+    /** Classloader-leak cleanup hook — on JVM, invoked by `StormifyLifecycle.clear()`. */
     internal fun clearRegistry() = registry.clear()
 }

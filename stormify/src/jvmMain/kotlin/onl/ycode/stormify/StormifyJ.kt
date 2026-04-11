@@ -129,8 +129,17 @@ class StormifyJ(dataSource: DataSource, vararg registrars: EntityRegistrar) {
         get() = stormify.logger
         set(value) { stormify.logger = value }
 
-    /** Registers the underlying [Stormify] instance as the library-wide default and returns this wrapper for chaining. */
-    fun asDefault(): StormifyJ { stormify.asDefault(); return this }
+    /**
+     * Registers the underlying [Stormify] instance as the library-wide default **and**
+     * caches this wrapper in [StormifyJ.getDefault], so Java callers can retrieve the
+     * Java-friendly wrapper (not just the raw [Stormify]) via a single static call.
+     * Returns this wrapper for fluent chaining.
+     */
+    fun asDefault(): StormifyJ {
+        stormify.asDefault()
+        defaultWrapper = this
+        return this
+    }
 
     /**
      * Attaches the underlying Stormify instance to [target] so the target can use it for
@@ -152,10 +161,28 @@ class StormifyJ(dataSource: DataSource, vararg registrars: EntityRegistrar) {
      */
     fun <T : StormifyAware> attach(target: T): T = stormify.attach(target)
 
-    /** Accessors for the library-wide default [Stormify] instance. */
+    /** Accessors for the library-wide default [StormifyJ] wrapper. */
     companion object {
-        /** Returns the current [Stormify.defaultInstance], or `null` if none has been set. */
+        /**
+         * The cached wrapper set by the most recent call to [StormifyJ.asDefault]. Java
+         * callers typically access it via the [getDefault] static accessor below rather
+         * than this field directly.
+         */
+        private var defaultWrapper: StormifyJ? = null
+
+        /**
+         * Returns the current default [StormifyJ] wrapper, or `null` if none has been
+         * registered yet. The default is set by calling [StormifyJ.asDefault] on a
+         * `StormifyJ` instance during application startup.
+         */
         @JvmStatic
-        fun getDefault(): Stormify? = Stormify.defaultInstance
+        fun getDefault(): StormifyJ? = defaultWrapper
+
+        /**
+         * Drops the cached wrapper. Called directly by [StormifyLifecycle.clear] so
+         * that a shared-classpath webapp undeploy doesn't retain a reference to the
+         * webapp's `StormifyJ` (and, through it, the entire entity ClassLoader).
+         */
+        internal fun clearDefaultWrapper() { defaultWrapper = null }
     }
 }
