@@ -11,9 +11,11 @@ behind the scenes.
 
 ## Quick Start
 
-Construction takes only the entity type. The [Stormify] instance is attached separately
-(or resolved from [the default instance](CRUD.md#default-instance) if you have one
-registered), so the same class works identically from Kotlin and Java.
+Construction takes only the entity type. The [Stormify] instance is resolved from
+[the default instance](Database_Configuration.md#default-instance) on first access, so
+the same class works identically from Kotlin and Java. If you are juggling multiple
+`Stormify` instances in the same process, use `stormify.attach(...)` at construction
+time to bind the list to a specific one.
 
 === "Kotlin"
 
@@ -22,8 +24,8 @@ registered), so the same class works identically from Kotlin and Java.
     import onl.ycode.stormify.biglist.PagedList
     import db.stormify.Company_   // KSP-generated typed paths
 
-    // Construct and attach in one fluent call
-    val list = stormify.attach(PagedList<Company>())
+    val list = PagedList<Company>()
+    // val list = stormify.attach(PagedList<Company>())    // when not using a default instance
 
     list.addColumn(Company_.name)                                 // auto-detect TEXT
     list.addColumn(Company_.contactPerson.firstName,              // OR across FK-traversed fields
@@ -46,8 +48,8 @@ registered), so the same class works identically from Kotlin and Java.
     import onl.ycode.stormify.biglist.PagedList;
     import db.stormify.Company_;   // KSP-generated typed paths
 
-    // Construct and attach in one fluent call
-    PagedList<Company> list = stormify.attach(new PagedList<>(Company.class));
+    PagedList<Company> list = new PagedList<>(Company.class);
+    // PagedList<Company> list = stormify.attach(new PagedList<>(Company.class));  // when not using a default instance
 
     list.addColumn(Company_.name);                                 // auto-detect TEXT
     list.addColumn(Company_.contactPerson.firstName,               // OR across FK-traversed fields
@@ -61,23 +63,6 @@ registered), so the same class works identically from Kotlin and Java.
     Company firstCompany = list.get(0);                            // triggers page load
     int totalMatches = list.size();                                // triggers COUNT query
     for (Company c : list) System.out.println(c.getName());        // streams page-by-page
-    ```
-
-If you have set a default Stormify instance via `asDefault()`, you can skip the explicit
-`attach` — the list will pick up the default on first access:
-
-=== "Kotlin"
-
-    ```kotlin
-    stormify.asDefault()
-    val list = PagedList<Company>()        // no attach needed, uses default instance
-    ```
-
-=== "Java"
-
-    ```java
-    stormify.asDefault();
-    PagedList<Company> list = new PagedList<>(Company.class);
     ```
 
 ## Enabling Type-Safe Paths
@@ -131,7 +116,7 @@ column use OR.
 === "Kotlin"
 
     ```kotlin
-    val list = stormify.attach(PagedList<Order>())
+    val list = PagedList<Order>()
     val nameCol   = list.addColumn(Order_.customer.name)       // FK traversal
     val statusCol = list.addColumn(Order_.status)              // scalar
     val rawCol    = list.addRawColumn("total * tax_rate", Column.NUMERIC)
@@ -144,7 +129,7 @@ column use OR.
 === "Java"
 
     ```java
-    PagedList<Order> list = stormify.attach(new PagedList<>(Order.class));
+    PagedList<Order> list = new PagedList<>(Order.class);
     Column nameCol   = list.addColumn(Order_.customer.name);
     Column statusCol = list.addColumn(Order_.status);
     Column rawCol    = list.addRawColumn("total * tax_rate", Column.NUMERIC);
@@ -152,10 +137,6 @@ column use OR.
     nameCol.setFilter("Acme");
     statusCol.setFilter("ACTIVE");
     ```
-
-> Note: `Column` is a non-generic type — you can write `Column` (not `Column<Order>`)
-> in Java. The list's entity type `T` is kept on `PagedList<T>` itself, but the
-> filter/sort machinery on a column does not depend on it.
 
 String paths with dot notation work too (`addColumn("customer.name")`) — useful for
 cross-cutting code where a field is chosen at runtime. Mix both styles freely.
@@ -207,7 +188,7 @@ Multiple matching display names produce an `IN` clause of the corresponding DB v
     ```kotlin
     enum class Status { ACTIVE, INACTIVE, BANNED }
 
-    val list = stormify.attach(PagedList<User>())
+    val list = PagedList<User>()
     list.addColumn(User_.status)            // auto-detects as ENUM
     list.getColumn(0).filter = "active"     // matches ACTIVE and INACTIVE
     ```
@@ -217,44 +198,45 @@ Multiple matching display names produce an `IN` clause of the corresponding DB v
     ```java
     public enum Status { ACTIVE, INACTIVE, BANNED }
 
-    PagedList<User> list = stormify.attach(new PagedList<>(User.class));
+    PagedList<User> list = new PagedList<>(User.class);
     list.addColumn(User_.status);
     list.getColumn(0).setFilter("active");
     ```
 
 To customize the display names (e.g., localized UI strings), implement the
 [`HumanReadable`](#humanreadable-display-names) interface on the enum. For non-enum
-fields that you want to treat as enums (or to override the auto-built map), use
-`addEnumColumn`:
+fields that you want to treat as enums (or to override the auto-built map), pass a
+display-to-DB-value `Map` as the first argument to `addColumn` — the same method
+name, resolved to the enum-column overload via the first-argument type:
 
 === "Kotlin"
 
     ```kotlin
     val displayMap = mapOf("Ενεργός" to 1, "Ανενεργός" to 0)
-    list.addEnumColumn(displayMap, User_.statusCode)
+    list.addColumn(displayMap, User_.statusCode)
     ```
 
 === "Java"
 
     ```java
     Map<String, Object> displayMap = Map.of("Ενεργός", 1, "Ανενεργός", 0);
-    list.addEnumColumn(displayMap, User_.statusCode);
+    list.addColumn(displayMap, User_.statusCode);
     ```
 
 ### NULL Filter
 
-Any column can filter for `NULL` using the sentinel constant `PagedList.NULL`:
+Any column can filter for `NULL` using the sentinel constant `Column.NULL`:
 
 === "Kotlin"
 
     ```kotlin
-    list.getColumn(0).filter = PagedList.NULL   // → WHERE name IS NULL
+    list.getColumn(0).filter = Column.NULL   // → WHERE name IS NULL
     ```
 
 === "Java"
 
     ```java
-    list.getColumn(0).setFilter(PagedList.NULL);
+    list.getColumn(0).setFilter(Column.NULL);   // → WHERE name IS NULL
     ```
 
 ## Sorting
@@ -302,6 +284,13 @@ filters. Use them to scope the list to a sub-query (e.g., "only orders for user 
 
 Constraints and column filters combine with `AND`. Unlike filters, constraints are **not**
 cleared by `list.reset()` — they're considered part of the list's fundamental definition.
+
+## Distinct Mode
+
+Set `list.isDistinct = true` to make the underlying query use `SELECT DISTINCT`. This is
+useful when JOINs cause row duplication. Note that `DISTINCT` affects both `size` (which
+becomes `COUNT(DISTINCT ...)`) and page queries. Aggregations are **not** affected —
+`getAggregator()` ignores the flag.
 
 ## Pagination and Caching
 
@@ -384,7 +373,6 @@ would actually return results under the current filter state.
     ```kotlin
     val statusCol = list.addColumn(User_.status)
     val distinctStatuses = statusCol.getFilterValues()
-    // Populate a dropdown; values are filtered by the other active filters
     distinctStatuses.forEach { println(it) }
     ```
 
@@ -428,9 +416,10 @@ so you can share it across multiple reads without re-querying.
 
 ## Input Parsing and Locale
 
-Raw user input (e.g., from a text field) often uses locale-specific formats — Greek
-numbers like `1.234,56`, European dates like `31/12/2026`. `PagedList` applies an
-`InputParser` (a SAM `fun interface`) that transforms the filter string before it reaches SQL.
+Raw user input (e.g., from a text field) often uses locale-specific formats —
+numbers like `1.234,56` (comma decimal), dates like `31/12/2026` (day-first).
+`PagedList` applies an `InputParser` (a SAM `fun interface`) that transforms the
+filter string before it reaches SQL.
 
 Resolution order: **column → list → global → identity (no transformation)**.
 
@@ -470,7 +459,7 @@ Resolution order: **column → list → global → identity (no transformation)*
     myList.getColumn(0).setInputParser((input, type) -> /* ... */);
     ```
 
-Set to `NoInputParser` (the default) to fall through to the next level.
+Set to `InputParser.NONE` (the default) to fall through to the next level.
 
 ## Custom SQL Generators for Raw Columns
 
@@ -508,10 +497,10 @@ provide localized display names:
 === "Kotlin"
 
     ```kotlin
-    enum class Status : HumanReadable {
-        ACTIVE    { override fun displayName() = "Ενεργή" },
-        INACTIVE  { override fun displayName() = "Ανενεργή" },
-        BANNED    { override fun displayName() = "Αποκλεισμένη" }
+    enum class Status(override val displayName: String) : HumanReadable {
+        ACTIVE("Ενεργή"),
+        INACTIVE("Ανενεργή"),
+        BANNED("Αποκλεισμένη")
     }
     ```
 
@@ -519,14 +508,19 @@ provide localized display names:
 
     ```java
     public enum Status implements HumanReadable {
-        ACTIVE   { public String displayName() { return "Ενεργή"; } },
-        INACTIVE { public String displayName() { return "Ανενεργή"; } },
-        BANNED   { public String displayName() { return "Αποκλεισμένη"; } }
+        ACTIVE("Ενεργή"),
+        INACTIVE("Ανενεργή"),
+        BANNED("Αποκλεισμένη");
+
+        private final String displayName;
+        Status(String displayName) { this.displayName = displayName; }
+
+        @Override public String getDisplayName() { return displayName; }
     }
     ```
 
 When the enum column auto-builds its display-name-to-DB-value map, it uses
-`displayName()` instead of `name`. This is also what `FilterValues` returns for enum
+`displayName` instead of `name`. This is also what `FilterValues` returns for enum
 columns — so your dropdown shows the localized labels instead of `ACTIVE`/`INACTIVE`/`BANNED`.
 
 ## Refreshing After External Changes
@@ -555,33 +549,46 @@ unaware of the change. Call `list.refresh()` to force the next read to re-query:
 it, the list itself is ready, and you are responsible for whatever UI refresh your
 framework needs.
 
-## Streaming with `forEach`
+## Streaming with `forEachStreaming`
 
 A `PagedList` supports ordinary iteration (`for (row in list)`), but the index-based
-iterator walks page by page and issues one query per page — fine for small result sets,
-but wasteful for exports over tens of thousands of rows.
+iterator walks page by page and issues one query per page — fine for small result
+sets, but wasteful for exports over tens of thousands of rows.
 
-For efficient, one-query streaming use `forEach`, which runs a server-side cursor over
-the current filter / sort state:
+For efficient, one-query streaming use **`forEachStreaming`**, which runs a
+server-side cursor over the current filter / sort state.
 
 === "Kotlin"
 
     ```kotlin
     // Single query, streams every row regardless of page size.
-    list.forEach { row -> exportWriter.write(row) }
+    list.forEachStreaming { row -> exportWriter.write(row) }
     ```
 
 === "Java"
 
     ```java
-    // Single query, streams every row. Overrides java.lang.Iterable.forEach
-    // so you get the streaming variant from Java too.
-    list.forEach(row -> exportWriter.write(row));
+    // Single query, streams every row regardless of page size.
+    list.forEachStreaming(row -> exportWriter.write(row));
     ```
 
-Kotlin's member-over-extension rule routes `list.forEach { }` to this streaming variant
-on all platforms. `for (row in list)` keeps its page-by-page semantics — choose
-`forEach` when you actually want to iterate everything.
+`for (row in list)` and the plain `list.forEach { … }` / `list.forEach(consumer)`
+keep their page-by-page semantics — they resolve to the default
+`kotlin.collections.Iterable.forEach` / `java.lang.Iterable.forEach` and walk the
+index-based iterator one page at a time. Pick `forEachStreaming` when you want
+the single-query cursor behaviour.
+
+**Sibling-batch friendly.** Under the hood, rows are forwarded to your callback in
+chunks matching the [default sibling-batch size](References.md#sibling-batch-optimization)
+rather than one at a time. The buffering is invisible to your code (you still see
+a stream of single rows), but it guarantees that if your callback touches a
+foreign-key reference — `row.customer.name`, `row.category.label` — the first
+touch triggers a **single** batched lookup covering the whole chunk of siblings
+instead of issuing an individual follow-up query per row. No configuration, no
+API change — just the same `forEachStreaming` call behaving optimally for the
+common streaming-with-lazy-FK pattern. See
+[Sibling Batch Optimization](References.md#sibling-batch-optimization) for the
+underlying mechanism.
 
 ## Aggregations
 
@@ -644,30 +651,24 @@ or explicit):
 
     ```kotlin
     val row = list.getAggregator()
-        .sum(Company_.revenue, "total")
-        .avg(Company_.revenue, "average")
-        .min(Company_.revenue)              // → "min_revenue"
-        .max(Company_.revenue)              // → "max_revenue"
-        .count("*", "cnt")
+        .sum(Company_.revenue, "total")     // → row["total"]
+        .avg(Company_.revenue, "average")   // → row["average"]
+        .min(Company_.revenue)              // → row["min_revenue"]
+        .max(Company_.revenue)              // → row["max_revenue"]
+        .count("*", "cnt")                  // → row["cnt"]
         .execute()
-
-    val total = row["total"] as BigDecimal
-    val min   = row["min_revenue"] as BigDecimal
     ```
 
 === "Java"
 
     ```java
     Map<String, Object> row = list.getAggregator()
-        .sum(Company_.revenue, "total")
-        .avg(Company_.revenue, "average")
-        .min(Company_.revenue, null)           // auto alias "min_revenue"
-        .max(Company_.revenue, null)           // auto alias "max_revenue"
-        .count("*", "cnt")
+        .sum(Company_.revenue, "total")        // → row.get("total")
+        .avg(Company_.revenue, "average")      // → row.get("average")
+        .min(Company_.revenue, null)           // → row.get("min_revenue")
+        .max(Company_.revenue, null)           // → row.get("max_revenue")
+        .count("*", "cnt")                     // → row.get("cnt")
         .execute();
-
-    BigDecimal total = (BigDecimal) row.get("total");
-    BigDecimal min   = (BigDecimal) row.get("min_revenue");
     ```
 
 Explicit aliases that collide with an already-added entry throw
@@ -691,21 +692,25 @@ one yourself — although supplying an explicit alias is always an option.
 
     // Multi with a raw alongside a typed aggregator
     val row = list.getAggregator()
-        .sum(Order_.total, "total")
-        .raw("SUM(order.total * tax_rate)", "total_with_tax")
+        .sum(Order_.total, "total")                                 // → row["total"]
+        .raw("SUM(order.total * tax_rate)", "total_with_tax")       // → row["total_with_tax"]
+        .raw("AVG(order.discount)")                                 // → row["AVG_order_discount"]
         .execute()
     ```
 
 === "Java"
 
     ```java
+    // SUM(qty * price) respecting current filters
     BigDecimal revenue = list.getAggregator()
         .raw("SUM(order_item.qty * order_item.price)", null)
         .execute(BigDecimal.class);
 
+    // Multi with a raw alongside a typed aggregator
     Map<String, Object> row = list.getAggregator()
-        .sum(Order_.total, "total")
-        .raw("SUM(order.total * tax_rate)", "total_with_tax")
+        .sum(Order_.total, "total")                                 // → row.get("total")
+        .raw("SUM(order.total * tax_rate)", "total_with_tax")       // → row.get("total_with_tax")
+        .raw("AVG(order.discount)", null)                           // → row.get("AVG_order_discount")
         .execute();
     ```
 
@@ -724,7 +729,7 @@ case-sensitivity flags, the page size, and the distinct flag into a plain
     viewModel.savedListState = state
 
     // When coming back
-    val list = stormify.attach(PagedList<Company>())
+    val list = PagedList<Company>()
     list.addColumn(Company_.name)
     list.addColumn(Company_.revenue)
     viewModel.savedListState?.let { list.restoreState(it) }
@@ -738,7 +743,7 @@ case-sensitivity flags, the page size, and the distinct flag into a plain
     viewModel.savedListState = state;
 
     // When coming back
-    PagedList<Company> list = stormify.attach(new PagedList<>(Company.class));
+    PagedList<Company> list = new PagedList<>(Company.class);
     list.addColumn(Company_.name);
     list.addColumn(Company_.revenue);
     if (viewModel.savedListState != null)
@@ -753,10 +758,3 @@ sessions without blowing up). Constraints, the selected entity, and input parser
 State keys are derived from each column's paths (raw columns use their SQL expression;
 field columns use their paths joined alphabetically), so the order in which paths were
 passed to `addColumn` does not affect the key.
-
-## Distinct Mode
-
-Set `list.isDistinct = true` to make the underlying query use `SELECT DISTINCT`. This is
-useful when JOINs cause row duplication. Note that `DISTINCT` affects both `size` (which
-becomes `COUNT(DISTINCT ...)`) and page queries. Aggregations are **not** affected —
-`getAggregator()` ignores the flag.

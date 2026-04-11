@@ -7,6 +7,7 @@ import kotlinx.datetime.LocalDateTime
 import kotlinx.datetime.LocalTime
 import kotlinx.datetime.TimeZone
 import kotlinx.datetime.toInstant
+import onl.ycode.logger.WatchLogger
 import onl.ycode.stormify.SqlDialect
 import onl.ycode.stormify.Stormify
 import onl.ycode.stormify.biglist.Column
@@ -34,6 +35,26 @@ class PagedListTest {
         )
         if (count > 0)
             s.create((1..count).map { TestC(it, "Item$it") })
+    }
+
+    /**
+     * Runs [block] with a [WatchLogger] that captures every SELECT statement
+     * Stormify emits, and returns the captured list. The original logger is
+     * restored on exit even if [block] throws.
+     */
+    private inline fun Stormify.captureSelects(block: () -> Unit): List<String> {
+        val captured = mutableListOf<String>()
+        val previousLogger = logger
+        logger = WatchLogger(previousLogger) { _, message, _ ->
+            if (message.trimStart().startsWith("SELECT", ignoreCase = true))
+                captured += message
+        }
+        try {
+            block()
+        } finally {
+            logger = previousLogger
+        }
+        return captured
     }
 
     private fun setupParentChild(s: Stormify) {
@@ -197,7 +218,7 @@ class PagedListTest {
 
         val list = PagedList<TestC>()
         val col = list.addColumn("name")
-        col.filter = PagedList.NULL
+        col.filter = Column.NULL
         assertEquals(2, list.size)
     }
 
@@ -464,7 +485,7 @@ class PagedListTest {
         val list = PagedList<TestC>()
         // Enum mapping: display name → DB value
         val nameMap = mapOf("Alice" to "Alice", "Bob" to "Bob", "Charlie" to "Charlie")
-        val col = list.addEnumColumn(nameMap, "name")
+        val col = list.addColumn(nameMap, "name")
         col.filter = "Ali"  // substring match → "Alice"
 
         assertEquals(1, list.size)
@@ -480,7 +501,7 @@ class PagedListTest {
 
         val list = PagedList<TestC>()
         val nameMap = mapOf("Active" to "Active", "Inactive" to "Inactive", "Archived" to "Archived")
-        val col = list.addEnumColumn(nameMap, "name")
+        val col = list.addColumn(nameMap, "name")
         col.filter = "active"  // case-insensitive → "Active", "Inactive"
 
         assertEquals(2, list.size)
@@ -495,7 +516,7 @@ class PagedListTest {
 
         val list = PagedList<TestC>()
         val nameMap = mapOf("Alice" to "Alice", "Bob" to "Bob")
-        val col = list.addEnumColumn(nameMap, "name")
+        val col = list.addColumn(nameMap, "name")
         col.filter = "xyz"  // no match → 0 results
 
         assertEquals(0, list.size)
@@ -1059,8 +1080,8 @@ class PagedListTest {
         // Map: HumanReadable display name → DB value (enum name)
         // The user types "Ενερ" — reverse substring lookup finds "Ενεργή" → "ACTIVE"
         // Note: "Ενερ" also matches "Ανενεργή" (contains "ενερ"), so we get 2 results
-        val displayMap = HRStatus.entries.associate { it.displayName() to it.name }
-        val col = list.addEnumColumn(displayMap, "name")
+        val displayMap = HRStatus.entries.associate { it.displayName to it.name }
+        val col = list.addColumn(displayMap, "name")
         col.filter = "Ενεργή"  // exact substring — matches "Ενεργή" and "Ανενεργή"
 
         // Should match both ACTIVE and INACTIVE (both contain "Ενεργή" in their display names)
@@ -1149,7 +1170,7 @@ class PagedListTest {
         assertEquals(1, list.size)
     }
 
-    // --- forEach streaming ---
+    // --- forEachStreaming ---
 
     @Test
     fun testForEachStreaming() = withDb("PAGED-FOREACH") { s ->
@@ -1158,7 +1179,7 @@ class PagedListTest {
         list.pageSize = 5
 
         val names = mutableListOf<String?>()
-        list.forEach { names.add(it.name) }
+        list.forEachStreaming { names.add(it.name) }
 
         assertEquals(100, names.size)
         assertEquals("Item1", names.first())
@@ -1173,9 +1194,137 @@ class PagedListTest {
         col.filter = "> 15"
 
         val ids = mutableListOf<Int>()
-        list.forEach { ids.add(it.id) }
+        list.forEachStreaming { ids.add(it.id) }
 
         assertEquals(listOf(16, 17, 18, 19, 20), ids.sorted())
+    }
+
+    /**
+     * `forEachStreaming` buffers rows in chunks of 32 internally (so sibling-batch
+     * lazy-load works in streaming mode). A size that is **not** a multiple of 32
+     * exercises both the full-chunk flush path and the final partial-chunk drain
+     * path. With 200 rows we get 6 full chunks of 32 plus one partial chunk of 8,
+     * which surfaces any off-by-one in the buffer (`buffer.clear()` missing,
+     * final drain missing, duplicate flush, out-of-order flush).
+     */
+    @Test
+    fun testForEachStreaming200RowsCrossesChunkBoundary() = withDb("PAGED-FOREACH-200") { s ->
+        setupTable(s, 200)
+        val list = PagedList<TestC>()
+
+        val seen = mutableListOf<Int>()
+        list.forEachStreaming { seen.add(it.id) }
+
+        // No lost rows, no duplicates, order preserved.
+        assertEquals(200, seen.size, "expected every buffered row to reach the callback")
+        assertEquals(200, seen.toSet().size, "forEachStreaming must not emit duplicates from the chunk flush")
+        assertEquals((1..200).toList(), seen, "forEachStreaming must preserve the cursor's row order across chunks")
+    }
+
+    /**
+     * Direct verification that [PagedListBase.forEachStreaming] really drives
+     * a single cursor SELECT — not a fallback to paged iteration. Captures
+     * every SELECT emitted during a 20-row scan and asserts there is exactly
+     * one query, no `LIMIT … OFFSET …`. If this ever reverts to paged mode
+     * the whole sibling-batch optimisation for streaming exports is gone.
+     */
+    @Test
+    fun testForEachStreamingUsesSingleCursorQuery() = withDb("PAGED-FOREACH-DISPATCH") { s ->
+        setupTable(s, 20)
+
+        val names = mutableListOf<String?>()
+        val captured = s.captureSelects {
+            PagedList<TestC>().forEachStreaming { names.add(it.name) }
+        }
+
+        assertEquals(20, names.size)
+        // Exactly one SELECT means we went through the cursor path.
+        assertEquals(
+            1,
+            captured.size,
+            "expected a single cursor SELECT, got ${captured.size}: $captured"
+        )
+        assertFalse(
+            captured.first().contains("LIMIT") || captured.first().contains("OFFSET"),
+            "expected the cursor path (no LIMIT/OFFSET), got: ${captured.first()}"
+        )
+    }
+
+    /**
+     * End-to-end check that `forEachStreaming` drives sibling-batch lazy-
+     * loading on foreign-key references. Seeds 50 parents and 200 children
+     * (4 per parent), then walks every child and touches `child.parent?.data`.
+     * A [WatchLogger] counts the SELECTs Stormify emits during the scan.
+     *
+     * By the time the first `.parent` touch fires inside a chunk, all 32
+     * buffered children have already been enrolled in the cursor's sibling
+     * group, so the first lazy load collapses into a single
+     * `WHERE id IN (…)` covering the whole chunk. The per-row fallback would
+     * emit ~51 SELECTs; the sibling-batch path stays well under 10. The ≥ 2
+     * lower bound guards against a regression where the FK path silently
+     * never fires.
+     */
+    @Test
+    fun testForEachStreamingBatchesParentFetchesSiblingGroup() = withDb("FOREACH-SIBLING-BATCH") { s ->
+        TestDDL.dropTable("auto_child")   // drop child first to release any FK
+        TestDDL.dropTable("auto_parent")
+        s.executeUpdate(
+            TestDDL.createTable(
+                "auto_parent",
+                "${TestDDL.intPrimaryKey("id")}, other ${TestDDL.textType()}, data ${TestDDL.textType()}"
+            )
+        )
+        s.executeUpdate(
+            TestDDL.createTable(
+                "auto_child",
+                "${TestDDL.intPrimaryKey("id")}, data ${TestDDL.textType()}, parent ${TestDDL.intType()}"
+            )
+        )
+
+        // 50 parents, 4 children per parent → 200 children total. Raw INSERTs
+        // bypass the ORM layer entirely so we don't have to care about the
+        // default-Stormify / `db`-delegate populate-on-setValue interaction.
+        for (pid in 1..50) {
+            s.executeUpdate(
+                "INSERT INTO auto_parent (id, other, data) VALUES (?, ?, ?)",
+                pid, "other$pid", "data$pid"
+            )
+        }
+        for (cid in 1..200) {
+            // children 1-4 → parent 1, children 5-8 → parent 2, …, children 197-200 → parent 50
+            val parentId = ((cid - 1) / 4) + 1
+            s.executeUpdate(
+                "INSERT INTO auto_child (id, data, parent) VALUES (?, ?, ?)",
+                cid, "child$cid", parentId
+            )
+        }
+
+        // Recording starts after the seeding above, so the INSERTs / DDL
+        // don't pollute the count.
+        var visited = 0
+        val captured = s.captureSelects {
+            PagedList<AutoChildEntity>().forEachStreaming { child ->
+                val expectedParentId = ((child.id!! - 1) / 4) + 1
+                assertEquals(
+                    "data$expectedParentId",
+                    child.parent?.data,
+                    "child ${child.id} must see parent $expectedParentId's data"
+                )
+                visited++
+            }
+        }
+        assertEquals(200, visited, "expected forEachStreaming to visit all 200 children")
+
+        // 1 SELECT for the cursor + several IN batches for parent stubs.
+        // The per-row fallback would emit ~51 SELECTs; the sibling-batch
+        // path stays well under 10. The ≥ 2 lower bound guards against a
+        // regression where the FK sibling-load path silently never fires
+        // (which would leave only the cursor SELECT and still pass under
+        // a `1..10` check).
+        assertTrue(
+            captured.size in 2..10,
+            "expected 2..10 SELECT statements with sibling batching, got ${captured.size}: $captured"
+        )
     }
 
     // --- Aggregator (single) ---
@@ -1381,6 +1530,97 @@ class PagedListTest {
             .execute<Long>()
         assertEquals(5L, cnt)
     }
+
+    /**
+     * Auto-generated raw aliases must be valid SQL identifiers. A raw
+     * expression whose sanitized form would start with a digit
+     * (`"1 + SUM(test.id)"` sanitizes to `"1_SUM_test_id"`) would otherwise
+     * produce the illegal alias `SELECT … AS 1_SUM_test_id FROM …` — and
+     * for a bare `raw("1")` the query would even become the unparseable
+     * `SELECT 1 AS 1 FROM …`. The generator therefore prepends a single
+     * `_` to digit-first sanitized aliases, matching the same rule applied
+     * to user-supplied aliases.
+     */
+    @Test
+    fun testAggregatorRawAliasDigitFirstGetsPrefix() = withDb("PAGED-AGG-ALIAS-RAW-DIGIT") { s ->
+        setupTable(s, 5)
+        val list = PagedList<TestC>()
+        val row = list.getAggregator()
+            .raw("1 + SUM(test.id)")       // digit-first — alias "_1_SUM_test_id"
+            .raw("2 * COUNT(test.id)")     // digit-first — alias "_2_COUNT_test_id"
+            .execute()
+
+        assertTrue("_1_SUM_test_id" in row, "got: ${row.keys}")
+        assertTrue("_2_COUNT_test_id" in row, "got: ${row.keys}")
+        // 1 + SUM(1..5) = 1 + 15 = 16
+        assertEquals(16L, (row["_1_SUM_test_id"] as Number).toLong())
+        // 2 * COUNT(...) = 2 * 5 = 10
+        assertEquals(10L, (row["_2_COUNT_test_id"] as Number).toLong())
+    }
+
+    /**
+     * Same rule applies to user-supplied aliases — if the first character is
+     * not a letter, a single `_` is prepended so the generated SQL remains
+     * valid on every mainstream dialect. The explicit name is otherwise
+     * preserved verbatim (no sanitization of the rest of the string).
+     */
+    @Test
+    fun testAggregatorUserSuppliedAliasDigitFirstGetsUnderscore() =
+        withDb("PAGED-AGG-ALIAS-USER-DIGIT") { s ->
+            setupTable(s, 5)
+            val list = PagedList<TestC>()
+            val row = list.getAggregator()
+                .sum("id", alias = "1total")   // explicit digit-first → "_1total"
+                .count("*", alias = "42rows")  // explicit digit-first → "_42rows"
+                .execute()
+
+            assertTrue("_1total" in row, "got: ${row.keys}")
+            assertTrue("_42rows" in row, "got: ${row.keys}")
+            assertEquals(15L, (row["_1total"] as Number).toLong())   // 1+2+3+4+5
+            assertEquals(5L, (row["_42rows"] as Number).toLong())
+        }
+
+    /**
+     * Degenerate case: `raw("1")` — a bare digit literal. Without the
+     * digit-first normalization the emitted query would be the unparseable
+     * `SELECT 1 AS 1 FROM …`; the single `_` prefix turns the alias into
+     * `"_1"` and the query becomes `SELECT 1 AS _1 FROM …`. The table has
+     * exactly one row so `executeSingle` can return the scalar `1`.
+     */
+    @Test
+    fun testAggregatorRawBareDigitLiteralGetsPrefix() = withDb("PAGED-AGG-ALIAS-RAW-BARE") { s ->
+        setupTable(s, 1)
+        val list = PagedList<TestC>()
+        val value = list.getAggregator()
+            .raw("1")                // degenerate case — alias "_1"
+            .execute<Long>()
+        assertEquals(1L, value)
+    }
+
+    /**
+     * Regression test: an explicit alias that already starts with `_`
+     * (a valid SQL identifier lead character) must be preserved verbatim
+     * — never double-prefixed to `"__foo"`. `_` is a valid first character
+     * for SQL identifiers on every mainstream dialect, so no normalization
+     * is required.
+     */
+    @Test
+    fun testAggregatorUserSuppliedAliasUnderscoreFirstPreserved() =
+        withDb("PAGED-AGG-ALIAS-USER-UNDERSCORE") { s ->
+            setupTable(s, 5)
+            val list = PagedList<TestC>()
+            val row = list.getAggregator()
+                .sum("id", alias = "_total")   // leading `_` — preserved as-is
+                .count("*", alias = "_cnt")    // leading `_` — preserved as-is
+                .execute()
+
+            assertTrue("_total" in row, "got: ${row.keys}")
+            assertTrue("_cnt" in row, "got: ${row.keys}")
+            assertFalse("__total" in row, "alias must not be double-prefixed, got: ${row.keys}")
+            assertFalse("__cnt" in row, "alias must not be double-prefixed, got: ${row.keys}")
+            assertEquals(15L, (row["_total"] as Number).toLong())
+            assertEquals(5L, (row["_cnt"] as Number).toLong())
+        }
 
     @Test
     fun testAggregatorExplicitAlias() = withDb("PAGED-AGG-ALIAS-EXPLICIT") { s ->

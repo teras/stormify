@@ -18,7 +18,7 @@ import kotlin.reflect.KClass
  * See [PagedListBase] for the full API (filtering, sorting, pagination, etc.).
  */
 class PagedList<T : Any>(classType: KClass<T>) : PagedListBase<T>(classType) {
-    /** Re-exports [PagedListBase] globals so native callers can write `PagedList.NULL` / `PagedList.defaultInputParser` directly. */
+    /** Re-export of [PagedListBase.defaultInputParser] for native callers. */
     companion object {
         /**
          * Global input parser for all PagedList instances. Backed by
@@ -30,12 +30,6 @@ class PagedList<T : Any>(classType: KClass<T>) : PagedListBase<T>(classType) {
             set(value) {
                 PagedListBase.defaultInputParser = value
             }
-
-        /**
-         * The string representation of a null value. Use this to search for NULL values
-         * in a filter instead of using a regular null.
-         */
-        const val NULL: String = PagedListBase.NULL
     }
 }
 

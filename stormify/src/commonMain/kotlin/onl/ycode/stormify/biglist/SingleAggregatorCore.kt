@@ -30,15 +30,38 @@ internal class SingleAggregatorCore(
      * access its alias for single-value execution.
      */
     internal fun add(function: String, expression: String, alias: String?): AggregateEntry {
+        // `any(isLetterOrDigit)` rejects blank strings AND pure-symbol strings
+        // ("$$$", ":::") which would otherwise hit the database as broken SQL.
+        // `"*"` is the only documented symbol-only expression — it stands for
+        // `COUNT(*)` and must be allowed through.
+        require(expression == "*" || expression.any(Char::isLetterOrDigit)) {
+            "Aggregate expression must contain at least one letter or digit " +
+                "(function='$function', expression='$expression')"
+        }
+        require(alias == null || alias.any(Char::isLetterOrDigit)) {
+            "Aggregate alias must contain at least one letter or digit " +
+                "(function='$function', expression='$expression', alias='$alias')"
+        }
         val resolvedAlias = when {
             alias == null -> generateAlias(function, expression)
-            entries.any { it.alias == alias } ->
-                throw IllegalArgumentException("Duplicate aggregate alias '$alias'")
-            else -> alias
+            else -> {
+                val normalized = normalizeFirstChar(alias)
+                if (entries.any { it.alias == normalized })
+                    throw IllegalArgumentException("Duplicate aggregate alias '$alias'")
+                normalized
+            }
         }
         val sql = buildExpressionSql(function, expression)
         return AggregateEntry(sql, resolvedAlias).also { entries.add(it) }
     }
+
+    /**
+     * SQL identifiers must start with a letter or `_` on every mainstream
+     * dialect. Prepends `_` if the first character is anything else; returns
+     * the alias unchanged otherwise.
+     */
+    private fun normalizeFirstChar(alias: String): String =
+        if (alias.firstOrNull()?.let { it.isLetter() || it == '_' } == true) alias else "_$alias"
 
     private fun buildExpressionSql(function: String, expression: String): String {
         if (function == "raw") return expression
@@ -61,10 +84,24 @@ internal class SingleAggregatorCore(
 
     /**
      * Produces a unique alias for an entry whose caller passed `alias = null`.
-     * See the plan docs for the sanitization + uniqueness rules.
+     *
+     * Rules:
+     *  - `count("*")` → `"count"` (the function name alone).
+     *  - Structured aggregates (`sum`, `avg`, …) → `"${function}_${sanitized}"`
+     *    so the alias is descriptive and always letter-first via the function
+     *    prefix.
+     *  - `raw()` keeps the "expression names itself" convention —
+     *    `raw("SUM(test.id)")` → `"SUM_test_id"` — because the expression
+     *    already contains its own meaningful label.
+     *
+     * Every generated alias then passes through [normalizeFirstChar], which
+     * prepends `_` if the first character is not a letter — the single place
+     * where digit-first raw expressions like `raw("1")` / `raw("2 * amount")`
+     * get turned into `"_1"` / `"_2_amount"`. Structured auto-aliases always
+     * begin with the function name so the normalization is a no-op for them.
      */
     internal fun generateAlias(function: String, expression: String): String {
-        val base = when {
+        val rawBase = when {
             expression == "*" -> function
             function == "raw" -> {
                 val sanitized = sanitize(expression)
@@ -75,6 +112,7 @@ internal class SingleAggregatorCore(
                 if (sanitized.isEmpty()) function else "${function}_$sanitized"
             }
         }
+        val base = normalizeFirstChar(rawBase)
         if (entries.none { it.alias == base }) return base
         var i = 2
         while (entries.any { it.alias == "${base}_$i" }) i++

@@ -543,24 +543,18 @@ int kdbc_bind_double(kdbc_stmt *stmt, int idx, double val) {
     return stmt->conn->vt->bind_double(stmt, idx, val);
 }
 
-/* Record a heap-owned string copy in stmt->params[idx-1] as KDBC_TYPE_STRING
- * (freeing any previous copy). Returns the owned pointer, or NULL on OOM. */
-static const char *store_string_param(kdbc_stmt *stmt, int idx, const char *val) {
+int kdbc_bind_string(kdbc_stmt *stmt, int idx, const char *val) {
+    CHECK_BIND(stmt, idx);
+    if (!val) return kdbc_bind_null(stmt, idx);
+
+    /* Take ownership of a copy */
     free(stmt->params[idx - 1].owned);
     char *copy = strdup(val);
-    if (!copy) { STMT_ERR(stmt, "Out of memory"); return NULL; }
+    if (!copy) { STMT_ERR(stmt, "Out of memory"); return KDBC_ERROR; }
     stmt->params[idx - 1].owned = copy;
     stmt->params[idx - 1].type = KDBC_TYPE_STRING;
     stmt->params[idx - 1].val.str.ptr = copy;
     stmt->params[idx - 1].val.str.len = strlen(copy);
-    return copy;
-}
-
-int kdbc_bind_string(kdbc_stmt *stmt, int idx, const char *val) {
-    CHECK_BIND(stmt, idx);
-    if (!val) return kdbc_bind_null(stmt, idx);
-    const char *copy = store_string_param(stmt, idx, val);
-    if (!copy) return KDBC_ERROR;
     return stmt->conn->vt->bind_string(stmt, idx, copy);
 }
 

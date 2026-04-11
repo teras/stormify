@@ -139,6 +139,33 @@ database.pool.size=10
     StormifyJ stormify = new StormifyJ(dataSource);
     ```
 
+### Default Instance
+
+Several Stormify APIs — the **CRUDTable** and **Extension** styles for CRUD
+operations, [AutoTable lazy stubs](References.md#fresh-construction-vs-lazy-stubs),
+and [`PagedList`](PagedList.md#quick-start) — operate without receiving an explicit
+`Stormify` reference on every call. They look up a **default instance** that you
+register once during application startup:
+
+=== "Kotlin"
+
+    ```kotlin
+    val stormify = Stormify(dataSource)
+    stormify.asDefault()
+    ```
+
+=== "Java"
+
+    ```java
+    StormifyJ stormify = new StormifyJ(dataSource);
+    stormify.asDefault();
+    ```
+
+After `asDefault()`, any code that needs an implicit `Stormify` (without an
+attached instance of its own) picks up this one. Construct as many `Stormify`
+instances as you need for explicit use; only the most recent `asDefault()` call
+wins for the library-wide default.
+
 ## Logging Configuration
 
 Stormify includes logging capabilities to help monitor SQL queries and diagnose issues.

@@ -6,6 +6,7 @@ package onl.ycode.stormify.biglist
 
 import kotlinx.atomicfu.atomic
 import onl.ycode.stormify.NativeBigInteger
+import onl.ycode.stormify.SiblingGroup
 import onl.ycode.stormify.Stormify
 import onl.ycode.stormify.StormifyAware
 import onl.ycode.stormify.TableInfo
@@ -13,7 +14,6 @@ import onl.ycode.stormify.TypeUtils
 import onl.ycode.stormify.enumEntries
 import onl.ycode.stormify.enumToInt
 import kotlin.jvm.JvmOverloads
-import kotlin.jvm.JvmStatic
 import kotlin.math.min
 import kotlin.reflect.KClass
 
@@ -116,10 +116,10 @@ abstract class PagedListBase<T : Any> internal constructor(
 
     /**
      * Input parser for this list. Overrides [defaultInputParser].
-     * Set to [NoInputParser] (default) to fall through to the global level.
+     * Set to [InputParser.NONE] (default) to fall through to the global level.
      * @see InputParser
      */
-    var inputParser: InputParser = NoInputParser
+    var inputParser: InputParser = InputParser.NONE
 
     /**
      * Whether the query should return only distinct results.
@@ -184,9 +184,10 @@ abstract class PagedListBase<T : Any> internal constructor(
      * Adds an [ENUM][Column.Type.ENUM] column with a custom display-name-to-DB-value map.
      * Use this when the field is not a Kotlin enum but logically represents one (e.g., a
      * status integer column with human-readable labels), or to override the auto-built
-     * map for a real enum field.
+     * map for a real enum field. The `Map` first argument distinguishes this overload
+     * from the scalar-typed variants at compile time.
      */
-    fun addEnumColumn(enumValues: Map<String, Any>, vararg fieldPaths: String): Column =
+    fun addColumn(enumValues: Map<String, Any>, vararg fieldPaths: String): Column =
         addColumnInternal(fieldPaths.map { FieldPath(it) }, Column.Type.ENUM, enumValues)
 
     /**
@@ -199,8 +200,8 @@ abstract class PagedListBase<T : Any> internal constructor(
     fun addColumn(type: Column.Type, vararg paths: ScalarPath): Column =
         addColumnInternal(paths.map { FieldPath(it.toPath()) }, type, null)
 
-    /** Enum-column variant using typed paths. */
-    fun addEnumColumn(enumValues: Map<String, Any>, vararg paths: ScalarPath): Column =
+    /** Enum-column variant using typed paths — same rules as the `Map` + `String` overload. */
+    fun addColumn(enumValues: Map<String, Any>, vararg paths: ScalarPath): Column =
         addColumnInternal(paths.map { FieldPath(it.toPath()) }, Column.Type.ENUM, enumValues)
 
     private fun addColumnInternal(
@@ -343,14 +344,24 @@ abstract class PagedListBase<T : Any> internal constructor(
      * paginating through the list's index-based `iterator()` would issue
      * `N / pageSize` queries.
      *
-     * Kotlin resolves this member in preference to the
-     * [kotlin.collections.Iterable.forEach] extension, so
-     * `list.forEach { ... }` benefits automatically.
+     * Rows are forwarded to [action] in chunks matching the default sibling-
+     * batch size, so a foreign-key touch resolves a whole chunk of siblings in
+     * one query instead of one per row. See the
+     * [PagedList docs](https://ycode.onl/stormify/PagedList/#streaming-with-foreachstreaming).
      */
-    fun forEach(action: (T) -> Unit) {
+    fun forEachStreaming(action: (T) -> Unit) {
         val (query, arguments) = constraintPart
         val sql = "SELECT ${distinctPart}${info.tableName}.* FROM ${tablesPart}$query ORDER BY $sortingPart"
-        stormify.readCursor(null, classType, sql, *arguments.toTypedArray()) { row -> action(row) }
+        // Chunk size matches the default sibling-batch size by design.
+        val buffer = ArrayList<T>(SiblingGroup.DEFAULT_BATCH_SIZE)
+        stormify.readCursor(null, classType, sql, *arguments.toTypedArray()) { row ->
+            buffer.add(row)
+            if (buffer.size >= SiblingGroup.DEFAULT_BATCH_SIZE) {
+                buffer.forEach(action)
+                buffer.clear()
+            }
+        }
+        buffer.forEach(action)
     }
 
     /**
@@ -467,7 +478,7 @@ abstract class PagedListBase<T : Any> internal constructor(
         for (column in _columns) {
             if (column === excludeColumn) continue
             val filterVal = column.filter ?: continue
-            val isNullFilter = filterVal == NULL
+            val isNullFilter = filterVal == Column.NULL
             val parser = resolveInputParser(column)
             val orParts = mutableListOf<String>()
 
@@ -615,33 +626,23 @@ abstract class PagedListBase<T : Any> internal constructor(
     private fun buildEnumValues(enumType: KClass<*>): Map<String, Any>? {
         val entries = enumEntries(enumType) ?: return null
         return entries.associate { e ->
-            val display = if (e is HumanReadable) e.displayName() else e.name
+            val display = if (e is HumanReadable) e.displayName else e.name
             display to enumToInt(e)
         }
     }
 
     internal fun resolveInputParser(column: Column): InputParser =
-        if (column.inputParser !== NoInputParser) column.inputParser
-        else if (inputParser !== NoInputParser) inputParser
+        if (column.inputParser !== InputParser.NONE) column.inputParser
+        else if (inputParser !== InputParser.NONE) inputParser
         else defaultInputParser
 
-    /** Global configuration shared by every `PagedList` instance. */
-    companion object {
-        /**
-         * Global input parser for all PagedList instances. Overridden by
-         * [PagedListBase.inputParser] (per-list) and [Column.inputParser] (per-column).
-         * @see InputParser
-         */
-        @JvmStatic
-        var defaultInputParser: InputParser = NoInputParser
+    internal companion object {
+        // Backing storage for the user-facing `PagedList.defaultInputParser`
+        // wrappers (jvmBasedMain and nativeMain). Not intended for direct user
+        // access — go through `PagedList.defaultInputParser` instead.
+        internal var defaultInputParser: InputParser = InputParser.NONE
 
-        /**
-         * The string representation of a null value. Use this to search for NULL values
-         * in a filter instead of using a regular null.
-         */
-        const val NULL: String = "―"
-
-        /** Classloader-leak cleanup hook — on JVM, invoked by `StormifyLifecycle.clear()`. */
-        internal fun clearDefaultInputParser() { defaultInputParser = NoInputParser }
+        // Classloader-leak cleanup hook — on JVM, invoked by `StormifyLifecycle.clear()`.
+        internal fun clearDefaultInputParser() { defaultInputParser = InputParser.NONE }
     }
 }

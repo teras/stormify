@@ -210,10 +210,10 @@ data class Event(
 
 enum class PlainStatus { ACTIVE, INACTIVE, BANNED }
 
-enum class HRStatus : HumanReadable {
-    ACTIVE { override fun displayName() = "Ενεργή" },
-    INACTIVE { override fun displayName() = "Ανενεργή" },
-    BANNED { override fun displayName() = "Αποκλεισμένη" }
+enum class HRStatus(override val displayName: String) : HumanReadable {
+    ACTIVE("Ενεργή"),
+    INACTIVE("Ανενεργή"),
+    BANNED("Αποκλεισμένη")
 }
 
 enum class CustomStatus(override val dbValue: Int) : DbValue {

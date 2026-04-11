@@ -84,28 +84,6 @@ dispatch to the same underlying implementation.
     val lines = order.details<OrderItem>()          // Parent-child query
     ```
 
-## Default Instance
-
-The **CRUDTable** and **Extension** styles operate without an explicit `Stormify`
-reference. They require a *default instance*, registered once at startup:
-
-=== "Kotlin"
-
-    ```kotlin
-    val stormify = Stormify(dataSource)
-    stormify.asDefault()
-    ```
-
-=== "Java"
-
-    ```java
-    StormifyJ stormify = new StormifyJ(dataSource);
-    stormify.asDefault();
-    ```
-
-The same default instance is picked up by [AutoTable lazy stubs](References.md#fresh-construction-vs-lazy-stubs)
-and [`PagedList`](PagedList.md#quick-start) when no instance is explicitly attached.
-
 ## Batch CRUD Operations
 
 Pass a collection to `create`, `update`, or `delete` to operate on many entities at once:

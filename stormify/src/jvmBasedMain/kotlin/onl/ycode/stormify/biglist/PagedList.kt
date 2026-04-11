@@ -25,17 +25,7 @@ class PagedList<T : Any> : PagedListBase<T> {
     /** Construct for the given Java class — the Java-friendly constructor. */
     constructor(entityClass: Class<T>) : super(entityClass.kotlin)
 
-    /**
-     * Streams every row through [action] using a cursor. Overrides the
-     * default [java.lang.Iterable.forEach] so Java callers also get the
-     * streaming behaviour — avoids paginating through the index-based
-     * iterator, which would issue one query per page.
-     */
-    override fun forEach(action: java.util.function.Consumer<in T>) {
-        super.forEach { action.accept(it) }
-    }
-
-    /** Java-facing re-exports of [PagedListBase] globals so callers can write `PagedList.NULL` / `PagedList.defaultInputParser` directly. */
+    /** Java-facing re-export of [PagedListBase.defaultInputParser]. */
     companion object {
         /**
          * Global input parser for all PagedList instances. Backed by
@@ -48,12 +38,6 @@ class PagedList<T : Any> : PagedListBase<T> {
             set(value) {
                 PagedListBase.defaultInputParser = value
             }
-
-        /**
-         * The string representation of a null value. Use this to search for NULL values
-         * in a filter instead of using a regular null.
-         */
-        const val NULL: String = PagedListBase.NULL
     }
 }
 

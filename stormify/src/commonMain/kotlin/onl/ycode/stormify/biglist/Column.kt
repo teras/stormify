@@ -64,6 +64,13 @@ class Column internal constructor(
         @JvmField val ASCENDING = SortState.ASCENDING
         /** Descending sort order. */
         @JvmField val DESCENDING = SortState.DESCENDING
+
+        /**
+         * Sentinel string used to filter a column for SQL `NULL`. Assign as the
+         * column filter (`column.filter = Column.NULL`) to generate
+         * `WHERE <column> IS NULL` in the underlying query.
+         */
+        const val NULL: String = "―"
     }
 
     /**
@@ -122,12 +129,12 @@ class Column internal constructor(
      * Used for locale-aware parsing of numbers, dates, etc.
      *
      * Resolution order: column → list → global → identity (no transformation).
-     * Set to [NoInputParser] (default) to fall through to the next level.
+     * Set to [InputParser.NONE] (default) to fall through to the next level.
      *
      * @see PagedListBase.inputParser
      * @see PagedListBase.defaultInputParser
      */
-    var inputParser: InputParser = NoInputParser
+    var inputParser: InputParser = InputParser.NONE
 
     private var _filterValues: FilterValues? = null
 
@@ -179,6 +186,13 @@ data class FieldPath(
 ) {
     init {
         require(segments.isNotEmpty()) { "Field path cannot be empty" }
+        require(segments.all { it.any(Char::isLetterOrDigit) }) {
+            // Rejects blank strings AND pure-symbol strings ("$$$", ":::", "@@@"),
+            // which could otherwise slip past a naive `isNotBlank()` check and
+            // surface only later as an obscure "field not found" tree-traversal
+            // error — or worse, as a raw SQL syntax error from the driver.
+            "Field path segments must contain at least one letter or digit: $segments"
+        }
     }
 
     /** Builds a path from a dot-notation string such as `"contactPerson.firstName"`. */
@@ -206,10 +220,21 @@ data class FieldPath(
 fun interface InputParser {
     /** Transforms [input] — the raw filter text — into the form the database expects. */
     fun parse(input: String, type: Column.Type): String
-}
 
-/** Sentinel value indicating no parser is set. Passes input through unchanged. */
-val NoInputParser: InputParser = InputParser { input, _ -> input }
+    /** Holder for the [NONE] sentinel and any future shared [InputParser] instances. */
+    companion object {
+        /**
+         * Sentinel parser that passes every filter through unchanged. Assigning this
+         * to a column / list / global parser slot means "no custom parsing at this
+         * level — fall through to the next level in the resolution chain".
+         *
+         * Because the field is `@JvmField`, Java callers can write
+         * `InputParser.NONE` directly without going through a getter.
+         */
+        @JvmField
+        val NONE: InputParser = InputParser { input, _ -> input }
+    }
+}
 
 /**
  * Callback used by [SqlGenerator] implementations to stage a bind parameter for the

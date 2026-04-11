@@ -8,17 +8,17 @@ package onl.ycode.stormify.biglist
  * Used by [PagedListBase] enum/quantize columns to map
  * between display names (what the user sees/types) and database values.
  *
- * Example:
+ * Example (mirrors the [onl.ycode.stormify.DbValue] pattern — constructor param
+ * propagated via `override val`):
  * ```kotlin
- * enum class Status(@DbValue val code: Int) : HumanReadable {
- *     ACTIVE(1) { override fun displayName() = "Ενεργή" },
- *     INACTIVE(0) { override fun displayName() = "Ανενεργή" }
+ * enum class Status(override val displayName: String) : HumanReadable {
+ *     ACTIVE("Ενεργή"),
+ *     INACTIVE("Ανενεργή"),
+ *     BANNED("Αποκλεισμένη")
  * }
  * ```
  */
 interface HumanReadable {
-    /**
-     * Returns the localized, human-readable display name for this value.
-     */
-    fun displayName(): String
+    /** The localized, human-readable display name for this value. */
+    val displayName: String
 }
