@@ -36,6 +36,7 @@ kotlin {
             compileTaskProvider.configure {
                 compilerOptions {
                     freeCompilerArgs.add("-Xannotation-default-target=param-property")
+                    freeCompilerArgs.add("-Xexpect-actual-classes")
                 }
             }
         }

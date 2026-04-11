@@ -145,13 +145,17 @@ column use OR.
 
     ```java
     PagedList<Order> list = stormify.attach(new PagedList<>(Order.class));
-    Column<Order> nameCol   = list.addColumn(Order_.customer.name);
-    Column<Order> statusCol = list.addColumn(Order_.status);
-    Column<Order> rawCol    = list.addRawColumn("total * tax_rate", Column.NUMERIC);
+    Column nameCol   = list.addColumn(Order_.customer.name);
+    Column statusCol = list.addColumn(Order_.status);
+    Column rawCol    = list.addRawColumn("total * tax_rate", Column.NUMERIC);
 
     nameCol.setFilter("Acme");
     statusCol.setFilter("ACTIVE");
     ```
+
+> Note: `Column` is a non-generic type — you can write `Column` (not `Column<Order>`)
+> in Java. The list's entity type `T` is kept on `PagedList<T>` itself, but the
+> filter/sort machinery on a column does not depend on it.
 
 String paths with dot notation work too (`addColumn("customer.name")`) — useful for
 cross-cutting code where a field is chosen at runtime. Mix both styles freely.
@@ -317,8 +321,9 @@ can be changed:
     ```
 
 Indexing outside the currently cached page triggers a new page load. The `size` property
-triggers a `COUNT(*)` query the first time it's read and caches the result. Any change to
-filters, sorting, or constraints invalidates both the page cache and the count.
+triggers a `COUNT(*)` query the first time it's read and caches the result. The list
+stays in sync with your configuration — filter, sort, constraint, and page-size changes
+are picked up automatically on the next access.
 
 Stormify uses the underlying SQL dialect's pagination syntax (`LIMIT/OFFSET`, `FETCH
 FIRST`, `ROWNUM`, etc.) automatically.
@@ -367,10 +372,10 @@ change immediately without resetting the user's filters:
     list.remove(company);
     ```
 
-## Selection Values (Distinct Per-Column)
+## Filter Values (Distinct Per-Column)
 
-For populating dropdown pickers, call `column.getSelectionValues()`. This returns a
-`SelectionList<T>` — another lazy paginated list, but of the distinct values of that
+For populating dropdown pickers, call `column.getFilterValues()`. This returns a
+`FilterValues` — another lazy paginated list, but of the distinct values of that
 column, filtered by the **other** columns' active filters. The user only sees values that
 would actually return results under the current filter state.
 
@@ -378,7 +383,7 @@ would actually return results under the current filter state.
 
     ```kotlin
     val statusCol = list.addColumn(User_.status)
-    val distinctStatuses = statusCol.getSelectionValues()
+    val distinctStatuses = statusCol.getFilterValues()
     // Populate a dropdown; values are filtered by the other active filters
     distinctStatuses.forEach { println(it) }
     ```
@@ -386,13 +391,40 @@ would actually return results under the current filter state.
 === "Java"
 
     ```java
-    Column<User> statusCol = list.addColumn(User_.status);
-    SelectionList<User> distinctStatuses = statusCol.getSelectionValues();
+    Column statusCol = list.addColumn(User_.status);
+    FilterValues distinctStatuses = statusCol.getFilterValues();
     distinctStatuses.forEach(System.out::println);
     ```
 
-`SelectionList` auto-invalidates whenever any filter or constraint changes on the parent
-list.
+`FilterValues` stays in sync with the parent list — any change to filters or
+constraints is reflected on the next access.
+
+### Facet Counts (`withCounts`)
+
+Some pickers want to show the value plus how many rows it would produce
+("Category: Books (12), Movies (4)"). Call `withCounts()` on the `FilterValues` to
+get a sibling `FilterCountedValues` — same lazy pagination, but each element is a
+`FilterCountedValue(value, count)`:
+
+=== "Kotlin"
+
+    ```kotlin
+    val categoryCol = list.addColumn(Product_.category)
+    val counts = categoryCol.getFilterValues().withCounts()
+    for (entry in counts) println("${entry.value} (${entry.count})")
+    ```
+
+=== "Java"
+
+    ```java
+    Column categoryCol = list.addColumn(Product_.category);
+    FilterCountedValues counts = categoryCol.getFilterValues().withCounts();
+    for (FilterCountedValue entry : counts)
+        System.out.println(entry.getValue() + " (" + entry.getCount() + ")");
+    ```
+
+Repeated calls to `withCounts()` on the same `FilterValues` return the same instance,
+so you can share it across multiple reads without re-querying.
 
 ## Input Parsing and Locale
 
@@ -460,7 +492,7 @@ predicates over calculated expressions:
 === "Java"
 
     ```java
-    Column<User> col = list.addRawColumn("users.id", Column.NUMERIC, (column, value, args) -> {
+    Column col = list.addRawColumn("users.id", Column.NUMERIC, (column, value, args) -> {
         int n = Integer.parseInt(value);
         args.accept(n);
         return column + " % ? = 0";
@@ -494,11 +526,237 @@ provide localized display names:
     ```
 
 When the enum column auto-builds its display-name-to-DB-value map, it uses
-`displayName()` instead of `name`. This is also what `SelectionList` returns for enum
+`displayName()` instead of `name`. This is also what `FilterValues` returns for enum
 columns — so your dropdown shows the localized labels instead of `ACTIVE`/`INACTIVE`/`BANNED`.
+
+## Refreshing After External Changes
+
+When you mutate data outside of the list's awareness — typically via
+`stormify.create/update/delete` — the list's cached row count and current page are
+unaware of the change. Call `list.refresh()` to force the next read to re-query:
+
+=== "Kotlin"
+
+    ```kotlin
+    stormify.create(Company(name = "Acme"))
+    list.refresh()            // next access will re-query
+    println(list.size)        // includes the new row
+    ```
+
+=== "Java"
+
+    ```java
+    stormify.create(new Company("Acme"));
+    list.refresh();           // next access will re-query
+    System.out.println(list.size());
+    ```
+
+`refresh()` is pure cache invalidation — there are no listeners to notify. After calling
+it, the list itself is ready, and you are responsible for whatever UI refresh your
+framework needs.
+
+## Streaming with `forEach`
+
+A `PagedList` supports ordinary iteration (`for (row in list)`), but the index-based
+iterator walks page by page and issues one query per page — fine for small result sets,
+but wasteful for exports over tens of thousands of rows.
+
+For efficient, one-query streaming use `forEach`, which runs a server-side cursor over
+the current filter / sort state:
+
+=== "Kotlin"
+
+    ```kotlin
+    // Single query, streams every row regardless of page size.
+    list.forEach { row -> exportWriter.write(row) }
+    ```
+
+=== "Java"
+
+    ```java
+    // Single query, streams every row. Overrides java.lang.Iterable.forEach
+    // so you get the streaming variant from Java too.
+    list.forEach(row -> exportWriter.write(row));
+    ```
+
+Kotlin's member-over-extension rule routes `list.forEach { }` to this streaming variant
+on all platforms. `for (row in list)` keeps its page-by-page semantics — choose
+`forEach` when you actually want to iterate everything.
+
+## Aggregations
+
+`list.getAggregator()` returns a `PagedAggregator` — a fluent builder for SQL aggregate
+queries that respect the list's current constraints and per-column filters. `isDistinct`
+is ignored for aggregates.
+
+The builder methods take a path (as `String` or typed `ScalarPath`) plus an optional
+alias. When alias is omitted the aggregator generates a unique one by combining the
+function name and the path (`sum_revenue`, `count_id`, `countDistinct_category`, …).
+
+### Single-Value Aggregation
+
+Chain one method and call `execute<R>()` (or `execute(Class<R>)` from Java) to get a
+typed scalar:
+
+=== "Kotlin"
+
+    ```kotlin
+    import java.math.BigDecimal
+
+    val total: BigDecimal? = list.getAggregator()
+        .sum(Company_.revenue)
+        .execute<BigDecimal>()
+
+    val rowCount: Long? = list.getAggregator()
+        .count("*")
+        .execute<Long>()
+
+    val categories: Long? = list.getAggregator()
+        .countDistinct(Product_.category)
+        .execute<Long>()
+    ```
+
+=== "Java"
+
+    ```java
+    import java.math.BigDecimal;
+
+    BigDecimal total = list.getAggregator()
+        .sum(Company_.revenue)
+        .execute(BigDecimal.class);
+
+    Long rowCount = list.getAggregator()
+        .count("*")
+        .execute(Long.class);
+
+    Long categories = list.getAggregator()
+        .countDistinct(Product_.category)
+        .execute(Long.class);
+    ```
+
+### Multi-Value Aggregation
+
+Keep chaining aggregators to build a `MultiAggregator` — its `execute()` runs a single
+query and returns a `Map<String, Any?>` keyed by each aggregator's alias (auto-generated
+or explicit):
+
+=== "Kotlin"
+
+    ```kotlin
+    val row = list.getAggregator()
+        .sum(Company_.revenue, "total")
+        .avg(Company_.revenue, "average")
+        .min(Company_.revenue)              // → "min_revenue"
+        .max(Company_.revenue)              // → "max_revenue"
+        .count("*", "cnt")
+        .execute()
+
+    val total = row["total"] as BigDecimal
+    val min   = row["min_revenue"] as BigDecimal
+    ```
+
+=== "Java"
+
+    ```java
+    Map<String, Object> row = list.getAggregator()
+        .sum(Company_.revenue, "total")
+        .avg(Company_.revenue, "average")
+        .min(Company_.revenue, null)           // auto alias "min_revenue"
+        .max(Company_.revenue, null)           // auto alias "max_revenue"
+        .count("*", "cnt")
+        .execute();
+
+    BigDecimal total = (BigDecimal) row.get("total");
+    BigDecimal min   = (BigDecimal) row.get("min_revenue");
+    ```
+
+Explicit aliases that collide with an already-added entry throw
+`IllegalArgumentException`. Auto-generated aliases never collide — repeating
+`sum("revenue")` gives `sum_revenue`, `sum_revenue_2`, `sum_revenue_3`, …
+
+### Raw Expressions
+
+When the built-in functions are not enough, use `raw(expression)` to emit an arbitrary
+SQL fragment. Auto-generated aliases sanitize the expression (operators and parentheses
+become underscores, duplicates get a numeric suffix) so you don't have to come up with
+one yourself — although supplying an explicit alias is always an option.
+
+=== "Kotlin"
+
+    ```kotlin
+    // SUM(qty * price) respecting current filters
+    val revenue = list.getAggregator()
+        .raw("SUM(order_item.qty * order_item.price)")
+        .execute<BigDecimal>()
+
+    // Multi with a raw alongside a typed aggregator
+    val row = list.getAggregator()
+        .sum(Order_.total, "total")
+        .raw("SUM(order.total * tax_rate)", "total_with_tax")
+        .execute()
+    ```
+
+=== "Java"
+
+    ```java
+    BigDecimal revenue = list.getAggregator()
+        .raw("SUM(order_item.qty * order_item.price)", null)
+        .execute(BigDecimal.class);
+
+    Map<String, Object> row = list.getAggregator()
+        .sum(Order_.total, "total")
+        .raw("SUM(order.total * tax_rate)", "total_with_tax")
+        .execute();
+    ```
+
+## Saving and Restoring State
+
+For navigation flows where the user leaves a grid / picker screen and comes back, use
+`saveState()` / `restoreState()`. They capture the per-column filters, sorts,
+case-sensitivity flags, the page size, and the distinct flag into a plain
+`PagedListState` data object — easy to persist in a view model or session store:
+
+=== "Kotlin"
+
+    ```kotlin
+    // Before leaving the screen
+    val state: PagedListState = list.saveState()
+    viewModel.savedListState = state
+
+    // When coming back
+    val list = stormify.attach(PagedList<Company>())
+    list.addColumn(Company_.name)
+    list.addColumn(Company_.revenue)
+    viewModel.savedListState?.let { list.restoreState(it) }
+    ```
+
+=== "Java"
+
+    ```java
+    // Before leaving the screen
+    PagedListState state = list.saveState();
+    viewModel.savedListState = state;
+
+    // When coming back
+    PagedList<Company> list = stormify.attach(new PagedList<>(Company.class));
+    list.addColumn(Company_.name);
+    list.addColumn(Company_.revenue);
+    if (viewModel.savedListState != null)
+        list.restoreState(viewModel.savedListState);
+    ```
+
+`restoreState()` is permissive: column keys present in the saved state but missing from
+the current list are silently ignored (so your list can add/remove columns between
+sessions without blowing up). Constraints, the selected entity, and input parsers are
+**not** part of the state — they are structural or ephemeral, not user-visible choices.
+
+State keys are derived from each column's paths (raw columns use their SQL expression;
+field columns use their paths joined alphabetically), so the order in which paths were
+passed to `addColumn` does not affect the key.
 
 ## Distinct Mode
 
 Set `list.isDistinct = true` to make the underlying query use `SELECT DISTINCT`. This is
 useful when JOINs cause row duplication. Note that `DISTINCT` affects both `size` (which
-becomes `COUNT(DISTINCT ...)`) and page queries.
+becomes `COUNT(DISTINCT ...)`) and page queries. Aggregations are **not** affected —
+`getAggregator()` ignores the flag.

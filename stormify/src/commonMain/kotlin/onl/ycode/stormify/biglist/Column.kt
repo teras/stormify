@@ -15,11 +15,9 @@ import kotlin.jvm.JvmField
  *
  * Columns are defined at setup time via [PagedListBase.addColumn] or [PagedListBase.addRawColumn].
  * After setup, the user activates/deactivates filters and sorting at runtime.
- *
- * @param T The entity type of the parent [PagedListBase]
  */
-class Column<T : Any> internal constructor(
-    private val pagedList: PagedListBase<T>,
+class Column internal constructor(
+    private val pagedList: PagedListBase<*>,
     internal val fields: List<FieldPath>,
     internal val type: Type,
     internal val enumValues: Map<String, Any>?,
@@ -78,7 +76,7 @@ class Column<T : Any> internal constructor(
         set(value) {
             if (field != value) {
                 field = value
-                pagedList.invalidate()
+                pagedList.refresh()
             }
         }
 
@@ -89,7 +87,7 @@ class Column<T : Any> internal constructor(
         set(value) {
             if (field != value) {
                 field = value
-                pagedList.invalidate()
+                pagedList.refresh()
             }
         }
 
@@ -112,6 +110,12 @@ class Column<T : Any> internal constructor(
      * Default is false (case-insensitive).
      */
     var isCaseSensitive: Boolean = false
+        set(value) {
+            if (field != value) {
+                field = value
+                pagedList.refresh()
+            }
+        }
 
     /**
      * Parser that transforms user input before it reaches the database.
@@ -125,27 +129,41 @@ class Column<T : Any> internal constructor(
      */
     var inputParser: InputParser = NoInputParser
 
-    private var _selectionValues: SelectionList<T>? = null
+    private var _filterValues: FilterValues? = null
 
     /**
      * Returns the distinct values available for this column, filtered by
      * the active filters of **other** columns and the list constraints.
      *
      * The result is a lazy paginated list — values are loaded on demand.
-     * The same instance is reused across calls; it auto-invalidates when
-     * any filter or constraint changes on the parent list.
+     * The same instance is reused across calls and stays in sync with the
+     * parent list's current state.
+     *
+     * Use [FilterValues.withCounts] to obtain a counted view that also
+     * exposes per-value row counts (for facet / picker UIs).
      */
-    fun getSelectionValues(): SelectionList<T> =
-        _selectionValues ?: SelectionList(pagedList, this).also { _selectionValues = it }
+    fun getFilterValues(): FilterValues =
+        _filterValues ?: FilterValues(pagedList, this).also { _filterValues = it }
 
-    internal fun invalidateSelectionValues() {
-        _selectionValues?.invalidate()
+    internal fun invalidateFilterValues() {
+        _filterValues?.invalidateAll()
     }
 
     internal fun hasActiveFilter(): Boolean = filter != null
 
     internal fun hasActiveSort(): Boolean = sort != null
 
+    /**
+     * Deterministic key for this column used by [PagedListBase.saveState] /
+     * [PagedListBase.restoreState]. Raw columns use their SQL expression; field
+     * columns use their paths joined alphabetically so that path order does not
+     * affect the key.
+     */
+    internal fun stateKey(): String = when {
+        rawExpression != null -> rawExpression
+        fields.isNotEmpty() -> fields.map { it.path }.sorted().joinToString(",")
+        else -> ""
+    }
 }
 
 /**

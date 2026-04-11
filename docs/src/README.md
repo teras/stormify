@@ -21,7 +21,7 @@ Designed for developers seeking a simple yet powerful ORM, Stormify excels in pr
 - **Coroutines**: Suspend-based transaction API with a built-in connection pool, coroutine cancellation wired to native database cancel primitives.
 - **Enum Properties**: Enum fields stored as integers (ordinal or custom values via `DbValue`) or strings (`@DbField(enumAsString = true)`).
 - **Lazy Loading**: Reference fields with `by db()` delegates for automatic lazy loading of related entities.
-- **Paginated Views**: `PagedList<T>` — on-demand, column-based paginated views with per-column filtering, sorting, FK traversal, and locale-aware input parsing. Suitable for data grids and dropdown pickers over very large result sets.
+- **Paginated Views**: `PagedList<T>` for data grids and pickers — column filters, sorting, FK traversal, aggregations, facet counts, and streaming iteration over very large result sets.
 - **Stored Procedures**: Call stored procedures with input, output, and bidirectional parameters.
 - **Support for Composite Keys**: Handle tables with composite primary keys effortlessly.
 
