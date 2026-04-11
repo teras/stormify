@@ -5,6 +5,7 @@
 package onl.ycode.stormify
 
 import onl.ycode.kdbc.SQLException
+import onl.ycode.stormify.biglist.ReferencePath
 import kotlin.properties.ReadWriteProperty
 import kotlin.reflect.KClass
 import kotlin.reflect.KProperty
@@ -57,6 +58,13 @@ inline fun <reified T : Any> findById(id: Any): T? =
 /** Returns all detail (child) entities of type [D] related to this parent through a foreign key. */
 inline fun <reified D : Any> Any.details(propertyName: String? = null): List<D> =
     stormify().getDetails(this, propertyName)
+
+/**
+ * Type-safe variant of [details] that accepts an annotation-processor-generated
+ * reference path (e.g. `Paths.AuditEntry_.createdBy`) instead of a string.
+ */
+inline fun <reified D : Any> Any.details(referenceField: ReferencePath): List<D> =
+    stormify().getDetails(this, referenceField)
 
 // --- Transactions ---
 
@@ -120,17 +128,56 @@ class db<T>(private val defaultValue: T) : ReadWriteProperty<Any?, T> {
 
 /**
  * Property delegate that lazy-loads child (detail) records on first access.
- * Optionally specify [propertyName] when the detail class has multiple foreign key fields
- * referencing different parent types.
+ *
+ * When omitted, [propertyName] is resolved automatically by scanning the child type
+ * ([T]) for exactly one field whose type matches the declaring parent class. When the
+ * child type has **multiple** foreign keys pointing to the same parent type, supply
+ * the **Kotlin property name on the child class** (not the database column name) that
+ * should be used for the lookup — i.e. the name of the `var`/`val` in the child
+ * source, even if it has been remapped with `@DbField(name = "…")` to a different
+ * column. The value must be a single field identifier, not a dotted traversal path.
  *
  * ```kotlin
  * class Order : AutoTable() {
  *     var items: List<OrderItem> by lazyDetails()
  * }
+ *
+ * class User : AutoTable() {
+ *     // AuditEntry has both `createdBy: User` and `modifiedBy: User`,
+ *     // so we disambiguate by the child-side Kotlin property name:
+ *     var createdEntries: List<AuditEntry> by lazyDetails("createdBy")
+ *     var modifiedEntries: List<AuditEntry> by lazyDetails("modifiedBy")
+ * }
  * ```
  */
 inline fun <reified T : Any> lazyDetails(propertyName: String = ""): ReadWriteProperty<Any?, List<T>> =
     LazyDetailsProperty(T::class, propertyName)
+
+/**
+ * Type-safe variant of [lazyDetails] that accepts an annotation-processor-generated
+ * reference path (e.g. `Paths.AuditEntry_.modifiedBy`) instead of a magic string. The
+ * compiler guarantees that the referenced property actually exists on the child type,
+ * so typos and renames are caught at build time instead of first query execution.
+ *
+ * The runtime value passed to the underlying lookup is identical to the plain-string
+ * form — `lazyDetails(Paths.AuditEntry_.modifiedBy)` resolves to the same field lookup
+ * as `lazyDetails("modifiedBy")`. Only direct reference fields on the child class are
+ * accepted; chained paths (e.g. `Paths.AuditEntry_.modifiedBy.somethingElse`) produce
+ * a [onl.ycode.stormify.biglist.ScalarPath] which the overload resolution rejects at
+ * compile time, and any lingering trailing `.` from the path builder is stripped
+ * before the lookup runs.
+ *
+ * ```kotlin
+ * class User : AutoTable() {
+ *     @DbField(primaryKey = true)
+ *     var id: Int? = null
+ *     var createdEntries: List<AuditEntry> by lazyDetails(Paths.AuditEntry_.createdBy)
+ *     var modifiedEntries: List<AuditEntry> by lazyDetails(Paths.AuditEntry_.modifiedBy)
+ * }
+ * ```
+ */
+inline fun <reified T : Any> lazyDetails(referenceField: ReferencePath): ReadWriteProperty<Any?, List<T>> =
+    LazyDetailsProperty(T::class, referenceField.path.trimEnd('.'))
 
 @PublishedApi
 internal class LazyDetailsProperty<T : Any>(

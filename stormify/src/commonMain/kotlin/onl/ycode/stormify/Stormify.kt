@@ -9,6 +9,7 @@ import onl.ycode.kdbc.*
 import onl.ycode.logger.LogManager
 import onl.ycode.stormify.SqlDialect.GeneratedKeyRetrieval
 import onl.ycode.stormify.TypeUtils.castTo
+import onl.ycode.stormify.biglist.ReferencePath
 import kotlin.reflect.KClass
 
 
@@ -602,9 +603,27 @@ open class Stormify(val dataSource: DataSource, vararg registrars: EntityRegistr
 
     // --- Detail retrieval ---
 
-    /** Retrieves all detail (child) entities related to a parent entity through a foreign key. */
+    /**
+     * Retrieves all detail (child) entities related to a parent entity through a foreign key.
+     *
+     * When [propertyName] is `null`, the child type [D] is scanned for exactly one field
+     * whose type matches the parent's class and that field's column is used. When the
+     * child type has multiple foreign keys of the same parent type, pass the **Kotlin
+     * property name on the child class** (not the database column name) to
+     * disambiguate. The value must be a single field identifier — a dotted traversal
+     * path (e.g. `"user.address"`) is rejected with an error.
+     */
     inline fun <reified D : Any> getDetails(parent: Any, propertyName: String? = null): List<D> =
         getDetails(null, parent, D::class, propertyName)
+
+    /**
+     * Type-safe variant of [getDetails] that accepts an annotation-processor-generated
+     * reference path (e.g. `Paths.AuditEntry_.createdBy`) instead of a string. The
+     * compiler guarantees the referenced property exists on the child type, so typos
+     * and renames surface at build time rather than on first query.
+     */
+    inline fun <reified D : Any> getDetails(parent: Any, referenceField: ReferencePath): List<D> =
+        getDetails(null, parent, D::class, referenceField.path.trimEnd('.'))
 
     @PublishedApi
     @Suppress("UNCHECKED_CAST")
@@ -614,6 +633,10 @@ open class Stormify(val dataSource: DataSource, vararg registrars: EntityRegistr
         detailsClass: KClass<D>,
         propertyName: String? = null
     ): List<D> {
+        require(propertyName == null || '.' !in propertyName) {
+            "getDetails propertyName must be a single field name on ${detailsClass.fullName}, " +
+                "not a traversal path — got '$propertyName'"
+        }
         val parentInfo = resolveTableInfo(parent::class) as TableInfo<M>
         val parentId = this.getValidIds(parent, parentInfo)
         require(parentId.size == 1) { "Parent class ${parent::class.fullName} should have exactly one primary key" }

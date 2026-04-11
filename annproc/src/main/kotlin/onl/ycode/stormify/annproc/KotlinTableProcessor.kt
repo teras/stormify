@@ -117,6 +117,7 @@ class KotlinTableProcessor(private val env: SymbolProcessorEnvironment) : Symbol
                 w.write("import kotlin.jvm.JvmField\n")
                 w.write("import kotlin.jvm.JvmName\n")
             }
+            w.write("import onl.ycode.stormify.biglist.ReferencePath\n")
             w.write("import onl.ycode.stormify.biglist.ScalarPath\n\n")
 
             // Generate a Ref class per entity
@@ -142,7 +143,7 @@ class KotlinTableProcessor(private val env: SymbolProcessorEnvironment) : Symbol
         props: Collection<EntityProperty>,
         entityQNames: Set<String>
     ) {
-        w.write("class ${className}Ref(private val p: String) {\n")
+        w.write("class ${className}Ref(path: String) : ReferencePath(path) {\n")
 
         for (prop in props) {
             if (prop.isReference) {
@@ -152,9 +153,9 @@ class KotlinTableProcessor(private val env: SymbolProcessorEnvironment) : Symbol
                 if (!isKnownEntity) continue
 
                 if (jvmTarget) w.write("    @get:JvmName(\"${prop.name}\")\n")
-                w.write("    val ${prop.name} get() = ${shortName}Ref(\"\${p}${prop.name}.\")\n")
+                w.write("    val ${prop.name} get() = ${shortName}Ref(\"\${path}${prop.name}.\")\n")
             } else {
-                w.write("    ${jvmFieldPrefix}val ${prop.name} = ScalarPath(\"\${p}${prop.name}\")\n")
+                w.write("    ${jvmFieldPrefix}val ${prop.name} = ScalarPath(\"\${path}${prop.name}\")\n")
             }
         }
 

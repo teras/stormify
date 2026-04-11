@@ -2,6 +2,7 @@ package onl.ycode.stormify
 
 import onl.ycode.kdbc.DataSource
 import onl.ycode.kdbc.JdbcDataSource
+import onl.ycode.stormify.biglist.ReferencePath
 import java.util.function.Consumer
 
 /**
@@ -71,6 +72,15 @@ class StormifyJ(dataSource: DataSource, vararg registrars: EntityRegistrar) {
     @JvmOverloads
     fun <M : Any, T : Any> getDetails(parent: M, detailsClass: Class<T>, propertyName: String? = null) =
         stormify.getDetails(null, parent, detailsClass.kotlin, propertyName)
+
+    /**
+     * Type-safe variant of [getDetails] that accepts an annotation-processor-generated
+     * reference path (e.g. `Paths.AuditEntry_.createdBy()`) instead of a string.
+     * The compiler guarantees the referenced property exists on the child type, so
+     * typos and renames surface at build time rather than on first query.
+     */
+    fun <M : Any, T : Any> getDetails(parent: M, detailsClass: Class<T>, referenceField: ReferencePath) =
+        stormify.getDetails(null, parent, detailsClass.kotlin, referenceField.path.trimEnd('.'))
 
     /** Convenience over [read] for `SELECT * FROM <table> <whereClause>`. */
     @JvmOverloads

@@ -1,5 +1,6 @@
 package onl.ycode.stormify
 
+import onl.ycode.stormify.biglist.ReferencePath
 import java.util.function.Consumer
 
 /**
@@ -58,6 +59,13 @@ class TransactionContextJ(private val ctx: TransactionContext) {
     @JvmOverloads
     fun <M : Any, T : Any> getDetails(parent: M, detailsClass: Class<T>, propertyName: String? = null) =
         stormify.getDetails(connection, parent, detailsClass.kotlin, propertyName)
+
+    /**
+     * Type-safe variant of [getDetails] that accepts an annotation-processor-generated
+     * reference path (e.g. `Paths.AuditEntry_.createdBy()`) instead of a string.
+     */
+    fun <M : Any, T : Any> getDetails(parent: M, detailsClass: Class<T>, referenceField: ReferencePath) =
+        stormify.getDetails(connection, parent, detailsClass.kotlin, referenceField.path.trimEnd('.'))
 
     /** Convenience over [read] for `SELECT * FROM <table> <whereClause>`. */
     @JvmOverloads

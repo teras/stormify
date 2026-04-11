@@ -2,6 +2,7 @@ package onl.ycode.stormify
 
 import onl.ycode.kdbc.Connection
 import onl.ycode.kdbc.Savepoint
+import onl.ycode.stormify.biglist.ReferencePath
 import kotlin.reflect.KClass
 
 /**
@@ -168,6 +169,13 @@ class TransactionContext internal constructor(
     /** Retrieves all detail (child) entities of [detailsClass] related to a [parent] through a foreign key. */
     fun <M : Any, D : Any> getDetails(parent: M, detailsClass: KClass<D>, propertyName: String? = null): List<D> =
         stormify.getDetails(conn, parent, detailsClass, propertyName)
+
+    /**
+     * Type-safe variant of [getDetails] that accepts an annotation-processor-generated
+     * reference path (e.g. `Paths.AuditEntry_.createdBy`) instead of a string.
+     */
+    inline fun <reified D : Any> getDetails(parent: Any, referenceField: ReferencePath): List<D> =
+        stormify.getDetails(conn, parent, D::class, referenceField.path.trimEnd('.'))
 
     /** Finds all entities of type [T], optionally filtered by a [whereClause]. */
     inline fun <reified T : Any> findAll(whereClause: String = "", vararg arguments: Any?): List<T> =

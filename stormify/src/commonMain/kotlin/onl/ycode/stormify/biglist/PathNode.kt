@@ -24,3 +24,24 @@ open class ScalarPath(
     /** Returns the dot-notation path string. */
     override fun toString() = path
 }
+
+/**
+ * Base class for annotation-processor-generated reference path nodes (e.g.
+ * `AuditEntry_.modifiedBy`). Each reference node carries the accumulated dot-notation
+ * path it represents — with a trailing `.` when further chaining through this node is
+ * still possible — and subclasses use that stored value to build the next path step
+ * when chaining into nested reference or scalar fields.
+ *
+ * The [path] property is the one and only door through which the accumulated value is
+ * exposed. It is read by the annotation-processor-generated chaining getters, by
+ * [onl.ycode.stormify.lazyDetails], and occasionally by callers who just want a
+ * readable representation of the traversal they have built. It is intentionally a
+ * plain public property: there is no secret here, merely a convenience accessor.
+ */
+open class ReferencePath(
+    /** The accumulated dot-notation path, typically ending with a trailing `.`. */
+    val path: String
+) {
+    /** Returns the accumulated dot-notation path. */
+    override fun toString() = path
+}
