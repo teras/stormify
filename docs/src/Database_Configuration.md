@@ -227,3 +227,82 @@ Tuning connection pool settings such as the maximum pool size, idle connections,
 - **Optimize SQL Queries**: Ensure your queries are efficient and indexed properly.
 - **Adjust Pool Sizes**: Balance pool sizes to match your application's workload and database capacity.
 - **Monitor Connection Usage**: Use monitoring tools to keep an eye on connection usage and database performance.
+
+## Application Server Deployment
+
+When Stormify is used inside a Jakarta EE / Java EE webapp (Payara, WildFly, Tomcat, GlassFish, Jetty), **where** you place `stormify-jvm.jar` on the classpath determines whether you need any shutdown cleanup.
+
+### Recommended: package inside the WAR
+
+Put `stormify-jvm.jar` in your application's `WEB-INF/lib/`. This is the default for any build that declares Stormify as a Maven / Gradle `implementation` dependency — the JAR ends up in the packaged WAR automatically. In this topology:
+
+- Stormify's internal singletons (entity metadata registry, enum registry, default instance) live **inside** the webapp ClassLoader, next to your entity classes.
+- On webapp undeploy, the entire webapp ClassLoader is garbage-collected together with everything it holds — registries, entity metadata, cached lambdas, all of it.
+- **No cleanup hook is required.** You can skip the rest of this section.
+
+### Shared classpath: call `StormifyLifecycle.clear()` on undeploy
+
+If — and only if — you install `stormify-jvm.jar` into a shared server path such as:
+
+- Payara / GlassFish: `${domain}/lib/`
+- Tomcat: `$CATALINA_HOME/lib/`
+- WildFly / JBoss: a shared module
+
+…then the library's static singletons live in the **server's common ClassLoader**, but they will be populated with `KClass` keys and lambdas that come from the **webapp's ClassLoader**. Without explicit cleanup, those references keep the webapp ClassLoader alive across redeploys, causing a metaspace leak.
+
+Register a single lifecycle listener that calls `StormifyLifecycle.clear()`:
+
+=== "Jakarta EE (`@WebListener`)"
+
+    ```java
+    import jakarta.servlet.ServletContextEvent;
+    import jakarta.servlet.ServletContextListener;
+    import jakarta.servlet.annotation.WebListener;
+    import onl.ycode.stormify.StormifyLifecycle;
+
+    @WebListener
+    public class StormifyShutdownListener implements ServletContextListener {
+        @Override
+        public void contextDestroyed(ServletContextEvent sce) {
+            StormifyLifecycle.clear();
+        }
+    }
+    ```
+
+    The `@WebListener` annotation is picked up automatically by the container — no entry in `web.xml` is needed.
+
+=== "CDI / `@PreDestroy`"
+
+    ```java
+    import jakarta.annotation.PreDestroy;
+    import jakarta.enterprise.context.ApplicationScoped;
+    import onl.ycode.stormify.StormifyLifecycle;
+
+    @ApplicationScoped
+    public class StormifyCleanup {
+        @PreDestroy
+        public void onShutdown() {
+            StormifyLifecycle.clear();
+        }
+    }
+    ```
+
+=== "Spring Boot WAR"
+
+    ```java
+    import jakarta.annotation.PreDestroy;
+    import org.springframework.stereotype.Component;
+    import onl.ycode.stormify.StormifyLifecycle;
+
+    @Component
+    public class StormifyCleanup {
+        @PreDestroy
+        public void onShutdown() {
+            StormifyLifecycle.clear();
+        }
+    }
+    ```
+
+    Only needed when the Spring Boot application is deployed **as a WAR** to an external server. Fat-jar Spring Boot apps don't have a redeploy lifecycle and don't need this.
+
+After `clear()` returns, Stormify is back in its initial state. If the same JVM hosts a new webapp deployment immediately afterwards, the next call to `new Stormify(...).asDefault()` re-initialises everything normally — the annproc-generated entity registrations are reapplied when the new webapp's classes are first touched.

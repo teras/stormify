@@ -41,6 +41,9 @@ open class Stormify(val dataSource: DataSource, vararg registrars: EntityRegistr
             private set(value) {
                 _defaultInstance.value = value
             }
+
+        /** Classloader-leak cleanup hook. Invoked by [StormifyLifecycle.clear]. */
+        internal fun clearDefault() { _defaultInstance.value = null }
     }
 
     /** Sets this instance as [defaultInstance] and returns it. */

@@ -640,5 +640,8 @@ abstract class PagedListBase<T : Any> internal constructor(
          * in a filter instead of using a regular null.
          */
         const val NULL: String = "―"
+
+        /** Classloader-leak cleanup hook. Invoked by [onl.ycode.stormify.StormifyLifecycle.clear]. */
+        internal fun clearDefaultInputParser() { defaultInputParser = NoInputParser }
     }
 }
