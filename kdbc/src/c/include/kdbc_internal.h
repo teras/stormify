@@ -52,7 +52,14 @@ struct kdbc_conn {
     char                 product_version[256];
 };
 
-/* Parameter storage for prepared statements */
+/* Parameter storage for prepared statements.
+ *
+ * Invariant: for temporal types (KDBC_TYPE_DATE/TIME/TIMESTAMP) and scalar
+ * types (NULL/INT/LONG/DOUBLE/BOOL), `owned` MUST be NULL. Only KDBC_TYPE_STRING
+ * and KDBC_TYPE_BLOB allocate an owned heap copy. Violating this invariant
+ * causes double-free via the batch snapshot, which deep-copies the kdbc_param
+ * array but does not duplicate the `owned` buffer — snapshot and live slot
+ * would both point to the same block and both would be freed. */
 typedef struct {
     kdbc_type type;
     union {
@@ -60,8 +67,20 @@ typedef struct {
         double   dbl;
         struct { const char *ptr; size_t len; } str;
         struct { const void *ptr; size_t len; } blob;
+        /* Decomposed temporal value. Shared by DATE (time fields zero),
+         * TIME (date fields zero), and TIMESTAMP (all fields used).
+         * 12 bytes, fits in the existing 16-byte union slot with 4 bytes slack.
+         * Layout mirrors Oracle's dpiTimestamp; widens to int at call-sites
+         * via implicit C integer promotion. */
+        struct {
+            int16_t year;
+            uint8_t month, day;
+            uint8_t hour, minute, second;
+            uint8_t _pad;
+            int32_t usec;
+        } ts;
     } val;
-    /* For string/blob copies that we own */
+    /* For string/blob copies that we own. MUST be NULL for non-STRING/BLOB types. */
     void *owned;
 } kdbc_param;
 

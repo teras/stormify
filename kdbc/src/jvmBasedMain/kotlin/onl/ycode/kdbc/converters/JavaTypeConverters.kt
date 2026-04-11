@@ -9,10 +9,16 @@ import java.math.BigDecimal
 import java.math.BigInteger
 import java.time.Instant
 import java.time.ZoneId
-import java.time.ZonedDateTime
+import java.time.ZoneOffset
 import java.time.format.DateTimeFormatter
 import kotlin.reflect.KClass
 import kotlinx.datetime.toInstant
+import kotlinx.datetime.toJavaLocalDate
+import kotlinx.datetime.toJavaLocalDateTime
+import kotlinx.datetime.toJavaLocalTime
+import kotlinx.datetime.toKotlinLocalDate
+import kotlinx.datetime.toKotlinLocalDateTime
+import kotlinx.datetime.toKotlinLocalTime
 import kotlinx.datetime.toLocalDateTime
 
 /**
@@ -85,6 +91,102 @@ internal object JavaTypeConverters {
         if (supportsKotlinxTime) {
             registerKotlinxTimeTargets(registry)
         }
+
+        // Direct pair-wise converters for pure-decomposed pairs. Registered AFTER
+        // the epoch-pivot block above, so the registry naturally prefers the direct
+        // path wherever one exists. Bug-fixes disguised as structural changes:
+        // no timezone traversal, no noon hack, no non-determinism.
+        registerJavaTimeDirectConverters(registry, supportsKotlinxTime)
+    }
+
+    /**
+     * Registers a direct (pair-wise) converter. Later registrations override earlier
+     * ones at the same (target, source) key.
+     */
+    private fun direct(
+        registry: MutableMap<KClass<*>, MutableMap<KClass<*>, (Any) -> Any>>,
+        target: KClass<*>,
+        source: KClass<*>,
+        fn: (Any) -> Any
+    ) {
+        registry.getOrPut(target) { mutableMapOf() }[source] = fn
+    }
+
+    /**
+     * Registers a bidirectional direct pair via two `direct` calls.
+     * Use for symmetric JDK-provided conversions (`toLocalDate` / `Date.valueOf`, etc.).
+     */
+    private inline fun <reified S : Any, reified T : Any> bidi(
+        registry: MutableMap<KClass<*>, MutableMap<KClass<*>, (Any) -> Any>>,
+        crossinline s2t: (S) -> T,
+        crossinline t2s: (T) -> S
+    ) {
+        direct(registry, T::class, S::class) { s2t(it as S) }
+        direct(registry, S::class, T::class) { t2s(it as T) }
+    }
+
+    private fun registerJavaTimeDirectConverters(
+        registry: MutableMap<KClass<*>, MutableMap<KClass<*>, (Any) -> Any>>,
+        supportsKotlinxTime: Boolean
+    ) {
+        // java.time pure-decomposed pairs
+        bidi<java.time.LocalDate, java.time.LocalDateTime>(
+            registry,
+            { it.atStartOfDay() },
+            { it.toLocalDate() }
+        )
+        direct(registry, java.time.LocalTime::class, java.time.LocalDateTime::class) {
+            (it as java.time.LocalDateTime).toLocalTime()
+        }
+
+        // java.sql ↔ java.time via JDK helpers (deterministic — the old epoch
+        // path for java.sql.Time ↔ java.time.LocalTime depended on now().offset,
+        // which this supersedes).
+        bidi<java.sql.Date, java.time.LocalDate>(
+            registry,
+            { it.toLocalDate() },
+            { java.sql.Date.valueOf(it) }
+        )
+        bidi<java.sql.Timestamp, java.time.LocalDateTime>(
+            registry,
+            { it.toLocalDateTime() },
+            { java.sql.Timestamp.valueOf(it) }
+        )
+        bidi<java.sql.Time, java.time.LocalTime>(
+            registry,
+            { it.toLocalTime() },
+            { java.sql.Time.valueOf(it) }
+        )
+
+        // java.time → String via ISO toString() (preserves the exact decomposed
+        // value; the old path round-tripped through a noon-anchored Instant and
+        // yielded "2026-03-20T12:00:00Z" for a plain LocalDate).
+        listOf(
+            java.time.LocalDate::class,
+            java.time.LocalDateTime::class,
+            java.time.LocalTime::class
+        ).forEach { t -> direct(registry, String::class, t) { it.toString() } }
+
+        // Cross-type: kotlinx.datetime ↔ java.time via the official interop
+        // extensions. These don't touch a timezone — they just rewrap the wire
+        // representation — so they're structurally DST-immune.
+        if (supportsKotlinxTime) {
+            bidi<kotlinx.datetime.LocalDate, java.time.LocalDate>(
+                registry,
+                { it.toJavaLocalDate() },
+                { it.toKotlinLocalDate() }
+            )
+            bidi<kotlinx.datetime.LocalDateTime, java.time.LocalDateTime>(
+                registry,
+                { it.toJavaLocalDateTime() },
+                { it.toKotlinLocalDateTime() }
+            )
+            bidi<kotlinx.datetime.LocalTime, java.time.LocalTime>(
+                registry,
+                { it.toJavaLocalTime() },
+                { it.toKotlinLocalTime() }
+            )
+        }
     }
 
     private fun registerKotlinxTimeTargets(registry: MutableMap<KClass<*>, MutableMap<KClass<*>, (Any) -> Any>>) {
@@ -97,7 +199,12 @@ internal object JavaTypeConverters {
             java.sql.Time::class to { (it as java.sql.Time).time },
             java.time.LocalDateTime::class to { (it as java.time.LocalDateTime).atZone(ZoneId.systemDefault()).toInstant().toEpochMilli() },
             java.time.LocalDate::class to { (it as java.time.LocalDate).atTime(12, 0).atZone(ZoneId.systemDefault()).toInstant().toEpochMilli() },
-            java.time.LocalTime::class to { (it as java.time.LocalTime).atDate(java.time.LocalDate.now()).toInstant(ZonedDateTime.now().offset).toEpochMilli() },
+            // Deterministic anchor: 1970-01-01 UTC. Previously used LocalDate.now() +
+            // ZonedDateTime.now().offset, which made the result depend on the current
+            // DST era — same LocalTime produced different Longs before/after a DST
+            // transition. The direct LocalTime ↔ java.sql.Time converters registered
+            // below short-circuit this path for that specific pair.
+            java.time.LocalTime::class to { (it as java.time.LocalTime).atDate(java.time.LocalDate.EPOCH).toInstant(ZoneOffset.UTC).toEpochMilli() },
         )
         val kotlinxFromMillis: List<Pair<KClass<*>, (Long) -> Any>> = listOf(
             kotlinx.datetime.LocalDate::class to { m: Long ->
@@ -147,9 +254,11 @@ internal object JavaTypeConverters {
         if (destClass != java.time.LocalDate::class) converters[java.time.LocalDate::class] = {
             toNative((it as java.time.LocalDate).atTime(12, 0).atZone(ZoneId.systemDefault()).toInstant().toEpochMilli())
         }
+        // Deterministic anchor: 1970-01-01 UTC (see commentary at the matching
+        // line inside registerKotlinxTimeTargets for the rationale).
         if (destClass != java.time.LocalTime::class) converters[java.time.LocalTime::class] = {
             toNative(
-                (it as java.time.LocalTime).atDate(java.time.LocalDate.now()).toInstant(ZonedDateTime.now().offset)
+                (it as java.time.LocalTime).atDate(java.time.LocalDate.EPOCH).toInstant(ZoneOffset.UTC)
                     .toEpochMilli()
             )
         }

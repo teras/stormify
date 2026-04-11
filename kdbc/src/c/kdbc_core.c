@@ -580,45 +580,61 @@ int kdbc_bind_blob(kdbc_stmt *stmt, int idx, const void *data, size_t len) {
     return stmt->conn->vt->bind_blob(stmt, idx, copy, len);
 }
 
-/* Temporal binders: store the formatted ISO value via store_string_param (so batch
- * replay can rebind via bind_string), then let the driver override with its native
- * temporal binder when available. */
+/* Temporal binders: store the decomposed value directly in val.ts so batch
+ * replay can rebind via the driver's native binder (avoiding the text protocol).
+ * All five drivers implement bind_timestamp/date/time, so no fallback needed. */
+static void clear_owned(kdbc_stmt *stmt, int idx) {
+    free(stmt->params[idx - 1].owned);
+    stmt->params[idx - 1].owned = NULL;
+}
+
 int kdbc_bind_timestamp(kdbc_stmt *stmt, int idx,
                         int year, int month, int day,
                         int hour, int minute, int second, int usec) {
     CHECK_BIND(stmt, idx);
-    char buf[32];
-    snprintf(buf, sizeof(buf), "%04d-%02d-%02d %02d:%02d:%02d.%06d",
-             year, month, day, hour, minute, second, usec);
-    const char *copy = store_string_param(stmt, idx, buf);
-    if (!copy) return KDBC_ERROR;
-    if (stmt->conn->vt->bind_timestamp)
-        return stmt->conn->vt->bind_timestamp(stmt, idx, year, month, day,
-                                              hour, minute, second, usec);
-    return stmt->conn->vt->bind_string(stmt, idx, copy);
+    clear_owned(stmt, idx);
+    kdbc_param *p = &stmt->params[idx - 1];
+    p->type = KDBC_TYPE_TIMESTAMP;
+    p->val.ts.year = (int16_t)year;
+    p->val.ts.month = (uint8_t)month;
+    p->val.ts.day = (uint8_t)day;
+    p->val.ts.hour = (uint8_t)hour;
+    p->val.ts.minute = (uint8_t)minute;
+    p->val.ts.second = (uint8_t)second;
+    p->val.ts.usec = usec;
+    return stmt->conn->vt->bind_timestamp(stmt, idx, year, month, day,
+                                          hour, minute, second, usec);
 }
 
 int kdbc_bind_date(kdbc_stmt *stmt, int idx, int year, int month, int day) {
     CHECK_BIND(stmt, idx);
-    char buf[16];
-    snprintf(buf, sizeof(buf), "%04d-%02d-%02d", year, month, day);
-    const char *copy = store_string_param(stmt, idx, buf);
-    if (!copy) return KDBC_ERROR;
-    if (stmt->conn->vt->bind_date)
-        return stmt->conn->vt->bind_date(stmt, idx, year, month, day);
-    return stmt->conn->vt->bind_string(stmt, idx, copy);
+    clear_owned(stmt, idx);
+    kdbc_param *p = &stmt->params[idx - 1];
+    p->type = KDBC_TYPE_DATE;
+    p->val.ts.year = (int16_t)year;
+    p->val.ts.month = (uint8_t)month;
+    p->val.ts.day = (uint8_t)day;
+    p->val.ts.hour = 0;
+    p->val.ts.minute = 0;
+    p->val.ts.second = 0;
+    p->val.ts.usec = 0;
+    return stmt->conn->vt->bind_date(stmt, idx, year, month, day);
 }
 
 int kdbc_bind_time(kdbc_stmt *stmt, int idx,
                    int hour, int minute, int second, int usec) {
     CHECK_BIND(stmt, idx);
-    char buf[20];
-    snprintf(buf, sizeof(buf), "%02d:%02d:%02d.%06d", hour, minute, second, usec);
-    const char *copy = store_string_param(stmt, idx, buf);
-    if (!copy) return KDBC_ERROR;
-    if (stmt->conn->vt->bind_time)
-        return stmt->conn->vt->bind_time(stmt, idx, hour, minute, second, usec);
-    return stmt->conn->vt->bind_string(stmt, idx, copy);
+    clear_owned(stmt, idx);
+    kdbc_param *p = &stmt->params[idx - 1];
+    p->type = KDBC_TYPE_TIME;
+    p->val.ts.year = 0;
+    p->val.ts.month = 0;
+    p->val.ts.day = 0;
+    p->val.ts.hour = (uint8_t)hour;
+    p->val.ts.minute = (uint8_t)minute;
+    p->val.ts.second = (uint8_t)second;
+    p->val.ts.usec = usec;
+    return stmt->conn->vt->bind_time(stmt, idx, hour, minute, second, usec);
 }
 
 /* ========================================================================
@@ -791,6 +807,29 @@ int kdbc_execute_batch(kdbc_stmt *stmt) {
                     break;
                 case KDBC_TYPE_BOOL:
                     stmt->conn->vt->bind_bool(stmt, idx, (int)p->val.i64);
+                    break;
+                case KDBC_TYPE_DATE:
+                    stmt->conn->vt->bind_date(stmt, idx,
+                                              p->val.ts.year,
+                                              p->val.ts.month,
+                                              p->val.ts.day);
+                    break;
+                case KDBC_TYPE_TIME:
+                    stmt->conn->vt->bind_time(stmt, idx,
+                                              p->val.ts.hour,
+                                              p->val.ts.minute,
+                                              p->val.ts.second,
+                                              p->val.ts.usec);
+                    break;
+                case KDBC_TYPE_TIMESTAMP:
+                    stmt->conn->vt->bind_timestamp(stmt, idx,
+                                                   p->val.ts.year,
+                                                   p->val.ts.month,
+                                                   p->val.ts.day,
+                                                   p->val.ts.hour,
+                                                   p->val.ts.minute,
+                                                   p->val.ts.second,
+                                                   p->val.ts.usec);
                     break;
                 default:
                     /* Fail loudly — old code silently `break`d which masked missing cases. */

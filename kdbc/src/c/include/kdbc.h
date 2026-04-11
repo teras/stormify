@@ -68,13 +68,16 @@ typedef enum {
  * Returned by type-inspection APIs and used internally for parameter binding.
  */
 typedef enum {
-    KDBC_TYPE_NULL    = 0,  /**< SQL NULL */
-    KDBC_TYPE_INT     = 1,  /**< 32-bit integer */
-    KDBC_TYPE_LONG    = 2,  /**< 64-bit integer */
-    KDBC_TYPE_DOUBLE  = 3,  /**< Double-precision float */
-    KDBC_TYPE_STRING  = 4,  /**< UTF-8 string */
-    KDBC_TYPE_BLOB    = 5,  /**< Binary large object */
-    KDBC_TYPE_BOOL    = 6   /**< Boolean */
+    KDBC_TYPE_NULL      = 0,  /**< SQL NULL */
+    KDBC_TYPE_INT       = 1,  /**< 32-bit integer */
+    KDBC_TYPE_LONG      = 2,  /**< 64-bit integer */
+    KDBC_TYPE_DOUBLE    = 3,  /**< Double-precision float */
+    KDBC_TYPE_STRING    = 4,  /**< UTF-8 string */
+    KDBC_TYPE_BLOB      = 5,  /**< Binary large object */
+    KDBC_TYPE_BOOL      = 6,  /**< Boolean */
+    KDBC_TYPE_DATE      = 7,  /**< Date (year, month, day) — decomposed, no epoch indirection */
+    KDBC_TYPE_TIME      = 8,  /**< Time (hour, minute, second, microsecond) — decomposed */
+    KDBC_TYPE_TIMESTAMP = 9   /**< Timestamp (full date + time + microsecond) — decomposed */
 } kdbc_type;
 
 /**

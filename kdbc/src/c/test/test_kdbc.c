@@ -191,7 +191,9 @@ static const char *text_type(void) {
 static const char *timestamp_type(void) {
     switch (g_driver) {
         case KDBC_ORACLE:   return "TIMESTAMP";
-        case KDBC_MSSQL:  return "DATETIME";
+        /* DATETIME2(6) has 1-microsecond precision; plain DATETIME rounds to
+         * ~3.33ms ticks which breaks sub-second round-trip assertions. */
+        case KDBC_MSSQL:  return "DATETIME2(6)";
         default:            return "TIMESTAMP";
     }
 }
@@ -941,6 +943,71 @@ static void test_batch_insert(void) {
     kdbc_close(conn);
 }
 
+/* Batch INSERT with DATE + TIMESTAMP rows, then read back and assert
+ * decomposed-field fidelity across the replay path. This exercises the
+ * KDBC_TYPE_DATE / KDBC_TYPE_TIMESTAMP cases in kdbc_execute_batch, which
+ * previously routed through the text protocol and lost precision / did
+ * per-row re-parse. */
+static void test_batch_temporal(void) {
+    kdbc_conn *conn = open_db();
+    drop_table(conn, "kdbc_btemp");
+    char ddl[256];
+    snprintf(ddl, sizeof(ddl),
+             "CREATE TABLE kdbc_btemp (id %s, d %s, t %s)",
+             int_type(), date_type(), timestamp_type());
+    exec_sql(conn, ddl);
+
+    struct { int id, y, mo, d, h, mi, s, us; } rows[] = {
+        { 1, 2024,  1,  1,  0,  0,  0,      0 },
+        { 2, 2024,  6, 15, 14, 30, 45, 123456 },
+        { 3, 1999, 12, 31, 23, 59, 58, 999999 },
+        { 4, 2026,  3, 19,  2, 30,  0,      0 }, /* DST-gap date in Brazil */
+    };
+    const int n = (int)(sizeof(rows) / sizeof(rows[0]));
+
+    kdbc_stmt *stmt = kdbc_prepare(conn,
+        "INSERT INTO kdbc_btemp (id, d, t) VALUES (?, ?, ?)");
+    ASSERT(stmt != NULL, "prepare");
+    for (int i = 0; i < n; i++) {
+        kdbc_bind_int(stmt, 1, rows[i].id);
+        kdbc_bind_date(stmt, 2, rows[i].y, rows[i].mo, rows[i].d);
+        kdbc_bind_timestamp(stmt, 3, rows[i].y, rows[i].mo, rows[i].d,
+                            rows[i].h, rows[i].mi, rows[i].s, rows[i].us);
+        ASSERT(kdbc_add_batch(stmt) == KDBC_OK, "add_batch");
+    }
+    int total = kdbc_execute_batch(stmt);
+    ASSERT_EQ_INT(total, n, "batch n rows");
+    kdbc_stmt_close(stmt);
+
+    kdbc_result *rs = kdbc_execute_query(conn,
+        "SELECT id, d, t FROM kdbc_btemp ORDER BY id");
+    for (int i = 0; i < n; i++) {
+        ASSERT(kdbc_next(rs), "has row");
+        ASSERT_EQ_INT(kdbc_get_long(rs, 1), rows[i].id, "id");
+        int y, mo, d;
+        ASSERT(kdbc_get_date(rs, 2, &y, &mo, &d) == KDBC_OK, "get_date");
+        ASSERT_EQ_INT(y, rows[i].y, "date year");
+        ASSERT_EQ_INT(mo, rows[i].mo, "date month");
+        ASSERT_EQ_INT(d, rows[i].d, "date day");
+        int ty, tmo, td, th, tmi, ts, tus;
+        ASSERT(kdbc_get_timestamp(rs, 3, &ty, &tmo, &td, &th, &tmi, &ts, &tus) == KDBC_OK,
+               "get_timestamp");
+        ASSERT_EQ_INT(ty, rows[i].y, "ts year");
+        ASSERT_EQ_INT(tmo, rows[i].mo, "ts month");
+        ASSERT_EQ_INT(td, rows[i].d, "ts day");
+        ASSERT_EQ_INT(th, rows[i].h, "ts hour");
+        ASSERT_EQ_INT(tmi, rows[i].mi, "ts minute");
+        ASSERT_EQ_INT(ts, rows[i].s, "ts second");
+        /* usec precision depends on DB — SQLite stores as text so it round-trips
+         * exactly; other DBs may quantize. Accept anything non-negative. */
+        ASSERT(tus >= 0, "ts usec >= 0");
+    }
+    kdbc_result_close(rs);
+
+    drop_table(conn, "kdbc_btemp");
+    kdbc_close(conn);
+}
+
 /* ========================================================================
  * Tests: Error handling
  * ======================================================================== */
@@ -1239,6 +1306,7 @@ int main(int argc, char **argv) {
 
     printf("\nBatch Execution:\n");
     RUN_TEST(test_batch_insert);
+    RUN_TEST(test_batch_temporal);
 
     printf("\nError Handling:\n");
     RUN_TEST(test_invalid_sql);

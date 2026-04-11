@@ -74,6 +74,43 @@ internal object KotlinxTimeConverters {
                     group[sourceClass] = { fromMillis(sourceToMillis(it)) }
             }
         }
+
+        // Direct pair-wise converters for pure-decomposed pairs. Two things make
+        // these the final writers in the registry:
+        //   1) They come AFTER the epoch-pivot block in this file.
+        //   2) TypeConversion.kt calls KotlinxTimeConverters AFTER JavaTypeConverters,
+        //      so any `registry[String][kotlinx.Local*]` that the platform module
+        //      filled in via epoch pivot is overwritten here.
+        // The epoch-pivot entries (including the noon hack at line 42 et al.) stay
+        // intact for pairs that genuinely need an Instant-via-timezone intermediary
+        // (Long ↔ temporal, String → LocalDate via multi-format parseTemporalString,
+        // etc.).
+        direct(registry, LocalDateTime::class, LocalDate::class) {
+            LocalDateTime(it as LocalDate, LocalTime(0, 0))
+        }
+        direct(registry, LocalDate::class, LocalDateTime::class) {
+            (it as LocalDateTime).date
+        }
+        direct(registry, LocalTime::class, LocalDateTime::class) {
+            (it as LocalDateTime).time
+        }
+        // Pure-decomposed → String: preserves the exact decomposed value via
+        // ISO `toString()` instead of round-tripping through a noon-anchored
+        // Instant (which would discard hour/minute/second for LocalDateTime
+        // and yield e.g. "2026-03-20T12:00:00Z" for LocalDate).
+        listOf(LocalDate::class, LocalDateTime::class, LocalTime::class)
+            .forEach { t -> direct(registry, String::class, t) { it.toString() } }
+    }
+
+    /** Registers a direct (pair-wise) converter in the registry. Later registrations
+     *  override earlier ones at the same (target, source) key. */
+    internal fun direct(
+        registry: MutableMap<KClass<*>, MutableMap<KClass<*>, (Any) -> Any>>,
+        target: KClass<*>,
+        source: KClass<*>,
+        fn: (Any) -> Any
+    ) {
+        registry.getOrPut(target) { mutableMapOf() }[source] = fn
     }
 
     private fun <T : Any> registerTimeTarget(

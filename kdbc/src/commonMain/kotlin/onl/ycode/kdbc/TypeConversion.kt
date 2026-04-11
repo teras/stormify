@@ -106,8 +106,13 @@ object TypeConversion {
         }
 
         try { IonspinConverters.register(registry) } catch (_: Throwable) {}
-        try { KotlinxTimeConverters.register(registry) } catch (_: Throwable) {}
+        // Platform converters (JVM: java.math / java.sql / java.time) run BEFORE
+        // KotlinxTimeConverters so that kotlinx direct pair-wise converters registered
+        // at the tail of KotlinxTimeConverters.register() are the last writers to the
+        // registry and naturally win. See the ordering commentary in
+        // KotlinxTimeConverters.register() for the rationale.
         registerPlatformConverters(registry)
+        try { KotlinxTimeConverters.register(registry) } catch (_: Throwable) {}
     }
 }
 
