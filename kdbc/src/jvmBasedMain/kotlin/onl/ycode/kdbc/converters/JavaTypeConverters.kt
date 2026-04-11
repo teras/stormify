@@ -22,6 +22,18 @@ import kotlinx.datetime.toKotlinLocalTime
 import kotlinx.datetime.toLocalDateTime
 
 /**
+ * Platform hook for registering direct `java.sql.* ↔ java.time.*` converters.
+ *
+ * JVM desktop and Android diverge here: desktop can rely on the JDK 8 bridge
+ * methods (`Date.toLocalDate()`, `Timestamp.valueOf(LocalDateTime)`, …), while
+ * Android's `java.sql.*` types don't carry those bridges and must fall back to
+ * field-wise construction via the legacy deprecated accessors.
+ */
+internal expect fun registerSqlTimeDirectConverters(
+    registry: MutableMap<KClass<*>, MutableMap<KClass<*>, (Any) -> Any>>
+)
+
+/**
  * Registers conversions for Java-specific types: java.math, java.sql, java.time, and vendor types.
  * Also registers cross-conversions between java types and kotlinx-datetime types (if available).
  */
@@ -139,24 +151,11 @@ internal object JavaTypeConverters {
             (it as java.time.LocalDateTime).toLocalTime()
         }
 
-        // java.sql ↔ java.time via JDK helpers (deterministic — the old epoch
-        // path for java.sql.Time ↔ java.time.LocalTime depended on now().offset,
-        // which this supersedes).
-        bidi<java.sql.Date, java.time.LocalDate>(
-            registry,
-            { it.toLocalDate() },
-            { java.sql.Date.valueOf(it) }
-        )
-        bidi<java.sql.Timestamp, java.time.LocalDateTime>(
-            registry,
-            { it.toLocalDateTime() },
-            { java.sql.Timestamp.valueOf(it) }
-        )
-        bidi<java.sql.Time, java.time.LocalTime>(
-            registry,
-            { it.toLocalTime() },
-            { java.sql.Time.valueOf(it) }
-        )
+        // java.sql ↔ java.time direct pairs are registered per-platform:
+        // JVM desktop can use the JDK 8 bridge methods (toLocalDate(),
+        // Timestamp.valueOf(LocalDateTime), …), while Android's java.sql.*
+        // types lack those bridges and must use field-wise construction.
+        registerSqlTimeDirectConverters(registry)
 
         // java.time → String via ISO toString() (preserves the exact decomposed
         // value; the old path round-tripped through a noon-anchored Instant and

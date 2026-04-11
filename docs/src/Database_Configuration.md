@@ -252,7 +252,7 @@ If — and only if — you install `stormify-jvm.jar` into a shared server path 
 
 Register a single lifecycle listener that calls `StormifyLifecycle.clear()`:
 
-=== "Jakarta EE (`@WebListener`)"
+=== "Jakarta EE"
 
     ```java
     import jakarta.servlet.ServletContextEvent;
@@ -271,7 +271,7 @@ Register a single lifecycle listener that calls `StormifyLifecycle.clear()`:
 
     The `@WebListener` annotation is picked up automatically by the container — no entry in `web.xml` is needed.
 
-=== "CDI / `@PreDestroy`"
+=== "CDI"
 
     ```java
     import jakarta.annotation.PreDestroy;
