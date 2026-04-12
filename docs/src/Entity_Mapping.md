@@ -59,7 +59,7 @@ ensuring consistency across your database schema. By default, the naming policy 
 
 Stormify includes a feature to manage fields that should be ignored during database interactions. This is useful when you want to exclude certain fields from being created, updated, or retrieved.
 
-**Note**: If a field is marked as `@Transient`, it will be ignored by default.
+**Note**: If a field is marked as transient, it will be ignored by default. All three forms are recognized: JPA `@javax.persistence.Transient`, Kotlin `@kotlin.jvm.Transient`, and the Java `transient` keyword.
 
 === "Kotlin"
 

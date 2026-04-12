@@ -139,7 +139,7 @@ Stormify provides support for several standard annotations from the `javax.persi
 
 - **`@Enumerated`**: Controls how enum fields are stored. `@Enumerated(EnumType.STRING)` stores the enum name as a string (equivalent to `@DbField(enumAsString = true)`). `@Enumerated(EnumType.ORDINAL)` (or omitting the annotation) stores the ordinal integer.
 
-- **`@Transient`**: Marks a field to be ignored during database operations.
+- **`@Transient`**: Marks a field to be ignored during database operations. All three forms are supported: JPA `@javax.persistence.Transient`, Kotlin `@kotlin.jvm.Transient`, and the Java `transient` keyword.
 
 These annotations help bridge the gap between your classes and the database schema. By leveraging standard JPA annotations, Stormify ensures compatibility with existing JPA setups while providing additional flexibility.
 

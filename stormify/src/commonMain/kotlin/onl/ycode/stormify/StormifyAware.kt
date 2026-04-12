@@ -18,12 +18,6 @@ package onl.ycode.stormify
  */
 interface StormifyAware {
     /**
-     * @suppress Internal storage for the attached Stormify instance.
-     *           Do not access directly — use [Stormify.attach] to set it.
-     */
-    var `!stormify`: Stormify?
-
-    /**
      * Called by [Stormify.attach] after the reference is set.
      * Subclasses override this to refresh any state that depends on the attached instance
      * (e.g. invalidate cached table metadata or query results).

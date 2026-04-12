@@ -16,8 +16,8 @@ import kotlinx.atomicfu.locks.synchronized
  */
 abstract class AutoTable : StormifyEntity() {
     private val lock = SynchronizedObject()
-    internal val `!hasRun` = atomic(false)
-    internal var `!siblingGroup`: SiblingGroup? = null
+    @Transient internal val _hasRun = atomic(false)
+    @Transient internal var _siblingGroup: SiblingGroup? = null
 
     /**
      * Tracks whether any [db]-delegated property has been written on this entity.
@@ -27,7 +27,7 @@ abstract class AutoTable : StormifyEntity() {
      * loudly if no Stormify is available) from "user-constructed entity with some fields
      * set" (should return in-memory values silently).
      */
-    internal var `!userTouched` = false
+    @Transient internal var _userTouched = false
 
     /**
      * Loads this entity's data from the database if it has not been populated yet. Thread-safe.
@@ -38,12 +38,12 @@ abstract class AutoTable : StormifyEntity() {
      * during unintended lazy-load lives in the [db] property delegate.
      */
     fun populate() {
-        if (`!hasRun`.value) return
-        val ctr = `!stormify` ?: Stormify.defaultInstance ?: return
+        if (_hasRun.value) return
+        val ctr = _stormify ?: Stormify.defaultInstance ?: return
         synchronized(lock) {
-            if (!`!hasRun`.value) {
-                `!hasRun`.value = true
-                val group = `!siblingGroup`
+            if (!_hasRun.value) {
+                _hasRun.value = true
+                val group = _siblingGroup
                 if (group != null)
                     group.batchPopulate(this)
                 else
@@ -54,6 +54,6 @@ abstract class AutoTable : StormifyEntity() {
 
     /** Marks this entity as already populated, preventing any future lazy-load. */
     fun markPopulated() {
-        `!hasRun`.value = true
+        _hasRun.value = true
     }
 }

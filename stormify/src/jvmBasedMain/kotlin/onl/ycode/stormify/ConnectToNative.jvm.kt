@@ -97,7 +97,6 @@ internal actual fun <T : Any> tryReflection(type: KClass<T>): EntityMeta<T>? {
             ?.takeIf { it.isNotBlank() }
 
     val kProps = type.members.filterIsInstance<kotlin.reflect.KProperty1<T, *>>()
-        .filter { it.name.first().isLetter() } // Exclude internal/synthetic fields
     if (kProps.isEmpty()) return null
 
     val properties = kProps.mapNotNull { kProp ->

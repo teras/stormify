@@ -8,6 +8,7 @@ import kotlinx.atomicfu.locks.synchronized
 import onl.ycode.kdbc.*
 import onl.ycode.logger.LogManager
 import onl.ycode.stormify.SqlDialect.GeneratedKeyRetrieval
+import onl.ycode.stormify.biglist.PagedListBase
 import onl.ycode.stormify.TypeUtils.castTo
 import onl.ycode.stormify.biglist.ReferencePath
 import kotlin.reflect.KClass
@@ -172,7 +173,7 @@ open class Stormify(val dataSource: DataSource, vararg registrars: EntityRegistr
     }
 
     private fun bindAndLog(stmt: Statement, query: String, params: List<Any?>) {
-        `!dbLog`(query, *params.toTypedArray())
+        _dbLog(query, *params.toTypedArray())
         for (i in params.indices)
             stmt.setObject(i + 1, params[i])
     }
@@ -207,7 +208,7 @@ open class Stormify(val dataSource: DataSource, vararg registrars: EntityRegistr
     internal fun createReferenceStub(refType: KClass<*>, idValue: Any): Any {
         val refInfo = resolveTableInfo(refType) as TableInfo<Any>
         val wrapper = refInfo.create()
-        if (wrapper is StormifyEntity) wrapper.`!stormify` = this
+        if (wrapper is StormifyEntity) wrapper._stormify = this
         refInfo.setField(wrapper, refInfo.idDbNames[0], idValue, this)
         return wrapper
     }
@@ -249,15 +250,22 @@ open class Stormify(val dataSource: DataSource, vararg registrars: EntityRegistr
      * ```
      */
     fun <T : StormifyAware> attach(target: T): T {
-        target.`!stormify` = this
+        setStormifyRef(target)
         target.onAttached()
         return target
     }
 
     private fun attachStormify(target: Any) {
         if (target is StormifyAware) {
-            target.`!stormify` = this
+            setStormifyRef(target)
             target.onAttached()
+        }
+    }
+
+    private fun setStormifyRef(target: StormifyAware) {
+        when (target) {
+            is StormifyEntity -> target._stormify = this
+            is PagedListBase<*> -> target._stormify = this
         }
     }
 
@@ -457,7 +465,7 @@ open class Stormify(val dataSource: DataSource, vararg registrars: EntityRegistr
         val result = mutableListOf<NativeBigInteger>()
         readCursor(conn, NativeBigInteger::class, sql) { result.add(it) }
         if (result.isNotEmpty())
-            `!dbLog`("Sequence $sequence incremented by ${result.size} to ${result.last()}")
+            _dbLog("Sequence $sequence incremented by ${result.size} to ${result.last()}")
         return result
     }
 
@@ -726,7 +734,7 @@ open class Stormify(val dataSource: DataSource, vararg registrars: EntityRegistr
         try {
             val placeholders: String = nCopies("?", ", ", params.size)
             val statement = "CALL $name($placeholders)"
-            `!dbLog`(statement, params)
+            _dbLog(statement, params)
             connection.prepareCall(statement).use { cs ->
                 for (i in params.indices) {
                     when (val p = params[i]) {
@@ -762,6 +770,6 @@ open class Stormify(val dataSource: DataSource, vararg registrars: EntityRegistr
     fun <T : Any> getTableInfo(kclass: KClass<T>): TableInfo<T> = resolveTableInfo(kclass)
 
     @Suppress("FunctionName")
-    internal fun `!dbLog`(query: String, vararg params: Any?) =
+    internal fun _dbLog(query: String, vararg params: Any?) =
         logger.debug("{}{}", query, if (params.isEmpty()) "" else " -- " + params.contentToString())
 }

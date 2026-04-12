@@ -35,15 +35,15 @@ inline fun <reified T : Any> String.readCursor(vararg args: Any?, noinline consu
 
 /** Inserts this entity into the database and returns it with generated values populated. */
 fun <T : Any> T.create(): T =
-    ((this as? StormifyEntity)?.`!stormify` ?: stormify()).create(this)
+    ((this as? StormifyEntity)?._stormify ?: stormify()).create(this)
 
 /** Updates this entity in the database based on its primary key. */
 fun <T : Any> T.update(): T =
-    ((this as? StormifyEntity)?.`!stormify` ?: stormify()).update(this)
+    ((this as? StormifyEntity)?._stormify ?: stormify()).update(this)
 
 /** Deletes this entity from the database based on its primary key. */
 fun <T : Any> T.delete() =
-    ((this as? StormifyEntity)?.`!stormify` ?: stormify()).delete(this)
+    ((this as? StormifyEntity)?._stormify ?: stormify()).delete(this)
 
 // --- Query helpers ---
 
@@ -97,12 +97,12 @@ class db<T>(private val defaultValue: T) : ReadWriteProperty<Any?, T> {
      */
     override fun getValue(thisRef: Any?, property: KProperty<*>): T {
         val entity = thisRef as? AutoTable
-        if (entity != null && !entity.`!hasRun`.value && !entity.`!userTouched`) {
+        if (entity != null && !entity._hasRun.value && !entity._userTouched) {
             // Entity has never been populated from DB, and the user has not written any
             // field on it. This means only the ID is set — a clear lazy-load attempt.
             // If no Stormify instance is available, lazy-load is impossible — fail loudly
             // so the user isn't silently handed the delegate's default value.
-            if (entity.`!stormify` == null && Stormify.defaultInstance == null)
+            if (entity._stormify == null && Stormify.defaultInstance == null)
                 throw SQLException(
                     "Cannot lazy-load property '${property.name}' on ${entity::class.qualifiedName}: " +
                             "no Stormify instance is attached to this entity and no default instance " +
@@ -122,7 +122,7 @@ class db<T>(private val defaultValue: T) : ReadWriteProperty<Any?, T> {
         val entity = thisRef as? AutoTable
         entity?.populate()
         prop = value
-        if (entity != null) entity.`!userTouched` = true
+        if (entity != null) entity._userTouched = true
     }
 }
 
@@ -190,7 +190,7 @@ internal class LazyDetailsProperty<T : Any>(
     override fun getValue(thisRef: Any?, property: KProperty<*>): List<T> {
         if (!initialized) {
             initialized = true
-            val s = (thisRef as? StormifyEntity)?.`!stormify` ?: stormify()
+            val s = (thisRef as? StormifyEntity)?._stormify ?: stormify()
             @Suppress("UNCHECKED_CAST")
             value = s.getDetails(null, thisRef!!, cls, propertyName.ifBlank { null })
         }

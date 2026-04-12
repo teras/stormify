@@ -58,7 +58,7 @@ abstract class PagedListBase<T : Any> internal constructor(
     val classType: KClass<T>
 ) : AbstractList<T>(), StormifyAware {
 
-    override var `!stormify`: Stormify? = null
+    @Transient internal var _stormify: Stormify? = null
 
     override fun onAttached() {
         // The attached Stormify may have different naming policies or registered entities
@@ -71,7 +71,7 @@ abstract class PagedListBase<T : Any> internal constructor(
 
     /** Resolves the Stormify instance — explicitly attached, default, or error. */
     private val stormify: Stormify
-        get() = `!stormify` ?: Stormify.defaultInstance
+        get() = _stormify ?: Stormify.defaultInstance
             ?: error(
                 "No Stormify instance attached to this PagedList and no default instance " +
                         "is configured. Call stormify.attach(list) or Stormify.asDefault() first."

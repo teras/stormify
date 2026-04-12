@@ -1,10 +1,12 @@
 package onl.ycode.stormify.annproc
 
 import com.google.devtools.ksp.symbol.ClassKind
+import com.google.devtools.ksp.symbol.KSAnnotation
 import com.google.devtools.ksp.symbol.KSClassDeclaration
 import com.google.devtools.ksp.symbol.KSPropertyDeclaration
 import com.google.devtools.ksp.symbol.KSType
 import com.google.devtools.ksp.symbol.KSTypeParameter
+import com.google.devtools.ksp.symbol.Modifier
 import com.google.devtools.ksp.symbol.Variance
 
 private const val DB_TABLE = "onl.ycode.stormify.DbTable"
@@ -13,13 +15,20 @@ private const val TABLE = "javax.persistence.Table"
 
 private const val DB_FIELD = "onl.ycode.stormify.DbField"
 private const val ID = "javax.persistence.Id"
-private const val TRANSIENT = "javax.persistence.Transient"
+private val TRANSIENT_ANNOTATIONS = setOf(
+    "javax.persistence.Transient",
+    "kotlin.jvm.Transient",
+)
 private const val COLUMN = "javax.persistence.Column"
 private const val JOIN_COLUMN = "javax.persistence.JoinColumn"
 private const val SEQUENCE = "javax.persistence.SequenceGenerator"
 private const val ENUMERATED = "javax.persistence.Enumerated"
 
 private const val AUTO_TABLE = "onl.ycode.stormify.AutoTable"
+
+/** True if this annotation marks a property as transient (JPA or Kotlin). */
+private fun KSAnnotation.isTransient(): Boolean =
+    annotationType.resolve().declaration.qualifiedName?.asString() in TRANSIENT_ANNOTATIONS
 
 /**
  * Qualified names of the four **roots** of the Kotlin and Java collection hierarchies.
@@ -173,16 +182,14 @@ class EntityProperty(declaration: KSPropertyDeclaration, entity: KSClassDeclarat
         fun find(entity: KSClassDeclaration): Collection<EntityProperty> {
             // Also check constructor parameter annotations for @Transient
             val ctorParamNames = entity.primaryConstructor?.parameters
-                ?.filter { p -> p.annotations.any { it.annotationType.resolve().declaration.qualifiedName?.asString() == TRANSIENT } }
+                ?.filter { p -> p.annotations.any { it.isTransient() } }
                 ?.mapNotNull { it.name?.asString() }?.toSet() ?: emptySet()
             return entity.getAllProperties().mapNotNull {
                 val propName = it.simpleName.asString()
-                // Skip library-internal backticked fields (convention: names starting with "!"
-                // are private/hidden storage — e.g. `!stormify`, `!hasRun`, `!siblingGroup`).
-                if (propName.startsWith("!")) return@mapNotNull null
                 if (propName in ctorParamNames) return@mapNotNull null
-                if (it.annotations.any { ann -> ann.annotationType.resolve().declaration.qualifiedName?.asString() == TRANSIENT })
-                    return@mapNotNull null
+                // Transient: Java keyword, @kotlin.jvm.Transient, @javax.persistence.Transient
+                if (Modifier.JAVA_TRANSIENT in it.modifiers) return@mapNotNull null
+                if (it.annotations.any { ann -> ann.isTransient() }) return@mapNotNull null
                 EntityProperty(it, entity).takeUnless { p -> p.skip }
             }.toList()
         }

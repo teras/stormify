@@ -8,11 +8,11 @@ package onl.ycode.stormify
  */
 interface CRUDTable {
     /** Inserts this entity into the database. */
-    fun create() { ((this as? StormifyEntity)?.`!stormify` ?: stormify()).create(this) }
+    fun create() { ((this as? StormifyEntity)?._stormify ?: stormify()).create(this) }
 
     /** Updates this entity in the database based on its primary key. */
-    fun update() { ((this as? StormifyEntity)?.`!stormify` ?: stormify()).update(this) }
+    fun update() { ((this as? StormifyEntity)?._stormify ?: stormify()).update(this) }
 
     /** Deletes this entity from the database based on its primary key. */
-    fun delete() { ((this as? StormifyEntity)?.`!stormify` ?: stormify()).delete(this) }
+    fun delete() { ((this as? StormifyEntity)?._stormify ?: stormify()).delete(this) }
 }

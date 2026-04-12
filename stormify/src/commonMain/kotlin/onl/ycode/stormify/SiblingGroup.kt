@@ -21,8 +21,8 @@ internal class SiblingGroup {
 
     fun batchPopulate(trigger: AutoTable) {
         synchronized(lock) {
-            if (trigger.`!siblingGroup` !== this) return
-            trigger.`!siblingGroup` = null
+            if (trigger._siblingGroup !== this) return
+            trigger._siblingGroup = null
 
             val toPopulate = mutableListOf(trigger)
             val alive = mutableListOf<WeakRef<AutoTable>>()
@@ -31,16 +31,16 @@ internal class SiblingGroup {
                 if (member == null) continue // dead ref — skip (prune)
                 alive.add(ref)
                 if (toPopulate.size >= DEFAULT_BATCH_SIZE) continue
-                if (member !== trigger && member.`!siblingGroup` === this) {
+                if (member !== trigger && member._siblingGroup === this) {
                     member.markPopulated()
-                    member.`!siblingGroup` = null
+                    member._siblingGroup = null
                     toPopulate.add(member)
                 }
             }
             members.clear()
             members.addAll(alive)
 
-            val stormify = trigger.`!stormify` ?: return
+            val stormify = trigger._stormify ?: return
             if (toPopulate.size == 1)
                 stormify.populate(trigger)
             else

@@ -22,7 +22,7 @@ internal class PopulationContext {
         if (wrapper is AutoTable) {
             val group = siblingGroups.getOrPut(type) { SiblingGroup() }
             group.add(wrapper)
-            wrapper.`!siblingGroup` = group
+            wrapper._siblingGroup = group
         }
 
         return wrapper

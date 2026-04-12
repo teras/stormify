@@ -142,7 +142,11 @@ package onl.ycode.stormify
  *
  * ## Excluding Fields
  *
- * To exclude a field from database operations:
+ * To exclude a field from database operations, mark it as transient.
+ * All three forms are recognized:
+ * - JPA: `@javax.persistence.Transient`
+ * - Kotlin: `@kotlin.jvm.Transient`
+ * - Java: the `transient` keyword
  *
  * ```kotlin
  * data class User(

@@ -8,5 +8,5 @@ package onl.ycode.stormify
  * Stormify instance without requiring it as an explicit parameter.
  */
 abstract class StormifyEntity : StormifyAware {
-    override var `!stormify`: Stormify? = null
+    @Transient internal var _stormify: Stormify? = null
 }
