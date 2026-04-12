@@ -43,7 +43,7 @@ import kotlin.test.fail
  * sensible failure (either an error or lossy replacement — both are
  * documented behavior depending on DB configuration).
  */
-class EncodingTest {
+open class EncodingTest {
     private fun withDb(name: String, test: (Stormify) -> Unit) = TestHelper.withDb(name, test)
 
     // --- Character buckets -------------------------------------------------

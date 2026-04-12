@@ -29,7 +29,7 @@ import kotlin.test.assertNotNull
  *
  * Skipped on dialects without stored-procedure support (SQLite).
  */
-class ProcedureTest {
+open class ProcedureTest {
     private fun withDb(name: String, test: (Stormify) -> Unit) = TestHelper.withDb(name, test)
 
     /** Skip with the correct category depending on the DB. */

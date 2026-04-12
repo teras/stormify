@@ -14,6 +14,7 @@ import onl.ycode.stormify.TypeUtils
 import onl.ycode.stormify.enumEntries
 import onl.ycode.stormify.enumToInt
 import kotlin.jvm.JvmOverloads
+import kotlin.jvm.Transient
 import kotlin.math.min
 import kotlin.reflect.KClass
 

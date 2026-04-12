@@ -15,7 +15,7 @@ import kotlin.test.assertNull
  * - Update preserving FK references via sqlData()
  * - Inheritance with and without AutoTable
  */
-class ReflectionTest {
+open class ReflectionTest {
 
     private fun withDb(name: String, test: (Stormify) -> Unit) = TestHelper.withDb(name, test)
 

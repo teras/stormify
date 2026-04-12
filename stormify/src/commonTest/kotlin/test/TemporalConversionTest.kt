@@ -19,7 +19,7 @@ import kotlin.test.assertNotNull
  * construction and must preserve the exact decomposed value when formatting
  * to String.
  */
-class TemporalConversionTest {
+open class TemporalConversionTest {
 
     // --- Direct pure-decomposed pairs --------------------------------------
 

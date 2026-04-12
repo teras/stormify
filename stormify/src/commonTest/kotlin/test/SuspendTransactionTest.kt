@@ -37,7 +37,7 @@ import kotlin.test.fail
  * These are not exhaustive concurrency tests — they are sanity checks that confirm the
  * plumbing works. Stress testing belongs in a separate performance suite.
  */
-class SuspendTransactionTest {
+open class SuspendTransactionTest {
 
     private lateinit var stormify: Stormify
     private lateinit var runner: SuspendStormify

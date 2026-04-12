@@ -3,7 +3,7 @@ package test
 import onl.ycode.stormify.Stormify
 import kotlin.test.*
 
-class QueryTest {
+open class QueryTest {
     private fun withDb(name: String, test: (Stormify) -> Unit) = TestHelper.withDb(name, test)
 
     @Test

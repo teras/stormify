@@ -23,7 +23,6 @@ public class Task extends AutoTable {
 
     private String description;
 
-    @DbField(name = "is_completed")
     private boolean isCompleted;
 
     private Priority priority;

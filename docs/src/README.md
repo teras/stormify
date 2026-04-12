@@ -10,7 +10,8 @@ Designed for developers seeking a simple yet powerful ORM, Stormify excels in pr
 
 ## Features
 
-- **Kotlin Multiplatform**: JVM (Java & Kotlin) and Linux native — same API, no JVM required on native.
+- **Kotlin Multiplatform**: JVM (Java & Kotlin), Android, and Linux native — same API across all platforms.
+- **Android Support**: Full ORM on Android's built-in SQLite via `Stormify(SQLiteDatabase)`, with compile-time entity metadata via the `annproc` KSP processor.
 - **Native Database Access**: Direct access to PostgreSQL, MariaDB/MySQL, Oracle, MSSQL, and SQLite on Linux without JVM or JDBC.
 - **CRUD Operations**: Easily create, read, update, and delete records, with batch variants for bulk operations.
 - **Annotation-Free Classes**: Perform operations with plain Kotlin classes without the need for extensive annotations or XML files.
@@ -32,6 +33,13 @@ Designed for developers seeking a simple yet powerful ORM, Stormify excels in pr
     ```kotlin
     implementation("onl.ycode:stormify-jvm:2.0.0")
     ksp("onl.ycode:annproc:2.0.0")          // optional on JVM
+    ```
+
+=== "Gradle (Android)"
+
+    ```kotlin
+    implementation("onl.ycode:stormify-android:2.0.0")
+    ksp("onl.ycode:annproc:2.0.0")          // required on Android
     ```
 
 === "Gradle (Native)"

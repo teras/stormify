@@ -2,6 +2,7 @@
 // (C) Panayotis Katsaloulis
 package onl.ycode.stormify
 
+import kotlin.jvm.Transient
 import kotlinx.atomicfu.atomic
 import kotlinx.atomicfu.locks.SynchronizedObject
 import kotlinx.atomicfu.locks.synchronized

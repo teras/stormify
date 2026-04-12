@@ -5,7 +5,7 @@ import com.ionspin.kotlin.bignum.integer.BigInteger
 import onl.ycode.stormify.Stormify
 import kotlin.test.*
 
-class TypesTest {
+open class TypesTest {
     private fun withDb(name: String, test: (Stormify) -> Unit) = TestHelper.withDb(name, test)
 
     @Test
@@ -239,7 +239,10 @@ class TypesTest {
 
         // Exercise different size buckets: below/around/above the typical VARBINARY
         // inline-vs-LOB threshold (8000 bytes on SQL Server) and well into MB range.
+        // Android's CursorWindow caps row reads at ~2 MB, so large sizes are skipped there.
+        val maxBlob = TestHelper.maxBlobTestSize
         val sizes = listOf(1_024, 7_999, 8_000, 8_001, 100_000, 1_048_576, 10_485_760)
+            .filter { maxBlob <= 0 || it <= maxBlob }
         for ((i, size) in sizes.withIndex()) {
             val id = 100 + i
             // Deterministic non-repeating pattern so any single-byte corruption is

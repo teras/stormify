@@ -95,6 +95,23 @@ Stormify connects to your database through a data source. On JVM, it accepts any
     Database client libraries are loaded at runtime via `dlopen` — only the ones you
     actually use need to be installed.
 
+=== "Android"
+
+    On Android, wrap the platform `SQLiteDatabase`:
+
+    ```kotlin
+    import android.content.Context
+    import onl.ycode.stormify.Stormify
+
+    val db = context.openOrCreateDatabase("mydb.db", Context.MODE_PRIVATE, null)
+    val stormify = Stormify(db)
+    ```
+
+    The `Stormify(SQLiteDatabase)` convenience function automatically wraps the
+    database in an `AndroidDataSource`. Foreign keys are off by default in Android
+    SQLite — enable them with `db.execSQL("PRAGMA foreign_keys = ON")` before
+    creating the Stormify instance.
+
 ### Using Different Data Sources
 
 On JVM, Stormify is compatible with any JDBC data source. Simply configure the data source according to your requirements and create a `Stormify` (Kotlin) or `StormifyJ` (Java) instance with it.

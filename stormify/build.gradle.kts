@@ -95,18 +95,25 @@ kotlin {
         val jvmMain by getting {
             dependsOn(jvmBasedMain)
         }
-        
+
         val androidMain by getting {
             dependsOn(jvmBasedMain)
         }
 
-        val jvmTest by getting {
+        // Common JVM-based test source set for both Desktop JVM and Android
+        val jvmBasedTest by creating {
+            dependsOn(commonTest)
+            dependsOn(jvmBasedMain)
             dependencies {
                 implementation(kotlin("reflect"))
-                // Tests exercise the BigDecimal/BigInteger and kotlinx-datetime paths
-                // which are compileOnly in jvmBasedMain — re-declare as runtime deps here.
                 implementation("org.jetbrains.kotlinx:kotlinx-datetime:0.7.1")
                 implementation("com.ionspin.kotlin:bignum:0.3.9")
+            }
+        }
+
+        val jvmTest by getting {
+            dependsOn(jvmBasedTest)
+            dependencies {
                 implementation("com.zaxxer:HikariCP:4.0.3")
                 // Load JDBC driver based on target database
                 val testDb = System.getProperty("stormify.test.db") ?: "sqlite"
@@ -123,6 +130,15 @@ kotlin {
                     }
                     else -> implementation("org.xerial:sqlite-jdbc:3.47.2.0")
                 }
+            }
+        }
+
+        val androidUnitTest by getting {
+            dependsOn(jvmBasedTest)
+            dependencies {
+                implementation("org.robolectric:robolectric:4.14.1")
+                implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.10.2")
+                implementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.10.2")
             }
         }
 
@@ -195,14 +211,29 @@ tasks.withType<JavaCompile>().configureEach {
 android {
     namespace = "onl.ycode.stormify"
     compileSdk = 34
-    
+
     defaultConfig {
         minSdk = 21
     }
-    
+
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_1_8
         targetCompatibility = JavaVersion.VERSION_1_8
+    }
+
+    testOptions {
+        unitTests.isIncludeAndroidResources = true
+        unitTests.all {
+            // Robolectric requires Java 11+; the library targets Java 8 via
+            // jvmToolchain(8), so override only the test JVM.
+            it.javaLauncher.set(javaToolchains.launcherFor {
+                languageVersion.set(JavaLanguageVersion.of(17))
+            })
+            // Run only the Robolectric wrappers (test.Android*) — the common
+            // tests are exercised through them; running them directly without
+            // Robolectric would hit Android's stub classes.
+            it.filter { includeTestsMatching("test.Android*") }
+        }
     }
 }
 
@@ -226,6 +257,7 @@ tasks.withType<Test> {
 dependencies {
     add("kspJvmTest", project(":annproc"))
     add("kspLinuxX64Test", project(":annproc"))
+    add("kspAndroidTestDebug", project(":annproc"))
 }
 
 // Make the KSP-generated sources visible to the test source sets.
@@ -235,10 +267,16 @@ kotlin.sourceSets.named("jvmTest") {
 kotlin.sourceSets.named("linuxX64Test") {
     kotlin.srcDir("build/generated/ksp/linuxX64/linuxX64Test/kotlin")
 }
+kotlin.sourceSets.named("androidUnitTest") {
+    kotlin.srcDir("build/generated/ksp/android/androidDebugUnitTest/kotlin")
+}
 
 tasks.matching { it.name == "compileTestKotlinJvm" }.configureEach {
     dependsOn("kspTestKotlinJvm")
 }
 tasks.matching { it.name == "compileTestKotlinLinuxX64" }.configureEach {
     dependsOn("kspTestKotlinLinuxX64")
+}
+tasks.matching { it.name == "compileDebugUnitTestKotlinAndroid" }.configureEach {
+    dependsOn("kspDebugUnitTestKotlinAndroid")
 }

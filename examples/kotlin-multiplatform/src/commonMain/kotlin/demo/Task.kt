@@ -19,7 +19,6 @@ class Task(
 ) : AutoTable() {
     var title: String by db("")
     var description: String by db("")
-    @DbField(name = "is_completed")
     var isCompleted: Boolean by db(false)
     var priority: Priority? by db(null)
     @DbField(name = "user_id")

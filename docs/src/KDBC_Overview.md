@@ -97,13 +97,13 @@ Different databases retrieve auto-generated keys differently. KDBC abstracts thi
 |----------|----------|----------------|--------|
 | **JVM** | Any JDBC-compatible | Wraps `java.sql.*` | Tested |
 | **Linux (linuxX64)** | All 5 (SQLite, PG, MariaDB, Oracle, MSSQL) | C library via cinterop | Tested |
-| **Android** | SQLite | Wraps `android.database.sqlite.*` | Untested |
+| **Android** | SQLite | Wraps `android.database.sqlite.*` | Tested |
 | **iOS** | SQLite | C library via cinterop | Untested |
 | **macOS** | SQLite | C library via cinterop | Untested |
 
 !!! note "Native platform testing"
-    The native C library and Kotlin/Native bindings are currently tested on **Linux only**.
-    Android, iOS, and macOS targets compile but have not been tested in production.
+    The native C library and Kotlin/Native bindings are tested on **Linux** and **Android** (via Robolectric).
+    iOS and macOS targets compile but have not been tested in production.
 
 ## What's Next
 

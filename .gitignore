@@ -48,6 +48,9 @@ gradle/wrapper
 ### Mac OS ###
 .DS_Store
 
+### Local properties (machine-specific SDK paths) ###
+local.properties
+
 .idea
 
 ### C build artifacts (kdbc) ###

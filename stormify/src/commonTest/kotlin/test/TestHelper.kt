@@ -32,6 +32,10 @@ fun skipTest(reason: SkipReason, detail: String): Nothing =
     throw SkipException("[${reason.tag}] $detail")
 
 object TestHelper {
+    /** Max blob size for the currently running test database (0 = unlimited). */
+    var maxBlobTestSize: Int = 0
+        private set
+
     fun withDb(testName: String, test: (Stormify) -> Unit) {
         val databases = createTestDatabases()
         if (databases.isEmpty()) {
@@ -40,6 +44,7 @@ object TestHelper {
         }
         databases.forEach { testDb ->
             println("[$testName] Running on: ${testDb.name}")
+            maxBlobTestSize = testDb.maxBlobTestSize
             val s = Stormify(testDb.dataSource)
             s.isStrictMode = false
             s.registerPrimaryKeyResolver(0) { _, field -> field.lowercase().startsWith("id") }

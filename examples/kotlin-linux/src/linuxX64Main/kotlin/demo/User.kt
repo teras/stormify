@@ -10,7 +10,7 @@ import onl.ycode.stormify.DbTable
  *
  * Compare with Task, which extends AutoTable and loads fields automatically.
  */
-@DbTable("user")
+@DbTable
 class User(
     @DbField(primaryKey = true, autoIncrement = true)
     var id: Int? = null,

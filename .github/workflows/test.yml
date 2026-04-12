@@ -154,6 +154,44 @@ jobs:
       - name: Run tests
         run: testing/test.sh linux ${{ matrix.db }}
 
+  android-test:
+    runs-on: ubuntu-latest
+    name: android / robolectric
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '9.3.1'
+
+      # publishToMavenLocal compiles all targets including native, so native
+      # headers are needed even though the Android tests don't use them.
+      - name: Install database client libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libsqlite3-dev libpq-dev libmariadb-dev libmariadb-dev-compat freetds-dev libaio1t64
+          sudo ln -sf /lib/x86_64-linux-gnu/libaio.so.1t64 /lib/x86_64-linux-gnu/libaio.so.1
+          git clone --depth 1 --branch v5.6.4 https://github.com/oracle/odpi.git /tmp/odpi
+          make -C /tmp/odpi -j4
+          sudo make -C /tmp/odpi install PREFIX=/usr/local
+          sudo cp /tmp/odpi/include/dpi.h /usr/include/dpi.h
+          rm -rf /tmp/odpi
+          wget -q https://download.oracle.com/otn_software/linux/instantclient/instantclient-basiclite-linuxx64.zip -O /tmp/ic.zip
+          sudo unzip -q /tmp/ic.zip -d /opt/oracle
+          echo /opt/oracle/instantclient_* | sudo tee /etc/ld.so.conf.d/oracle.conf
+          sudo ldconfig
+
+      - name: Run Android unit tests
+        run: gradle :stormify:testDebugUnitTest --console=plain
+
   example:
     runs-on: ubuntu-latest
     strategy:

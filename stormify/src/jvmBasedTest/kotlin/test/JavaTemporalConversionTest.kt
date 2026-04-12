@@ -25,7 +25,7 @@ import kotlin.test.assertNotNull
  * These tests pin the fix by round-tripping under simulated wall-clock
  * timezones — the result must not change across `TimeZone.setDefault` calls.
  */
-class JavaTemporalConversionTest {
+open class JavaTemporalConversionTest {
 
     private fun <R> withDefaultTimeZone(tz: String, block: () -> R): R {
         val saved = TimeZone.getDefault()

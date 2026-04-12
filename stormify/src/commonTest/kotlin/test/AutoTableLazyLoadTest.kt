@@ -26,7 +26,7 @@ import kotlin.test.assertTrue
  * calls `asDefault()`) under the default alphabetical test ordering. The [requireCleanState]
  * guard will fail loudly if this assumption is ever broken.
  */
-class AutoTableLazyLoadTest {
+open class AutoTableLazyLoadTest {
     private fun withDb(name: String, test: (Stormify) -> Unit) = TestHelper.withDb(name, test)
 
     @BeforeTest

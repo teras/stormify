@@ -19,7 +19,7 @@ import kotlin.test.assertNotNull
  * gen_random_uuid / NEWID) at the kdbc C level, where it is naturally
  * dialect-partitioned. This test runs everywhere — no skips.
  */
-class StringPkTest {
+open class StringPkTest {
     private fun withDb(name: String, test: (Stormify) -> Unit) = TestHelper.withDb(name, test)
 
     /** Hex UUID-like identifier generated client-side (no platform Uuid dependency). */

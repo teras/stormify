@@ -10,7 +10,7 @@ import kotlin.test.*
  * and manual transaction mode (transaction {} blocks), including the state
  * transitions after commit, rollback, and nested savepoints.
  */
-class AutocommitTest {
+open class AutocommitTest {
     private fun withDb(name: String, test: (Stormify) -> Unit) = TestHelper.withDb(name, test)
 
     @Test

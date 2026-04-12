@@ -293,27 +293,28 @@ open class Stormify(val dataSource: DataSource, vararg registrars: EntityRegistr
     ) = performQuery(conn, query, params.toList(), code = { statement ->
         val isMap = Map::class == baseClass
         val info = if (isScalarClass(baseClass) || isMap) null else resolveTableInfo(baseClass)
-        val rs: ResultSet = statement.executeQuery()
-        val context = if (info != null) PopulationContext() else null
-        var count = 0
-        while (rs.next()) {
-            count++
-            if (isMap) {
-                val meta = rs.getMetaData()
-                val row = LinkedHashMap<String, Any?>()
-                for (i in 1..meta.columnCount)
-                    row[meta.getColumnLabel(i).lowercase()] = rs.getObject(i, Any::class)
-                @Suppress("UNCHECKED_CAST")
-                consumer(row as T)
-            } else {
-                consumer(
-                    if (info != null) populate(info.create().also { attachStormify(it) }, rs, context)
-                    else castTo(baseClass, rs.getObject(1, baseClass), this)
-                        ?: throw SQLException("Expecting type ${baseClass.fullName} but found null")
-                )
+        statement.executeQuery().use { rs ->
+            val context = if (info != null) PopulationContext() else null
+            var count = 0
+            while (rs.next()) {
+                count++
+                if (isMap) {
+                    val meta = rs.getMetaData()
+                    val row = LinkedHashMap<String, Any?>()
+                    for (i in 1..meta.columnCount)
+                        row[meta.getColumnLabel(i).lowercase()] = rs.getObject(i, Any::class)
+                    @Suppress("UNCHECKED_CAST")
+                    consumer(row as T)
+                } else {
+                    consumer(
+                        if (info != null) populate(info.create().also { attachStormify(it) }, rs, context)
+                        else castTo(baseClass, rs.getObject(1, baseClass), this)
+                            ?: throw SQLException("Expecting type ${baseClass.fullName} but found null")
+                    )
+                }
             }
+            count
         }
-        count
     })
 
     /** Executes a SELECT query and returns all results as a list. */
@@ -364,9 +365,10 @@ open class Stormify(val dataSource: DataSource, vararg registrars: EntityRegistr
         val idValues = getValidIds(entity, info)
         if (idValues.any { it == null }) return entity  // null PK = nothing to populate
         performQuery<Any>(conn, info.populateQuery, idValues, code = { statement ->
-            val rs: ResultSet = statement.executeQuery()
-            if (rs.next()) return@performQuery populate<T>(entity, rs)
-            else throw SQLException("No data found for ${info.tableName}:${info.getIdValues(entity)}")
+            statement.executeQuery().use { rs ->
+                if (rs.next()) return@performQuery populate<T>(entity, rs)
+                else throw SQLException("No data found for ${info.tableName}:${info.getIdValues(entity)}")
+            }
         })
         return entity
     }
@@ -437,21 +439,22 @@ open class Stormify(val dataSource: DataSource, vararg registrars: EntityRegistr
         val pkDbName = info.idDbNames[0]
         val nestedContext = PopulationContext()
         performQuery<Any>(null, query, uniqueIds, code = { statement ->
-            val rs = statement.executeQuery()
-            val meta = rs.getMetaData()
-            var pkColIdx = 1
-            for (c in 1..meta.columnCount)
-                if (meta.getColumnLabel(c).equals(pkDbName, ignoreCase = true)) {
-                    pkColIdx = c; break
+            statement.executeQuery().use { rs ->
+                val meta = rs.getMetaData()
+                var pkColIdx = 1
+                for (c in 1..meta.columnCount)
+                    if (meta.getColumnLabel(c).equals(pkDbName, ignoreCase = true)) {
+                        pkColIdx = c; break
+                    }
+                while (rs.next()) {
+                    val key = rs.getObject(pkColIdx, info.idTypes[0]).toString()
+                    val targets = byId.remove(key)
+                    if (targets != null)
+                        for (target in targets)
+                            populate(target, rs, nestedContext)
                 }
-            while (rs.next()) {
-                val key = rs.getObject(pkColIdx, info.idTypes[0]).toString()
-                val targets = byId.remove(key)
-                if (targets != null)
-                    for (target in targets)
-                        populate(target, rs, nestedContext)
+                0
             }
-            0
         })
 
         if (byId.isNotEmpty())

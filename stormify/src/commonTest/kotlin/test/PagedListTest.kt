@@ -19,7 +19,7 @@ import onl.ycode.stormify.biglist.SortState
 import onl.ycode.stormify.biglist.execute
 import kotlin.test.*
 
-class PagedListTest {
+open class PagedListTest {
     private fun withDb(name: String, test: (Stormify) -> Unit) = TestHelper.withDb(name) {
         it.asDefault()
         test(it)
