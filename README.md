@@ -10,9 +10,10 @@ Designed for developers seeking a simple yet powerful ORM, Stormify excels in pr
 
 ## Features
 
-- **Kotlin Multiplatform**: JVM (Java & Kotlin), Android, and Linux native — same API across all platforms.
-- **Android Support**: Full ORM on Android's built-in SQLite via `Stormify(SQLiteDatabase)`, with compile-time entity metadata via the `annproc` KSP processor.
-- **Native Database Access**: Direct access to PostgreSQL, MariaDB/MySQL, Oracle, MSSQL, and SQLite on Linux without JVM or JDBC.
+- **Kotlin Multiplatform**: JVM (Java & Kotlin), Android, Linux (x64 & ARM64), Windows (x64), macOS, and iOS — same API across all platforms.
+- **Native Database Access**: Direct access to PostgreSQL, MariaDB/MySQL, Oracle, MSSQL, and SQLite on Linux, Windows, and macOS without JVM or JDBC.
+- **Android Support**: Full ORM on Android's built-in SQLite, with compile-time entity metadata via annotation processing.
+- **iOS Support**: SQLite-based ORM on iOS devices and simulators.
 - **CRUD Operations**: Easily create, read, update, and delete records, with batch variants for bulk operations.
 - **Annotation-Free Classes**: Perform operations with plain Kotlin classes without the need for extensive annotations or XML files.
 - **Fine or Coarse Grain Definitions**: Define naming policies and primary key resolvers for standard naming patterns, or use annotations to handle special cases.
@@ -20,7 +21,7 @@ Designed for developers seeking a simple yet powerful ORM, Stormify excels in pr
 - **Flexible Query Execution**: Execute custom and complex SQL queries and map results to Kotlin objects, with automatic collection parameter expansion for `IN` clauses.
 - **Transaction Management**: Support for nested transactions with rollback and commit capabilities via savepoints.
 - **Coroutines**: Suspend-based transaction API with a built-in connection pool, coroutine cancellation wired to native database cancel primitives.
-- **Enum Properties**: Enum fields stored as integers (ordinal or custom values via `DbValue`) or strings (`@DbField(enumAsString = true)`).
+- **Enum Properties**: Enum fields stored as integers or strings, with support for custom mappings.
 - **Lazy Loading**: Reference fields with `by db()` delegates for automatic lazy loading of related entities.
 - **Paginated Views**: `PagedList<T>` for data grids and pickers — column filters, sorting, FK traversal, aggregations, facet counts, and streaming iteration over very large result sets.
 - **Stored Procedures**: Call stored procedures with input, output, and bidirectional parameters.
@@ -55,11 +56,18 @@ ksp("onl.ycode:annproc:2.0.0")              // required on Android
 ### Gradle (Native)
 
 ```kotlin
-implementation("onl.ycode:stormify-linuxx64:2.0.0")
-ksp("onl.ycode:annproc:2.0.0")              // required (no reflection on native)
+// Pick the artifact for your target platform:
+implementation("onl.ycode:stormify-linuxx64:2.0.0")        // Linux x64
+implementation("onl.ycode:stormify-linuxarm64:2.0.0")      // Linux ARM64
+implementation("onl.ycode:stormify-mingwx64:2.0.0")        // Windows x64
+implementation("onl.ycode:stormify-macosarm64:2.0.0")      // macOS (Apple Silicon)
+implementation("onl.ycode:stormify-macosx64:2.0.0")        // macOS (Intel)
+implementation("onl.ycode:stormify-iosarm64:2.0.0")        // iOS (device)
+implementation("onl.ycode:stormify-iossimulatorarm64:2.0.0") // iOS (simulator)
+ksp("onl.ycode:annproc:2.0.0")                             // required (no reflection on native)
 ```
 
-Supported native databases: **PostgreSQL, MariaDB/MySQL, Oracle, MSSQL, SQLite** — loaded at runtime via `dlopen`.
+Supported native databases: **PostgreSQL, MariaDB/MySQL, Oracle, MSSQL, SQLite**. On iOS, only SQLite is available.
 
 **Entity metadata**: On JVM, entity metadata is discovered at runtime via `kotlin-reflect`
 (included as a transitive dependency). On Native/Android/iOS, use the `annproc` annotation
@@ -76,6 +84,8 @@ val stormify = Stormify(dataSource, GeneratedEntities)
 ## Basic Usage
 
 ### Configure Your Database
+
+Stormify works with any JDBC `DataSource`. The examples below use HikariCP, but any connection pool or plain driver will work.
 
 **Kotlin (JVM):**
 
@@ -113,6 +123,7 @@ Define a simple Kotlin class. The library automatically maps fields based on the
 For a table `CREATE TABLE test (id INT PRIMARY KEY, name VARCHAR(255))`:
 
 ```kotlin
+@DbTable("test")  // optional on JVM — class name is used by default
 data class Test(
     @DbField(primaryKey = true)
     var id: Int = 0,

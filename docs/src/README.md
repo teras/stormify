@@ -4,15 +4,16 @@
 
 # Stormify
 
-Stormify is a flexible ORM library for Kotlin Multiplatform that simplifies database interactions with minimal configuration. It operates and performs CRUD operations on plain Kotlin classes without requiring extensive annotations or XML setups, as long as field names match database columns.
+Stormify is a flexible ORM library for Kotlin Multiplatform that simplifies database interactions with minimal configuration. It operates and performs CRUD operations on plain Kotlin classes without requiring extensive annotations or XML setups, as long as field names match database columns. Custom mappings are available through annotations when needed, but are not required.
 
 Designed for developers seeking a simple yet powerful ORM, Stormify excels in projects that favor convention over configuration, allowing for minimal setup and clean, straightforward code.
 
 ## Features
 
-- **Kotlin Multiplatform**: JVM (Java & Kotlin), Android, and Linux native — same API across all platforms.
-- **Android Support**: Full ORM on Android's built-in SQLite via `Stormify(SQLiteDatabase)`, with compile-time entity metadata via the `annproc` KSP processor.
-- **Native Database Access**: Direct access to PostgreSQL, MariaDB/MySQL, Oracle, MSSQL, and SQLite on Linux without JVM or JDBC.
+- **Kotlin Multiplatform**: JVM (Java & Kotlin), Android, Linux (x64 & ARM64), Windows (x64), macOS, and iOS — same API across all platforms.
+- **Native Database Access**: Direct access to PostgreSQL, MariaDB/MySQL, Oracle, MSSQL, and SQLite on Linux, Windows, and macOS without JVM or JDBC.
+- **Android Support**: Full ORM on Android's built-in SQLite, with compile-time entity metadata via annotation processing.
+- **iOS Support**: SQLite-based ORM on iOS devices and simulators.
 - **CRUD Operations**: Easily create, read, update, and delete records, with batch variants for bulk operations.
 - **Annotation-Free Classes**: Perform operations with plain Kotlin classes without the need for extensive annotations or XML files.
 - **Fine or Coarse Grain Definitions**: Define naming policies and primary key resolvers for standard naming patterns, or use annotations to handle special cases.
@@ -20,7 +21,7 @@ Designed for developers seeking a simple yet powerful ORM, Stormify excels in pr
 - **Flexible Query Execution**: Execute custom and complex SQL queries and map results to Kotlin objects, with automatic collection parameter expansion for `IN` clauses.
 - **Transaction Management**: Support for nested transactions with rollback and commit capabilities via savepoints.
 - **Coroutines**: Suspend-based transaction API with a built-in connection pool, coroutine cancellation wired to native database cancel primitives.
-- **Enum Properties**: Enum fields stored as integers (ordinal or custom values via `DbValue`) or strings (`@DbField(enumAsString = true)`).
+- **Enum Properties**: Enum fields stored as integers or strings, with support for custom mappings.
 - **Lazy Loading**: Reference fields with `by db()` delegates for automatic lazy loading of related entities.
 - **Paginated Views**: `PagedList<T>` for data grids and pickers — column filters, sorting, FK traversal, aggregations, facet counts, and streaming iteration over very large result sets.
 - **Stored Procedures**: Call stored procedures with input, output, and bidirectional parameters.
@@ -45,8 +46,15 @@ Designed for developers seeking a simple yet powerful ORM, Stormify excels in pr
 === "Gradle (Native)"
 
     ```kotlin
-    implementation("onl.ycode:stormify-linuxx64:2.0.0")
-    ksp("onl.ycode:annproc:2.0.0")          // required (no reflection on native)
+    // Pick the artifact for your target platform:
+    implementation("onl.ycode:stormify-linuxx64:2.0.0")        // Linux x64
+    implementation("onl.ycode:stormify-linuxarm64:2.0.0")      // Linux ARM64
+    implementation("onl.ycode:stormify-mingwx64:2.0.0")        // Windows x64
+    implementation("onl.ycode:stormify-macosarm64:2.0.0")      // macOS (Apple Silicon)
+    implementation("onl.ycode:stormify-macosx64:2.0.0")        // macOS (Intel)
+    implementation("onl.ycode:stormify-iosarm64:2.0.0")        // iOS (device)
+    implementation("onl.ycode:stormify-iossimulatorarm64:2.0.0") // iOS (simulator)
+    ksp("onl.ycode:annproc:2.0.0")                             // required (no reflection on native)
     ```
 
 === "Gradle (Java)"
@@ -79,8 +87,8 @@ registrar to the constructor:
 val stormify = Stormify(dataSource, GeneratedEntities)
 ```
 
-**Native database libraries** are loaded at runtime via `dlopen` — install only the ones
-you need. Supported: PostgreSQL, MariaDB/MySQL, Oracle, MSSQL, SQLite.
+**Native database libraries** — install only the ones you need. On iOS, only SQLite
+is available. Supported on Linux/macOS/Windows: PostgreSQL, MariaDB/MySQL, Oracle, MSSQL, SQLite.
 
 ```bash
 # Debian / Ubuntu
@@ -89,6 +97,8 @@ sudo apt install libsqlite3-0 libpq5 libmariadb3
 # Arch Linux
 sudo pacman -S sqlite postgresql-libs mariadb-libs
 ```
+
+See [Database Configuration](Database_Configuration.md) for Windows and advanced setup.
 
 ## Basic Usage
 

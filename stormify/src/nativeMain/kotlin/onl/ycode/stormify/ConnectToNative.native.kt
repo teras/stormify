@@ -5,6 +5,7 @@ package onl.ycode.stormify
 
 import kotlin.reflect.KClass
 
+/** Maps to ionspin [com.ionspin.kotlin.bignum.integer.BigInteger] on Native. */
 actual typealias NativeBigInteger = com.ionspin.kotlin.bignum.integer.BigInteger
 
 internal actual fun getNativeAllPrimitives(): Collection<KClass<*>> = listOf(

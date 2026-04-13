@@ -102,7 +102,7 @@ kotlin {
     // Apple targets - build enabled on macOS only.
     // Each target uses a libkdbc.a compiled for its specific SDK via the Makefile
     // TARGET parameter. macOS uses the default build; iOS targets use ios-sim/ios.
-    if (org.gradle.internal.os.OperatingSystem.current().isMacOsX) {
+    if (System.getProperty("os.name").startsWith("Mac")) {
         fun org.jetbrains.kotlin.gradle.plugin.mpp.KotlinNativeTarget.kdbcCinterop(libDir: String) {
             compilations.getByName("main") {
                 cinterops {
@@ -196,7 +196,7 @@ tasks.matching { it.name.startsWith("cinteropKdbcLinuxArm64") }.configureEach {
 }
 
 // Apple targets — build libkdbc.a for each SDK on macOS
-if (org.gradle.internal.os.OperatingSystem.current().isMacOsX) {
+if (System.getProperty("os.name").startsWith("Mac")) {
     // macOS targets use the default native build (same host)
     tasks.matching { it.name.startsWith("cinteropKdbcMacosArm64") || it.name.startsWith("cinteropKdbcMacosX64") }.configureEach {
         dependsOn(buildNativeKdbc)

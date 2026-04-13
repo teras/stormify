@@ -220,25 +220,6 @@ collect() {
 }
 
 # ========================================================================
-# Pre-compile helpers
-# ========================================================================
-
-build_linux() {
-    echo "Compiling Kotlin/Native test binary..."
-    cd "$PROJECT_DIR"
-    gradle :stormify:linkDebugTestLinuxX64 --console=plain 2>&1
-    export STORMIFY_PREBUILT=1
-    echo ""
-}
-
-build_jvm() {
-    echo "Compiling JVM test classes..."
-    cd "$PROJECT_DIR"
-    gradle :stormify:jvmTestClasses --console=plain 2>&1
-    echo ""
-}
-
-# ========================================================================
 # Main
 # ========================================================================
 
@@ -275,8 +256,7 @@ case "$TARGET" in
 
     native|jvm|linux|linux-arm64|mingw)
         "$T" check
-        [ "$TARGET" = "linux" ] && build_linux
-        [ "$TARGET" = "jvm" ] && build_jvm
+        "$T" build "$TARGET"
         run "$TARGET" $("$T" list dbs)
         echo ""
         collect "$TARGET" $("$T" list dbs)
@@ -303,12 +283,12 @@ case "$TARGET" in
         collect native $("$T" list dbs) || all_failed=$((all_failed + $?))
 
         echo "=== Phase 2: JVM tests ==="
-        build_jvm
+        "$T" build jvm
         run jvm $("$T" list dbs)
         collect jvm $("$T" list dbs) || all_failed=$((all_failed + $?))
 
         echo "=== Phase 3: Kotlin/Native tests ==="
-        build_linux
+        "$T" build linux
         run linux $("$T" list dbs)
         collect linux $("$T" list dbs) || all_failed=$((all_failed + $?))
 

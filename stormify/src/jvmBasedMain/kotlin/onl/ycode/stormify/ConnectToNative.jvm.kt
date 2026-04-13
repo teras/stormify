@@ -5,6 +5,7 @@ package onl.ycode.stormify
 
 import kotlin.reflect.KClass
 
+/** Maps to [java.math.BigInteger] on JVM. */
 actual typealias NativeBigInteger = java.math.BigInteger
 
 private val supportsIonspinBigNumbers = try {

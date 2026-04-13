@@ -127,6 +127,7 @@ Database lifecycle:
   down [database]        Stop database container(s)
   status                 Show which database containers are running
   check                  Exit 0 if all databases are ready, 1 otherwise
+  build <target>         Pre-compile test binary for target (native/linux/mingw/jvm)
   list dbs|docker-dbs|examples   Print item list (for scripting)
 
 Databases:
@@ -160,13 +161,43 @@ EOF
 }
 
 # ========================================================================
-# Build C test binary
+# Build helpers — each builds once, skips if binary is up-to-date
 # ========================================================================
 
 build_native() {
     echo "Building C test binary..."
     make -C "$C_SRC_DIR" lib 2>&1
     make -C "$C_SRC_DIR" test/test_kdbc 2>&1
+    echo ""
+}
+
+LINUX_TEST_BIN="$PROJECT_DIR/stormify/build/bin/linuxX64/debugTest/test.kexe"
+ARM64_TEST_BIN="$PROJECT_DIR/stormify/build/bin/linuxArm64/debugTest/test.kexe"
+MINGW_TEST_BIN="$PROJECT_DIR/stormify/build/bin/mingwX64/debugTest/test.exe"
+
+build_linux() {
+    [ -x "$LINUX_TEST_BIN" ] && return 0
+    echo "Building linuxX64 test binary..."
+    cd "$PROJECT_DIR"
+    gradle :stormify:linkDebugTestLinuxX64 --console=plain 2>&1
+    echo ""
+}
+
+build_arm64() {
+    [ -x "$ARM64_TEST_BIN" ] && return 0
+    echo "Building linuxArm64 test binary..."
+    cd "$PROJECT_DIR"
+    gradle :stormify:linkDebugTestLinuxArm64 --console=plain 2>&1
+    echo ""
+}
+
+build_mingw() {
+    [ -x "$MINGW_TEST_BIN" ] && return 0
+    echo "Building C library for mingw..."
+    make -C "$C_SRC_DIR" TARGET=mingw BUILDDIR=build-mingw lib 2>&1
+    echo "Building mingwX64 test binary..."
+    cd "$PROJECT_DIR"
+    gradle :stormify:linkDebugTestMingwX64 --console=plain 2>&1
     echo ""
 }
 
@@ -250,17 +281,10 @@ run_linux_one() {
     echo "========================================="
 
     require_db "$db"
+    build_linux
 
     local rc=0
-    cd "$PROJECT_DIR"
-
-    local test_bin="$PROJECT_DIR/stormify/build/bin/linuxX64/debugTest/test.kexe"
-    if [ "${STORMIFY_PREBUILT:-0}" = "1" ] && [ -x "$test_bin" ]; then
-        STORMIFY_TEST_DB="$db" "$test_bin" 2>&1 || rc=$?
-    else
-        STORMIFY_TEST_DB="$db" gradle :stormify:linuxX64Test \
-            --console=plain 2>&1 || rc=$?
-    fi
+    STORMIFY_TEST_DB="$db" "$LINUX_TEST_BIN" 2>&1 || rc=$?
 
     if [ $rc -eq 0 ]; then
         echo "PASSED: linuxX64 $db"
@@ -288,28 +312,17 @@ run_linux_arm64_one() {
     echo "========================================="
 
     require_db "$db"
+    build_arm64
 
     local rc=0
-    cd "$PROJECT_DIR"
-
-    local test_bin="$PROJECT_DIR/stormify/build/bin/linuxArm64/debugTest/test.kexe"
     local host_arch
     host_arch="$(uname -m)"
 
     if [ "$host_arch" = "aarch64" ]; then
         # Native arm64 host — run directly
-        if [ "${STORMIFY_PREBUILT:-0}" = "1" ] && [ -x "$test_bin" ]; then
-            STORMIFY_TEST_DB="$db" "$test_bin" 2>&1 || rc=$?
-        else
-            STORMIFY_TEST_DB="$db" gradle :stormify:linuxArm64Test \
-                --console=plain 2>&1 || rc=$?
-        fi
+        STORMIFY_TEST_DB="$db" "$ARM64_TEST_BIN" 2>&1 || rc=$?
     else
         # x64 host — run via Docker multiarch (QEMU)
-        if [ ! -x "$test_bin" ]; then
-            echo "Building linuxArm64 test binary..."
-            gradle :stormify:linkDebugTestLinuxArm64 --console=plain 2>&1 || { rc=$?; return $rc; }
-        fi
         docker run --rm --platform linux/arm64 \
             --network=host \
             -v "$PROJECT_DIR/stormify/build/bin/linuxArm64/debugTest:/test:ro" \
@@ -388,11 +401,11 @@ run_mingw_one() {
     echo "========================================="
 
     require_db "$db"
+    build_mingw
 
     local rc=0
-    local test_exe="$PROJECT_DIR/stormify/build/bin/mingwX64/debugTest/test.exe"
     if command -v wine &>/dev/null; then
-        STORMIFY_TEST_DB="$db" wine "$test_exe" 2>&1 || rc=$?
+        STORMIFY_TEST_DB="$db" wine "$MINGW_TEST_BIN" 2>&1 || rc=$?
     else
         echo "Wine not available. Build succeeded; skipping execution."
         echo "Run on Windows: STORMIFY_TEST_DB=$db test.exe"
@@ -493,6 +506,22 @@ case "$TARGET" in
         esac
         ;;
 
+    build)
+        case "${DB:-}" in
+            native)     build_native ;;
+            linux)      build_linux ;;
+            linux-arm64) build_arm64 ;;
+            mingw)      build_mingw ;;
+            jvm)        echo "Compiling JVM test classes..."
+                        cd "$PROJECT_DIR"
+                        gradle :stormify:jvmTestClasses --console=plain 2>&1 ;;
+            android)    echo "Compiling Android test classes..."
+                        cd "$PROJECT_DIR"
+                        gradle :stormify:compileDebugUnitTestKotlin --console=plain 2>&1 ;;
+            *)          echo "Usage: ./test.sh build native|linux|linux-arm64|mingw|jvm|android"; exit 1 ;;
+        esac
+        ;;
+
     check)
         # Exit 0 if all databases are ready, 1 otherwise
         missing=""
@@ -569,7 +598,6 @@ case "$TARGET" in
         ;;
 
     mingw)
-        build_mingw
         if [ -n "$DB" ]; then
             run_mingw_one "$DB"
         else
@@ -586,7 +614,6 @@ case "$TARGET" in
         ;;
 
     all)
-        build_native
         failed=0
         echo ""
         echo "############### NATIVE TESTS ###############"
@@ -611,7 +638,6 @@ case "$TARGET" in
         echo ""
         echo "############### MINGW TESTS ###############"
         echo ""
-        build_mingw
         run_for_dbs run_mingw_one $ALL_DBS || failed=$((failed + $?))
         echo ""
         echo "############### EXAMPLES ###############"

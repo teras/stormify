@@ -20,7 +20,7 @@ kotlin {
     linuxArm64()
 
     // Apple targets - build enabled on macOS only
-    if (org.gradle.internal.os.OperatingSystem.current().isMacOsX) {
+    if (System.getProperty("os.name").startsWith("Mac")) {
         // iOS
         iosArm64()
         iosX64()

@@ -387,7 +387,7 @@ jobs:
         run: testing/test.sh up ${{ matrix.db }}
 
       - name: Run tests
-        run: STORMIFY_PREBUILT=1 testing/test.sh linux-arm64 ${{ matrix.db }}
+        run: testing/test.sh linux-arm64 ${{ matrix.db }}
 
       - name: Stop database
         if: always() && matrix.db != 'sqlite'
