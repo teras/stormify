@@ -32,6 +32,18 @@ else ifeq ($(TARGET),arm64)
   # that live in libgcc, but Kotlin/Native links with its own LLVM runtime
   # which does not provide them.
   EXTRA_CFLAGS = -mno-outline-atomics
+else ifeq ($(TARGET),ios-sim)
+  CC       = $(shell xcrun --sdk iphonesimulator --find clang)
+  AR       = ar
+  LDFLAGS  = -ldl
+  LIB_SHARED = $(BUILDDIR)/libkdbc.dylib
+  EXTRA_CFLAGS = -target arm64-apple-ios-simulator -isysroot $(shell xcrun --sdk iphonesimulator --show-sdk-path)
+else ifeq ($(TARGET),ios)
+  CC       = $(shell xcrun --sdk iphoneos --find clang)
+  AR       = ar
+  LDFLAGS  = -ldl
+  LIB_SHARED = $(BUILDDIR)/libkdbc.dylib
+  EXTRA_CFLAGS = -target arm64-apple-ios -isysroot $(shell xcrun --sdk iphoneos --show-sdk-path)
 else
   CC       = gcc
   AR       = ar

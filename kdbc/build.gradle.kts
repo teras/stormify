@@ -99,16 +99,28 @@ kotlin {
         }
     }
 
-    // Apple targets - build enabled on macOS only
+    // Apple targets - build enabled on macOS only.
+    // Each target uses a libkdbc.a compiled for its specific SDK via the Makefile
+    // TARGET parameter. macOS uses the default build; iOS targets use ios-sim/ios.
     if (org.gradle.internal.os.OperatingSystem.current().isMacOsX) {
-        // iOS
-        iosArm64()
-        iosX64()
-        iosSimulatorArm64()
+        fun org.jetbrains.kotlin.gradle.plugin.mpp.KotlinNativeTarget.kdbcCinterop(libDir: String) {
+            compilations.getByName("main") {
+                cinterops {
+                    val kdbc by creating {
+                        defFile(project.file("src/nativeInterop/cinterop/kdbc.def"))
+                        packageName = "onl.ycode.kdbc.cinterop"
+                        includeDirs(project.file("src/c/include"))
+                        extraOpts("-libraryPath", project.file(libDir).absolutePath)
+                    }
+                }
+            }
+        }
 
-        // macOS
-        macosArm64()
-        macosX64()
+        macosArm64  { kdbcCinterop("src/c") }
+        macosX64    { kdbcCinterop("src/c") }
+        iosSimulatorArm64 { kdbcCinterop("src/c/build-ios-sim") }
+        iosArm64    { kdbcCinterop("src/c/build-ios") }
+        iosX64      { kdbcCinterop("src/c/build-ios-sim") }
     }
 
     // Target Java 8 bytecode for the JVM artifact (matches stormify's Java 8 floor).
@@ -181,6 +193,33 @@ tasks.matching { it.name.startsWith("cinteropKdbcMingwX64") }.configureEach {
 }
 tasks.matching { it.name.startsWith("cinteropKdbcLinuxArm64") }.configureEach {
     dependsOn(buildNativeKdbcArm64)
+}
+
+// Apple targets — build libkdbc.a for each SDK on macOS
+if (org.gradle.internal.os.OperatingSystem.current().isMacOsX) {
+    // macOS targets use the default native build (same host)
+    tasks.matching { it.name.startsWith("cinteropKdbcMacosArm64") || it.name.startsWith("cinteropKdbcMacosX64") }.configureEach {
+        dependsOn(buildNativeKdbc)
+    }
+
+    val buildNativeKdbcIosSim = tasks.register<Exec>("buildNativeKdbcIosSim") {
+        workingDir = file("src/c")
+        commandLine("make", "TARGET=ios-sim", "BUILDDIR=build-ios-sim", "build-ios-sim/libkdbc.a")
+        cSrcInputs.execute(this)
+        outputs.file("src/c/build-ios-sim/libkdbc.a")
+    }
+    val buildNativeKdbcIos = tasks.register<Exec>("buildNativeKdbcIos") {
+        workingDir = file("src/c")
+        commandLine("make", "TARGET=ios", "BUILDDIR=build-ios", "build-ios/libkdbc.a")
+        cSrcInputs.execute(this)
+        outputs.file("src/c/build-ios/libkdbc.a")
+    }
+    tasks.matching { it.name.startsWith("cinteropKdbcIosSimulatorArm64") || it.name.startsWith("cinteropKdbcIosX64") }.configureEach {
+        dependsOn(buildNativeKdbcIosSim)
+    }
+    tasks.matching { it.name.startsWith("cinteropKdbcIosArm64") }.configureEach {
+        dependsOn(buildNativeKdbcIos)
+    }
 }
 
 android {

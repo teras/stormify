@@ -15,6 +15,7 @@
 #include "kdbc.h"
 #include <ctype.h>
 #include <string.h>
+#include <strings.h>
 #include <stdlib.h>
 #include <stdio.h>
 #include <stdarg.h>
@@ -25,8 +26,33 @@
 
 #define KDBC_ERR_SIZE 1024
 
-/* Thread-local global error buffer for connection-less errors */
-static _Thread_local char g_error[KDBC_ERR_SIZE] = "";
+/*
+ * Thread-local global error buffer for connection-less errors.
+ *
+ * iOS does not support C11 _Thread_local in static libraries (dyld limitation),
+ * so we fall back to pthread_key_t thread-specific storage there. All other
+ * platforms use the faster _Thread_local.
+ */
+#if defined(__APPLE__) && __has_include(<TargetConditionals.h>)
+  #include <TargetConditionals.h>
+#endif
+
+#if defined(TARGET_OS_IPHONE) && TARGET_OS_IPHONE
+  #include <pthread.h>
+  static pthread_key_t  _g_error_key;
+  static pthread_once_t _g_error_once = PTHREAD_ONCE_INIT;
+  static void _g_error_init(void) { pthread_key_create(&_g_error_key, free); }
+  static inline char *_g_error_buf(void) {
+      pthread_once(&_g_error_once, _g_error_init);
+      char *buf = (char *)pthread_getspecific(_g_error_key);
+      if (!buf) { buf = (char *)calloc(1, KDBC_ERR_SIZE); pthread_setspecific(_g_error_key, buf); }
+      return buf;
+  }
+  #define g_error _g_error_buf()
+#else
+  static _Thread_local char _g_error_storage[KDBC_ERR_SIZE] = "";
+  #define g_error _g_error_storage
+#endif
 
 static inline void kdbc_set_global_error(const char *fmt, ...) {
     va_list ap;

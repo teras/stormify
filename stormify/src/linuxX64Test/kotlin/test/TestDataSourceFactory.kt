@@ -28,6 +28,7 @@ actual fun createTestDatabases(): List<TestDatabase> {
     GeneratedEntities.register()
 
     val dbName = (getenv("STORMIFY_TEST_DB")?.toKString() ?: "sqlite").lowercase().ifEmpty { "sqlite" }
+    val host = getenv("STORMIFY_TEST_HOST")?.toKString() ?: "localhost"
 
     val (displayName, url) = when (dbName) {
         "sqlite" -> {
@@ -40,25 +41,21 @@ actual fun createTestDatabases(): List<TestDatabase> {
             "SQLite (file: $path)" to "jdbc:sqlite:$path"
         }
         "postgresql", "postgres" -> "PostgreSQL 16 Native" to
-                "jdbc:postgresql://localhost:15432/stormify_test"
+                "jdbc:postgresql://$host:15432/stormify_test"
         "postgresql9" -> "PostgreSQL 9.6 Native" to
-                "jdbc:postgresql://localhost:15431/stormify_test"
+                "jdbc:postgresql://$host:15431/stormify_test"
         "mysql" -> "MySQL 8.0 Native" to
-                "jdbc:mysql://localhost:13306/stormify_test"
+                "jdbc:mysql://$host:13306/stormify_test"
         "mysql5" -> "MySQL 5.7 Native" to
-                "jdbc:mysql://localhost:13305/stormify_test"
+                "jdbc:mysql://$host:13305/stormify_test"
         "mariadb" -> "MariaDB Native" to
-                "jdbc:mariadb://localhost:13307/stormify_test"
+                "jdbc:mariadb://$host:13307/stormify_test"
         "oracle" -> "Oracle Native" to
-                "jdbc:oracle:thin:@localhost:11521/XEPDB1"
-        // Oracle XE 11g with the database character set converted to
-        // EL8ISO8859P7 (Greek ISO-8859-7) via the init script under
-        // testing/config/oracle11/. First-class target in the test matrix —
-        // several production clients run this exact configuration.
+                "jdbc:oracle:thin:@$host:11521/XEPDB1"
         "oracle11" -> "Oracle 11g Native (EL8ISO8859P7)" to
-                "jdbc:oracle:thin:@localhost:11524/XE"
+                "jdbc:oracle:thin:@$host:11524/XE"
         "mssql", "sqlserver" -> "MSSQL Native" to
-                "jdbc:sqlserver://localhost:11433;databaseName=stormify_test"
+                "jdbc:sqlserver://$host:11433;databaseName=stormify_test"
         else -> error("Unknown STORMIFY_TEST_DB value: '$dbName'")
     }
 

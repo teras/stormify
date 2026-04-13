@@ -180,39 +180,25 @@ kotlin {
 
         // Apple targets - build enabled on macOS only
         if (org.gradle.internal.os.OperatingSystem.current().isMacOsX) {
-            val appleMain by creating {
-                dependsOn(nativeMain)
+            val appleMain by getting {
                 dependencies {
                     implementation(project(":kdbc"))
                 }
             }
-            
-            val iosMain by creating {
-                dependsOn(appleMain)
+
+            // Apple test source sets share the same POSIX test sources as linuxX64.
+            // Only non-deprecated targets get test infrastructure.
+            val macosArm64Test by getting {
+                kotlin.srcDir("src/linuxX64Test/kotlin")
+                dependencies { implementation(project(":kdbc")) }
             }
-            
-            val iosArm64Main by getting {
-                dependsOn(iosMain)
+            val iosSimulatorArm64Test by getting {
+                kotlin.srcDir("src/linuxX64Test/kotlin")
+                dependencies { implementation(project(":kdbc")) }
             }
-            
-            val iosX64Main by getting {
-                dependsOn(iosMain)
-            }
-            
-            val iosSimulatorArm64Main by getting {
-                dependsOn(iosMain)
-            }
-            
-            val macosMain by creating {
-                dependsOn(appleMain)
-            }
-            
-            val macosArm64Main by getting {
-                dependsOn(macosMain)
-            }
-            
-            val macosX64Main by getting {
-                dependsOn(macosMain)
+            val iosArm64Test by getting {
+                kotlin.srcDir("src/linuxX64Test/kotlin")
+                dependencies { implementation(project(":kdbc")) }
             }
         }
     }
@@ -275,6 +261,9 @@ dependencies {
     add("kspLinuxX64Test", project(":annproc"))
     add("kspMingwX64Test", project(":annproc"))
     // linuxArm64Test reuses linuxX64 KSP output — no separate KSP run needed
+    add("kspMacosArm64Test", project(":annproc"))
+    add("kspIosSimulatorArm64Test", project(":annproc"))
+    add("kspIosArm64Test", project(":annproc"))
     add("kspAndroidTestDebug", project(":annproc"))
 }
 
@@ -288,9 +277,21 @@ kotlin.sourceSets.named("linuxX64Test") {
 kotlin.sourceSets.named("mingwX64Test") {
     kotlin.srcDir("build/generated/ksp/mingwX64/mingwX64Test/kotlin")
 }
-// linuxArm64Test reuses linuxX64's KSP output — same entities, same generated code
+// linuxArm64Test and Apple test targets reuse linuxX64's KSP output —
+// same entities, same generated code
 kotlin.sourceSets.named("linuxArm64Test") {
     kotlin.srcDir("build/generated/ksp/linuxX64/linuxX64Test/kotlin")
+}
+if (org.gradle.internal.os.OperatingSystem.current().isMacOsX) {
+    for (target in listOf("MacosArm64", "IosSimulatorArm64", "IosArm64")) {
+        val lower = target.replaceFirstChar { it.lowercase() }
+        kotlin.sourceSets.named("${lower}Test") {
+            kotlin.srcDir("build/generated/ksp/$lower/${lower}Test/kotlin")
+        }
+        tasks.matching { it.name == "compileTestKotlin$target" }.configureEach {
+            dependsOn("kspTestKotlin$target")
+        }
+    }
 }
 kotlin.sourceSets.named("androidUnitTest") {
     kotlin.srcDir("build/generated/ksp/android/androidDebugUnitTest/kotlin")

@@ -118,7 +118,21 @@ static fn_dbanydatecrack p_dbanydatecrack;
 static fn_dbtds         p_dbtds;
 
 /* Thread-local buffer where message handlers stash the last server error. */
-static _Thread_local char g_last_msg[1024] = "";
+#if defined(TARGET_OS_IPHONE) && TARGET_OS_IPHONE
+  static pthread_key_t  _g_last_msg_key;
+  static pthread_once_t _g_last_msg_once = PTHREAD_ONCE_INIT;
+  static void _g_last_msg_init(void) { pthread_key_create(&_g_last_msg_key, free); }
+  static inline char *_g_last_msg_buf(void) {
+      pthread_once(&_g_last_msg_once, _g_last_msg_init);
+      char *buf = (char *)pthread_getspecific(_g_last_msg_key);
+      if (!buf) { buf = (char *)calloc(1, 1024); pthread_setspecific(_g_last_msg_key, buf); }
+      return buf;
+  }
+  #define g_last_msg _g_last_msg_buf()
+#else
+  static _Thread_local char _g_last_msg_storage[1024] = "";
+  #define g_last_msg _g_last_msg_storage
+#endif
 
 static int tds_server_msg_handler(DBPROCESS *dbproc, DBINT msgno, int msgstate,
                                   int severity, char *msgtext, char *srvname,
