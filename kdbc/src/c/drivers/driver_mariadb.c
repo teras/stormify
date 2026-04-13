@@ -119,6 +119,7 @@ static int            my_load_ok   = 0;
 static void my_load_impl(void) {
     lib_handle = kdbc_dl_open(KDBC_LIBNAME("mariadb", "3"), RTLD_LAZY);
     if (!lib_handle) lib_handle = kdbc_dl_open(KDBC_LIBNAME_NOVER("mariadb"), RTLD_LAZY);
+    if (!lib_handle) lib_handle = kdbc_dl_open(KDBC_LIBNAME_LIBPREFIX("mariadb"), RTLD_LAZY);
     if (!lib_handle) lib_handle = kdbc_dl_open(KDBC_LIBNAME("mysqlclient", "21"), RTLD_LAZY);
     if (!lib_handle) lib_handle = kdbc_dl_open(KDBC_LIBNAME_NOVER("mysqlclient"), RTLD_LAZY);
     if (!lib_handle) return;

@@ -59,16 +59,25 @@ static inline void kdbc_dl_close(kdbc_lib_handle lib) {
  *   Linux:   "libsqlite3.so.0"
  *   macOS:   "libsqlite3.0.dylib"
  *   Windows: "sqlite3.dll"
+ *
+ * Some Windows libraries keep the "lib" prefix (e.g. libpq.dll, libmariadb.dll).
+ * Use KDBC_LIBNAME_LIBPREFIX for those.
  */
 #ifdef _WIN32
   #define KDBC_LIBNAME(base, ver) base ".dll"
   #define KDBC_LIBNAME_NOVER(base) base ".dll"
+  #define KDBC_LIBNAME_LIBPREFIX(base) "lib" base ".dll"
+  #define KDBC_LIBNAME_LIBVER(base, ver) "lib" base "-" ver ".dll"
 #elif defined(__APPLE__)
   #define KDBC_LIBNAME(base, ver) "lib" base "." ver ".dylib"
   #define KDBC_LIBNAME_NOVER(base) "lib" base ".dylib"
+  #define KDBC_LIBNAME_LIBPREFIX(base) "lib" base ".dylib"
+  #define KDBC_LIBNAME_LIBVER(base, ver) "lib" base "-" ver ".dylib"
 #else
   #define KDBC_LIBNAME(base, ver) "lib" base ".so." ver
   #define KDBC_LIBNAME_NOVER(base) "lib" base ".so"
+  #define KDBC_LIBNAME_LIBPREFIX(base) "lib" base ".so"
+  #define KDBC_LIBNAME_LIBVER(base, ver) "lib" base "-" ver ".so"
 #endif
 
 #endif /* KDBC_DL_H */

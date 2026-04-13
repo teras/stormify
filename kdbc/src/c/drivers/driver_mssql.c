@@ -160,6 +160,8 @@ static int tds_load(void) {
 
     lib_handle = kdbc_dl_open(KDBC_LIBNAME("sybdb", "5"), RTLD_LAZY);
     if (!lib_handle) lib_handle = kdbc_dl_open(KDBC_LIBNAME_NOVER("sybdb"), RTLD_LAZY);
+    if (!lib_handle) lib_handle = kdbc_dl_open(KDBC_LIBNAME_LIBPREFIX("sybdb"), RTLD_LAZY);
+    if (!lib_handle) lib_handle = kdbc_dl_open(KDBC_LIBNAME_LIBVER("sybdb", "5"), RTLD_LAZY);
     if (!lib_handle) return 0;
 
     DB_LOAD(p_dbinit,        "dbinit");

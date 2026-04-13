@@ -92,8 +92,10 @@ Stormify connects to your database through a data source. On JVM, it accepts any
     val stormify = Stormify(ds)
     ```
 
-    Database client libraries are loaded at runtime via `dlopen` — only the ones you
-    actually use need to be installed.
+    Database client libraries are loaded at runtime via `dlopen` / `LoadLibrary` —
+    only the ones you actually use need to be installed. See the
+    [Native Runtime Libraries](#native-runtime-libraries) section below for
+    per-database installation instructions.
 
 === "Android"
 
@@ -271,6 +273,139 @@ Tuning connection pool settings such as the maximum pool size, idle connections,
 - **Optimize SQL Queries**: Ensure your queries are efficient and indexed properly.
 - **Adjust Pool Sizes**: Balance pool sizes to match your application's workload and database capacity.
 - **Monitor Connection Usage**: Use monitoring tools to keep an eye on connection usage and database performance.
+
+## Native Runtime Libraries
+
+On native targets (Linux x64, Linux ARM64, Windows x64), Stormify loads database
+client libraries dynamically at runtime. Only install the libraries for the
+databases you actually use. If a library is missing, Stormify reports
+"driver not available" for that database — other drivers continue to work normally.
+
+### SQLite
+
+No external library needed on most systems — SQLite is typically bundled with the OS.
+
+=== "Linux"
+
+    ```bash
+    # Debian / Ubuntu
+    sudo apt install libsqlite3-0
+
+    # Arch Linux / Manjaro
+    sudo pacman -S sqlite
+    ```
+
+=== "Windows"
+
+    Download `sqlite3.dll` from [sqlite.org](https://www.sqlite.org/download.html)
+    (Precompiled Binaries for Windows, 64-bit DLL) and place it next to your
+    application or on `PATH`.
+
+### PostgreSQL
+
+=== "Linux"
+
+    ```bash
+    # Debian / Ubuntu
+    sudo apt install libpq5
+
+    # Arch Linux / Manjaro
+    sudo pacman -S postgresql-libs
+    ```
+
+=== "Windows"
+
+    Download the [PostgreSQL binaries zip](https://www.postgresql.org/download/windows/)
+    from EDB and extract `libpq.dll` (and its dependencies `libssl-3-x64.dll`,
+    `libcrypto-3-x64.dll`, `libintl-9.dll`, `libiconv-2.dll`) from the `pgsql/bin/`
+    directory. Place them next to your application or on `PATH`.
+
+### MariaDB / MySQL
+
+The MariaDB Connector/C client library works with both MariaDB and MySQL servers.
+
+=== "Linux"
+
+    ```bash
+    # Debian / Ubuntu
+    sudo apt install libmariadb3
+
+    # Arch Linux / Manjaro
+    sudo pacman -S mariadb-libs
+    ```
+
+=== "Windows"
+
+    Extract `libmariadb.dll` from the
+    [MariaDB Server zip](https://mariadb.org/download/) (`lib/` directory)
+    or install from the
+    [MariaDB Connector/C MSI](https://mariadb.com/downloads/connectors/).
+    Place next to your application or on `PATH`.
+
+    For MySQL 8+ servers, you also need the `caching_sha2_password.dll`
+    authentication plugin (included in the Connector/C MSI) in the same
+    directory as `libmariadb.dll`.
+
+### MS SQL Server (via FreeTDS)
+
+=== "Linux"
+
+    ```bash
+    # Debian / Ubuntu
+    sudo apt install libsybdb5
+
+    # Arch Linux / Manjaro
+    sudo pacman -S freetds
+    ```
+
+=== "Windows"
+
+    FreeTDS does not provide official Windows builds. Install via
+    [MSYS2](https://www.msys2.org/):
+
+    ```
+    pacman -S mingw-w64-x86_64-freetds
+    ```
+
+    Copy `libsybdb-5.dll` from `mingw64/bin/` next to your application.
+
+### Oracle
+
+Oracle support requires two components:
+
+1. **ODPI-C** (Oracle Database Programming Interface for C) — a thin open-source
+   C wrapper (Apache 2.0 / UPL 1.0 license).
+2. **Oracle Instant Client** — Oracle's proprietary client library (free download,
+   no redistribution).
+
+=== "Linux"
+
+    ```bash
+    # 1. Build and install ODPI-C from source
+    git clone --depth 1 --branch v5.6.4 https://github.com/oracle/odpi.git
+    cd odpi && make -j4 && sudo make install PREFIX=/usr/local && cd .. && rm -rf odpi
+
+    # 2. Download Oracle Instant Client basic-lite
+    #    https://www.oracle.com/database/technologies/instant-client/linux-x86-64-downloads.html
+    wget https://download.oracle.com/otn_software/linux/instantclient/instantclient-basiclite-linuxx64.zip
+    sudo unzip instantclient-basiclite-linuxx64.zip -d /opt/oracle
+    echo /opt/oracle/instantclient_* | sudo tee /etc/ld.so.conf.d/oracle.conf
+    sudo ldconfig
+    ```
+
+=== "Windows"
+
+    ```
+    # 1. Build ODPI-C from source (requires MinGW or Visual Studio)
+    git clone --depth 1 --branch v5.6.4 https://github.com/oracle/odpi.git
+    cd odpi
+    gcc -shared -o odpic.dll src/*.c -Iinclude -DDPI_DLL_EXPORT -O2
+    # Place odpic.dll next to your application
+
+    # 2. Download Oracle Instant Client basic-lite for Windows x64
+    #    https://www.oracle.com/database/technologies/instant-client/winx64-64-downloads.html
+    # Unzip and place oci.dll (and supporting ora*.dll files) next to your application or on PATH
+    ```
 
 ## Application Server Deployment (JVM only)
 

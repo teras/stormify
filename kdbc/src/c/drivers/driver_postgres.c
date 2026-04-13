@@ -171,6 +171,7 @@ static int            pg_load_ok   = 0;
 static void pg_load_impl(void) {
     lib_handle = kdbc_dl_open(KDBC_LIBNAME("pq", "5"), RTLD_LAZY);
     if (!lib_handle) lib_handle = kdbc_dl_open(KDBC_LIBNAME_NOVER("pq"), RTLD_LAZY);
+    if (!lib_handle) lib_handle = kdbc_dl_open(KDBC_LIBNAME_LIBPREFIX("pq"), RTLD_LAZY);
     if (!lib_handle) return;
 
     PG_LOAD(connectdb);
