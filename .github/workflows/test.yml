@@ -45,6 +45,13 @@ on:
 #   The mingw-w64 package provides the cross-compiler for building
 #   libkdbc.a targeting Windows. Kotlin/Native handles its own
 #   cross-compilation via its bundled LLVM toolchain.
+#
+# linuxArm64 (ARM64 cross-compilation):
+#   The gcc-aarch64-linux-gnu package provides the cross-compiler for
+#   building libkdbc.a targeting ARM64 Linux. The test binary runs on
+#   an ubuntu-24.04-arm runner (native ARM64 GitHub Actions runner).
+#   The -mno-outline-atomics flag is needed in the Makefile because
+#   Kotlin/Native links with its own LLVM runtime, not libgcc.
 # ---------------------------------------------------------------------------
 
 jobs:
@@ -274,3 +281,66 @@ jobs:
         env:
           STORMIFY_TEST_DB: sqlite
         run: .\test.exe
+
+  # ---------------------------------------------------------------------------
+  # Linux ARM64 (linuxArm64) — cross-compile on Linux x64, test on ARM64
+  # ---------------------------------------------------------------------------
+
+  linux-arm64-build:
+    runs-on: ubuntu-latest
+    name: linux-arm64 / build
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '9.3.1'
+
+      - name: Install cross-compilation toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-aarch64-linux-gnu
+
+      - name: Cross-compile libkdbc.a for linuxArm64
+        run: make -C kdbc/src/c TARGET=arm64 BUILDDIR=build-arm64 lib
+
+      - name: Build linuxArm64 test binary
+        run: gradle :stormify:linkDebugTestLinuxArm64 --console=plain
+
+      - name: Upload test binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: arm64-test-binary
+          path: stormify/build/bin/linuxArm64/debugTest/test.kexe
+          retention-days: 1
+
+  linux-arm64-test:
+    runs-on: ubuntu-24.04-arm
+    needs: linux-arm64-build
+    name: linux-arm64 / sqlite
+
+    steps:
+      - name: Install runtime libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libsqlite3-0 libatomic1
+
+      - name: Download test binary
+        uses: actions/download-artifact@v4
+        with:
+          name: arm64-test-binary
+
+      - name: Run tests
+        env:
+          STORMIFY_TEST_DB: sqlite
+        run: |
+          chmod +x test.kexe
+          ./test.kexe

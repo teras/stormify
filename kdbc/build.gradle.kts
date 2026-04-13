@@ -39,6 +39,14 @@ val buildNativeKdbcMingw = tasks.register<Exec>("buildNativeKdbcMingw") {
     outputs.file("src/c/build-mingw/libkdbc.dll")
 }
 
+val buildNativeKdbcArm64 = tasks.register<Exec>("buildNativeKdbcArm64") {
+    workingDir = file("src/c")
+    commandLine("make", "TARGET=arm64", "BUILDDIR=build-arm64", "lib")
+    cSrcInputs.execute(this)
+    outputs.file("src/c/build-arm64/libkdbc.a")
+    outputs.file("src/c/build-arm64/libkdbc.so")
+}
+
 val cleanNativeKdbc = tasks.register<Exec>("cleanNativeKdbc") {
     workingDir = file("src/c")
     commandLine("make", "clean")
@@ -74,6 +82,18 @@ kotlin {
                     packageName = "onl.ycode.kdbc.cinterop"
                     includeDirs(project.file("src/c/include"))
                     extraOpts("-libraryPath", project.file("src/c/build-mingw").absolutePath)
+                }
+            }
+        }
+    }
+    linuxArm64 {
+        compilations.getByName("main") {
+            cinterops {
+                val kdbc by creating {
+                    defFile(project.file("src/nativeInterop/cinterop/kdbc.def"))
+                    packageName = "onl.ycode.kdbc.cinterop"
+                    includeDirs(project.file("src/c/include"))
+                    extraOpts("-libraryPath", project.file("src/c/build-arm64").absolutePath)
                 }
             }
         }
@@ -158,6 +178,9 @@ tasks.matching { it.name.startsWith("cinteropKdbcLinuxX64") }.configureEach {
 }
 tasks.matching { it.name.startsWith("cinteropKdbcMingwX64") }.configureEach {
     dependsOn(buildNativeKdbcMingw)
+}
+tasks.matching { it.name.startsWith("cinteropKdbcLinuxArm64") }.configureEach {
+    dependsOn(buildNativeKdbcArm64)
 }
 
 android {

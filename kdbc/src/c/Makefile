@@ -28,6 +28,10 @@ else ifeq ($(TARGET),arm64)
   AR       = aarch64-linux-gnu-ar
   LDFLAGS  = -ldl -lpthread
   LIB_SHARED = $(BUILDDIR)/libkdbc.so
+  # Disable outline atomics — GCC emits calls to __aarch64_ldadd* helpers
+  # that live in libgcc, but Kotlin/Native links with its own LLVM runtime
+  # which does not provide them.
+  EXTRA_CFLAGS = -mno-outline-atomics
 else
   CC       = gcc
   AR       = ar
@@ -71,7 +75,7 @@ OBJ_CORE    = $(addprefix $(BUILDDIR)/,$(SRC_CORE:.c=.o))
 OBJ_DRIVERS = $(addprefix $(BUILDDIR)/,$(SRC_DRIVERS:.c=.o))
 OBJECTS     = $(OBJ_CORE) $(OBJ_DRIVERS)
 
-CFLAGS = -Wall -Wextra -std=c11 -fPIC -Iinclude -g -O2 $(VENDOR_INCLUDES)
+CFLAGS = -Wall -Wextra -std=c11 -fPIC -Iinclude -g -O2 $(VENDOR_INCLUDES) $(EXTRA_CFLAGS)
 
 LIB_STATIC  = $(BUILDDIR)/libkdbc.a
 

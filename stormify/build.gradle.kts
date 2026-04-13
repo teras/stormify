@@ -19,6 +19,7 @@ kotlin {
     }
     linuxX64()
     mingwX64()
+    linuxArm64()
 
     // Apple targets - build enabled on macOS only
     if (org.gradle.internal.os.OperatingSystem.current().isMacOsX) {
@@ -169,6 +170,14 @@ kotlin {
             }
         }
 
+        val linuxArm64Test by getting {
+            // Share test sources with linuxX64Test — identical POSIX APIs and paths
+            kotlin.srcDir("src/linuxX64Test/kotlin")
+            dependencies {
+                implementation(project(":kdbc"))
+            }
+        }
+
         // Apple targets - build enabled on macOS only
         if (org.gradle.internal.os.OperatingSystem.current().isMacOsX) {
             val appleMain by creating {
@@ -265,6 +274,7 @@ dependencies {
     add("kspJvmTest", project(":annproc"))
     add("kspLinuxX64Test", project(":annproc"))
     add("kspMingwX64Test", project(":annproc"))
+    // linuxArm64Test reuses linuxX64 KSP output — no separate KSP run needed
     add("kspAndroidTestDebug", project(":annproc"))
 }
 
@@ -278,6 +288,10 @@ kotlin.sourceSets.named("linuxX64Test") {
 kotlin.sourceSets.named("mingwX64Test") {
     kotlin.srcDir("build/generated/ksp/mingwX64/mingwX64Test/kotlin")
 }
+// linuxArm64Test reuses linuxX64's KSP output — same entities, same generated code
+kotlin.sourceSets.named("linuxArm64Test") {
+    kotlin.srcDir("build/generated/ksp/linuxX64/linuxX64Test/kotlin")
+}
 kotlin.sourceSets.named("androidUnitTest") {
     kotlin.srcDir("build/generated/ksp/android/androidDebugUnitTest/kotlin")
 }
@@ -290,6 +304,9 @@ tasks.matching { it.name == "compileTestKotlinLinuxX64" }.configureEach {
 }
 tasks.matching { it.name == "compileTestKotlinMingwX64" }.configureEach {
     dependsOn("kspTestKotlinMingwX64")
+}
+tasks.matching { it.name == "compileTestKotlinLinuxArm64" }.configureEach {
+    dependsOn("kspTestKotlinLinuxX64")
 }
 
 // Copy platform-specific runtime libraries (DLLs, .so files) next to test
