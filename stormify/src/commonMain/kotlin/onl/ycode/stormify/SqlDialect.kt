@@ -332,6 +332,17 @@ enum class SqlDialect(
     }
 
     /**
+     * Quotes a column alias if it would be rejected as an unquoted identifier.
+     * Oracle requires double-quoting for aliases starting with `_` or digits;
+     * other databases accept them unquoted.
+     */
+    fun quoteAlias(alias: String): String {
+        if (this != ORACLE_NEW && this != ORACLE_OLD) return alias
+        val first = alias.firstOrNull() ?: return alias
+        return if (first.isLetter()) alias else "\"$alias\""
+    }
+
+    /**
      * Wraps a bind placeholder with a dialect-specific cast to DATE.
      * Used by raw columns with [onl.ycode.stormify.biglist.Column.Type.TEMPORAL] where the DB cannot
      * implicitly convert an ISO string bind parameter to a date.

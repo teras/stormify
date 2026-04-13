@@ -56,9 +56,9 @@ internal class SingleAggregatorCore(
     }
 
     /**
-     * SQL identifiers must start with a letter or `_` on every mainstream
-     * dialect. Prepends `_` if the first character is anything else; returns
-     * the alias unchanged otherwise.
+     * SQL identifiers must start with a letter or `_` on most dialects.
+     * Prepends `_` if the first character is anything else; returns the
+     * alias unchanged otherwise.
      */
     private fun normalizeFirstChar(alias: String): String =
         if (alias.firstOrNull()?.let { it.isLetter() || it == '_' } == true) alias else "_$alias"
@@ -122,8 +122,9 @@ internal class SingleAggregatorCore(
     /** Builds the final SQL for the current entry list. */
     internal fun buildQuery(): String {
         require(entries.isNotEmpty()) { "Aggregator has no aggregations to run" }
+        val dialect = pagedList.getStormify().sqlDialect
         val (where, _) = pagedList.buildConstraintPart(excludeColumn = null)
-        val select = entries.joinToString(", ") { "${it.expression} AS ${it.alias}" }
+        val select = entries.joinToString(", ") { "${it.expression} AS ${dialect.quoteAlias(it.alias)}" }
         return "SELECT $select FROM ${pagedList.getTablesPart()}$where"
     }
 
