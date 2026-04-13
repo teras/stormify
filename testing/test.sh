@@ -6,6 +6,8 @@ PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 C_SRC_DIR="$PROJECT_DIR/kdbc/src/c"
 C_TEST_BIN="$C_SRC_DIR/test/test_kdbc"
 
+COMPOSE_FILE="$SCRIPT_DIR/docker-compose.yml"
+
 ALL_DBS="sqlite postgresql postgresql9 mysql mysql5 mariadb oracle oracle11 mssql"
 
 # Database connection details (matching docker-compose.yml)
@@ -27,6 +29,85 @@ esac; }
 db_user()     { case "$1" in mssql) echo "sa";; *) echo "stormify";; esac; }
 db_password() { echo "Stormify1!"; }
 
+# ========================================================================
+# Docker lifecycle (used by up/down commands)
+# ========================================================================
+
+start_db() {
+    local db="$1"
+    [ "$db" = "sqlite" ] && return 0
+    echo "Starting $db container..."
+    docker compose -f "$COMPOSE_FILE" --profile "$db" up -d
+    "$SCRIPT_DIR/scripts/wait-for-db.sh" "$db"
+}
+
+stop_db() {
+    local db="$1"
+    [ "$db" = "sqlite" ] && return 0
+    echo "Stopping $db container..."
+    docker compose -f "$COMPOSE_FILE" --profile "$db" down -v 2>/dev/null || true
+}
+
+stop_all_dbs() {
+    echo "Stopping all database containers..."
+    docker compose -f "$COMPOSE_FILE" --profile all down -v 2>/dev/null || true
+}
+
+# ========================================================================
+# Health checks (used by test runners)
+# ========================================================================
+
+check_db_ready() {
+    local db="$1"
+    [ "$db" = "sqlite" ] && return 0
+    local status
+    status=$(docker compose -f "$COMPOSE_FILE" ps --format json "$db" 2>/dev/null \
+        | grep -o '"Health":"[^"]*"' | head -1 | cut -d'"' -f4 || true)
+    [ "$status" = "healthy" ]
+}
+
+require_db() {
+    local db="$1"
+    [ "$db" = "sqlite" ] && return 0
+    if ! check_db_ready "$db"; then
+        echo ""
+        echo "ERROR: Database '$db' is not running or not healthy."
+        echo "Start it with:  ./test.sh up $db"
+        echo "Or start all:   ./test.sh up"
+        echo ""
+        echo "Hint: run './test.sh status' to see which databases are available."
+        return 1
+    fi
+}
+
+# ========================================================================
+# Status display
+# ========================================================================
+
+show_status() {
+    echo "Database container status:"
+    echo ""
+    printf "  %-14s  %-10s  %-10s\n" "DATABASE" "STATE" "HEALTH"
+    printf "  %-14s  %-10s  %-10s\n" "--------" "-----" "------"
+    for db in $ALL_DBS; do
+        if [ "$db" = "sqlite" ]; then
+            printf "  %-14s  %-10s  %-10s\n" "sqlite" "n/a" "always ready"
+            continue
+        fi
+        local info
+        info=$(docker compose -f "$COMPOSE_FILE" ps --format json "$db" 2>/dev/null || true)
+        if [ -z "$info" ]; then
+            printf "  %-14s  %-10s  %-10s\n" "$db" "stopped" "-"
+        else
+            local state health
+            state=$(echo "$info" | grep -o '"State":"[^"]*"' | head -1 | cut -d'"' -f4 || echo "unknown")
+            health=$(echo "$info" | grep -o '"Health":"[^"]*"' | head -1 | cut -d'"' -f4 || echo "unknown")
+            printf "  %-14s  %-10s  %-10s\n" "$db" "$state" "$health"
+        fi
+    done
+    echo ""
+}
+
 usage() {
     cat <<'EOF'
 Usage: ./test.sh <target> [database]
@@ -36,8 +117,17 @@ Targets:
   linux [database]       Run Kotlin/Native linuxX64 tests
   linux-arm64 [database] Run Kotlin/Native linuxArm64 tests (via Docker on x64)
   native [database]      Run C native tests
+  android                Run Android unit tests (Robolectric, no database needed)
+  mingw [database]       Cross-compile and test mingwX64 (Wine required for execution)
   examples               Build and run all example projects
   all                    Run everything (JVM + linux + native + examples, all databases)
+
+Database lifecycle:
+  up [database]          Start database container(s) and wait for healthy
+  down [database]        Stop database container(s)
+  status                 Show which database containers are running
+  check                  Exit 0 if all databases are ready, 1 otherwise
+  list dbs|docker-dbs|examples   Print item list (for scripting)
 
 Databases:
   sqlite               SQLite (no Docker needed)
@@ -53,39 +143,20 @@ Databases:
 If no database specified, runs ALL supported databases for the target.
 
 Examples:
-  ./test.sh native sqlite           # Quick: C tests with SQLite only
-  ./test.sh native                  # C tests against all databases
-  ./test.sh jvm postgresql          # JVM tests against PostgreSQL
-  ./test.sh linux oracle            # linuxX64 tests against Oracle
-  ./test.sh linux-arm64 sqlite      # linuxArm64 tests via Docker
-  ./test.sh linux-arm64             # linuxArm64 against all arm64-compatible DBs
-  ./test.sh all                     # Everything
+  ./test.sh up postgresql          # Start PostgreSQL container
+  ./test.sh up                     # Start ALL database containers (sequentially)
+  ./test.sh status                 # Check which databases are running
+  ./test.sh native sqlite          # Quick: C tests with SQLite only
+  ./test.sh native                 # C tests against all databases
+  ./test.sh jvm postgresql         # JVM tests against PostgreSQL
+  ./test.sh linux oracle           # linuxX64 tests against Oracle
+  ./test.sh linux-arm64 sqlite     # linuxArm64 tests via Docker
+  ./test.sh android                # Android Robolectric tests
+  ./test.sh mingw                  # mingwX64 cross-compile + test
+  ./test.sh all                    # Everything
+  ./test.sh down                   # Stop ALL database containers
 EOF
     exit 1
-}
-
-# ========================================================================
-# Docker helpers
-# ========================================================================
-
-# STORMIFY_KEEP_CONTAINERS=1 — start containers but don't stop them
-# (used by test-parallel.sh; cleanup happens once at the end)
-KEEP_CONTAINERS="${STORMIFY_KEEP_CONTAINERS:-0}"
-
-start_db() {
-    local db="$1"
-    [ "$db" = "sqlite" ] && return 0
-    echo "Starting $db container..."
-    docker compose -f "$SCRIPT_DIR/docker-compose.yml" --profile "$db" up -d
-    "$SCRIPT_DIR/scripts/wait-for-db.sh" "$db"
-}
-
-stop_db() {
-    local db="$1"
-    [ "$db" = "sqlite" ] && return 0
-    [ "$KEEP_CONTAINERS" = "1" ] && return 0
-    echo "Stopping $db container..."
-    docker compose -f "$SCRIPT_DIR/docker-compose.yml" --profile "$db" down -v 2>/dev/null || true
 }
 
 # ========================================================================
@@ -114,7 +185,7 @@ run_native_one() {
     echo "Native C tests: $db"
     echo "========================================="
 
-    start_db "$db"
+    require_db "$db"
 
     local rc=0
     if [ "$db" = "sqlite" ]; then
@@ -122,8 +193,6 @@ run_native_one() {
     else
         "$C_TEST_BIN" "$driver" "$url" "$user" "$pass" || rc=$?
     fi
-
-    stop_db "$db"
 
     if [ $rc -eq 0 ]; then
         echo "PASSED: native $db"
@@ -146,7 +215,7 @@ run_jvm_one() {
     echo "JVM tests: $db"
     echo "========================================="
 
-    start_db "$db"
+    require_db "$db"
 
     local rc=0
     cd "$PROJECT_DIR"
@@ -159,8 +228,6 @@ run_jvm_one() {
     else
         gradle :stormify:jvmTest --console=plain 2>&1 || rc=$?
     fi
-
-    stop_db "$db"
 
     if [ $rc -eq 0 ]; then
         echo "PASSED: jvm $db"
@@ -182,7 +249,7 @@ run_linux_one() {
     echo "Kotlin/Native linuxX64 tests: $db"
     echo "========================================="
 
-    start_db "$db"
+    require_db "$db"
 
     local rc=0
     cd "$PROJECT_DIR"
@@ -194,8 +261,6 @@ run_linux_one() {
         STORMIFY_TEST_DB="$db" gradle :stormify:linuxX64Test \
             --console=plain 2>&1 || rc=$?
     fi
-
-    stop_db "$db"
 
     if [ $rc -eq 0 ]; then
         echo "PASSED: linuxX64 $db"
@@ -222,7 +287,7 @@ run_linux_arm64_one() {
     echo "Kotlin/Native linuxArm64 tests: $db"
     echo "========================================="
 
-    start_db "$db"
+    require_db "$db"
 
     local rc=0
     cd "$PROJECT_DIR"
@@ -243,7 +308,7 @@ run_linux_arm64_one() {
         # x64 host — run via Docker multiarch (QEMU)
         if [ ! -x "$test_bin" ]; then
             echo "Building linuxArm64 test binary..."
-            gradle :stormify:linkDebugTestLinuxArm64 --console=plain 2>&1 || { rc=$?; stop_db "$db"; return $rc; }
+            gradle :stormify:linkDebugTestLinuxArm64 --console=plain 2>&1 || { rc=$?; return $rc; }
         fi
         docker run --rm --platform linux/arm64 \
             --network=host \
@@ -268,12 +333,75 @@ run_linux_arm64_one() {
             2>&1 || rc=$?
     fi
 
-    stop_db "$db"
-
     if [ $rc -eq 0 ]; then
         echo "PASSED: linuxArm64 $db"
     else
         echo "FAILED: linuxArm64 $db (exit code: $rc)"
+    fi
+    echo ""
+    return $rc
+}
+
+# ========================================================================
+# Run Android unit tests (Robolectric)
+# ========================================================================
+
+run_android() {
+    echo "========================================="
+    echo "Android unit tests (Robolectric)"
+    echo "========================================="
+
+    local rc=0
+    cd "$PROJECT_DIR"
+    gradle :stormify:testDebugUnitTest --console=plain 2>&1 || rc=$?
+
+    if [ $rc -eq 0 ]; then
+        echo "PASSED: android"
+    else
+        echo "FAILED: android (exit code: $rc)"
+    fi
+    echo ""
+    return $rc
+}
+
+# ========================================================================
+# Run mingwX64 tests for one database
+# ========================================================================
+
+build_mingw() {
+    local test_exe="$PROJECT_DIR/stormify/build/bin/mingwX64/debugTest/test.exe"
+    [ -x "$test_exe" ] && return 0
+
+    echo "Building C library for mingw..."
+    make -C "$C_SRC_DIR" TARGET=mingw BUILDDIR=build-mingw lib 2>&1
+
+    echo "Building mingwX64 test binary..."
+    cd "$PROJECT_DIR"
+    gradle :stormify:linkDebugTestMingwX64 --console=plain 2>&1
+}
+
+run_mingw_one() {
+    local db="$1"
+
+    echo "========================================="
+    echo "mingwX64 tests: $db"
+    echo "========================================="
+
+    require_db "$db"
+
+    local rc=0
+    local test_exe="$PROJECT_DIR/stormify/build/bin/mingwX64/debugTest/test.exe"
+    if command -v wine &>/dev/null; then
+        STORMIFY_TEST_DB="$db" wine "$test_exe" 2>&1 || rc=$?
+    else
+        echo "Wine not available. Build succeeded; skipping execution."
+        echo "Run on Windows: STORMIFY_TEST_DB=$db test.exe"
+    fi
+
+    if [ $rc -eq 0 ]; then
+        echo "PASSED: mingw $db"
+    else
+        echo "FAILED: mingw $db (exit code: $rc)"
     fi
     echo ""
     return $rc
@@ -356,6 +484,53 @@ TARGET="${1:-}"
 DB="${2:-}"
 
 case "$TARGET" in
+    list)
+        case "${DB:-}" in
+            dbs)        echo $ALL_DBS ;;
+            docker-dbs) for db in $ALL_DBS; do [ "$db" != "sqlite" ] && printf "%s " "$db"; done; echo ;;
+            examples)   echo $ALL_EXAMPLES ;;
+            *)          echo "Usage: ./test.sh list dbs|docker-dbs|examples"; exit 1 ;;
+        esac
+        ;;
+
+    check)
+        # Exit 0 if all databases are ready, 1 otherwise
+        missing=""
+        for db in $ALL_DBS; do
+            if ! check_db_ready "$db"; then
+                missing="$missing $db"
+            fi
+        done
+        if [ -n "$missing" ]; then
+            echo "ERROR: Not running:$missing"
+            echo "Start with: ./test.sh up  or  ./test-parallel.sh up"
+            exit 1
+        fi
+        echo "All databases ready."
+        ;;
+
+    up)
+        if [ -z "$DB" ] || [ "$DB" = "all" ]; then
+            for db in $ALL_DBS; do
+                start_db "$db"
+            done
+        else
+            start_db "$DB"
+        fi
+        ;;
+
+    down)
+        if [ -z "$DB" ] || [ "$DB" = "all" ]; then
+            stop_all_dbs
+        else
+            stop_db "$DB"
+        fi
+        ;;
+
+    status)
+        show_status
+        ;;
+
     native)
         build_native
         if [ -n "$DB" ]; then
@@ -389,6 +564,19 @@ case "$TARGET" in
         fi
         ;;
 
+    android)
+        run_android
+        ;;
+
+    mingw)
+        build_mingw
+        if [ -n "$DB" ]; then
+            run_mingw_one "$DB"
+        else
+            run_for_dbs run_mingw_one $ALL_DBS
+        fi
+        ;;
+
     examples)
         if [ -n "$DB" ]; then
             run_example_one "$DB"
@@ -416,6 +604,15 @@ case "$TARGET" in
         echo "############### KOTLIN/NATIVE ARM64 TESTS ###############"
         echo ""
         run_for_dbs run_linux_arm64_one $ALL_DBS || failed=$((failed + $?))
+        echo ""
+        echo "############### ANDROID TESTS ###############"
+        echo ""
+        run_android || failed=$((failed + 1))
+        echo ""
+        echo "############### MINGW TESTS ###############"
+        echo ""
+        build_mingw
+        run_for_dbs run_mingw_one $ALL_DBS || failed=$((failed + $?))
         echo ""
         echo "############### EXAMPLES ###############"
         echo ""

@@ -78,8 +78,16 @@ jobs:
         with:
           gradle-version: '9.3.1'
 
+      - name: Start database
+        if: matrix.db != 'sqlite'
+        run: testing/test.sh up ${{ matrix.db }}
+
       - name: Run tests
         run: testing/test.sh jvm ${{ matrix.db }}
+
+      - name: Stop database
+        if: always() && matrix.db != 'sqlite'
+        run: testing/test.sh down ${{ matrix.db }}
 
   native-test:
     runs-on: ubuntu-latest
@@ -110,8 +118,16 @@ jobs:
           echo /opt/oracle/instantclient_* | sudo tee /etc/ld.so.conf.d/oracle.conf
           sudo ldconfig
 
+      - name: Start database
+        if: matrix.db != 'sqlite'
+        run: testing/test.sh up ${{ matrix.db }}
+
       - name: Run tests
         run: testing/test.sh native ${{ matrix.db }}
+
+      - name: Stop database
+        if: always() && matrix.db != 'sqlite'
+        run: testing/test.sh down ${{ matrix.db }}
 
   linux-test:
     runs-on: ubuntu-latest
@@ -150,8 +166,16 @@ jobs:
           echo /opt/oracle/instantclient_* | sudo tee /etc/ld.so.conf.d/oracle.conf
           sudo ldconfig
 
+      - name: Start database
+        if: matrix.db != 'sqlite'
+        run: testing/test.sh up ${{ matrix.db }}
+
       - name: Run tests
         run: testing/test.sh linux ${{ matrix.db }}
+
+      - name: Stop database
+        if: always() && matrix.db != 'sqlite'
+        run: testing/test.sh down ${{ matrix.db }}
 
   android-test:
     runs-on: ubuntu-latest
@@ -172,7 +196,7 @@ jobs:
           gradle-version: '9.3.1'
 
       - name: Run Android unit tests
-        run: gradle :stormify:testDebugUnitTest --console=plain
+        run: testing/test.sh android
 
   example:
     runs-on: ubuntu-latest
@@ -355,7 +379,16 @@ jobs:
           name: arm64-test-binary
           path: stormify/build/bin/linuxArm64/debugTest/
 
+      - name: Make test binary executable
+        run: chmod +x stormify/build/bin/linuxArm64/debugTest/test.kexe
+
+      - name: Start database
+        if: matrix.db != 'sqlite'
+        run: testing/test.sh up ${{ matrix.db }}
+
       - name: Run tests
-        run: |
-          chmod +x stormify/build/bin/linuxArm64/debugTest/test.kexe
-          STORMIFY_PREBUILT=1 testing/test.sh linux-arm64 ${{ matrix.db }}
+        run: STORMIFY_PREBUILT=1 testing/test.sh linux-arm64 ${{ matrix.db }}
+
+      - name: Stop database
+        if: always() && matrix.db != 'sqlite'
+        run: testing/test.sh down ${{ matrix.db }}
