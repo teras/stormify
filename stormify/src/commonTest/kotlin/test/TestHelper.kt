@@ -57,6 +57,8 @@ object TestHelper {
             } catch (e: Throwable) {
                 println("[$testName] FAILED on ${testDb.name}: ${e.message}")
                 throw AssertionError("Test failed on ${testDb.name}: ${e.message}", e)
+            } finally {
+                testDb.close?.invoke()
             }
         }
     }

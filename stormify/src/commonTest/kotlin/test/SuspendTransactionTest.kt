@@ -41,6 +41,7 @@ open class SuspendTransactionTest {
 
     private lateinit var stormify: Stormify
     private lateinit var runner: SuspendStormify
+    private var testDbCloseHook: (() -> Unit)? = null
     private val dbNameForTest = "suspend_tx"
 
     @BeforeTest
@@ -50,6 +51,7 @@ open class SuspendTransactionTest {
             return
         }
         val testDb = databases.first()
+        testDbCloseHook = testDb.close
         stormify = Stormify(testDb.dataSource)
         stormify.isStrictMode = false
         stormify.registerPrimaryKeyResolver(0) { _, field -> field.lowercase().startsWith("id") }
@@ -76,6 +78,8 @@ open class SuspendTransactionTest {
         if (::stormify.isInitialized) {
             TestDDL.dropTable(dbNameForTest)
         }
+        testDbCloseHook?.invoke()
+        testDbCloseHook = null
     }
 
     @Test
@@ -167,7 +171,7 @@ open class SuspendTransactionTest {
     }
 
     @Test
-    fun cancellationRollsBackTransaction() = runBlocking {
+    open fun cancellationRollsBackTransaction(): Unit = runBlocking {
         if (!::runner.isInitialized) return@runBlocking
 
         // Pre-seed a row so we can prove rollback didn't touch it.
