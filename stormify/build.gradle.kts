@@ -18,7 +18,8 @@ kotlin {
         publishLibraryVariants("release", "debug")
     }
     linuxX64()
-    
+    mingwX64()
+
     // Apple targets - build enabled on macOS only
     if (org.gradle.internal.os.OperatingSystem.current().isMacOsX) {
         // iOS
@@ -161,7 +162,13 @@ kotlin {
                 implementation(project(":kdbc"))
             }
         }
-        
+
+        val mingwX64Test by getting {
+            dependencies {
+                implementation(project(":kdbc"))
+            }
+        }
+
         // Apple targets - build enabled on macOS only
         if (org.gradle.internal.os.OperatingSystem.current().isMacOsX) {
             val appleMain by creating {
@@ -257,6 +264,7 @@ tasks.withType<Test> {
 dependencies {
     add("kspJvmTest", project(":annproc"))
     add("kspLinuxX64Test", project(":annproc"))
+    add("kspMingwX64Test", project(":annproc"))
     add("kspAndroidTestDebug", project(":annproc"))
 }
 
@@ -267,6 +275,9 @@ kotlin.sourceSets.named("jvmTest") {
 kotlin.sourceSets.named("linuxX64Test") {
     kotlin.srcDir("build/generated/ksp/linuxX64/linuxX64Test/kotlin")
 }
+kotlin.sourceSets.named("mingwX64Test") {
+    kotlin.srcDir("build/generated/ksp/mingwX64/mingwX64Test/kotlin")
+}
 kotlin.sourceSets.named("androidUnitTest") {
     kotlin.srcDir("build/generated/ksp/android/androidDebugUnitTest/kotlin")
 }
@@ -276,6 +287,31 @@ tasks.matching { it.name == "compileTestKotlinJvm" }.configureEach {
 }
 tasks.matching { it.name == "compileTestKotlinLinuxX64" }.configureEach {
     dependsOn("kspTestKotlinLinuxX64")
+}
+tasks.matching { it.name == "compileTestKotlinMingwX64" }.configureEach {
+    dependsOn("kspTestKotlinMingwX64")
+}
+
+// Copy platform-specific runtime libraries (DLLs, .so files) next to test
+// binaries so that dlopen / LoadLibrary finds them when running tests.
+// The source directory is kdbc/src/c/libs/<platform> where <platform> maps
+// to the Kotlin/Native target name (e.g. mingwX64 → mingw, linuxArm64 → arm64).
+// If the directory is empty or missing, the copy is a no-op.
+kotlin.targets.withType<org.jetbrains.kotlin.gradle.plugin.mpp.KotlinNativeTarget>().configureEach {
+    val platformDir = when (name) {
+        "mingwX64" -> "mingw"
+        "linuxArm64" -> "arm64"
+        else -> return@configureEach
+    }
+    val libsDir = project(":kdbc").file("src/c/libs/$platformDir")
+    val targetName = name
+    val copyTask = tasks.register<Copy>("copy${targetName.replaceFirstChar { it.uppercase() }}TestLibs") {
+        from(libsDir)
+        into(layout.buildDirectory.dir("bin/$targetName/debugTest"))
+    }
+    tasks.matching { it.name == "${targetName}Test" || it.name == "linkDebugTest${targetName.replaceFirstChar { it.uppercase() }}" }.configureEach {
+        dependsOn(copyTask)
+    }
 }
 tasks.matching { it.name == "compileDebugUnitTestKotlinAndroid" }.configureEach {
     dependsOn("kspDebugUnitTestKotlinAndroid")

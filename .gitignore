@@ -57,7 +57,12 @@ local.properties
 kdbc/src/c/**/*.o
 kdbc/src/c/libkdbc.a
 kdbc/src/c/libkdbc.so
+kdbc/src/c/libkdbc.dll
 kdbc/src/c/test/test_kdbc
+kdbc/src/c/build-*/
+
+### Native runtime libraries (not committed, local testing only) ###
+kdbc/src/c/libs/
 
 ### Test logs ###
 testing/.logs/

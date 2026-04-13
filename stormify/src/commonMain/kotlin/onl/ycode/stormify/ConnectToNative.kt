@@ -10,7 +10,6 @@ expect class NativeBigInteger
 /** Whether this value is a platform-specific primitive type (e.g. `java.math.BigDecimal` on JVM). */
 expect val Any.isOtherPrimitive: Boolean
 
-internal expect fun systemMillis(): Long
 internal expect fun getNativeAllPrimitives(): Collection<KClass<*>>
 internal expect fun transformResultValue(value: Any?): Any?
 

@@ -16,7 +16,8 @@ kotlin {
         publishLibraryVariants("release", "debug")
     }
     linuxX64()
-    
+    mingwX64()
+
     // Apple targets - build enabled on macOS only
     if (org.gradle.internal.os.OperatingSystem.current().isMacOsX) {
         // iOS

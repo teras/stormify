@@ -7,49 +7,47 @@ see the [Doxygen documentation](kdbc-c/html/index.html).
 
 ### Prerequisites
 
-- C11-compatible compiler (GCC, Clang)
-- `pkg-config` (optional, for automatic header discovery)
-- Database development headers for the drivers you want to compile support for
+- C11-compatible compiler (GCC, Clang, or MinGW for cross-compilation)
+- Database client headers are vendored in `include/vendor/` — no system packages needed for compilation
+
+!!! note "All drivers compile unconditionally"
+    The build compiles all five driver backends using vendored headers.
+    Missing runtime libraries are detected lazily via `dlopen` — you only need the client
+    library installed on the machine where the application **runs**, not where it's built.
+
+For **running** tests or applications, install the runtime libraries for the databases you use:
 
 === "Debian / Ubuntu"
 
     ```bash
-    # Required
-    sudo apt install build-essential pkg-config
-
-    # Database headers (install whichever you need)
-    sudo apt install libsqlite3-dev    # SQLite
-    sudo apt install libpq-dev         # PostgreSQL
-    sudo apt install libmariadb-dev    # MariaDB / MySQL
-    sudo apt install freetds-dev       # MS SQL Server
-    # Oracle: install ODPI-C headers manually
+    sudo apt install libsqlite3-0     # SQLite
+    sudo apt install libpq5           # PostgreSQL
+    sudo apt install libmariadb3      # MariaDB / MySQL
+    sudo apt install libsybdb5        # MS SQL Server
     ```
 
 === "Arch Linux"
 
     ```bash
-    # Required
-    sudo pacman -S base-devel pkgconf
-
-    # Database headers (install whichever you need)
-    sudo pacman -S sqlite              # SQLite
-    sudo pacman -S postgresql-libs     # PostgreSQL
-    sudo pacman -S mariadb-libs        # MariaDB / MySQL
-    sudo pacman -S freetds             # MS SQL Server
+    sudo pacman -S sqlite             # SQLite
+    sudo pacman -S postgresql-libs    # PostgreSQL
+    sudo pacman -S mariadb-libs       # MariaDB / MySQL
+    sudo pacman -S freetds            # MS SQL Server
     ```
-
-!!! note "All drivers compile unconditionally"
-    The build compiles all five driver backends regardless of which headers are installed.
-    Missing runtime libraries are detected lazily via `dlopen` -- you only need the client
-    library installed on the machine where the application runs, not where it's built.
 
 ### Build Commands
 
 ```bash
 cd kdbc/src/c
 
-# Build static and shared libraries
-make
+# Build static and shared libraries (Linux x64)
+make lib
+
+# Cross-compile for Windows x64
+make TARGET=mingw BUILDDIR=build-mingw lib
+
+# Cross-compile for Linux ARM64
+make TARGET=arm64 BUILDDIR=build-arm64 lib
 
 # Run test suite (SQLite in-memory by default)
 make test
@@ -64,7 +62,7 @@ make clean
 This produces:
 
 - `libkdbc.a` -- static library
-- `libkdbc.so` -- shared library
+- `libkdbc.so` / `libkdbc.dll` -- shared library
 
 ### Linking Your Application
 

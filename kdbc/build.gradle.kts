@@ -9,17 +9,34 @@ group = parent?.group ?: IllegalStateException("Group is not defined")
 version = parent?.version ?: IllegalStateException("Version is not defined")
 description = "Kotlin Database Connectivity API"
 
-// Task that builds libkdbc.a / libkdbc.so from the C sources in src/c.
-// This is a prerequisite for the linuxX64 cinterop step.
-val buildNativeKdbc = tasks.register<Exec>("buildNativeKdbc") {
-    workingDir = file("src/c")
-    commandLine("make")
+// ---------------------------------------------------------------------------
+// Native C library build tasks
+//
+// Each target produces libkdbc.a in its own BUILDDIR so multiple targets
+// can coexist. The Makefile TARGET variable selects the cross-compiler.
+// ---------------------------------------------------------------------------
+
+val cSrcInputs: Action<Task> = Action {
     inputs.dir("src/c/drivers")
     inputs.dir("src/c/include")
     inputs.file("src/c/kdbc_core.c")
     inputs.file("src/c/Makefile")
+}
+
+val buildNativeKdbc = tasks.register<Exec>("buildNativeKdbc") {
+    workingDir = file("src/c")
+    commandLine("make", "lib")
+    cSrcInputs.execute(this)
     outputs.file("src/c/libkdbc.a")
     outputs.file("src/c/libkdbc.so")
+}
+
+val buildNativeKdbcMingw = tasks.register<Exec>("buildNativeKdbcMingw") {
+    workingDir = file("src/c")
+    commandLine("make", "TARGET=mingw", "BUILDDIR=build-mingw", "lib")
+    cSrcInputs.execute(this)
+    outputs.file("src/c/build-mingw/libkdbc.a")
+    outputs.file("src/c/build-mingw/libkdbc.dll")
 }
 
 val cleanNativeKdbc = tasks.register<Exec>("cleanNativeKdbc") {
@@ -45,6 +62,18 @@ kotlin {
                     packageName = "onl.ycode.kdbc.cinterop"
                     includeDirs(project.file("src/c/include"))
                     extraOpts("-libraryPath", project.file("src/c").absolutePath)
+                }
+            }
+        }
+    }
+    mingwX64 {
+        compilations.getByName("main") {
+            cinterops {
+                val kdbc by creating {
+                    defFile(project.file("src/nativeInterop/cinterop/kdbc.def"))
+                    packageName = "onl.ycode.kdbc.cinterop"
+                    includeDirs(project.file("src/c/include"))
+                    extraOpts("-libraryPath", project.file("src/c/build-mingw").absolutePath)
                 }
             }
         }
@@ -123,9 +152,12 @@ tasks.withType<JavaCompile>().configureEach {
     targetCompatibility = "1.8"
 }
 
-// Ensure libkdbc.a is built before any linuxX64 cinterop task runs.
+// Ensure the correct libkdbc.a is built before each target's cinterop task.
 tasks.matching { it.name.startsWith("cinteropKdbcLinuxX64") }.configureEach {
     dependsOn(buildNativeKdbc)
+}
+tasks.matching { it.name.startsWith("cinteropKdbcMingwX64") }.configureEach {
+    dependsOn(buildNativeKdbcMingw)
 }
 
 android {

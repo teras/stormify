@@ -1,97 +1,104 @@
-CC       = gcc
-
 # ---------------------------------------------------------------------------
-# Portable include path discovery
+# Cross-compilation support
 #
-# Different distros place database client headers in different locations:
-#   - libpq-fe.h:    /usr/include (Arch, Fedora) vs /usr/include/postgresql (Debian, Ubuntu, RHEL)
-#   - mysql.h:       /usr/include/mysql (Debian/Ubuntu, Arch) vs /usr/include/mariadb (some)
-#   - sqlite3.h:     always /usr/include
-#   - dpi.h:         /usr/include (when ODPI-C installed)
-#   - ctpublic.h:    /usr/include (FreeTDS)
+# TARGET selects the toolchain:
+#   native  (default) — host gcc, produces Linux x64 binaries
+#   mingw   — x86_64-w64-mingw32-gcc, produces Windows x64 binaries
+#   arm64   — aarch64-linux-gnu-gcc, produces Linux ARM64 binaries
 #
-# Strategy: ask pkg-config when available, then add well-known fallback -I
-# paths. gcc silently ignores non-existent -I paths, so listing them is safe.
+# BUILDDIR places all outputs (objects, libraries) in a separate directory
+# so multiple targets can coexist without cleaning between builds.
 #
-# All drivers are compiled unconditionally — missing runtime libraries are
-# handled lazily by dlopen at runtime, not at build time. The canonical build
-# environment is docker/Dockerfile, which ships every required header.
+# Examples:
+#   make lib                                        # Linux x64 (default)
+#   make TARGET=mingw BUILDDIR=build-mingw lib      # Windows x64
+#   make TARGET=arm64 BUILDDIR=build-arm64 lib      # Linux ARM64
 # ---------------------------------------------------------------------------
 
-PKG_CONFIG := $(shell command -v pkg-config 2>/dev/null)
+TARGET   ?= native
+BUILDDIR ?= .
 
-ifneq ($(PKG_CONFIG),)
-  PKG_CFLAGS := \
-    $(shell $(PKG_CONFIG) --cflags libpq      2>/dev/null) \
-    $(shell $(PKG_CONFIG) --cflags sqlite3    2>/dev/null) \
-    $(shell $(PKG_CONFIG) --cflags libmariadb 2>/dev/null) \
-    $(shell $(PKG_CONFIG) --cflags freetds    2>/dev/null)
+ifeq ($(TARGET),mingw)
+  CC       = x86_64-w64-mingw32-gcc
+  AR       = x86_64-w64-mingw32-ar
+  LDFLAGS  = -lpthread
+  LIB_SHARED = $(BUILDDIR)/libkdbc.dll
+else ifeq ($(TARGET),arm64)
+  CC       = aarch64-linux-gnu-gcc
+  AR       = aarch64-linux-gnu-ar
+  LDFLAGS  = -ldl -lpthread
+  LIB_SHARED = $(BUILDDIR)/libkdbc.so
 else
-  PKG_CFLAGS :=
+  CC       = gcc
+  AR       = ar
+  LIB_SHARED = $(BUILDDIR)/libkdbc.so
+  ifeq ($(OS),Windows_NT)
+    LDFLAGS =
+  else
+    LDFLAGS = -ldl -lpthread
+  endif
 endif
 
-FALLBACK_INCLUDES := \
-    -I/usr/include/postgresql \
-    -I/usr/include/mysql      \
-    -I/usr/include/mariadb
+# ---------------------------------------------------------------------------
+# Database client headers
+#
+# All database client headers are vendored under include/vendor/<driver>/
+# so that cross-compilation works without system-installed dev packages.
+# The headers define stable C APIs and are platform-independent.
+#
+# To update vendored headers from system packages, run:
+#   make vendor-headers
+#
+# All drivers are compiled unconditionally — missing runtime libraries are
+# handled lazily by dlopen at runtime, not at build time.
+# ---------------------------------------------------------------------------
 
-EXTRA_INCLUDES := $(PKG_CFLAGS) $(FALLBACK_INCLUDES)
+VENDOR_INCLUDES := \
+    -Iinclude/vendor/sqlite    \
+    -Iinclude/vendor/postgres  \
+    -Iinclude/vendor/mariadb   \
+    -Iinclude/vendor/freetds   \
+    -Iinclude/vendor/oracle
 
 SRC_CORE    = kdbc_core.c
-OBJ_CORE    = $(SRC_CORE:.c=.o)
-
 SRC_DRIVERS = drivers/driver_sqlite.c \
               drivers/driver_postgres.c \
               drivers/driver_mariadb.c \
               drivers/driver_oracle.c \
               drivers/driver_mssql.c
 
-OBJ_DRIVERS = $(SRC_DRIVERS:.c=.o)
+OBJ_CORE    = $(addprefix $(BUILDDIR)/,$(SRC_CORE:.c=.o))
+OBJ_DRIVERS = $(addprefix $(BUILDDIR)/,$(SRC_DRIVERS:.c=.o))
 OBJECTS     = $(OBJ_CORE) $(OBJ_DRIVERS)
 
-CFLAGS = -Wall -Wextra -std=c11 -fPIC -Iinclude -g -O2 $(EXTRA_INCLUDES)
+CFLAGS = -Wall -Wextra -std=c11 -fPIC -Iinclude -g -O2 $(VENDOR_INCLUDES)
 
-# ---------------------------------------------------------------------------
-# Link flags
-#
-# - Windows uses LoadLibrary (kernel32), no -ldl.
-# - POSIX needs -ldl for dlopen/dlsym and -lpthread for pthread_once. On
-#   glibc >= 2.34 libpthread is a stub merged into libc, making -lpthread a
-#   harmless no-op; on older glibc (e.g. Ubuntu 20.04 / glibc 2.31) it is
-#   required so pthread_once resolves against libpthread.so.0.
-# ---------------------------------------------------------------------------
-
-ifeq ($(OS),Windows_NT)
-  LDFLAGS =
-else
-  LDFLAGS = -ldl -lpthread
-endif
-
-LIB_STATIC  = libkdbc.a
-LIB_SHARED  = libkdbc.so
+LIB_STATIC  = $(BUILDDIR)/libkdbc.a
 
 TEST_SRC    = test/test_kdbc.c
-TEST_BIN    = test/test_kdbc
+TEST_BIN    = $(BUILDDIR)/test/test_kdbc
 
-.PHONY: all clean test lib docs
+.PHONY: all clean test lib docs vendor-headers
 
 all: lib
 
 lib: $(LIB_STATIC) $(LIB_SHARED)
 
 $(LIB_STATIC): $(OBJECTS)
-	ar rcs $@ $^
+	$(AR) rcs $@ $^
 
 $(LIB_SHARED): $(OBJECTS)
 	$(CC) -shared -o $@ $^ $(LDFLAGS)
 
-%.o: %.c
+$(BUILDDIR)/%.o: %.c
+	@mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) -c -o $@ $<
 
 test: $(TEST_BIN)
 	./$(TEST_BIN)
 
 $(TEST_BIN): $(TEST_SRC) $(LIB_STATIC)
+	@mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) -o $@ $< $(LIB_STATIC) $(LDFLAGS) -lm
 
 docs:
@@ -99,3 +106,27 @@ docs:
 
 clean:
 	rm -f $(OBJECTS) $(LIB_STATIC) $(LIB_SHARED) $(TEST_BIN)
+ifneq ($(BUILDDIR),.)
+	rm -rf $(BUILDDIR)
+endif
+
+# ---------------------------------------------------------------------------
+# Refresh vendored database client headers from system packages.
+# Run manually when upgrading a database client library version.
+# ---------------------------------------------------------------------------
+
+VENDOR_DIR = include/vendor
+
+vendor-headers:
+	rm -rf $(VENDOR_DIR)/sqlite   && mkdir -p $(VENDOR_DIR)/sqlite
+	rm -rf $(VENDOR_DIR)/postgres && mkdir -p $(VENDOR_DIR)/postgres
+	rm -rf $(VENDOR_DIR)/mariadb  && mkdir -p $(VENDOR_DIR)/mariadb
+	rm -rf $(VENDOR_DIR)/freetds  && mkdir -p $(VENDOR_DIR)/freetds
+	rm -rf $(VENDOR_DIR)/oracle   && mkdir -p $(VENDOR_DIR)/oracle
+	cp /usr/include/sqlite3.h                          $(VENDOR_DIR)/sqlite/
+	cp /usr/include/libpq-fe.h /usr/include/postgres_ext.h $(VENDOR_DIR)/postgres/
+	mkdir -p $(VENDOR_DIR)/mariadb/mysql
+	cp /usr/include/mysql/*.h                          $(VENDOR_DIR)/mariadb/mysql/
+	cp /usr/include/sybdb.h /usr/include/sybfront.h /usr/include/tds_sysdep_public.h $(VENDOR_DIR)/freetds/
+	cp /usr/include/dpi.h                              $(VENDOR_DIR)/oracle/
+	@echo "Vendored headers refreshed from system packages."

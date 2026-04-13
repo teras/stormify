@@ -19,47 +19,32 @@ FROM ubuntu:20.04
 # Prevent interactive prompts
 ENV DEBIAN_FRONTEND=noninteractive
 
-# Install build tools and database development libraries
-# -dev packages include headers and .so files needed for compilation.
+# Install build tools and database runtime libraries.
 #
-# Note: kdbc uses dlopen/dlsym to load database client libraries at runtime,
-# so the .so files here are only needed for Kotlin/Native cinterop smoke
-# tests. At runtime on the end-user machine, only the client libraries they
-# actually use need to be present.
+# Database client headers are vendored in kdbc/src/c/include/vendor/ and
+# committed to the repo — no -dev packages are needed for compilation.
+# Only runtime shared libraries are installed here for test execution
+# (kdbc uses dlopen/dlsym to load them at runtime).
 #
-# Headers required for compilation of every driver:
-#   libsqlite3-dev        -> sqlite3.h
-#   libpq-dev             -> libpq-fe.h (lives under /usr/include/postgresql/)
-#   libmariadb-dev        -> mysql/mysql.h
-#   libmariadb-dev-compat -> legacy MySQL header compat
-#   freetds-dev           -> ctpublic.h (MS SQL Server via FreeTDS ct-lib)
-#   ODPI-C (installed below, not in apt) -> dpi.h (Oracle)
+# Runtime libraries:
+#   libsqlite3-0     -> libsqlite3.so (SQLite)
+#   libpq5           -> libpq.so (PostgreSQL)
+#   libmariadb3      -> libmariadb.so (MariaDB/MySQL)
+#   libsybdb5        -> libsybdb.so (MS SQL Server via FreeTDS)
 #
-# pkg-config is used by kdbc/src/c/Makefile for portable include path
-# discovery across distros.
+# build-essential is still needed for compiling the C library (libkdbc.a)
+# via the project Makefile.
 RUN apt-get update && apt-get install -y \
     openjdk-11-jdk \
     wget \
     unzip \
     git \
-    pkg-config \
     build-essential \
-    libsqlite3-dev \
-    libpq-dev \
-    libmariadb-dev \
-    libmariadb-dev-compat \
-    freetds-dev \
+    libsqlite3-0 \
+    libpq5 \
+    libmariadb3 \
+    libsybdb5 \
     && rm -rf /var/lib/apt/lists/*
-
-# Install ODPI-C header (Oracle Database Programming Interface for C).
-# ODPI-C is not packaged in Ubuntu apt, so we fetch the single header from
-# the upstream release tag. At runtime, dlopen will locate libodpic.so on
-# the end-user system; the .so is not needed at build time.
-# Upstream: https://github.com/oracle/odpi (Apache 2.0 license)
-ARG ODPI_C_VERSION=v5.6.4
-RUN git clone --depth 1 --branch ${ODPI_C_VERSION} https://github.com/oracle/odpi.git /tmp/odpi \
-    && cp /tmp/odpi/include/dpi.h /usr/include/dpi.h \
-    && rm -rf /tmp/odpi
 
 # Create a non-root user for building (prevents permission issues)
 # Use same UID/GID as typical Linux user (1000) for volume mounts

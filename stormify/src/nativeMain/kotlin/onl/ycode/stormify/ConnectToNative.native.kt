@@ -3,22 +3,9 @@
 
 package onl.ycode.stormify
 
-import kotlinx.cinterop.ExperimentalForeignApi
-import kotlinx.cinterop.alloc
-import kotlinx.cinterop.memScoped
-import kotlinx.cinterop.ptr
-import platform.posix.gettimeofday
-import platform.posix.timeval
 import kotlin.reflect.KClass
 
 actual typealias NativeBigInteger = com.ionspin.kotlin.bignum.integer.BigInteger
-
-@OptIn(ExperimentalForeignApi::class)
-internal actual fun systemMillis() = memScoped {
-    val time = alloc<timeval>()
-    gettimeofday(time.ptr, null)
-    time.tv_sec * 1000 + time.tv_usec / 1000
-}
 
 internal actual fun getNativeAllPrimitives(): Collection<KClass<*>> = listOf(
     com.ionspin.kotlin.bignum.decimal.BigDecimal::class,

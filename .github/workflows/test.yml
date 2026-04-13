@@ -12,34 +12,28 @@ on:
 #   (jvmTarget = JVM_1_8 in build.gradle.kts) — JDK 17 is only needed as
 #   the Gradle host JVM, not as a compilation target.
 #
-# Native database libraries:
-#   The native C tests (kdbc/src/c) and Kotlin/Native linuxX64 tests both
-#   need database client headers at compile time and shared libraries at
-#   runtime. All drivers use dlopen, so missing runtime libraries cause
-#   graceful "driver not available" errors rather than link failures.
+# Native database runtime libraries:
+#   Database client headers are vendored in kdbc/src/c/include/vendor/ and
+#   committed to the repo — no -dev packages are needed for compilation.
+#   Only runtime shared libraries are required for test execution (dlopen).
+#   Missing libraries cause graceful "driver not available" errors.
 #
-#   Packages installed via apt:
-#     - libsqlite3-dev     → sqlite3.h + libsqlite3.so
-#     - libpq-dev          → libpq-fe.h + libpq.so (PostgreSQL)
-#     - libmariadb-dev     → mysql.h + libmariadb.so (MariaDB/MySQL)
-#     - libmariadb-dev-compat → creates /usr/include/mysql/ symlinks and
-#       provides legacy typedefs (my_bool etc.) that the C driver uses.
-#       Without this package, #include <mysql/mysql.h> fails on Ubuntu.
-#     - freetds-dev        → sybdb.h + libsybdb.so (MS SQL Server)
+#   Runtime packages installed via apt:
+#     - libsqlite3-0       → libsqlite3.so (SQLite)
+#     - libpq5             → libpq.so (PostgreSQL)
+#     - libmariadb3        → libmariadb.so (MariaDB/MySQL)
+#     - libsybdb5          → libsybdb.so (MS SQL Server via FreeTDS)
 #     - libaio1t64         → async I/O library required by Oracle IC
 #
 #   libaio symlink:
 #     Ubuntu 24.04 transitioned to 64-bit time_t, renaming the library to
 #     libaio.so.1t64. Oracle Instant Client still looks for libaio.so.1,
-#     so we create a compatibility symlink. Without this, libclntsh.so
-#     fails to load and ODPI-C's dpiContext_create returns an error,
-#     causing the native Oracle driver to report "library not found".
+#     so we create a compatibility symlink.
 #
 #   ODPI-C (Oracle Database Programming Interface for C):
 #     Not available as an Ubuntu apt package. Built from source
-#     (github.com/oracle/odpi, Apache 2.0 license). Provides:
-#       - dpi.h header (needed at compile time for driver_oracle.c)
-#       - libodpic.so shared library (loaded via dlopen at runtime)
+#     (github.com/oracle/odpi, Apache 2.0 license). The header (dpi.h) is
+#     vendored; only the runtime library (libodpic.so) is needed here.
 #     ODPI-C itself loads libclntsh.so from Oracle Instant Client.
 #
 #   Oracle Instant Client (basic-lite):
@@ -47,10 +41,10 @@ on:
 #     libclntsh.so (the OCI library that ODPI-C wraps). Installed to
 #     /opt/oracle/ and registered via ldconfig so dlopen finds it.
 #
-# Example jobs:
-#   All example jobs need native libraries because `publishToMavenLocal`
-#   compiles all targets (JVM + Native), not just the one the example uses.
-#   Without native headers, the Kotlin/Native cinterop step fails.
+# mingwX64 (Windows cross-compilation):
+#   The mingw-w64 package provides the cross-compiler for building
+#   libkdbc.a targeting Windows. Kotlin/Native handles its own
+#   cross-compilation via its bundled LLVM toolchain.
 # ---------------------------------------------------------------------------
 
 jobs:
@@ -92,17 +86,16 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install database client libraries
+      - name: Install database runtime libraries
         run: |
           sudo apt-get update
-          sudo apt-get install -y libsqlite3-dev libpq-dev libmariadb-dev libmariadb-dev-compat freetds-dev libaio1t64
+          sudo apt-get install -y libsqlite3-0 libpq5 libmariadb3 libsybdb5 libaio1t64
           # libaio compat symlink (see header comment)
           sudo ln -sf /lib/x86_64-linux-gnu/libaio.so.1t64 /lib/x86_64-linux-gnu/libaio.so.1
-          # ODPI-C: build from source (see header comment)
+          # ODPI-C: build from source — only the runtime .so is needed (header is vendored)
           git clone --depth 1 --branch v5.6.4 https://github.com/oracle/odpi.git /tmp/odpi
           make -C /tmp/odpi -j4
           sudo make -C /tmp/odpi install PREFIX=/usr/local
-          sudo cp /tmp/odpi/include/dpi.h /usr/include/dpi.h
           rm -rf /tmp/odpi
           # Oracle Instant Client basic-lite (see header comment)
           wget -q https://download.oracle.com/otn_software/linux/instantclient/instantclient-basiclite-linuxx64.zip -O /tmp/ic.zip
@@ -136,15 +129,14 @@ jobs:
         with:
           gradle-version: '9.3.1'
 
-      - name: Install database client libraries
+      - name: Install database runtime libraries
         run: |
           sudo apt-get update
-          sudo apt-get install -y libsqlite3-dev libpq-dev libmariadb-dev libmariadb-dev-compat freetds-dev libaio1t64
+          sudo apt-get install -y libsqlite3-0 libpq5 libmariadb3 libsybdb5 libaio1t64
           sudo ln -sf /lib/x86_64-linux-gnu/libaio.so.1t64 /lib/x86_64-linux-gnu/libaio.so.1
           git clone --depth 1 --branch v5.6.4 https://github.com/oracle/odpi.git /tmp/odpi
           make -C /tmp/odpi -j4
           sudo make -C /tmp/odpi install PREFIX=/usr/local
-          sudo cp /tmp/odpi/include/dpi.h /usr/include/dpi.h
           rm -rf /tmp/odpi
           wget -q https://download.oracle.com/otn_software/linux/instantclient/instantclient-basiclite-linuxx64.zip -O /tmp/ic.zip
           sudo unzip -q /tmp/ic.zip -d /opt/oracle
@@ -172,23 +164,6 @@ jobs:
         with:
           gradle-version: '9.3.1'
 
-      # publishToMavenLocal compiles all targets including native, so native
-      # headers are needed even though the Android tests don't use them.
-      - name: Install database client libraries
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libsqlite3-dev libpq-dev libmariadb-dev libmariadb-dev-compat freetds-dev libaio1t64
-          sudo ln -sf /lib/x86_64-linux-gnu/libaio.so.1t64 /lib/x86_64-linux-gnu/libaio.so.1
-          git clone --depth 1 --branch v5.6.4 https://github.com/oracle/odpi.git /tmp/odpi
-          make -C /tmp/odpi -j4
-          sudo make -C /tmp/odpi install PREFIX=/usr/local
-          sudo cp /tmp/odpi/include/dpi.h /usr/include/dpi.h
-          rm -rf /tmp/odpi
-          wget -q https://download.oracle.com/otn_software/linux/instantclient/instantclient-basiclite-linuxx64.zip -O /tmp/ic.zip
-          sudo unzip -q /tmp/ic.zip -d /opt/oracle
-          echo /opt/oracle/instantclient_* | sudo tee /etc/ld.so.conf.d/oracle.conf
-          sudo ldconfig
-
       - name: Run Android unit tests
         run: gradle :stormify:testDebugUnitTest --console=plain
 
@@ -215,16 +190,17 @@ jobs:
         with:
           gradle-version: '9.3.1'
 
-      # All examples need native libs for publishToMavenLocal (see header comment)
-      - name: Install database client libraries
+      # publishToMavenLocal compiles all targets including mingwX64, so the
+      # cross-compiler is needed. Runtime libraries are needed for linuxX64
+      # examples that dlopen database drivers.
+      - name: Install runtime libraries and cross-compilers
         run: |
           sudo apt-get update
-          sudo apt-get install -y libsqlite3-dev libpq-dev libmariadb-dev libmariadb-dev-compat freetds-dev libaio1t64
+          sudo apt-get install -y libsqlite3-0 libpq5 libmariadb3 libsybdb5 libaio1t64 mingw-w64
           sudo ln -sf /lib/x86_64-linux-gnu/libaio.so.1t64 /lib/x86_64-linux-gnu/libaio.so.1
           git clone --depth 1 --branch v5.6.4 https://github.com/oracle/odpi.git /tmp/odpi
           make -C /tmp/odpi -j4
           sudo make -C /tmp/odpi install PREFIX=/usr/local
-          sudo cp /tmp/odpi/include/dpi.h /usr/include/dpi.h
           rm -rf /tmp/odpi
           wget -q https://download.oracle.com/otn_software/linux/instantclient/instantclient-basiclite-linuxx64.zip -O /tmp/ic.zip
           sudo unzip -q /tmp/ic.zip -d /opt/oracle
@@ -236,3 +212,65 @@ jobs:
 
       - name: Run example
         run: testing/test.sh examples ${{ matrix.example }}
+
+  # ---------------------------------------------------------------------------
+  # Windows native (mingwX64) — cross-compile on Linux, test on Windows
+  # ---------------------------------------------------------------------------
+
+  windows-native-build:
+    runs-on: ubuntu-latest
+    name: windows-native / build
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '9.3.1'
+
+      - name: Install cross-compilation toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y mingw-w64
+
+      - name: Cross-compile libkdbc.a for mingwX64
+        run: make -C kdbc/src/c TARGET=mingw BUILDDIR=build-mingw lib
+
+      - name: Build mingwX64 test binary
+        run: gradle :stormify:linkDebugTestMingwX64 --console=plain
+
+      - name: Upload test binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: mingw-test-binary
+          path: stormify/build/bin/mingwX64/debugTest/test.exe
+          retention-days: 1
+
+  windows-native-test:
+    runs-on: windows-latest
+    needs: windows-native-build
+    name: windows-native / sqlite
+
+    steps:
+      - name: Download test binary
+        uses: actions/download-artifact@v4
+        with:
+          name: mingw-test-binary
+
+      - name: Download SQLite DLL
+        shell: pwsh
+        run: |
+          Invoke-WebRequest -Uri "https://www.sqlite.org/2024/sqlite-dll-win-x64-3470200.zip" -OutFile sqlite.zip
+          Expand-Archive sqlite.zip -DestinationPath .
+
+      - name: Run tests
+        env:
+          STORMIFY_TEST_DB: sqlite
+        run: .\test.exe

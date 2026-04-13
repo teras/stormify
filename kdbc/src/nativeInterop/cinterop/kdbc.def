@@ -9,3 +9,4 @@ headerFilter = kdbc.h
 # via dlopen by the C library itself — only -ldl is required at link time.
 staticLibraries = libkdbc.a
 linkerOpts.linux_x64 = -ldl
+linkerOpts.mingw_x64 =

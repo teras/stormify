@@ -6,7 +6,6 @@ package onl.ycode.stormify
 import kotlin.reflect.KClass
 
 actual typealias NativeBigInteger = java.math.BigInteger
-internal actual fun systemMillis() = System.currentTimeMillis()
 
 private val supportsIonspinBigNumbers = try {
     com.ionspin.kotlin.bignum.decimal.BigDecimal::class.simpleName
