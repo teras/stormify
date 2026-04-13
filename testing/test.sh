@@ -32,11 +32,12 @@ usage() {
 Usage: ./test.sh <target> [database]
 
 Targets:
-  jvm [database]       Run JVM tests (Gradle)
-  linux [database]     Run Kotlin/Native linuxX64 tests (Gradle)
-  native [database]    Run C native tests
-  examples             Build and run all example projects
-  all                  Run everything (JVM + linux + native + examples, all databases)
+  jvm [database]         Run JVM tests (Gradle)
+  linux [database]       Run Kotlin/Native linuxX64 tests
+  linux-arm64 [database] Run Kotlin/Native linuxArm64 tests (via Docker on x64)
+  native [database]      Run C native tests
+  examples               Build and run all example projects
+  all                    Run everything (JVM + linux + native + examples, all databases)
 
 Databases:
   sqlite               SQLite (no Docker needed)
@@ -49,14 +50,16 @@ Databases:
   oracle11             Oracle 11g XE (EL8ISO8859P7 / Greek ISO-8859-7)
   mssql                MS SQL Server 2022
 
-If no database specified, runs ALL databases sequentially.
+If no database specified, runs ALL supported databases for the target.
 
 Examples:
-  ./test.sh native sqlite        # Quick: C tests with SQLite only
-  ./test.sh native               # C tests against all databases
-  ./test.sh jvm postgresql       # JVM tests against PostgreSQL
-  ./test.sh linux oracle         # Kotlin/Native tests against Oracle
-  ./test.sh all                  # Everything
+  ./test.sh native sqlite           # Quick: C tests with SQLite only
+  ./test.sh native                  # C tests against all databases
+  ./test.sh jvm postgresql          # JVM tests against PostgreSQL
+  ./test.sh linux oracle            # linuxX64 tests against Oracle
+  ./test.sh linux-arm64 sqlite      # linuxArm64 tests via Docker
+  ./test.sh linux-arm64             # linuxArm64 against all arm64-compatible DBs
+  ./test.sh all                     # Everything
 EOF
     exit 1
 }
@@ -184,8 +187,6 @@ run_linux_one() {
     local rc=0
     cd "$PROJECT_DIR"
 
-    # If pre-compiled binary exists (from build_linux), run it directly.
-    # Otherwise fall back to full Gradle build+test.
     local test_bin="$PROJECT_DIR/stormify/build/bin/linuxX64/debugTest/test.kexe"
     if [ "${STORMIFY_PREBUILT:-0}" = "1" ] && [ -x "$test_bin" ]; then
         STORMIFY_TEST_DB="$db" "$test_bin" 2>&1 || rc=$?
@@ -197,9 +198,82 @@ run_linux_one() {
     stop_db "$db"
 
     if [ $rc -eq 0 ]; then
-        echo "PASSED: linux $db"
+        echo "PASSED: linuxX64 $db"
     else
-        echo "FAILED: linux $db (exit code: $rc)"
+        echo "FAILED: linuxX64 $db (exit code: $rc)"
+    fi
+    echo ""
+    return $rc
+}
+
+# ========================================================================
+# Run Kotlin/Native linuxArm64 tests for one database
+#
+# On a native arm64 host (e.g. CI runner), runs the binary directly.
+# On an x64 host, runs via Docker multiarch (QEMU emulation).
+# Network databases use --network=host so the test binary can reach
+# the Docker Compose containers on localhost ports.
+# ========================================================================
+
+run_linux_arm64_one() {
+    local db="$1"
+
+    echo "========================================="
+    echo "Kotlin/Native linuxArm64 tests: $db"
+    echo "========================================="
+
+    start_db "$db"
+
+    local rc=0
+    cd "$PROJECT_DIR"
+
+    local test_bin="$PROJECT_DIR/stormify/build/bin/linuxArm64/debugTest/test.kexe"
+    local host_arch
+    host_arch="$(uname -m)"
+
+    if [ "$host_arch" = "aarch64" ]; then
+        # Native arm64 host — run directly
+        if [ "${STORMIFY_PREBUILT:-0}" = "1" ] && [ -x "$test_bin" ]; then
+            STORMIFY_TEST_DB="$db" "$test_bin" 2>&1 || rc=$?
+        else
+            STORMIFY_TEST_DB="$db" gradle :stormify:linuxArm64Test \
+                --console=plain 2>&1 || rc=$?
+        fi
+    else
+        # x64 host — run via Docker multiarch (QEMU)
+        if [ ! -x "$test_bin" ]; then
+            echo "Building linuxArm64 test binary..."
+            gradle :stormify:linkDebugTestLinuxArm64 --console=plain 2>&1 || { rc=$?; stop_db "$db"; return $rc; }
+        fi
+        docker run --rm --platform linux/arm64 \
+            --network=host \
+            -v "$PROJECT_DIR/stormify/build/bin/linuxArm64/debugTest:/test:ro" \
+            -e "STORMIFY_TEST_DB=$db" \
+            ubuntu:22.04 \
+            bash -c '
+                apt-get update -qq
+                apt-get install -y -qq libsqlite3-0 libpq5 libmariadb3 libsybdb5 libatomic1 libaio1 git make gcc wget unzip > /dev/null 2>&1
+                # ODPI-C runtime
+                git clone --depth 1 --branch v5.6.4 https://github.com/oracle/odpi.git /tmp/odpi 2>/dev/null
+                make -C /tmp/odpi -j4 > /dev/null 2>&1
+                make -C /tmp/odpi install PREFIX=/usr/local > /dev/null 2>&1
+                rm -rf /tmp/odpi
+                # Oracle Instant Client arm64
+                wget -q https://download.oracle.com/otn_software/linux/instantclient/2370000/instantclient-basiclite-linux.arm64-23.7.0.25.01.zip -O /tmp/ic.zip
+                unzip -q /tmp/ic.zip -d /opt/oracle
+                echo /opt/oracle/instantclient_* > /etc/ld.so.conf.d/oracle.conf
+                ldconfig
+                /test/test.kexe
+            ' \
+            2>&1 || rc=$?
+    fi
+
+    stop_db "$db"
+
+    if [ $rc -eq 0 ]; then
+        echo "PASSED: linuxArm64 $db"
+    else
+        echo "FAILED: linuxArm64 $db (exit code: $rc)"
     fi
     echo ""
     return $rc
@@ -307,6 +381,14 @@ case "$TARGET" in
         fi
         ;;
 
+    linux-arm64)
+        if [ -n "$DB" ]; then
+            run_linux_arm64_one "$DB"
+        else
+            run_for_dbs run_linux_arm64_one $ALL_DBS
+        fi
+        ;;
+
     examples)
         if [ -n "$DB" ]; then
             run_example_one "$DB"
@@ -330,6 +412,10 @@ case "$TARGET" in
         echo "############### KOTLIN/NATIVE LINUX TESTS ###############"
         echo ""
         run_for_dbs run_linux_one $ALL_DBS || failed=$((failed + $?))
+        echo ""
+        echo "############### KOTLIN/NATIVE ARM64 TESTS ###############"
+        echo ""
+        run_for_dbs run_linux_arm64_one $ALL_DBS || failed=$((failed + $?))
         echo ""
         echo "############### EXAMPLES ###############"
         echo ""

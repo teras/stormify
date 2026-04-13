@@ -325,22 +325,37 @@ jobs:
   linux-arm64-test:
     runs-on: ubuntu-24.04-arm
     needs: linux-arm64-build
-    name: linux-arm64 / sqlite
+    strategy:
+      fail-fast: false
+      matrix:
+        db: [sqlite, postgresql, postgresql9, mysql, mysql5, mariadb, oracle, oracle11, mssql]
+
+    name: linux-arm64 / ${{ matrix.db }}
 
     steps:
+      - uses: actions/checkout@v4
+
       - name: Install runtime libraries
         run: |
           sudo apt-get update
-          sudo apt-get install -y libsqlite3-0 libatomic1
+          sudo apt-get install -y libsqlite3-0 libpq5 libmariadb3 libsybdb5 libatomic1 libaio1t64
+          sudo ln -sf /lib/aarch64-linux-gnu/libaio.so.1t64 /lib/aarch64-linux-gnu/libaio.so.1
+          git clone --depth 1 --branch v5.6.4 https://github.com/oracle/odpi.git /tmp/odpi
+          make -C /tmp/odpi -j4
+          sudo make -C /tmp/odpi install PREFIX=/usr/local
+          rm -rf /tmp/odpi
+          wget -q https://download.oracle.com/otn_software/linux/instantclient/2370000/instantclient-basiclite-linux.arm64-23.7.0.25.01.zip -O /tmp/ic.zip
+          sudo unzip -q /tmp/ic.zip -d /opt/oracle
+          echo /opt/oracle/instantclient_* | sudo tee /etc/ld.so.conf.d/oracle.conf
+          sudo ldconfig
 
       - name: Download test binary
         uses: actions/download-artifact@v4
         with:
           name: arm64-test-binary
+          path: stormify/build/bin/linuxArm64/debugTest/
 
       - name: Run tests
-        env:
-          STORMIFY_TEST_DB: sqlite
         run: |
-          chmod +x test.kexe
-          ./test.kexe
+          chmod +x stormify/build/bin/linuxArm64/debugTest/test.kexe
+          STORMIFY_PREBUILT=1 testing/test.sh linux-arm64 ${{ matrix.db }}
