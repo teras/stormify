@@ -430,17 +430,11 @@ jobs:
         run: testing/test.sh jvm sqlite
 
   macos-native:
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: macos-latest
-            target: MacosArm64
-          - os: macos-13
-            target: MacosX64
-
-    name: macos / ${{ matrix.target }} build
+    runs-on: macos-latest
+    # Intel macOS (MacosX64) intentionally omitted: Apple has discontinued
+    # Intel hardware, macos-13 runners are deprecated with long queue times,
+    # and the Kotlin/Native compiler path is identical to MacosArm64.
+    name: macos / MacosArm64 build
 
     steps:
       - uses: actions/checkout@v4
@@ -457,8 +451,8 @@ jobs:
           gradle-version: '9.3.1'
 
       # No macos*Test source set exists; compile main code only.
-      - name: Compile Kotlin/Native ${{ matrix.target }}
-        run: gradle :stormify:compileKotlin${{ matrix.target }} --console=plain
+      - name: Compile Kotlin/Native MacosArm64
+        run: gradle :stormify:compileKotlinMacosArm64 --console=plain
 
   ios-build:
     runs-on: macos-latest

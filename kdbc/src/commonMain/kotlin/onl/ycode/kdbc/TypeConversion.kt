@@ -4,6 +4,7 @@ package onl.ycode.kdbc
 
 import onl.ycode.kdbc.converters.IonspinConverters
 import onl.ycode.kdbc.converters.KotlinxTimeConverters
+import kotlin.jvm.JvmSynthetic
 import kotlin.reflect.KClass
 
 /**
@@ -19,7 +20,7 @@ import kotlin.reflect.KClass
 object TypeConversion {
 
     // first key: target class, second key: source class
-    @PublishedApi
+    @JvmSynthetic
     internal val registry: MutableMap<KClass<*>, MutableMap<KClass<*>, (Any) -> Any>> = HashMap()
 
     /**

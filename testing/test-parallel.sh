@@ -72,21 +72,23 @@ LOG_DIR="$LOG_DIR"
 log="\$LOG_DIR/\${target}_\${item}.log"
 echo "=== \$item (\$target) ==="; echo ""
 rc=0
+t0=\$SECONDS
 if [ "\$standalone" = "true" ]; then
     "$T" "\$target" 2>&1 | tee "\$log" || rc=\${PIPESTATUS[0]}
 else
     "$T" "\$target" "\$item" 2>&1 | tee "\$log" || rc=\${PIPESTATUS[0]}
 fi
+dur=\$((SECONDS - t0))
 echo ""
 if [ \$rc -eq 0 ]; then
-    echo "PASS" > "\$LOG_DIR/\${target}_\${item}.result"
+    echo "PASS:\$dur" > "\$LOG_DIR/\${target}_\${item}.result"
     echo "================================"
-    echo "  \$item: PASSED"
+    echo "  \$item: PASSED (\${dur}s)"
     echo "================================"
 else
-    echo "FAIL:\$rc" > "\$LOG_DIR/\${target}_\${item}.result"
+    echo "FAIL:\$rc:\$dur" > "\$LOG_DIR/\${target}_\${item}.result"
     echo "================================"
-    echo "  \$item: FAILED (exit \$rc)"
+    echo "  \$item: FAILED (exit \$rc, \${dur}s)"
     echo "================================"
 fi
 RUNNER
@@ -104,8 +106,9 @@ while true; do
         rf="\$LOG_DIR/\${TARGET}_\${i}.result"
         if [ -f "\$rf" ]; then
             r=\$(cat "\$rf"); d=\$((d+1))
-            if [ "\$r" = "PASS" ]; then p=\$((p+1)); s="\$s \$i:OK"
-            else f=\$((f+1)); s="\$s #[bold]\$i:FAIL#[nobold]"; fi
+            dur=\$(echo "\$r" | awk -F: '{print \$NF}')
+            if [[ "\$r" == PASS* ]]; then p=\$((p+1)); s="\$s \$i:OK(\${dur}s)"
+            else f=\$((f+1)); s="\$s #[bold]\$i:FAIL(\${dur}s)#[nobold]"; fi
         else s="\$s \$i:..."; fi
     done
     tmux set-option -t "\$SESSION" status-left " [\$d/\$TOTAL]\$s " 2>/dev/null || exit 0
@@ -172,13 +175,15 @@ run_bg() {
         (
             local log="$LOG_DIR/${target}_${item}.log"
             local rc=0
+            local t0=$SECONDS
             if $standalone; then
                 "$T" "$target" > "$log" 2>&1 || rc=$?
             else
                 "$T" "$target" "$item" > "$log" 2>&1 || rc=$?
             fi
-            if [ $rc -eq 0 ]; then echo "PASS" > "$LOG_DIR/${target}_${item}.result"
-            else echo "FAIL:$rc" > "$LOG_DIR/${target}_${item}.result"; fi
+            local dur=$((SECONDS - t0))
+            if [ $rc -eq 0 ]; then echo "PASS:$dur" > "$LOG_DIR/${target}_${item}.result"
+            else echo "FAIL:$rc:$dur" > "$LOG_DIR/${target}_${item}.result"; fi
         ) &
         pids+=($!)
     done
@@ -195,7 +200,7 @@ collect() {
     local target="$1"
     shift
     local items=("$@")
-    local passed=0 failed=0
+    local passed=0 failed=0 total_dur=0
 
     echo ""
     echo "========================================="
@@ -204,16 +209,27 @@ collect() {
     echo ""
     for item in "${items[@]}"; do
         local rf="$LOG_DIR/${target}_${item}.result"
-        if [ -f "$rf" ] && [ "$(cat "$rf")" = "PASS" ]; then
+        local content="" dur=0
+        if [ -f "$rf" ]; then
+            content="$(cat "$rf")"
+            dur="${content##*:}"
+            [[ "$dur" =~ ^[0-9]+$ ]] || dur=0
+            total_dur=$((total_dur + dur))
+        fi
+        local tfmt
+        if [ "$dur" -ge 60 ]; then tfmt="$((dur/60))m$((dur%60))s"; else tfmt="${dur}s"; fi
+        if [[ "$content" == PASS* ]]; then
             passed=$((passed + 1))
-            printf "  %-14s  PASSED\n" "$item"
+            printf "  %-14s  PASSED  %8s\n" "$item" "$tfmt"
         else
             failed=$((failed + 1))
-            printf "  %-14s  FAILED\n" "$item"
+            printf "  %-14s  FAILED  %8s\n" "$item" "$tfmt"
         fi
     done
     echo ""
-    echo "  Total: $((passed + failed))  Passed: $passed  Failed: $failed"
+    local tfmt
+    if [ "$total_dur" -ge 60 ]; then tfmt="$((total_dur/60))m$((total_dur%60))s"; else tfmt="${total_dur}s"; fi
+    echo "  Total: $((passed + failed))  Passed: $passed  Failed: $failed  Wall (sum): $tfmt"
     echo "  Logs: $LOG_DIR/"
     echo ""
     return $failed

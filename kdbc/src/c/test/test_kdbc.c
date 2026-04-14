@@ -194,6 +194,11 @@ static const char *timestamp_type(void) {
         /* DATETIME2(6) has 1-microsecond precision; plain DATETIME rounds to
          * ~3.33ms ticks which breaks sub-second round-trip assertions. */
         case KDBC_MSSQL:  return "DATETIME2(6)";
+        /* MySQL/MariaDB default TIMESTAMP has 0 fractional-second precision,
+         * so 23:59:58.999999 rounds up to next second. Request microsecond
+         * precision explicitly to preserve sub-second round-trip. MySQL
+         * maps to KDBC_MARIADB (shared driver). */
+        case KDBC_MARIADB:  return "TIMESTAMP(6)";
         default:            return "TIMESTAMP";
     }
 }
@@ -960,7 +965,7 @@ static void test_batch_temporal(void) {
     struct { int id, y, mo, d, h, mi, s, us; } rows[] = {
         { 1, 2024,  1,  1,  0,  0,  0,      0 },
         { 2, 2024,  6, 15, 14, 30, 45, 123456 },
-        { 3, 1999, 12, 31, 23, 59, 58, 999000 },
+        { 3, 1999, 12, 31, 23, 59, 58, 999999 },
         { 4, 2026,  3, 19,  2, 30,  0,      0 }, /* DST-gap date in Brazil */
     };
     const int n = (int)(sizeof(rows) / sizeof(rows[0]));
