@@ -171,7 +171,7 @@ open class SuspendTransactionTest {
     }
 
     @Test
-    open fun cancellationRollsBackTransaction(): Unit = runBlocking {
+    fun cancellationRollsBackTransaction() = runBlocking {
         if (!::runner.isInitialized) return@runBlocking
 
         // Pre-seed a row so we can prove rollback didn't touch it.

@@ -141,6 +141,40 @@ attached instance of its own) picks up this one. Construct as many `Stormify`
 instances as you need for explicit use; only the most recent `asDefault()` call
 wins for the library-wide default.
 
+### Scoped Default
+
+For scenarios where the default should apply only for a limited region of code —
+per-request tenants, background jobs that temporarily target a different database,
+or fixtures that don't want to leak state — call `asDefault` with a block. The
+previous default is restored automatically on exit, even if the block throws.
+
+=== "Kotlin"
+
+    ```kotlin
+    tenantStormify.asDefault { s ->
+        s.read<Order>("SELECT * FROM orders WHERE active = true")
+    }
+    // library-wide default is whatever it was before the block
+    ```
+
+=== "Java"
+
+    ```java
+    tenantStormify.asDefault(s -> {
+        List<Order> orders = s.read(Order.class,
+            "SELECT * FROM orders WHERE active = true");
+        // ...
+    });
+
+    // returning variant
+    int count = tenantStormify.asDefault(s ->
+        s.readOne(Integer.class, "SELECT COUNT(*) FROM orders"));
+    ```
+
+The scoped form nests safely — an inner `asDefault` block restores to the outer
+default, not to the base one — so mixing permanent and scoped defaults in the
+same application is well-defined.
+
 ## Logging Configuration
 
 Stormify includes logging capabilities to help monitor SQL queries and diagnose issues.

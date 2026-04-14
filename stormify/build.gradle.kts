@@ -115,6 +115,10 @@ kotlin {
 
         val jvmTest by getting {
             dependsOn(jvmBasedTest)
+            // Default Kotlin hierarchy does NOT wire jvmTest → jvmMain; this makes
+            // any expect/actual whose JVM `actual` lives in jvmMain invisible during
+            // test compile. Explicit dependency fixes it.
+            dependsOn(jvmMain)
             dependencies {
                 implementation("com.zaxxer:HikariCP:4.0.3")
                 // Load JDBC driver based on target database
@@ -137,6 +141,11 @@ kotlin {
 
         val androidUnitTest by getting {
             dependsOn(jvmBasedTest)
+            // AGP's default Kotlin source set hierarchy does NOT make androidUnitTest
+            // see androidMain, so any expect/actual whose Android `actual` lives in
+            // androidMain is invisible during unit-test compile. Explicit dependency
+            // fixes it.
+            dependsOn(androidMain)
             dependencies {
                 implementation("org.robolectric:robolectric:4.14.1")
                 implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.10.2")

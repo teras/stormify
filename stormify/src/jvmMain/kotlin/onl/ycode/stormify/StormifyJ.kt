@@ -142,6 +142,35 @@ class StormifyJ(dataSource: DataSource, vararg registrars: EntityRegistrar) {
     }
 
     /**
+     * Runs [block] with this wrapper as the default, restoring the previous default
+     * when the block exits. Use for scoped overrides such as per-request tenants.
+     *
+     * ```java
+     * stormifyJ.asDefault(() -> {
+     *     User u = stormifyJ.attach(new User());
+     *     u.setId(42);
+     *     System.out.println(u.getName());
+     * });
+     * ```
+     */
+    fun asDefault(block: java.util.function.Consumer<StormifyJ>) = asDefault<Unit> { block.accept(this) }
+
+    /** Returning variant of [asDefault] — see the [Consumer] overload for semantics. */
+    fun <R> asDefault(block: java.util.function.Function<StormifyJ, R>): R = asDefault<R> { block.apply(this) }
+
+    // Shared implementation: delegate Stormify.defaultInstance management to the
+    // scoped Stormify.asDefault(block) and only track the StormifyJ wrapper cache here.
+    private inline fun <R> asDefault(crossinline body: () -> R): R {
+        val prevWrapper = defaultWrapper
+        defaultWrapper = this
+        return try {
+            stormify.asDefault { body() }
+        } finally {
+            defaultWrapper = prevWrapper
+        }
+    }
+
+    /**
      * Attaches the underlying Stormify instance to [target] so the target can use it for
      * database operations without receiving it as an explicit parameter.
      *

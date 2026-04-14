@@ -94,6 +94,40 @@ interface Connection : AutoCloseable {
      * sqlite3_interrupt, mariadb_cancel, dpiConn_breakExecution). Default: no-op.
      */
     fun cancel(): Unit = Unit
+
+    /**
+     * Driver-specific recovery after [cancel] has interrupted a blocking call. Invoked
+     * by the coroutine cancellation path on the thread that owned the blocking call,
+     * once that call has returned with an error.
+     *
+     * The split between [cancel] and this method exists because cancel fires on a
+     * DIFFERENT thread than the blocking operation, and what each driver needs to do
+     * next varies:
+     *
+     * - **Oracle (ODPI-C, JDBC thin)**: `cancel` issues `OCIBreak`, which leaves the
+     *   connection in a state where `rollback` blocks indefinitely (ODPI-C does not
+     *   expose `OCIReset`). Default no-op — connection is evicted by the pool.
+     * - **libpq (PostgreSQL native)**: `PQcancel` aborts the current query; `rollback`
+     *   afterwards CAN succeed but is fragile when the cancel races with the call's
+     *   own error return. Default no-op; pool eviction is the safer path.
+     * - **JDBC / JVM drivers**: `java.sql.Statement.cancel` stops the statement, then
+     *   `rollback` on the connection is typically safe. Drivers that prove robust can
+     *   override this to invoke [rollback] themselves.
+     * - **Android `SQLiteDatabase`**: `cancel` is a no-op (no async-interrupt primitive
+     *   on Android SQLite). The active `beginTransaction` is tracked in a
+     *   `ThreadLocal<SQLiteSession>`; if we skip the rollback, the session keeps the
+     *   transaction open and the `SQLiteConnectionPool` never releases the underlying
+     *   connection — subsequent operations hang in `waitForConnection()`. Android
+     *   therefore MUST override this to call [rollback] (and restore auto-commit).
+     * - **SQLite native, MariaDB, MSSQL (FreeTDS)**: similar to libpq — cancel is
+     *   supported, rollback post-cancel is typically workable but drivers differ in
+     *   error-state stability. Default no-op unless a specific driver proves otherwise.
+     *
+     * Implementations that choose to run cleanup here should wrap each call in
+     * `runCatching` — any further failure is a signal that the pool should evict
+     * the connection, and swallowing it avoids masking the original cancellation.
+     */
+    fun cleanupAfterCancel(): Unit = Unit
 }
 
 /** Provides information about the database, such as product name and version. */

@@ -54,6 +54,24 @@ open class Stormify(val dataSource: DataSource, vararg registrars: EntityRegistr
         return this
     }
 
+    /**
+     * Runs [block] with this instance as the default, restoring the previous default
+     * when the block exits. Use for scoped overrides such as per-request tenants.
+     *
+     * ```kotlin
+     * stormify.asDefault { s -> s.read<User>(...) }
+     * ```
+     */
+    fun <R> asDefault(block: (Stormify) -> R): R {
+        val previous = defaultInstance
+        defaultInstance = this
+        try {
+            return block(this)
+        } finally {
+            defaultInstance = previous
+        }
+    }
+
     // --- Policies ---
 
     private val configLock = kotlinx.atomicfu.locks.SynchronizedObject()

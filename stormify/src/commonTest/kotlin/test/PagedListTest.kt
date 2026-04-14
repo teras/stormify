@@ -21,8 +21,7 @@ import kotlin.test.*
 
 open class PagedListTest {
     private fun withDb(name: String, test: (Stormify) -> Unit) = TestHelper.withDb(name) {
-        it.asDefault()
-        test(it)
+        it.asDefault(test)
     }
 
     private fun setupTable(s: Stormify, count: Int) {

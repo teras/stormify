@@ -48,6 +48,15 @@ private class AndroidConnection(private val db: SQLiteDatabase) : Connection {
     private var txSuccess: Boolean = false
     private var savepointCounter: Int = 0
 
+    // cancel() is a no-op on Android, and SQLiteDatabase's ThreadLocal transaction
+    // state MUST be unwound via endTransaction() on the begin thread — otherwise the
+    // SQLiteConnectionPool leaks the connection. Issue the rollback + setAutoCommit
+    // restore explicitly here.
+    override fun cleanupAfterCancel() {
+        runCatching { rollback() }
+        runCatching { setAutoCommit(true) }
+    }
+
     override val metaData: DatabaseMetaData by lazy { AndroidDatabaseMetaData(db) }
 
     override fun initStatement(

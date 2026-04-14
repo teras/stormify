@@ -116,7 +116,7 @@ public class SuspendStormify internal constructor(
     @OptIn(InternalCoroutinesApi::class, ExperimentalAtomicApi::class)
     private suspend fun <R> topLevelTransaction(block: suspend TransactionContext.() -> R): R =
         pool.use { conn ->
-            withContext(ioDispatcher + ConnectionElement(conn, stormify)) {
+            withTxDispatcher(ConnectionElement(conn, stormify)) {
                 // Wire coroutine cancellation → DB cancel. `onCancelling = true` (from
                 // InternalCoroutinesApi) fires the handler the moment the job enters the
                 // cancelling state. The public `invokeOnCompletion(handler)` would fire
@@ -149,6 +149,9 @@ public class SuspendStormify internal constructor(
                     result
                 } catch (e: Throwable) {
                     if (cancelled.load() == 0) runCatching { conn.rollback() }
+                    // If cancelled, the driver decides what (if anything) is safe to
+                    // run post-cancel — defaults to a no-op and relies on pool eviction.
+                    else runCatching { conn.cleanupAfterCancel() }
                     throw e
                 } finally {
                     if (cancelled.load() == 0) runCatching { conn.setAutoCommit(true) }
