@@ -9,7 +9,7 @@ Entity classes and all demo logic live in `commonMain`, while only the DataSourc
 - **JVM** uses SQLite via JDBC (`org.xerial:sqlite-jdbc`)
 - **Linux native** (`linuxX64`) uses SQLite via KDBC's native driver (`KdbcDataSource`)
 - **Windows native** (`mingwX64`) uses the same KDBC driver
-- **macOS native** (`macosArm64`) uses the same KDBC driver
+- **macOS native** (`macosArm64`, `macosX64`) uses the same KDBC driver
 
 The **KSP annotation processor** generates entity metadata at compile time, which is required for native and works on JVM as well. Both entities extend `AutoTable` with `by db()` delegates for transparent lazy-loading of references.
 
@@ -58,9 +58,16 @@ wine stormify-kotlin-multiplatform-demo.exe   # or run natively on Windows
 
 ## macOS native (release)
 
+On Apple Silicon:
 ```bash
 gradle linkReleaseExecutableMacosArm64
 ./build/bin/macosArm64/releaseExecutable/stormify-kotlin-multiplatform-demo.kexe
 ```
 
-Or build + run in one step (debug): `gradle runDebugExecutableMacosArm64`.
+On Intel:
+```bash
+gradle linkReleaseExecutableMacosX64
+./build/bin/macosX64/releaseExecutable/stormify-kotlin-multiplatform-demo.kexe
+```
+
+Or build + run in one step (debug): `gradle runDebugExecutableMacosArm64` / `runDebugExecutableMacosX64`.
