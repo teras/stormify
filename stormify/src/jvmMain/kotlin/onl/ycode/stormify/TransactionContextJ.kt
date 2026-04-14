@@ -2,14 +2,14 @@ package onl.ycode.stormify
 
 import onl.ycode.stormify.biglist.ReferencePath
 import java.util.function.Consumer
+import java.util.function.Function
 
 /**
- * Java-facing wrapper around a [TransactionContext]. Exposes all CRUD and query operations
- * as idiomatic Java methods that take `Class<T>` parameters (instead of Kotlin `KClass<T>`)
- * and `Consumer<T>` / `Runnable` instead of Kotlin function types.
+ * Scope of an active database transaction. Provides CRUD operations, raw SQL queries,
+ * stored procedure calls, and nested transactions; every operation runs on the same
+ * connection and participates in the same transaction.
  *
- * Obtained from [StormifyJ.transaction] — you do not construct this directly. All operations
- * share the same underlying connection so they participate in the same database transaction.
+ * Obtained from [StormifyJ.transaction].
  */
 class TransactionContextJ(private val ctx: TransactionContext) {
     private val connection = ctx.conn
@@ -83,7 +83,17 @@ class TransactionContextJ(private val ctx: TransactionContext) {
 
     internal fun start(block: Consumer<TransactionContextJ>) = ctx.start { block.accept(this@TransactionContextJ) }
 
+    internal fun <R> start(block: Function<TransactionContextJ, R>): R =
+        ctx.start { block.apply(this@TransactionContextJ) }
+
     /** Starts a nested transaction via a savepoint. If [block] throws, only its work is rolled back. */
     fun transaction(block: Runnable) =
         ctx.transaction { block.run() }
+
+    /**
+     * Starts a nested transaction via a savepoint and returns [block]'s result. If [block]
+     * throws, only its work is rolled back.
+     */
+    fun <R> transaction(block: Function<TransactionContextJ, R>): R =
+        ctx.transaction { block.apply(this@TransactionContextJ) }
 }

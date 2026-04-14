@@ -105,19 +105,15 @@ class TransactionContext internal constructor(
         ownsConnection = true,
     )
 
-    internal fun start(block: TransactionContext.() -> Unit) {
-        if (ownsConnection) {
-            conn.use { runBody(block) }
-        } else {
-            runBody(block)
-        }
-    }
+    internal fun <R> start(block: TransactionContext.() -> R): R =
+        if (ownsConnection) conn.use { runBody(block) } else runBody(block)
 
-    private fun runBody(block: TransactionContext.() -> Unit) {
+    private fun <R> runBody(block: TransactionContext.() -> R): R {
         try {
             conn.setAutoCommit(false)
-            block()
+            val result = block()
             conn.commit()
+            return result
         } catch (e: Throwable) {
             conn.rollback()
             e.throwQuery("Unable to execute transaction: ${e.message}")
@@ -194,14 +190,15 @@ class TransactionContext internal constructor(
     /** Calls a stored procedure by [name]. OUT/INOUT parameters use [Sp.Out]/[Sp.InOut]. */
     fun procedure(name: String, vararg args: Any?) = stormify.procedure(conn, name, *args)
 
-    /** Executes a nested transaction using a database savepoint. */
-    fun transaction(block: () -> Unit) {
+    /** Executes a nested transaction using a database savepoint, returning [block]'s result. */
+    fun <R> transaction(block: () -> R): R {
         var savepoint: Savepoint? = null
         try {
             savepoint = conn.setSavepoint(nextSavepointName())
-            block()
+            val result = block()
             if (stormify.sqlDialect.supportsReleaseSavepoint)
                 conn.releaseSavepoint(savepoint)
+            return result
         } catch (e: Throwable) {
             if (savepoint != null)
                 conn.rollback(savepoint)

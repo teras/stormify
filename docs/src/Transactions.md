@@ -49,6 +49,30 @@ Use the `transaction` method to group operations. All included operations are co
     }
     ```
 
+### Returning a Value
+
+The `transaction` block returns whatever its body returns, so you can lift a computed value out of the transaction directly.
+
+=== "Kotlin"
+
+    ```kotlin
+    val userId: Int = stormify.transaction {
+        val user = create(User(email = "test@example.com"))
+        user.id
+    }
+    ```
+
+=== "Java"
+
+    ```java
+    Integer userId = stormify.transaction(tx -> {
+        User user = tx.create(new User("test@example.com"));
+        return user.getId();
+    });
+    ```
+
+In Java the value-returning overload takes a `Function<TransactionContextJ, R>`; the existing `Consumer` overload (no return value) remains available for fire-and-forget transactions.
+
 ## Nested Transactions
 
 Nested transactions use database savepoints. If an inner transaction fails, only operations within that savepoint are rolled back.

@@ -69,7 +69,7 @@ inline fun <reified D : Any> Any.details(referenceField: ReferencePath): List<D>
 // --- Transactions ---
 
 /** Executes a block within a database transaction with automatic commit/rollback. */
-fun transaction(block: TransactionContext.() -> Unit) = stormify().transaction(block)
+fun <R> transaction(block: TransactionContext.() -> R): R = stormify().transaction(block)
 
 // --- Stored procedures ---
 

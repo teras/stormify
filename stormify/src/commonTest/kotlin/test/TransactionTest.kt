@@ -52,4 +52,38 @@ open class TransactionTest {
         }
         assertEquals("[Test2]", s.read<String>("SELECT name FROM tx_test ORDER BY id").toString())
     }
+
+    @Test
+    fun testTransactionReturnsValue() = withDb("TX_RETURN") { s ->
+        TestDDL.dropTable("tx_ret")
+        s.executeUpdate(TestDDL.createTable("tx_ret",
+            "${TestDDL.intPrimaryKey("id")}, name ${TestDDL.textType()}"))
+        s.executeUpdate("INSERT INTO tx_ret (id, name) VALUES (?, ?)", 1, "Alice")
+        s.executeUpdate("INSERT INTO tx_ret (id, name) VALUES (?, ?)", 2, "Bob")
+
+        // Top-level transaction returns a value
+        val names: List<String> = s.transaction {
+            read<String>("SELECT name FROM tx_ret ORDER BY id")
+        }
+        assertEquals(listOf("Alice", "Bob"), names)
+
+        // Nested transaction returns a value
+        val count: Int = s.transaction {
+            transaction {
+                executeUpdate("INSERT INTO tx_ret (id, name) VALUES (?, ?)", 3, "Carol")
+                readOne<Int>("SELECT COUNT(*) FROM tx_ret") ?: -1
+            }
+        }
+        assertEquals(3, count)
+
+        // Rollback still propagates, even with a return type
+        try {
+            s.transaction<Int> {
+                executeUpdate("INSERT INTO tx_ret (id, name) VALUES (?, ?)", 99, "Ghost")
+                throw RuntimeException("boom")
+            }
+            fail("expected exception")
+        } catch (_: Exception) {}
+        assertEquals(3, s.readOne<Int>("SELECT COUNT(*) FROM tx_ret") ?: -1)
+    }
 }

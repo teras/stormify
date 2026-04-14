@@ -712,8 +712,11 @@ open class Stormify(val dataSource: DataSource, vararg registrars: EntityRegistr
 
     // --- Transaction ---
 
-    /** Executes a block within a database transaction with automatic commit/rollback. */
-    fun transaction(block: TransactionContext.() -> Unit) = TransactionContext(this).start(block)
+    /**
+     * Executes [block] within a database transaction with automatic commit/rollback,
+     * returning the block's result.
+     */
+    fun <R> transaction(block: TransactionContext.() -> R): R = TransactionContext(this).start(block)
 
     // --- Stored Procedures ---
 

@@ -4,20 +4,19 @@ import onl.ycode.kdbc.DataSource
 import onl.ycode.kdbc.JdbcDataSource
 import onl.ycode.stormify.biglist.ReferencePath
 import java.util.function.Consumer
+import java.util.function.Function
 
 /**
- * Java-facing wrapper around [Stormify]. Exposes all CRUD, query, and transaction operations
- * as idiomatic Java methods: takes `Class<T>` parameters (instead of Kotlin `KClass<T>`),
- * returns Java collections, and accepts `Consumer<T>` / `Runnable` in place of Kotlin lambdas.
- *
- * Construct directly from a [javax.sql.DataSource]:
+ * Entry point for Stormify from Java code. Provides CRUD operations, raw SQL queries,
+ * stored procedure calls, and transaction management against a [javax.sql.DataSource].
  *
  * ```java
  * StormifyJ stormify = new StormifyJ(hikariDataSource);
  * stormify.asDefault();
+ * User u = stormify.findById(User.class, 1);
  * ```
  *
- * From Kotlin code, prefer [Stormify] directly — this wrapper exists for Java consumers.
+ * From Kotlin code, use [Stormify] directly.
  */
 class StormifyJ(dataSource: DataSource, vararg registrars: EntityRegistrar) {
     /** Convenience constructor that accepts any [javax.sql.DataSource] (HikariCP, plain JDBC driver, etc.). */
@@ -98,9 +97,16 @@ class StormifyJ(dataSource: DataSource, vararg registrars: EntityRegistrar) {
 
     /**
      * Runs [block] inside a database transaction. On return the transaction commits;
-     * on any exception it rolls back. All operations inside [block] share the same connection.
+     * on any exception it rolls back.
      */
     fun transaction(block: Consumer<TransactionContextJ>) =
+        TransactionContextJ(TransactionContext(stormify)).start(block)
+
+    /**
+     * Runs [block] inside a database transaction and returns its result. On return the
+     * transaction commits; on any exception it rolls back.
+     */
+    fun <R> transaction(block: Function<TransactionContextJ, R>): R =
         TransactionContextJ(TransactionContext(stormify)).start(block)
 
     /** Returns the [TableInfo] metadata for [baseClass], building it on first access. */

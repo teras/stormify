@@ -25,7 +25,7 @@ class Column internal constructor(
     internal val sqlGenerator: SqlGenerator?
 ) {
     /**
-     * The type of a column, which determines how filter values
+     * The type of column, which determines how filter values
      * are interpreted and converted to SQL conditions.
      *
      * Use as `Column.TEXT`, `Column.NUMERIC`, etc.

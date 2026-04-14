@@ -292,7 +292,7 @@ abstract class PagedListBase<T : Any> internal constructor(
      * @throws IndexOutOfBoundsException if index is outside the cached page
      */
     operator fun set(index: Int, element: T): T {
-        if (index < lowBound || index >= upperBound || fragment == null)
+        if (index !in lowBound..<upperBound || fragment == null)
             throw IndexOutOfBoundsException("Index $index is outside cached page [$lowBound, $upperBound)")
         val mutableFragment = fragment as? MutableList<T>
             ?: fragment!!.toMutableList().also { fragment = it }
