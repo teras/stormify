@@ -36,9 +36,9 @@ Designed for developers seeking a simple yet powerful ORM, Stormify excels in pr
 
 <p align="center">
   <a href="https://stormify.org/"><img src="https://img.shields.io/badge/Homepage-stormify.org-1e88e5?style=flat-square&logo=firefox&logoColor=white" alt="Homepage"></a>
-  <a href="https://stormify.org/docs/"><img src="https://img.shields.io/badge/Docs-Guide-43a047?style=flat-square&logo=readthedocs&logoColor=white" alt="Docs"></a>
-  <a href="https://stormify.org/docs/api-stormify/"><img src="https://img.shields.io/badge/API-Reference-fb8c00?style=flat-square&logo=kotlin&logoColor=white" alt="API"></a>
-  <a href="https://github.com/teras/stormify/tree/main/examples"><img src="https://img.shields.io/badge/Examples-Samples-8e24aa?style=flat-square&logo=github&logoColor=white" alt="Examples"></a>
+  <a href="https://stormify.org/docs/2.0.1/"><img src="https://img.shields.io/badge/Docs-Guide-43a047?style=flat-square&logo=readthedocs&logoColor=white" alt="Docs"></a>
+  <a href="https://stormify.org/docs/2.0.1/api-stormify/"><img src="https://img.shields.io/badge/API-Reference-fb8c00?style=flat-square&logo=kotlin&logoColor=white" alt="API"></a>
+  <a href="https://github.com/teras/stormify-examples/tree/2.0.1"><img src="https://img.shields.io/badge/Examples-Samples-8e24aa?style=flat-square&logo=github&logoColor=white" alt="Examples"></a>
 </p>
 
 ## Installation
@@ -199,9 +199,27 @@ val user = stormify.readOne<User>("SELECT * FROM users WHERE id = ?", 1)
 val user = stormify.findById<User>(1)
 ```
 
+## Examples
+
+Runnable example projects live in a separate repository: [stormify-examples](https://github.com/teras/stormify-examples/tree/2.0.1). They cover JVM (Kotlin & Java), Android, iOS, Kotlin/Native (Linux, Windows, macOS), and Kotlin Multiplatform.
+
+Clone them standalone:
+
+```bash
+git clone -b 2.0.1 https://github.com/teras/stormify-examples.git
+```
+
+Or pull them directly inside this repo as a submodule:
+
+```bash
+git submodule update --init --recursive
+```
+
+Each subfolder is a self-contained project with its own `README.md` explaining how to build and run it. See the [Examples overview](docs/src/Examples.md) for a short description of each.
+
 ## Documentation
 
-Full documentation is available at [stormify.org/docs](https://stormify.org/docs/).
+Full documentation is available at [stormify.org/docs](https://stormify.org/docs/2.0.1/).
 
 ## Contributing
 

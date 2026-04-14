@@ -65,6 +65,7 @@ nav:
     - Raw Queries: Raw_Queries.md
   - Features:
     - PagedList: PagedList.md
+  - Examples: Examples.md
   - KDBC:
     - Overview: KDBC_Overview.md
     - C Guide: KDBC_C_Guide.md
