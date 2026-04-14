@@ -1,0 +1,165 @@
+name: Publish to Maven Central
+
+# Build KMP artifacts on two OSes (Linux builds JVM + linux + mingw + android +
+# kmp-metadata; macOS builds apple targets), collect everything into a single
+# local maven tree, zip it, and upload to Central Portal as ONE deployment.
+# publishingType=USER_MANAGED leaves the deployment in staging — the user
+# approves the release manually in the Central Portal UI.
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+jobs:
+  tests:
+    uses: ./.github/workflows/test.yml
+
+  build-linux:
+    needs: tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '9.3.1'
+
+      - name: Install cross-compilers for mingw and linuxArm64
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends \
+            mingw-w64 \
+            gcc-aarch64-linux-gnu \
+            libc6-dev-arm64-cross
+
+      - name: Publish Linux/JVM/Android/Mingw targets to local staging
+        env:
+          ORG_GRADLE_PROJECT_mavenCentralUsername: ${{ secrets.MAVEN_CENTRAL_USERNAME }}
+          ORG_GRADLE_PROJECT_mavenCentralPassword: ${{ secrets.MAVEN_CENTRAL_PASSWORD }}
+          ORG_GRADLE_PROJECT_signingInMemoryKey: ${{ secrets.SIGNING_IN_MEMORY_KEY }}
+          ORG_GRADLE_PROJECT_signingInMemoryKeyId: ${{ secrets.SIGNING_IN_MEMORY_KEY_ID }}
+          ORG_GRADLE_PROJECT_signingInMemoryKeyPassword: ${{ secrets.SIGNING_IN_MEMORY_KEY_PASSWORD }}
+        run: |
+          gradle \
+            :stormify:publishAllPublicationsToLocalStagingRepository \
+            :kdbc:publishAllPublicationsToLocalStagingRepository \
+            :logger:publishAllPublicationsToLocalStagingRepository \
+            :annproc:publishAllPublicationsToLocalStagingRepository \
+            --no-daemon --stacktrace
+
+      - name: Upload staging artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: staging-linux
+          path: build/staging-deploy/
+          if-no-files-found: error
+          retention-days: 1
+
+  build-macos:
+    needs: tests
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Gradle toolchain spec requires both JDK 8 (for the JVM 1.8 target of
+      # the publishable modules) and JDK 17 (to run Gradle itself). Zulu
+      # distributes JDK 8 for Apple Silicon (arm64); Temurin does not.
+      - name: Set up JDKs
+        uses: actions/setup-java@v4
+        with:
+          java-version: |
+            8
+            17
+          distribution: 'zulu'
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '9.3.1'
+
+      - name: Publish Apple targets to local staging
+        env:
+          ORG_GRADLE_PROJECT_mavenCentralUsername: ${{ secrets.MAVEN_CENTRAL_USERNAME }}
+          ORG_GRADLE_PROJECT_mavenCentralPassword: ${{ secrets.MAVEN_CENTRAL_PASSWORD }}
+          ORG_GRADLE_PROJECT_signingInMemoryKey: ${{ secrets.SIGNING_IN_MEMORY_KEY }}
+          ORG_GRADLE_PROJECT_signingInMemoryKeyId: ${{ secrets.SIGNING_IN_MEMORY_KEY_ID }}
+          ORG_GRADLE_PROJECT_signingInMemoryKeyPassword: ${{ secrets.SIGNING_IN_MEMORY_KEY_PASSWORD }}
+        run: |
+          # Only publish apple-target publications. We explicitly enumerate them
+          # so we don't duplicate the JVM/metadata uploads from the linux runner.
+          gradle \
+            :stormify:publishIosArm64PublicationToLocalStagingRepository \
+            :stormify:publishIosX64PublicationToLocalStagingRepository \
+            :stormify:publishIosSimulatorArm64PublicationToLocalStagingRepository \
+            :stormify:publishMacosArm64PublicationToLocalStagingRepository \
+            :stormify:publishMacosX64PublicationToLocalStagingRepository \
+            :kdbc:publishIosArm64PublicationToLocalStagingRepository \
+            :kdbc:publishIosX64PublicationToLocalStagingRepository \
+            :kdbc:publishIosSimulatorArm64PublicationToLocalStagingRepository \
+            :kdbc:publishMacosArm64PublicationToLocalStagingRepository \
+            :kdbc:publishMacosX64PublicationToLocalStagingRepository \
+            :logger:publishIosArm64PublicationToLocalStagingRepository \
+            :logger:publishIosX64PublicationToLocalStagingRepository \
+            :logger:publishIosSimulatorArm64PublicationToLocalStagingRepository \
+            :logger:publishMacosArm64PublicationToLocalStagingRepository \
+            :logger:publishMacosX64PublicationToLocalStagingRepository \
+            --no-daemon --stacktrace
+
+      - name: Upload staging artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: staging-macos
+          path: build/staging-deploy/
+          if-no-files-found: error
+          retention-days: 1
+
+  publish:
+    needs: [build-linux, build-macos]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download Linux staging
+        uses: actions/download-artifact@v4
+        with:
+          name: staging-linux
+          path: staging/
+
+      - name: Download macOS staging
+        uses: actions/download-artifact@v4
+        with:
+          name: staging-macos
+          path: staging/
+
+      - name: Bundle deployment zip
+        working-directory: staging
+        run: zip -r ../bundle.zip .
+
+      - name: Upload bundle to Central Portal (USER_MANAGED — requires manual release)
+        env:
+          USER: ${{ secrets.MAVEN_CENTRAL_USERNAME }}
+          PASS: ${{ secrets.MAVEN_CENTRAL_PASSWORD }}
+        run: |
+          TOKEN=$(printf '%s:%s' "$USER" "$PASS" | base64 -w0)
+          HTTP_CODE=$(curl -sS -o response.txt -w '%{http_code}' \
+            -X POST \
+            -H "Authorization: Bearer $TOKEN" \
+            -F "bundle=@bundle.zip" \
+            "https://central.sonatype.com/api/v1/publisher/upload?name=stormify-${GITHUB_REF_NAME}&publishingType=USER_MANAGED")
+          echo "HTTP $HTTP_CODE"
+          cat response.txt
+          echo
+          if [ "$HTTP_CODE" != "201" ] && [ "$HTTP_CODE" != "200" ]; then
+            exit 1
+          fi
+          echo "Deployment staged. Approve release at https://central.sonatype.com/publishing/deployments"

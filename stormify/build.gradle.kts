@@ -1,10 +1,13 @@
+import com.vanniktech.maven.publish.JavadocJar
+import com.vanniktech.maven.publish.KotlinMultiplatform
+
 plugins {
-    id("maven-publish")
     kotlin("multiplatform")
     id("com.android.library")
     id("org.jetbrains.kotlinx.atomicfu") version "0.30.0-beta"
     id("com.google.devtools.ksp") version "2.2.20-2.0.2"
     id("org.jetbrains.dokka")
+    id("com.vanniktech.maven.publish")
 }
 
 group = parent?.group ?: IllegalStateException("Group is not defined")
@@ -15,20 +18,26 @@ kotlin {
     applyDefaultHierarchyTemplate()
     jvm()
     androidTarget {
-        publishLibraryVariants("release", "debug")
+        publishLibraryVariants("release")
     }
-    linuxX64()
-    mingwX64()
-    linuxArm64()
+    // Native targets are registered conditionally based on the build host.
+    // Linux/mingw require cross-compilers (gcc-aarch64-linux-gnu, x86_64-w64-mingw32-gcc)
+    // which are only available on Linux. Apple targets require macOS SDK.
+    // Splitting avoids triggering cinterop commonization on targets whose
+    // native libraries can't be built on the current host.
+    val osName = System.getProperty("os.name")
+    val isMac = osName.startsWith("Mac")
+    val isLinux = osName.startsWith("Linux")
 
-    // Apple targets - build enabled on macOS only
-    if (System.getProperty("os.name").startsWith("Mac")) {
-        // iOS
+    if (isLinux) {
+        linuxX64()
+        linuxArm64()
+        mingwX64()
+    }
+    if (isMac) {
         iosArm64()
         iosX64()
         iosSimulatorArm64()
-        
-        // macOS
         macosArm64()
         macosX64()
     }
@@ -165,25 +174,28 @@ kotlin {
             }
         }
 
-        val linuxX64Main by getting
+        // Linux-host source sets — see note in kotlin{} about conditional target registration.
+        if (System.getProperty("os.name").startsWith("Linux")) {
+            val linuxX64Main by getting
 
-        val linuxX64Test by getting {
-            dependencies {
-                implementation(project(":kdbc"))
+            val linuxX64Test by getting {
+                dependencies {
+                    implementation(project(":kdbc"))
+                }
             }
-        }
 
-        val mingwX64Test by getting {
-            dependencies {
-                implementation(project(":kdbc"))
+            val mingwX64Test by getting {
+                dependencies {
+                    implementation(project(":kdbc"))
+                }
             }
-        }
 
-        val linuxArm64Test by getting {
-            // Share test sources with linuxX64Test — identical POSIX APIs and paths
-            kotlin.srcDir("src/linuxX64Test/kotlin")
-            dependencies {
-                implementation(project(":kdbc"))
+            val linuxArm64Test by getting {
+                // Share test sources with linuxX64Test — identical POSIX APIs and paths
+                kotlin.srcDir("src/linuxX64Test/kotlin")
+                dependencies {
+                    implementation(project(":kdbc"))
+                }
             }
         }
 
@@ -248,9 +260,23 @@ android {
     }
 }
 
-publishing {
-    repositories {
-        mavenLocal()
+mavenPublishing {
+    publishToMavenCentral()
+    signAllPublications()
+    // Empty javadoc jar — Dokka would require compiling ALL target klibs (including
+    // linuxArm64) even when publishing only apple targets, which fails on macOS
+    // runners where aarch64-linux-gnu-gcc is unavailable. KDoc lives in the
+    // sources jar anyway; Maven Central only requires that *some* javadoc jar exists.
+    configure(KotlinMultiplatform(javadocJar = JavadocJar.Empty()))
+    coordinates(group.toString(), "stormify", version.toString())
+    pom {
+        name.set("Stormify")
+        description.set(project.description)
+        url.set(rootProject.extra["pomUrl"] as String)
+        inceptionYear.set(rootProject.extra["pomInceptionYear"] as String)
+        licenses { license { name.set(rootProject.extra["pomLicenseName"] as String); url.set(rootProject.extra["pomLicenseUrl"] as String) } }
+        developers { developer { id.set(rootProject.extra["pomDeveloperId"] as String); name.set(rootProject.extra["pomDeveloperName"] as String); email.set(rootProject.extra["pomDeveloperEmail"] as String) } }
+        scm { url.set(rootProject.extra["pomScmUrl"] as String); connection.set(rootProject.extra["pomScmConnection"] as String); developerConnection.set(rootProject.extra["pomScmDevConnection"] as String) }
     }
 }
 
@@ -265,14 +291,18 @@ tasks.withType<Test> {
 // Per-target annproc registration (not kspCommonMainMetadata): the generated Paths
 // emit @JvmField / @get:JvmName which are @OptionalExpectation in kotlin.jvm and
 // cannot be referenced from non-JVM source sets.
+val isMacHost = System.getProperty("os.name").startsWith("Mac")
+val isLinuxHost = System.getProperty("os.name").startsWith("Linux")
+
 dependencies {
     add("kspJvmTest", project(":annproc"))
-    add("kspLinuxX64Test", project(":annproc"))
-    add("kspMingwX64Test", project(":annproc"))
-    // linuxArm64Test reuses linuxX64 KSP output — no separate KSP run needed
     add("kspAndroidTestDebug", project(":annproc"))
-    // Apple targets only available on macOS
-    if (System.getProperty("os.name").startsWith("Mac")) {
+    if (isLinuxHost) {
+        add("kspLinuxX64Test", project(":annproc"))
+        add("kspMingwX64Test", project(":annproc"))
+        // linuxArm64Test reuses linuxX64 KSP output — no separate KSP run needed
+    }
+    if (isMacHost) {
         add("kspMacosArm64Test", project(":annproc"))
         add("kspIosSimulatorArm64Test", project(":annproc"))
         add("kspIosArm64Test", project(":annproc"))
@@ -283,18 +313,19 @@ dependencies {
 kotlin.sourceSets.named("jvmTest") {
     kotlin.srcDir("build/generated/ksp/jvm/jvmTest/kotlin")
 }
-kotlin.sourceSets.named("linuxX64Test") {
-    kotlin.srcDir("build/generated/ksp/linuxX64/linuxX64Test/kotlin")
+if (isLinuxHost) {
+    kotlin.sourceSets.named("linuxX64Test") {
+        kotlin.srcDir("build/generated/ksp/linuxX64/linuxX64Test/kotlin")
+    }
+    kotlin.sourceSets.named("mingwX64Test") {
+        kotlin.srcDir("build/generated/ksp/mingwX64/mingwX64Test/kotlin")
+    }
+    // linuxArm64Test reuses linuxX64's KSP output — same entities, same generated code
+    kotlin.sourceSets.named("linuxArm64Test") {
+        kotlin.srcDir("build/generated/ksp/linuxX64/linuxX64Test/kotlin")
+    }
 }
-kotlin.sourceSets.named("mingwX64Test") {
-    kotlin.srcDir("build/generated/ksp/mingwX64/mingwX64Test/kotlin")
-}
-// linuxArm64Test and Apple test targets reuse linuxX64's KSP output —
-// same entities, same generated code
-kotlin.sourceSets.named("linuxArm64Test") {
-    kotlin.srcDir("build/generated/ksp/linuxX64/linuxX64Test/kotlin")
-}
-if (System.getProperty("os.name").startsWith("Mac")) {
+if (isMacHost) {
     for (target in listOf("MacosArm64", "IosSimulatorArm64", "IosArm64")) {
         val lower = target.replaceFirstChar { it.lowercase() }
         kotlin.sourceSets.named("${lower}Test") {
@@ -312,14 +343,16 @@ kotlin.sourceSets.named("androidUnitTest") {
 tasks.matching { it.name == "compileTestKotlinJvm" }.configureEach {
     dependsOn("kspTestKotlinJvm")
 }
-tasks.matching { it.name == "compileTestKotlinLinuxX64" }.configureEach {
-    dependsOn("kspTestKotlinLinuxX64")
-}
-tasks.matching { it.name == "compileTestKotlinMingwX64" }.configureEach {
-    dependsOn("kspTestKotlinMingwX64")
-}
-tasks.matching { it.name == "compileTestKotlinLinuxArm64" }.configureEach {
-    dependsOn("kspTestKotlinLinuxX64")
+if (isLinuxHost) {
+    tasks.matching { it.name == "compileTestKotlinLinuxX64" }.configureEach {
+        dependsOn("kspTestKotlinLinuxX64")
+    }
+    tasks.matching { it.name == "compileTestKotlinMingwX64" }.configureEach {
+        dependsOn("kspTestKotlinMingwX64")
+    }
+    tasks.matching { it.name == "compileTestKotlinLinuxArm64" }.configureEach {
+        dependsOn("kspTestKotlinLinuxX64")
+    }
 }
 
 // Copy platform-specific runtime libraries (DLLs, .so files) next to test

@@ -1,8 +1,11 @@
+import com.vanniktech.maven.publish.JavadocJar
+import com.vanniktech.maven.publish.KotlinMultiplatform
+
 plugins {
-    id("maven-publish")
     kotlin("multiplatform")
     id("com.android.library")
     id("org.jetbrains.dokka")
+    id("com.vanniktech.maven.publish")
 }
 
 group = parent?.group ?: IllegalStateException("Group is not defined")
@@ -60,62 +63,36 @@ kotlin {
     applyDefaultHierarchyTemplate()
     jvm()
     androidTarget {
-        publishLibraryVariants("release", "debug")
+        publishLibraryVariants("release")
     }
-    linuxX64 {
+    // Native targets are registered conditionally based on the build host.
+    // Linux/mingw require GCC cross-compilers; Apple targets require macOS SDK.
+    // Splitting avoids triggering cinterop commonization / native builds on
+    // targets whose toolchain isn't available on the current host.
+    val osName = System.getProperty("os.name")
+    val isMac = osName.startsWith("Mac")
+    val isLinux = osName.startsWith("Linux")
+
+    fun org.jetbrains.kotlin.gradle.plugin.mpp.KotlinNativeTarget.kdbcCinterop(libDir: String) {
         compilations.getByName("main") {
             cinterops {
                 val kdbc by creating {
                     defFile(project.file("src/nativeInterop/cinterop/kdbc.def"))
                     packageName = "onl.ycode.kdbc.cinterop"
                     includeDirs(project.file("src/c/include"))
-                    extraOpts("-libraryPath", project.file("src/c").absolutePath)
-                }
-            }
-        }
-    }
-    mingwX64 {
-        compilations.getByName("main") {
-            cinterops {
-                val kdbc by creating {
-                    defFile(project.file("src/nativeInterop/cinterop/kdbc.def"))
-                    packageName = "onl.ycode.kdbc.cinterop"
-                    includeDirs(project.file("src/c/include"))
-                    extraOpts("-libraryPath", project.file("src/c/build-mingw").absolutePath)
-                }
-            }
-        }
-    }
-    linuxArm64 {
-        compilations.getByName("main") {
-            cinterops {
-                val kdbc by creating {
-                    defFile(project.file("src/nativeInterop/cinterop/kdbc.def"))
-                    packageName = "onl.ycode.kdbc.cinterop"
-                    includeDirs(project.file("src/c/include"))
-                    extraOpts("-libraryPath", project.file("src/c/build-arm64").absolutePath)
+                    extraOpts("-libraryPath", project.file(libDir).absolutePath)
                 }
             }
         }
     }
 
-    // Apple targets - build enabled on macOS only.
-    // Each target uses a libkdbc.a compiled for its specific SDK via the Makefile
-    // TARGET parameter. macOS uses the default build; iOS targets use ios-sim/ios.
-    if (System.getProperty("os.name").startsWith("Mac")) {
-        fun org.jetbrains.kotlin.gradle.plugin.mpp.KotlinNativeTarget.kdbcCinterop(libDir: String) {
-            compilations.getByName("main") {
-                cinterops {
-                    val kdbc by creating {
-                        defFile(project.file("src/nativeInterop/cinterop/kdbc.def"))
-                        packageName = "onl.ycode.kdbc.cinterop"
-                        includeDirs(project.file("src/c/include"))
-                        extraOpts("-libraryPath", project.file(libDir).absolutePath)
-                    }
-                }
-            }
-        }
+    if (isLinux) {
+        linuxX64           { kdbcCinterop("src/c") }
+        mingwX64           { kdbcCinterop("src/c/build-mingw") }
+        linuxArm64         { kdbcCinterop("src/c/build-arm64") }
+    }
 
+    if (isMac) {
         macosArm64  { kdbcCinterop("src/c") }
         macosX64    { kdbcCinterop("src/c") }
         iosSimulatorArm64 { kdbcCinterop("src/c/build-ios-sim") }
@@ -174,7 +151,9 @@ kotlin {
             }
         }
 
-        val linuxX64Main by getting
+        if (System.getProperty("os.name").startsWith("Linux")) {
+            val linuxX64Main by getting
+        }
     }
 }
 
@@ -236,8 +215,18 @@ android {
     }
 }
 
-publishing {
-    repositories {
-        mavenLocal()
+mavenPublishing {
+    publishToMavenCentral()
+    signAllPublications()
+    configure(KotlinMultiplatform(javadocJar = JavadocJar.Empty()))
+    coordinates(group.toString(), "kdbc", version.toString())
+    pom {
+        name.set("KDBC")
+        description.set(project.description)
+        url.set(rootProject.extra["pomUrl"] as String)
+        inceptionYear.set(rootProject.extra["pomInceptionYear"] as String)
+        licenses { license { name.set(rootProject.extra["pomLicenseName"] as String); url.set(rootProject.extra["pomLicenseUrl"] as String) } }
+        developers { developer { id.set(rootProject.extra["pomDeveloperId"] as String); name.set(rootProject.extra["pomDeveloperName"] as String); email.set(rootProject.extra["pomDeveloperEmail"] as String) } }
+        scm { url.set(rootProject.extra["pomScmUrl"] as String); connection.set(rootProject.extra["pomScmConnection"] as String); developerConnection.set(rootProject.extra["pomScmDevConnection"] as String) }
     }
 }

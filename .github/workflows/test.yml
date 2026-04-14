@@ -2,7 +2,9 @@ name: Database Tests
 
 on:
   push:
+    tags-ignore: ['**']   # tags trigger publish.yml instead, which calls this workflow
   pull_request:
+  workflow_call:
 
 # ---------------------------------------------------------------------------
 # CI environment notes (Ubuntu 24.04 / ubuntu-latest as of 2026-04)

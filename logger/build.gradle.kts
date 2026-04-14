@@ -1,8 +1,11 @@
+import com.vanniktech.maven.publish.JavadocJar
+import com.vanniktech.maven.publish.KotlinMultiplatform
+
 plugins {
-    id("maven-publish")
     kotlin("multiplatform")
     id("com.android.library")
     id("org.jetbrains.dokka")
+    id("com.vanniktech.maven.publish")
 }
 
 group = parent?.group ?: IllegalStateException("Group is not defined")
@@ -13,20 +16,23 @@ kotlin {
     applyDefaultHierarchyTemplate()
     jvm()
     androidTarget {
-        publishLibraryVariants("release", "debug")
+        publishLibraryVariants("release")
     }
-    linuxX64()
-    mingwX64()
-    linuxArm64()
+    // Native targets are registered conditionally based on the build host —
+    // see the comment in stormify/build.gradle.kts for rationale.
+    val osName = System.getProperty("os.name")
+    val isMac = osName.startsWith("Mac")
+    val isLinux = osName.startsWith("Linux")
 
-    // Apple targets - build enabled on macOS only
-    if (System.getProperty("os.name").startsWith("Mac")) {
-        // iOS
+    if (isLinux) {
+        linuxX64()
+        linuxArm64()
+        mingwX64()
+    }
+    if (isMac) {
         iosArm64()
         iosX64()
         iosSimulatorArm64()
-        
-        // macOS
         macosArm64()
         macosX64()
     }
@@ -81,8 +87,18 @@ android {
     }
 }
 
-publishing {
-    repositories {
-        mavenLocal()
+mavenPublishing {
+    publishToMavenCentral()
+    signAllPublications()
+    configure(KotlinMultiplatform(javadocJar = JavadocJar.Empty()))
+    coordinates(group.toString(), "logger", version.toString())
+    pom {
+        name.set("Stormify Logger")
+        description.set(project.description)
+        url.set(rootProject.extra["pomUrl"] as String)
+        inceptionYear.set(rootProject.extra["pomInceptionYear"] as String)
+        licenses { license { name.set(rootProject.extra["pomLicenseName"] as String); url.set(rootProject.extra["pomLicenseUrl"] as String) } }
+        developers { developer { id.set(rootProject.extra["pomDeveloperId"] as String); name.set(rootProject.extra["pomDeveloperName"] as String); email.set(rootProject.extra["pomDeveloperEmail"] as String) } }
+        scm { url.set(rootProject.extra["pomScmUrl"] as String); connection.set(rootProject.extra["pomScmConnection"] as String); developerConnection.set(rootProject.extra["pomScmDevConnection"] as String) }
     }
 }

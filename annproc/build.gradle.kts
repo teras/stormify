@@ -1,7 +1,10 @@
+import com.vanniktech.maven.publish.JavadocJar
+import com.vanniktech.maven.publish.KotlinJvm
+
 plugins {
-    id("maven-publish")
     kotlin("jvm")
     id("com.google.devtools.ksp") version "2.2.20-2.0.2" // Use the latest KSP version
+    id("com.vanniktech.maven.publish")
 }
 
 group = parent?.group ?: IllegalStateException("Group is not defined")
@@ -22,16 +25,18 @@ kotlin {
     jvmToolchain(11)
 }
 
-publishing {
-    publications {
-        create<MavenPublication>("mavenJava") {
-            from(components["java"])
-            groupId = project.group.toString()
-            artifactId = project.name
-            version = project.version.toString()
-        }
-    }
-    repositories {
-        mavenLocal()
+mavenPublishing {
+    publishToMavenCentral()
+    signAllPublications()
+    configure(KotlinJvm(javadocJar = JavadocJar.Empty(), sourcesJar = true))
+    coordinates(group.toString(), "annproc", version.toString())
+    pom {
+        name.set("Stormify Annotation Processor")
+        description.set(project.description)
+        url.set(rootProject.extra["pomUrl"] as String)
+        inceptionYear.set(rootProject.extra["pomInceptionYear"] as String)
+        licenses { license { name.set(rootProject.extra["pomLicenseName"] as String); url.set(rootProject.extra["pomLicenseUrl"] as String) } }
+        developers { developer { id.set(rootProject.extra["pomDeveloperId"] as String); name.set(rootProject.extra["pomDeveloperName"] as String); email.set(rootProject.extra["pomDeveloperEmail"] as String) } }
+        scm { url.set(rootProject.extra["pomScmUrl"] as String); connection.set(rootProject.extra["pomScmConnection"] as String); developerConnection.set(rootProject.extra["pomScmDevConnection"] as String) }
     }
 }
