@@ -1,0 +1,4 @@
+[submodule "examples"]
+	path = examples
+	url = https://github.com/teras/stormify-examples.git
+	branch = 2.0.1

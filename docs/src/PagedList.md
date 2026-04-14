@@ -78,7 +78,7 @@ your build (once; the same processor also generates entity metadata):
     }
 
     dependencies {
-        ksp("onl.ycode:annproc:2.0.0")
+        ksp("onl.ycode:annproc:2.0.1")
     }
     ```
 
@@ -90,7 +90,7 @@ your build (once; the same processor also generates entity metadata):
     }
 
     dependencies {
-        ksp 'onl.ycode:annproc:2.0.0'
+        ksp 'onl.ycode:annproc:2.0.1'
     }
     ```
 

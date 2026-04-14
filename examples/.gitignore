@@ -1,5 +1,0 @@
-build/
-target/
-.gradle/
-.kotlin/
-*.hprof
