@@ -1,72 +1,27 @@
-name: Publish snapshot to Maven Central
+name: Publish to Maven Central
 
-# Dual-host build with merged root module:
-#   - Linux runner builds JVM, Android, linuxX64, linuxArm64, mingwX64
-#   - macOS runner builds the apple targets (macos*, ios*)
-# Each host produces its own staging tree with platform-specific Maven coords
-# AND its own root *.module file (only declaring its own target variants). The
-# merge job unions the two root .module files (variants array union), re-signs,
-# and uploads to the Central Portal snapshots repository.
+# Single-host build on macOS — the only host that can produce every target
+# (JVM, Android, linuxX64, linuxArm64, mingwX64, macos*, ios*) thanks to
+# Kotlin/Native cross-compile + Homebrew GCC cross-toolchains. A single host
+# means a single complete root KMP module, no merge hacks.
 #
-# Tests run in parallel; publish gates on tests + both build hosts.
+# Tests run in parallel with the build. Publish gates on both — nothing reaches
+# Maven Central unless the test matrix is green.
+#
+# Version suffix `-SNAPSHOT` routes to the snapshots repo (mutable, auto);
+# otherwise the bundle is uploaded to the Central Portal as USER_MANAGED
+# (manual approve in the UI).
 
 on:
+  push:
+    tags: ['v*']
   workflow_dispatch:
 
 jobs:
   tests:
     uses: ./.github/workflows/test.yml
 
-  build-linux:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Set up JDK
-        uses: actions/setup-java@v4
-        with:
-          java-version: '17'
-          distribution: 'temurin'
-
-      - name: Set up Gradle
-        uses: gradle/actions/setup-gradle@v4
-        with:
-          gradle-version: '9.3.1'
-
-      - name: Install cross-compilers for mingw and linuxArm64
-        env:
-          DEBIAN_FRONTEND: noninteractive
-        run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y --no-install-recommends \
-            mingw-w64 \
-            gcc-aarch64-linux-gnu \
-            libc6-dev-arm64-cross
-
-      - name: Publish JVM/Android/Linux/Mingw targets to local staging
-        env:
-          ORG_GRADLE_PROJECT_mavenCentralUsername: ${{ secrets.MAVEN_CENTRAL_USERNAME }}
-          ORG_GRADLE_PROJECT_mavenCentralPassword: ${{ secrets.MAVEN_CENTRAL_PASSWORD }}
-          ORG_GRADLE_PROJECT_signingInMemoryKey: ${{ secrets.SIGNING_IN_MEMORY_KEY }}
-          ORG_GRADLE_PROJECT_signingInMemoryKeyId: ${{ secrets.SIGNING_IN_MEMORY_KEY_ID }}
-          ORG_GRADLE_PROJECT_signingInMemoryKeyPassword: ${{ secrets.SIGNING_IN_MEMORY_KEY_PASSWORD }}
-        run: |
-          gradle \
-            :stormify:publishAllPublicationsToLocalStagingRepository \
-            :kdbc:publishAllPublicationsToLocalStagingRepository \
-            :logger:publishAllPublicationsToLocalStagingRepository \
-            :annproc:publishAllPublicationsToLocalStagingRepository \
-            --no-daemon --stacktrace
-
-      - name: Upload Linux staging
-        uses: actions/upload-artifact@v4
-        with:
-          name: staging-linux
-          path: build/staging-deploy/
-          if-no-files-found: error
-          retention-days: 1
-
-  build-macos:
+  build:
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
@@ -84,7 +39,31 @@ jobs:
         with:
           gradle-version: '9.3.1'
 
-      - name: Publish Apple targets to local staging
+      - name: Install cross-compile toolchains (Linux + MinGW)
+        run: |
+          brew tap messense/macos-cross-toolchains
+          brew install x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu mingw-w64
+          # The kdbc Makefile expects unprefixed `aarch64-linux-gnu-*` and
+          # `x86_64-linux-gnu-*` names; messense ships them with the
+          # `unknown-` prefix. Bridge with symlinks on PATH.
+          mkdir -p $HOME/cross-bin
+          ln -sf $(brew --prefix)/bin/aarch64-unknown-linux-gnu-gcc $HOME/cross-bin/aarch64-linux-gnu-gcc
+          ln -sf $(brew --prefix)/bin/aarch64-unknown-linux-gnu-ar  $HOME/cross-bin/aarch64-linux-gnu-ar
+          ln -sf $(brew --prefix)/bin/x86_64-unknown-linux-gnu-gcc  $HOME/cross-bin/x86_64-linux-gnu-gcc
+          ln -sf $(brew --prefix)/bin/x86_64-unknown-linux-gnu-ar   $HOME/cross-bin/x86_64-linux-gnu-ar
+          echo "$HOME/cross-bin" >> $GITHUB_PATH
+
+      - name: Pre-build native C libraries for every target
+        run: |
+          cd kdbc/src/c
+          make lib                                                # macOS host native
+          make TARGET=linux  BUILDDIR=build-linux   lib           # Linux x64
+          make TARGET=arm64  BUILDDIR=build-arm64   lib           # Linux ARM64
+          make TARGET=mingw  BUILDDIR=build-mingw   lib           # Windows x64
+          make TARGET=ios    BUILDDIR=build-ios     build-ios/libkdbc.a
+          make TARGET=ios-sim BUILDDIR=build-ios-sim build-ios-sim/libkdbc.a
+
+      - name: Publish all targets to local staging
         env:
           ORG_GRADLE_PROJECT_mavenCentralUsername: ${{ secrets.MAVEN_CENTRAL_USERNAME }}
           ORG_GRADLE_PROJECT_mavenCentralPassword: ${{ secrets.MAVEN_CENTRAL_PASSWORD }}
@@ -93,88 +72,54 @@ jobs:
           ORG_GRADLE_PROJECT_signingInMemoryKeyPassword: ${{ secrets.SIGNING_IN_MEMORY_KEY_PASSWORD }}
         run: |
           gradle \
-            :stormify:publishIosArm64PublicationToLocalStagingRepository \
-            :stormify:publishIosX64PublicationToLocalStagingRepository \
-            :stormify:publishIosSimulatorArm64PublicationToLocalStagingRepository \
-            :stormify:publishMacosArm64PublicationToLocalStagingRepository \
-            :stormify:publishMacosX64PublicationToLocalStagingRepository \
-            :stormify:publishKotlinMultiplatformPublicationToLocalStagingRepository \
-            :kdbc:publishIosArm64PublicationToLocalStagingRepository \
-            :kdbc:publishIosX64PublicationToLocalStagingRepository \
-            :kdbc:publishIosSimulatorArm64PublicationToLocalStagingRepository \
-            :kdbc:publishMacosArm64PublicationToLocalStagingRepository \
-            :kdbc:publishMacosX64PublicationToLocalStagingRepository \
-            :kdbc:publishKotlinMultiplatformPublicationToLocalStagingRepository \
-            :logger:publishIosArm64PublicationToLocalStagingRepository \
-            :logger:publishIosX64PublicationToLocalStagingRepository \
-            :logger:publishIosSimulatorArm64PublicationToLocalStagingRepository \
-            :logger:publishMacosArm64PublicationToLocalStagingRepository \
-            :logger:publishMacosX64PublicationToLocalStagingRepository \
-            :logger:publishKotlinMultiplatformPublicationToLocalStagingRepository \
+            :stormify:publishAllPublicationsToLocalStagingRepository \
+            :kdbc:publishAllPublicationsToLocalStagingRepository \
+            :logger:publishAllPublicationsToLocalStagingRepository \
+            :annproc:publishAllPublicationsToLocalStagingRepository \
             --no-daemon --stacktrace
 
-      - name: Upload macOS staging
+      - name: Read project version
+        id: v
+        run: |
+          VERSION=$(grep -E '^version = ' build.gradle.kts | head -1 | sed -E 's/.*"([^"]+)".*/\1/')
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          if [[ "$VERSION" == *-SNAPSHOT ]]; then
+            echo "is_snapshot=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "is_snapshot=false" >> "$GITHUB_OUTPUT"
+          fi
+          echo "Version: $VERSION"
+
+      - name: Upload staging artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: staging-macos
+          name: staging
           path: build/staging-deploy/
           if-no-files-found: error
           retention-days: 1
 
-  merge-and-publish:
-    needs: [tests, build-linux, build-macos]
+    outputs:
+      is_snapshot: ${{ steps.v.outputs.is_snapshot }}
+      version: ${{ steps.v.outputs.version }}
+
+  publish:
+    needs: [tests, build]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-
-      - name: Download Linux staging
+      - name: Download staging
         uses: actions/download-artifact@v4
         with:
-          name: staging-linux
-          path: staging-linux/
+          name: staging
+          path: staging/
 
-      - name: Download macOS staging
-        uses: actions/download-artifact@v4
-        with:
-          name: staging-macos
-          path: staging-macos/
-
-      - name: Merge stagings (root .module variants union, prefer macOS metadata jars)
-        run: |
-          python3 .github/scripts/merge-staging.py staging-linux staging-macos staging-merged
-
-      - name: Re-sign merged root .module files
-        env:
-          SIGNING_KEY: ${{ secrets.SIGNING_IN_MEMORY_KEY }}
-          SIGNING_KEY_PASSWORD: ${{ secrets.SIGNING_IN_MEMORY_KEY_PASSWORD }}
-        run: |
-          echo "$SIGNING_KEY" | gpg --batch --import
-          KEY_ID=$(gpg --list-secret-keys --with-colons | awk -F: '/^sec:/ {print $5; exit}')
-          # Re-sign root .module files for stormify/kdbc/logger (annproc isn't KMP).
-          # Per-target modules (stormify-jvm, stormify-macosarm64, ...) keep their
-          # original signatures since their content was never modified.
-          for art in stormify kdbc logger; do
-            find "staging-merged/onl/ycode/$art" -maxdepth 3 -name "$art-*.module" | while read f; do
-              echo "  re-signing $f"
-              rm -f "$f.asc" "$f.md5" "$f.sha1" "$f.sha256" "$f.sha512"
-              gpg --batch --pinentry-mode loopback --passphrase "$SIGNING_KEY_PASSWORD" \
-                  --local-user "$KEY_ID" --armor --detach-sign "$f"
-              md5sum    "$f" | awk '{print $1}' > "$f.md5"
-              sha1sum   "$f" | awk '{print $1}' > "$f.sha1"
-              sha256sum "$f" | awk '{print $1}' > "$f.sha256"
-              sha512sum "$f" | awk '{print $1}' > "$f.sha512"
-            done
-          done
-
-      - name: Upload to snapshots repo
+      - name: Upload snapshot to Central Portal snapshots repo
+        if: needs.build.outputs.is_snapshot == 'true'
         env:
           USER: ${{ secrets.MAVEN_CENTRAL_USERNAME }}
           PASS: ${{ secrets.MAVEN_CENTRAL_PASSWORD }}
         run: |
-          cd staging-merged
+          cd staging
           BASE="https://central.sonatype.com/repository/maven-snapshots"
-          # Parallel uploads: 16 concurrent PUTs reuse TCP/auth handshakes and
-          # collapse upload time from ~minutes to ~seconds for hundreds of files.
           export USER PASS BASE
           upload_one() {
             f="$1"
@@ -187,8 +132,6 @@ jobs:
             echo "OK $CODE  $REL"
           }
           export -f upload_one
-          # Whitelist of known Maven artifact extensions — keeps stray files
-          # (build logs, .DS_Store, etc.) out of the upload.
           find . -type f \( -name '*.jar' -o -name '*.pom' -o -name '*.module' \
                             -o -name '*.klib' -o -name '*.aar' -o -name '*.json' \
                             -o -name '*.asc' -o -name '*.md5' -o -name '*.sha1' \
@@ -198,4 +141,24 @@ jobs:
                 echo "One or more uploads failed"; exit 1;
               }
           echo ""
-          echo "Snapshot published to $BASE/"
+          echo "Snapshot ${{ needs.build.outputs.version }} published."
+
+      - name: Bundle and upload release to Central Portal (USER_MANAGED)
+        if: needs.build.outputs.is_snapshot == 'false'
+        env:
+          USER: ${{ secrets.MAVEN_CENTRAL_USERNAME }}
+          PASS: ${{ secrets.MAVEN_CENTRAL_PASSWORD }}
+        run: |
+          cd staging && zip -r ../bundle.zip . && cd ..
+          TOKEN=$(printf '%s:%s' "$USER" "$PASS" | base64 -w0)
+          HTTP_CODE=$(curl -sS -o response.txt -w '%{http_code}' \
+            -X POST \
+            -H "Authorization: Bearer $TOKEN" \
+            -F "bundle=@bundle.zip" \
+            "https://central.sonatype.com/api/v1/publisher/upload?name=stormify-${GITHUB_REF_NAME}&publishingType=USER_MANAGED")
+          echo "HTTP $HTTP_CODE"
+          cat response.txt
+          if [ "$HTTP_CODE" != "201" ] && [ "$HTTP_CODE" != "200" ]; then
+            exit 1
+          fi
+          echo "Deployment staged. Approve at https://central.sonatype.com/publishing/deployments"

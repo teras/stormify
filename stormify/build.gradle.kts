@@ -20,20 +20,18 @@ kotlin {
     androidTarget {
         publishLibraryVariants("release")
     }
-    // Native targets are registered conditionally based on the build host.
-    // Linux/mingw require cross-compilers (gcc-aarch64-linux-gnu, x86_64-w64-mingw32-gcc)
-    // which are only available on Linux. Apple targets require macOS SDK.
-    // Splitting avoids triggering cinterop commonization on targets whose
-    // native libraries can't be built on the current host.
-    val osName = System.getProperty("os.name")
-    val isMac = osName.startsWith("Mac")
-    val isLinux = osName.startsWith("Linux")
+    // Linux/Windows native targets are always declared — Kotlin/Native ships
+    // its own LLVM-based cross-compile toolchain so they build from any host.
+    // The C library (libkdbc) requires system cross-compilers though; install
+    // via `brew tap messense/macos-cross-toolchains && brew install
+    // x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu mingw-w64` on macOS,
+    // or `apt install gcc-aarch64-linux-gnu mingw-w64` on Linux.
+    linuxX64()
+    linuxArm64()
+    mingwX64()
 
-    if (isLinux) {
-        linuxX64()
-        linuxArm64()
-        mingwX64()
-    }
+    // Apple targets need the macOS SDK + Xcode — only declarable on macOS.
+    val isMac = System.getProperty("os.name").startsWith("Mac")
     if (isMac) {
         iosArm64()
         iosX64()

@@ -69,9 +69,7 @@ kotlin {
     // Linux/mingw require GCC cross-compilers; Apple targets require macOS SDK.
     // Splitting avoids triggering cinterop commonization / native builds on
     // targets whose toolchain isn't available on the current host.
-    val osName = System.getProperty("os.name")
-    val isMac = osName.startsWith("Mac")
-    val isLinux = osName.startsWith("Linux")
+    val isMac = System.getProperty("os.name").startsWith("Mac")
 
     fun org.jetbrains.kotlin.gradle.plugin.mpp.KotlinNativeTarget.kdbcCinterop(libDir: String) {
         compilations.getByName("main") {
@@ -86,18 +84,25 @@ kotlin {
         }
     }
 
-    if (isLinux) {
-        linuxX64           { kdbcCinterop("src/c") }
-        mingwX64           { kdbcCinterop("src/c/build-mingw") }
-        linuxArm64         { kdbcCinterop("src/c/build-arm64") }
-    }
+    // libkdbc layout:
+    //   src/c                 — host-native build (Linux libkdbc on Linux, mac libkdbc on macOS)
+    //   src/c/build-linux     — Linux x64 cross-compile (used when host is not Linux)
+    //   src/c/build-arm64     — Linux ARM64 cross-compile
+    //   src/c/build-mingw     — Windows x64 cross-compile
+    //   src/c/build-ios       — iOS device
+    //   src/c/build-ios-sim   — iOS simulator
+    val linuxX64LibDir = if (isMac) "src/c/build-linux" else "src/c"
+
+    linuxX64    { kdbcCinterop(linuxX64LibDir) }
+    mingwX64    { kdbcCinterop("src/c/build-mingw") }
+    linuxArm64  { kdbcCinterop("src/c/build-arm64") }
 
     if (isMac) {
-        macosArm64  { kdbcCinterop("src/c") }
-        macosX64    { kdbcCinterop("src/c") }
+        macosArm64        { kdbcCinterop("src/c") }
+        macosX64          { kdbcCinterop("src/c") }
         iosSimulatorArm64 { kdbcCinterop("src/c/build-ios-sim") }
-        iosArm64    { kdbcCinterop("src/c/build-ios") }
-        iosX64      { kdbcCinterop("src/c/build-ios-sim") }
+        iosArm64          { kdbcCinterop("src/c/build-ios") }
+        iosX64            { kdbcCinterop("src/c/build-ios-sim") }
     }
 
     // Target Java 8 bytecode for the JVM artifact (matches stormify's Java 8 floor).

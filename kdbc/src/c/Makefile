@@ -2,15 +2,19 @@
 # Cross-compilation support
 #
 # TARGET selects the toolchain:
-#   native  (default) — host gcc, produces Linux x64 binaries
+#   native  (default) — host gcc/clang, produces binaries for the host OS
+#   linux   — x86_64-linux-gnu-gcc, cross-compiles Linux x64 from non-Linux hosts
 #   mingw   — x86_64-w64-mingw32-gcc, produces Windows x64 binaries
 #   arm64   — aarch64-linux-gnu-gcc, produces Linux ARM64 binaries
+#   ios     — Xcode clang, produces iOS device (arm64) binaries
+#   ios-sim — Xcode clang, produces iOS simulator (arm64) binaries
 #
 # BUILDDIR places all outputs (objects, libraries) in a separate directory
 # so multiple targets can coexist without cleaning between builds.
 #
 # Examples:
-#   make lib                                        # Linux x64 (default)
+#   make lib                                        # native host
+#   make TARGET=linux BUILDDIR=build-linux lib      # Linux x64 (cross-compile)
 #   make TARGET=mingw BUILDDIR=build-mingw lib      # Windows x64
 #   make TARGET=arm64 BUILDDIR=build-arm64 lib      # Linux ARM64
 # ---------------------------------------------------------------------------
@@ -23,6 +27,11 @@ ifeq ($(TARGET),mingw)
   AR       = x86_64-w64-mingw32-ar
   LDFLAGS  = -lpthread
   LIB_SHARED = $(BUILDDIR)/libkdbc.dll
+else ifeq ($(TARGET),linux)
+  CC       = x86_64-linux-gnu-gcc
+  AR       = x86_64-linux-gnu-ar
+  LDFLAGS  = -ldl -lpthread
+  LIB_SHARED = $(BUILDDIR)/libkdbc.so
 else ifeq ($(TARGET),arm64)
   CC       = aarch64-linux-gnu-gcc
   AR       = aarch64-linux-gnu-ar

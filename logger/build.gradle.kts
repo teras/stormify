@@ -18,18 +18,11 @@ kotlin {
     androidTarget {
         publishLibraryVariants("release")
     }
-    // Native targets are registered conditionally based on the build host —
-    // see the comment in stormify/build.gradle.kts for rationale.
-    val osName = System.getProperty("os.name")
-    val isMac = osName.startsWith("Mac")
-    val isLinux = osName.startsWith("Linux")
-
-    if (isLinux) {
-        linuxX64()
-        linuxArm64()
-        mingwX64()
-    }
-    if (isMac) {
+    // See the comment in stormify/build.gradle.kts for the target rationale.
+    linuxX64()
+    linuxArm64()
+    mingwX64()
+    if (System.getProperty("os.name").startsWith("Mac")) {
         iosArm64()
         iosX64()
         iosSimulatorArm64()
