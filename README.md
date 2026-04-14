@@ -4,6 +4,13 @@
 
 # Stormify
 
+<p align="center">
+  <a href="https://central.sonatype.com/artifact/onl.ycode/stormify-jvm"><img src="https://img.shields.io/maven-central/v/onl.ycode/stormify-jvm?style=flat-square&logo=apachemaven&logoColor=white&label=Maven%20Central&color=c71a36" alt="Maven Central"></a>
+  <a href="https://github.com/teras/stormify/blob/main/LICENSE.md"><img src="https://img.shields.io/badge/License-Apache%202.0-blue?style=flat-square" alt="License"></a>
+  <img src="https://img.shields.io/badge/Kotlin-2.2.20-7f52ff?style=flat-square&logo=kotlin&logoColor=white" alt="Kotlin">
+  <img src="https://img.shields.io/badge/Platforms-JVM%20%7C%20Native%20%7C%20Android%20%7C%20iOS-4c8cbf?style=flat-square" alt="Platforms">
+</p>
+
 Stormify is a flexible ORM library for Kotlin Multiplatform that simplifies database interactions with minimal configuration. It operates and performs CRUD operations on plain Kotlin classes without requiring extensive annotations or XML setups, as long as field names match database columns.
 
 Designed for developers seeking a simple yet powerful ORM, Stormify excels in projects that favor convention over configuration, allowing for minimal setup and clean, straightforward code.
@@ -26,6 +33,13 @@ Designed for developers seeking a simple yet powerful ORM, Stormify excels in pr
 - **Paginated Views**: `PagedList<T>` for data grids and pickers — column filters, sorting, FK traversal, aggregations, facet counts, and streaming iteration over very large result sets.
 - **Stored Procedures**: Call stored procedures with input, output, and bidirectional parameters.
 - **Support for Composite Keys**: Handle tables with composite primary keys effortlessly.
+
+<p align="center">
+  <a href="https://stormify.org/"><img src="https://img.shields.io/badge/Homepage-stormify.org-1e88e5?style=flat-square&logo=firefox&logoColor=white" alt="Homepage"></a>
+  <a href="https://stormify.org/docs/"><img src="https://img.shields.io/badge/Docs-Guide-43a047?style=flat-square&logo=readthedocs&logoColor=white" alt="Docs"></a>
+  <a href="https://stormify.org/docs/api-stormify/"><img src="https://img.shields.io/badge/API-Reference-fb8c00?style=flat-square&logo=kotlin&logoColor=white" alt="API"></a>
+  <a href="https://github.com/teras/stormify/tree/main/examples"><img src="https://img.shields.io/badge/Examples-Samples-8e24aa?style=flat-square&logo=github&logoColor=white" alt="Examples"></a>
+</p>
 
 ## Installation
 
