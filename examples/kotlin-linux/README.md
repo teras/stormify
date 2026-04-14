@@ -17,7 +17,28 @@ The `Task` entity extends `AutoTable` with `by db()` delegates for automatic laz
 - **Transaction DSL** with automatic rollback on exception
 - **Raw SQL JOIN query** returning `Map<String, Any?>` results
 
+## Requirements
+
+The native SQLite driver loads `libsqlite3.so.0` at runtime:
+
+```bash
+# Debian / Ubuntu
+sudo apt install libsqlite3-0
+
+# Arch / Manjaro
+sudo pacman -S sqlite
+```
+
 ## Build & Run
+
+Release build (optimized, stripped):
+
+```bash
+gradle linkReleaseExecutableLinuxX64
+./build/bin/linuxX64/releaseExecutable/stormify-kotlin-linux-demo.kexe
+```
+
+Or build + run in one step (debug):
 
 ```bash
 gradle runDebugExecutableLinuxX64

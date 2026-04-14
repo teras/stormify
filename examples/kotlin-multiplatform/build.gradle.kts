@@ -24,6 +24,22 @@ kotlin {
         }
     }
 
+    mingwX64 {
+        binaries {
+            executable {
+                entryPoint = "demo.main"
+            }
+        }
+    }
+
+    macosArm64 {
+        binaries {
+            executable {
+                entryPoint = "demo.main"
+            }
+        }
+    }
+
     jvmToolchain(8)
 
     sourceSets {
@@ -41,26 +57,30 @@ kotlin {
     }
 }
 
-// Annotation processor generates entity metadata (required for native, optional for JVM)
+// Per-target annproc registration (not kspCommonMainMetadata): the generated Paths
+// emit @JvmField / @get:JvmName which are @OptionalExpectation in kotlin.jvm and
+// cannot be referenced from non-JVM source sets.
 dependencies {
-    add("kspCommonMainMetadata", "onl.ycode:annproc:2.0.0")
+    add("kspJvm", "onl.ycode:annproc:2.0.0")
+    add("kspLinuxX64", "onl.ycode:annproc:2.0.0")
+    add("kspMingwX64", "onl.ycode:annproc:2.0.0")
+    add("kspMacosArm64", "onl.ycode:annproc:2.0.0")
 }
 
-// Make KSP-generated sources visible to platform targets only
-// (not commonMain, to avoid KSP seeing its own output as input)
-val kspGeneratedDir = "build/generated/ksp/metadata/commonMain/kotlin"
+// Make KSP-generated sources visible to each target's main source set.
 kotlin.sourceSets.named("jvmMain") {
-    kotlin.srcDir(kspGeneratedDir)
+    kotlin.srcDir("build/generated/ksp/jvm/jvmMain/kotlin")
 }
 kotlin.sourceSets.named("linuxX64Main") {
-    kotlin.srcDir(kspGeneratedDir)
+    kotlin.srcDir("build/generated/ksp/linuxX64/linuxX64Main/kotlin")
+}
+kotlin.sourceSets.named("mingwX64Main") {
+    kotlin.srcDir("build/generated/ksp/mingwX64/mingwX64Main/kotlin")
+}
+kotlin.sourceSets.named("macosArm64Main") {
+    kotlin.srcDir("build/generated/ksp/macosArm64/macosArm64Main/kotlin")
 }
 
-tasks.matching { it.name == "compileKotlinJvm" || it.name == "compileKotlinLinuxX64" }.configureEach {
-    dependsOn("kspCommonMainKotlinMetadata")
-}
-
-// Ensure clean invalidates KSP caches so a full rebuild regenerates entity metadata
 tasks.named("clean") {
     doLast {
         delete("build/kspCaches")
