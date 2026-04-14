@@ -9,6 +9,8 @@ data class TestDatabase(
     val dataSource: DataSource,
     /** Max blob size the platform can read back via cursor/resultset. 0 = unlimited. */
     val maxBlobTestSize: Int = 0,
+    /** Optional cleanup invoked by TestHelper.withDb after the test body runs. */
+    val close: (() -> Unit)? = null,
 )
 
 expect fun createTestDatabases(): List<TestDatabase>

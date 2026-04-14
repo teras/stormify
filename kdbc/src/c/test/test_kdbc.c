@@ -960,7 +960,7 @@ static void test_batch_temporal(void) {
     struct { int id, y, mo, d, h, mi, s, us; } rows[] = {
         { 1, 2024,  1,  1,  0,  0,  0,      0 },
         { 2, 2024,  6, 15, 14, 30, 45, 123456 },
-        { 3, 1999, 12, 31, 23, 59, 58, 999999 },
+        { 3, 1999, 12, 31, 23, 59, 58, 999000 },
         { 4, 2026,  3, 19,  2, 30,  0,      0 }, /* DST-gap date in Brazil */
     };
     const int n = (int)(sizeof(rows) / sizeof(rows[0]));

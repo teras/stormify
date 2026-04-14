@@ -227,7 +227,7 @@ jobs:
       - name: Install runtime libraries and cross-compilers
         run: |
           sudo apt-get update
-          sudo apt-get install -y libsqlite3-0 libpq5 libmariadb3 libsybdb5 libaio1t64 mingw-w64
+          sudo apt-get install -y libsqlite3-0 libpq5 libmariadb3 libsybdb5 libaio1t64 mingw-w64 gcc-aarch64-linux-gnu
           sudo ln -sf /lib/x86_64-linux-gnu/libaio.so.1t64 /lib/x86_64-linux-gnu/libaio.so.1
           git clone --depth 1 --branch v5.6.4 https://github.com/oracle/odpi.git /tmp/odpi
           make -C /tmp/odpi -j4
@@ -352,7 +352,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        db: [sqlite, postgresql, postgresql9, mysql, mysql5, mariadb, oracle, oracle11, mssql]
+        # mysql5, mssql, oracle, oracle11 have no linux/arm64 Docker images; excluded.
+        db: [sqlite, postgresql, postgresql9, mysql, mariadb]
 
     name: linux-arm64 / ${{ matrix.db }}
 
@@ -392,3 +393,96 @@ jobs:
       - name: Stop database
         if: always() && matrix.db != 'sqlite'
         run: testing/test.sh down ${{ matrix.db }}
+
+  # ---------------------------------------------------------------------------
+  # macOS — JVM + native (SQLite) + iOS cross-compile
+  #
+  # macos-latest is arm64 (Apple Silicon). macos-13 is Intel (x64).
+  # Native drivers beyond SQLite would need Homebrew (libpq, libmariadb, etc.);
+  # limited to SQLite here, which ships with macOS.
+  # ---------------------------------------------------------------------------
+
+  macos-jvm:
+    runs-on: macos-latest
+    name: macos / jvm-sqlite
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # Gradle toolchain spec requires both JDK 8 (for test execution, JVM 1.8 target)
+      # and JDK 17 (to run Gradle itself). On Linux runners JDK 8 is preinstalled;
+      # on macOS it is not, so we install it explicitly.
+      # Zulu distributes JDK 8 for Apple Silicon (arm64); Temurin does not.
+      - name: Set up JDKs
+        uses: actions/setup-java@v4
+        with:
+          java-version: |
+            8
+            17
+          distribution: 'zulu'
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '9.3.1'
+
+      - name: Run JVM tests (SQLite)
+        run: testing/test.sh jvm sqlite
+
+  macos-native:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            target: MacosArm64
+          - os: macos-13
+            target: MacosX64
+
+    name: macos / ${{ matrix.target }} build
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '9.3.1'
+
+      # No macos*Test source set exists; compile main code only.
+      - name: Compile Kotlin/Native ${{ matrix.target }}
+        run: gradle :stormify:compileKotlin${{ matrix.target }} --console=plain
+
+  ios-build:
+    runs-on: macos-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [IosArm64, IosX64, IosSimulatorArm64]
+
+    name: ios / ${{ matrix.target }} build
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '9.3.1'
+
+      # No ios*Test source set exists; compile main code only.
+      - name: Compile iOS target
+        run: gradle :stormify:compileKotlin${{ matrix.target }} --console=plain
