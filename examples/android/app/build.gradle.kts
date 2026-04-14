@@ -70,3 +70,9 @@ dependencies {
     implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.8.7")
     debugImplementation("androidx.compose.ui:ui-tooling")
 }
+
+tasks.named("clean") {
+    doLast {
+        delete("build/kspCaches")
+    }
+}
