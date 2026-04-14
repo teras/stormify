@@ -30,10 +30,9 @@ class PagedList<T : Any> : PagedListBase<T> {
         /**
          * Global input parser for all PagedList instances. Backed by
          * [PagedListBase.defaultInputParser] — changing either reflects in both.
-         * @see InputParser
          */
         @JvmStatic
-        var defaultInputParser: InputParser
+        var defaultInputParser: InputParser?
             get() = PagedListBase.defaultInputParser
             set(value) {
                 PagedListBase.defaultInputParser = value

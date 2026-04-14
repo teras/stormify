@@ -52,7 +52,7 @@ internal object DefaultDataConverter {
     private fun withParser(
         converter: (String, String, SqlArgsCollector) -> String
     ): Converter =
-        { col, input, parser, args -> converter(col, parser.parse(input, Column.Type.TEXT), args) }
+        { col, input, parser, args -> converter(col, parser(input, Column.Type.TEXT), args) }
 
     private fun textConverter(
         dialect: SqlDialect,
@@ -213,7 +213,7 @@ internal object DefaultDataConverter {
         if ((bigger || smaller || biggerOrEqual || smallerOrEqual) && dots >= 0)
             throw SQLException("Cannot use '...' together with '<' or '>'")
 
-        fun transform(raw: String) = parser.parse(part(raw, userInput), type)
+        fun transform(raw: String) = parser(part(raw, userInput), type)
 
         return when {
             bigger || smaller -> {

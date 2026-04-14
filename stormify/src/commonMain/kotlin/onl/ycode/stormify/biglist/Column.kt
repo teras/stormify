@@ -129,12 +129,11 @@ class Column internal constructor(
      * Used for locale-aware parsing of numbers, dates, etc.
      *
      * Resolution order: column → list → global → identity (no transformation).
-     * Set to [InputParser.NONE] (default) to fall through to the next level.
      *
      * @see PagedListBase.inputParser
      * @see PagedListBase.defaultInputParser
      */
-    var inputParser: InputParser = InputParser.NONE
+    var inputParser: InputParser? = null
 
     private var _filterValues: FilterValues? = null
 
@@ -205,36 +204,14 @@ data class FieldPath(
     override fun toString() = path
 }
 
-/**
- * Transforms raw user input before it reaches the database query.
- *
- * Use this to handle locale-specific formatting of numbers, dates, etc.
- * For example, converting `"1.234,56"` (Greek locale) to `"1234.56"`,
- * or `"31/12/2026"` to `"2026-12-31"`.
- *
- * Set at three levels (resolution order: column → list → global):
- * - [Column.inputParser] — per column
- * - [PagedListBase.inputParser] — per list
- * - [PagedListBase.defaultInputParser] — global for all lists
- */
-fun interface InputParser {
-    /** Transforms [input] — the raw filter text — into the form the database expects. */
-    fun parse(input: String, type: Column.Type): String
 
-    /** Holder for the [NONE] sentinel and any future shared [InputParser] instances. */
-    companion object {
-        /**
-         * Sentinel parser that passes every filter through unchanged. Assigning this
-         * to a column / list / global parser slot means "no custom parsing at this
-         * level — fall through to the next level in the resolution chain".
-         *
-         * Because the field is `@JvmField`, Java callers can write
-         * `InputParser.NONE` directly without going through a getter.
-         */
-        @JvmField
-        val NONE: InputParser = InputParser { input, _ -> input }
-    }
-}
+/**
+ * Transforms user filter input before it reaches the database — e.g. locale-aware
+ * number/date parsing. Resolution chain: [Column.inputParser] → [PagedListBase.inputParser]
+ * → [PagedListBase.defaultInputParser] → identity.
+ */
+typealias InputParser = (String, Column.Type) -> String
+
 
 /**
  * Callback used by [SqlGenerator] implementations to stage a bind parameter for the

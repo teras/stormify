@@ -61,7 +61,8 @@ abstract class PagedListBase<T : Any> internal constructor(
 
     @Transient internal var _stormify: Stormify? = null
 
-    override fun onAttached() {
+    override fun attachTo(stormify: Stormify) {
+        _stormify = stormify
         // The attached Stormify may have different naming policies or registered entities
         // than whatever resolved the cached state previously. Drop the cached metadata
         // and query tree so they get rebuilt on next access.
@@ -117,10 +118,8 @@ abstract class PagedListBase<T : Any> internal constructor(
 
     /**
      * Input parser for this list. Overrides [defaultInputParser].
-     * Set to [InputParser.NONE] (default) to fall through to the global level.
-     * @see InputParser
      */
-    var inputParser: InputParser = InputParser.NONE
+    var inputParser: InputParser? = null
 
     /**
      * Whether the query should return only distinct results.
@@ -483,9 +482,9 @@ abstract class PagedListBase<T : Any> internal constructor(
             val parser = resolveInputParser(column)
             val orParts = mutableListOf<String>()
 
-            // Wrap custom sqlGenerator to apply the InputParser before it sees the value
+            // Wrap custom sqlGenerator to apply the input parser before it sees the value
             fun wrapUserGenerator(gen: SqlGenerator): (String, String, InputParser, SqlArgsCollector) -> String =
-                { col, input, p, a -> gen.generate(col, p.parse(input, column.type), a) }
+                { col, input, p, a -> gen.generate(col, p(input, column.type), a) }
 
             if (column.rawExpression != null) {
                 // Raw column
@@ -633,17 +632,15 @@ abstract class PagedListBase<T : Any> internal constructor(
     }
 
     internal fun resolveInputParser(column: Column): InputParser =
-        if (column.inputParser !== InputParser.NONE) column.inputParser
-        else if (inputParser !== InputParser.NONE) inputParser
-        else defaultInputParser
+        column.inputParser ?: inputParser ?: defaultInputParser ?: { s, _ -> s }
 
     internal companion object {
         // Backing storage for the user-facing `PagedList.defaultInputParser`
         // wrappers (jvmBasedMain and nativeMain). Not intended for direct user
         // access — go through `PagedList.defaultInputParser` instead.
-        internal var defaultInputParser: InputParser = InputParser.NONE
+        internal var defaultInputParser: InputParser? = null
 
         // Classloader-leak cleanup hook — on JVM, invoked by `StormifyLifecycle.clear()`.
-        internal fun clearDefaultInputParser() { defaultInputParser = InputParser.NONE }
+        internal fun clearDefaultInputParser() { defaultInputParser = null }
     }
 }

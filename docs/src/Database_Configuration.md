@@ -114,50 +114,6 @@ Stormify connects to your database through a data source. On JVM, it accepts any
     SQLite — enable them with `db.execSQL("PRAGMA foreign_keys = ON")` before
     creating the Stormify instance.
 
-### Using Different Data Sources
-
-On JVM, Stormify is compatible with any JDBC data source. Simply configure the data source according to your requirements and create a `Stormify` (Kotlin) or `StormifyJ` (Java) instance with it.
-
-## Environment Setup
-
-Stormify can be configured through configuration files or programmatically within your application code.
-
-### Configuration Files
-
-You can store configuration settings in files such as `application.properties`. Common configuration options include database URL, username, password, and connection pool settings.
-
-```properties
-database.url=jdbc:mysql://localhost:3306/yourdb
-database.username=username
-database.password=password
-database.pool.size=10
-```
-
-### Programmatic Configuration
-
-=== "Kotlin"
-
-    ```kotlin
-    val config = HikariConfig().apply {
-        jdbcUrl = "jdbc:mysql://localhost:3306/yourdb"
-        username = "username"
-        password = "password"
-    }
-    val dataSource = HikariDataSource(config)
-    val stormify = Stormify(dataSource)
-    ```
-
-=== "Java"
-
-    ```java
-    HikariConfig config = new HikariConfig();
-    config.setJdbcUrl("jdbc:mysql://localhost:3306/yourdb");
-    config.setUsername("username");
-    config.setPassword("password");
-    HikariDataSource dataSource = new HikariDataSource(config);
-    StormifyJ stormify = new StormifyJ(dataSource);
-    ```
-
 ### Default Instance
 
 Several Stormify APIs — the **CRUDTable** and **Extension** styles for CRUD
@@ -276,10 +232,14 @@ Tuning connection pool settings such as the maximum pool size, idle connections,
 
 ## Native Runtime Libraries
 
-On native targets (Linux x64, Linux ARM64, Windows x64), Stormify loads database
-client libraries dynamically at runtime. Only install the libraries for the
-databases you actually use. If a library is missing, Stormify reports
-"driver not available" for that database — other drivers continue to work normally.
+On native targets (Linux x64, Linux ARM64, Windows x64, macOS Apple Silicon, macOS
+Intel), Stormify loads database client libraries dynamically at runtime. Only install
+the libraries for the databases you actually use. If a library is missing, Stormify
+reports "driver not available" for that database — other drivers continue to work
+normally.
+
+**iOS** is SQLite-only and uses the platform's built-in `libsqlite3` — nothing to
+install. The rest of this section does not apply to iOS.
 
 ### SQLite
 
@@ -301,6 +261,10 @@ No external library needed on most systems — SQLite is typically bundled with 
     (Precompiled Binaries for Windows, 64-bit DLL) and place it next to your
     application or on `PATH`.
 
+=== "macOS"
+
+    SQLite ships with macOS — no installation needed.
+
 ### PostgreSQL
 
 === "Linux"
@@ -319,6 +283,16 @@ No external library needed on most systems — SQLite is typically bundled with 
     from EDB and extract `libpq.dll` (and its dependencies `libssl-3-x64.dll`,
     `libcrypto-3-x64.dll`, `libintl-9.dll`, `libiconv-2.dll`) from the `pgsql/bin/`
     directory. Place them next to your application or on `PATH`.
+
+=== "macOS"
+
+    ```bash
+    brew install libpq
+    ```
+
+    Homebrew does not symlink `libpq` into the default library path by default.
+    Either run `brew link --force libpq` or add its lib directory to
+    `DYLD_LIBRARY_PATH` at runtime.
 
 ### MariaDB / MySQL
 
@@ -346,6 +320,12 @@ The MariaDB Connector/C client library works with both MariaDB and MySQL servers
     authentication plugin (included in the Connector/C MSI) in the same
     directory as `libmariadb.dll`.
 
+=== "macOS"
+
+    ```bash
+    brew install mariadb-connector-c
+    ```
+
 ### MS SQL Server (via FreeTDS)
 
 === "Linux"
@@ -363,11 +343,17 @@ The MariaDB Connector/C client library works with both MariaDB and MySQL servers
     FreeTDS does not provide official Windows builds. Install via
     [MSYS2](https://www.msys2.org/):
 
-    ```
+    ```bash
     pacman -S mingw-w64-x86_64-freetds
     ```
 
     Copy `libsybdb-5.dll` from `mingw64/bin/` next to your application.
+
+=== "macOS"
+
+    ```bash
+    brew install freetds
+    ```
 
 ### Oracle
 
@@ -395,7 +381,7 @@ Oracle support requires two components:
 
 === "Windows"
 
-    ```
+    ```bash
     # 1. Build ODPI-C from source (requires MinGW or Visual Studio)
     git clone --depth 1 --branch v5.6.4 https://github.com/oracle/odpi.git
     cd odpi
@@ -405,6 +391,20 @@ Oracle support requires two components:
     # 2. Download Oracle Instant Client basic-lite for Windows x64
     #    https://www.oracle.com/database/technologies/instant-client/winx64-64-downloads.html
     # Unzip and place oci.dll (and supporting ora*.dll files) next to your application or on PATH
+    ```
+
+=== "macOS"
+
+    ```bash
+    # 1. Build and install ODPI-C from source
+    git clone --depth 1 --branch v5.6.4 https://github.com/oracle/odpi.git
+    cd odpi && make -j4 && sudo make install PREFIX=/usr/local && cd .. && rm -rf odpi
+
+    # 2. Download Oracle Instant Client basic-lite for macOS
+    #    https://www.oracle.com/database/technologies/instant-client/macos-arm64-downloads.html  (Apple Silicon)
+    #    https://www.oracle.com/database/technologies/instant-client/macos-intel-x86-downloads.html  (Intel)
+    # Unzip somewhere (e.g. /opt/oracle/instantclient_*) and add that directory to
+    # DYLD_LIBRARY_PATH at runtime.
     ```
 
 ## Application Server Deployment (JVM only)

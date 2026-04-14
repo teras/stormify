@@ -1,9 +1,9 @@
 # KDBC Overview
 
 KDBC (Kotlin Database Connectivity) is a unified database connectivity layer that works across JVM, Linux
-(native), Android, iOS, and macOS. Think of it as "JDBC, but cross-platform" -- it provides the same
-familiar interfaces (DataSource, Connection, PreparedStatement, ResultSet) on every platform Stormify
-supports.
+(x64 and ARM64), Windows, macOS, iOS, and Android. Think of it as "JDBC, but cross-platform" -- it provides
+the same familiar interfaces (DataSource, Connection, PreparedStatement, ResultSet) on every platform
+Stormify supports.
 
 ## Two Faces of KDBC
 
@@ -17,9 +17,9 @@ via `dlopen`. You can use it from any C or C++ project without Kotlin.
 `PreparedStatement`, `ResultSet`, etc.) with platform-specific implementations:
 
 - **JVM**: wraps `java.sql.*` (zero overhead delegation to JDBC)
-- **Native (Linux)**: wraps the C library above via Kotlin/Native cinterop
+- **Native (Linux x64/ARM64, Windows x64, macOS)**: wraps the C library above via Kotlin/Native cinterop — all 5 drivers available
 - **Android**: wraps `android.database.sqlite.SQLiteDatabase`
-- **iOS / macOS**: wraps SQLite via cinterop (same C driver as Linux)
+- **iOS**: wraps SQLite via cinterop (same C driver as other native targets)
 
 ## Architecture
 
@@ -52,11 +52,11 @@ This means:
 
 | Database | Driver Constant | Native Library | Platforms |
 |----------|----------------|----------------|-----------|
-| SQLite | `KDBC_SQLITE` | libsqlite3 | Linux, macOS, iOS, Android |
-| PostgreSQL | `KDBC_POSTGRES` | libpq | Linux |
-| MariaDB / MySQL | `KDBC_MARIADB` | libmariadb | Linux |
-| Oracle | `KDBC_ORACLE` | ODPI-C | Linux |
-| MS SQL Server | `KDBC_MSSQL` | FreeTDS (libsybdb) | Linux |
+| SQLite | `KDBC_SQLITE` | libsqlite3 | Linux, Windows, macOS, iOS, Android |
+| PostgreSQL | `KDBC_POSTGRES` | libpq | Linux, Windows, macOS |
+| MariaDB / MySQL | `KDBC_MARIADB` | libmariadb | Linux, Windows, macOS |
+| Oracle | `KDBC_ORACLE` | ODPI-C | Linux, Windows, macOS |
+| MS SQL Server | `KDBC_MSSQL` | FreeTDS (libsybdb) | Linux, Windows, macOS |
 
 ## Key Design Decisions
 
@@ -93,17 +93,15 @@ Different databases retrieve auto-generated keys differently. KDBC abstracts thi
 
 ## Platform Summary
 
-| Platform | Databases | Implementation | Status |
-|----------|----------|----------------|--------|
-| **JVM** | Any JDBC-compatible | Wraps `java.sql.*` | Tested |
-| **Linux (linuxX64)** | All 5 (SQLite, PG, MariaDB, Oracle, MSSQL) | C library via cinterop | Tested |
-| **Android** | SQLite | Wraps `android.database.sqlite.*` | Tested |
-| **iOS** | SQLite | C library via cinterop | Untested |
-| **macOS** | SQLite | C library via cinterop | Untested |
-
-!!! note "Native platform testing"
-    The native C library and Kotlin/Native bindings are tested on **Linux** and **Android** (via Robolectric).
-    iOS and macOS targets compile but have not been tested in production.
+| Platform | Databases | Implementation |
+|----------|----------|----------------|
+| **JVM** | Any JDBC-compatible | Wraps `java.sql.*` |
+| **Linux x64 (linuxX64)** | All 5 (SQLite, PG, MariaDB, Oracle, MSSQL) | C library via cinterop |
+| **Linux ARM64 (linuxArm64)** | All 5 | C library via cinterop |
+| **Windows x64 (mingwX64)** | All 5 | C library via cinterop |
+| **Android** | SQLite | Wraps `android.database.sqlite.*` |
+| **macOS (macosArm64, macosX64)** | All 5 | C library via cinterop |
+| **iOS (iosArm64, iosX64, iosSimulatorArm64)** | SQLite | C library via cinterop |
 
 ## What's Next
 

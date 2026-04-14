@@ -3,7 +3,7 @@
 package onl.ycode.stormify
 
 /**
- * Marker interface for objects that can hold a reference to a [Stormify] instance.
+ * Interface for objects that can be bound to a [Stormify] instance via [attachTo].
  *
  * Two kinds of library objects implement this:
  * - [StormifyEntity] (and therefore [AutoTable]) — database entities that need to know
@@ -18,9 +18,10 @@ package onl.ycode.stormify
  */
 interface StormifyAware {
     /**
-     * Called by [Stormify.attach] after the reference is set.
-     * Subclasses override this to refresh any state that depends on the attached instance
-     * (e.g. invalidate cached table metadata or query results).
+     * Binds [stormify] to this object. Implementations store the reference and
+     * may reset any state that depends on the previously-attached instance.
+     *
+     * Prefer [Stormify.attach] when you want fluent chaining (`val x = stormify.attach(obj)`).
      */
-    fun onAttached() {}
+    fun attachTo(stormify: Stormify)
 }

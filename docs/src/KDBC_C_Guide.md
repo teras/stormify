@@ -40,7 +40,7 @@ For **running** tests or applications, install the runtime libraries for the dat
 ```bash
 cd kdbc/src/c
 
-# Build static and shared libraries (Linux x64)
+# Build static and shared libraries for the host platform (Linux x64 or macOS)
 make lib
 
 # Cross-compile for Windows x64
@@ -48,6 +48,12 @@ make TARGET=mingw BUILDDIR=build-mingw lib
 
 # Cross-compile for Linux ARM64
 make TARGET=arm64 BUILDDIR=build-arm64 lib
+
+# iOS device (macOS host only)
+make TARGET=ios BUILDDIR=build-ios lib
+
+# iOS simulator (macOS host only)
+make TARGET=ios-sim BUILDDIR=build-ios-sim lib
 
 # Run test suite (SQLite in-memory by default)
 make test

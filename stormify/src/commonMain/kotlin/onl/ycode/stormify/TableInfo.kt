@@ -151,12 +151,12 @@ class TableInfo<T : Any> internal constructor(
         @Suppress("UNCHECKED_CAST")
         internal fun <T : Any> build(
             meta: EntityMeta<T>,
-            namingPolicy: NamingPolicy,
+            namingPolicy: (String) -> String,
             blacklist: Set<String>,
             pkResolvers: Collection<(String, String) -> Boolean>
         ): TableInfo<T> {
             val tableName = meta.tableNameOverride?.takeIf { it.isNotBlank() }
-                ?: namingPolicy.convert(meta.type.simpleName ?: meta.type.toString())
+                ?: namingPolicy(meta.type.simpleName ?: meta.type.toString())
 
             val activeProps = meta.properties
                 .filter { !it.isTransient && it.name !in blacklist }
@@ -165,7 +165,7 @@ class TableInfo<T : Any> internal constructor(
 
             val resolved = activeProps.map { prop ->
                 val dbName = prop.dbNameOverride?.takeIf { it.isNotBlank() }
-                    ?: namingPolicy.convert(prop.name)
+                    ?: namingPolicy(prop.name)
                 val isPk = if (hasPkAnnotation) prop.isPrimaryKey
                 else pkResolvers.any { resolver -> resolver(tableName, prop.name) }
                 ResolvedProperty(

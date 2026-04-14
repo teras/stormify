@@ -870,7 +870,7 @@ open class PagedListTest {
         val list = PagedList<TestC>()
         val col = list.addColumn("id")
         // Simulate Greek locale: "1.000" means 1000, not 1.000
-        col.inputParser = InputParser { input, _ -> input.replace(".", "") }
+        col.inputParser = { input, _ -> input.replace(".", "") }
         col.filter = "> 1.000"
 
         // Without parser: "> 1.000" → "> 1.000" (error or wrong result)
@@ -883,7 +883,7 @@ open class PagedListTest {
     fun testInputParserPerList() = withDb("PAGED-PARSER-LIST") { s ->
         setupTable(s, 20)
         val list = PagedList<TestC>()
-        list.inputParser = InputParser { input, type ->
+        list.inputParser = { input, type ->
             if (type == Column.NUMERIC) input.replace(".", "") else input
         }
         val col = list.addColumn("id")
@@ -897,7 +897,7 @@ open class PagedListTest {
         val oldParser = PagedList.defaultInputParser
         try {
             // Simulate locale where dot is thousand separator
-            PagedList.defaultInputParser = InputParser { input, type ->
+            PagedList.defaultInputParser = { input, type ->
                 if (type == Column.NUMERIC) input.replace(".", "") else input
             }
             setupTable(s, 20)
@@ -916,16 +916,16 @@ open class PagedListTest {
         val oldParser = PagedList.defaultInputParser
         try {
             // Global: replace comma
-            PagedList.defaultInputParser = InputParser { input, _ -> input.replace(",", ".") }
+            PagedList.defaultInputParser = { input, _ -> input.replace(",", ".") }
 
             setupTable(s, 20)
             val list = PagedList<TestC>()
             // List: replace dot
-            list.inputParser = InputParser { input, _ -> input.replace(".", "") }
+            list.inputParser = { input, _ -> input.replace(".", "") }
 
             val col = list.addColumn("id")
             // Column parser wins over list parser
-            col.inputParser = InputParser { input, _ -> input.replace("X", "1") }
+            col.inputParser = { input, _ -> input.replace("X", "1") }
             col.filter = "> X8"  // column parser: "X8" → "18"
 
             assertEquals(2, list.size) // ids 19, 20
@@ -936,7 +936,7 @@ open class PagedListTest {
 
     // --- Date InputParser ---
 
-    private val dateParser: InputParser = InputParser { input, _ ->
+    private val dateParser: InputParser = { input, _ ->
         // InputParser receives individual values only (no operators)
         // Convert dd/MM/yyyy → yyyy-MM-dd
         val parts = input.split("/")

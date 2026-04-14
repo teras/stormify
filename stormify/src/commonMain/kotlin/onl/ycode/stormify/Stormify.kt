@@ -63,7 +63,7 @@ open class Stormify(val dataSource: DataSource, vararg registrars: EntityRegistr
      * Default is [NamingPolicy.LOWER_CASE_WITH_UNDERSCORES] (snake_case).
      * Changing this only affects entities resolved after the change.
      */
-    var namingPolicy: NamingPolicy = NamingPolicy.LOWER_CASE_WITH_UNDERSCORES
+    var namingPolicy: (String) -> String = NamingPolicy.LOWER_CASE_WITH_UNDERSCORES
     // Exclude common Java/JPA base-class fields that should never be mapped to database columns
     private val blacklist = mutableSetOf("serialVersionUID", "idFieldValue", "transientId")
     private val pkResolvers = mutableMapOf<Int, (String, String) -> Boolean>()
@@ -249,24 +249,10 @@ open class Stormify(val dataSource: DataSource, vararg registrars: EntityRegistr
      * list.addColumn("name")
      * ```
      */
-    fun <T : StormifyAware> attach(target: T): T {
-        setStormifyRef(target)
-        target.onAttached()
-        return target
-    }
+    fun <T : StormifyAware> attach(target: T): T = target.also { it.attachTo(this) }
 
     private fun attachStormify(target: Any) {
-        if (target is StormifyAware) {
-            setStormifyRef(target)
-            target.onAttached()
-        }
-    }
-
-    private fun setStormifyRef(target: StormifyAware) {
-        when (target) {
-            is StormifyEntity -> target._stormify = this
-            is PagedListBase<*> -> target._stormify = this
-        }
+        if (target is StormifyAware) target.attachTo(this)
     }
 
     // --- Read operations ---

@@ -41,12 +41,12 @@ ensuring consistency across your database schema. By default, the naming policy 
     - Kotlin/Java camelCase names are converted to SCREAMING_SNAKE_CASE for the database.
     - Example: Kotlin field `userName` → DB column `USER_NAME`, class `UserAccount` → table `USER_ACCOUNT`.
 
-`NamingPolicy` is a functional interface — you can create custom implementations:
+`namingPolicy` is a functional interface — you can create custom implementations:
 
 === "Kotlin"
 
     ```kotlin
-    stormify.namingPolicy = NamingPolicy { name -> "tbl_${name.lowercase()}" }
+    stormify.namingPolicy = { name -> "tbl_${name.lowercase()}" }
     ```
 
 === "Java"

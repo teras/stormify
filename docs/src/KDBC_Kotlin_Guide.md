@@ -1,8 +1,8 @@
 # KDBC Kotlin Usage Guide
 
 KDBC provides a unified set of database interfaces for Kotlin Multiplatform. The same code compiles
-and runs on JVM (wrapping JDBC), Linux native (wrapping the C library), Android (wrapping
-`SQLiteDatabase`), and iOS/macOS (wrapping SQLite via cinterop).
+and runs on JVM (wrapping JDBC), Linux (x64 and ARM64), Windows x64, and macOS native (wrapping the
+C library — all 5 drivers), Android (wrapping `SQLiteDatabase`), and iOS (wrapping SQLite via cinterop).
 
 ## Common Interfaces
 
@@ -47,9 +47,9 @@ How you create a `DataSource` depends on the platform.
     The `JdbcDataSource` wrapper has zero overhead -- it delegates directly to the underlying
     JDBC types.
 
-=== "Native (Linux)"
+=== "Native (Linux / Windows / macOS)"
 
-    On Linux native, use `KdbcDataSource` with a standard JDBC URL. The URL is parsed and
+    On native targets, use `KdbcDataSource` with a standard JDBC URL. The URL is parsed and
     dispatched to the appropriate C driver:
 
     ```kotlin
@@ -110,9 +110,9 @@ How you create a `DataSource` depends on the platform.
     val ds = AndroidDataSource(db)
     ```
 
-=== "iOS / macOS"
+=== "iOS"
 
-    On Apple platforms, use `KdbcDataSource` with a SQLite URL:
+    On iOS, use `KdbcDataSource` with a SQLite URL (SQLite is the only supported driver):
 
     ```kotlin
     import onl.ycode.kdbc.KdbcDataSource
@@ -457,7 +457,7 @@ Stormify. Stormify accepts a KDBC `DataSource` directly:
     val stormify = Stormify(JdbcDataSource(hikariDs))
     ```
 
-=== "Native (Linux)"
+=== "Native (Linux / Windows / macOS)"
 
     ```kotlin
     import onl.ycode.kdbc.KdbcDataSource
@@ -477,7 +477,7 @@ Stormify. Stormify accepts a KDBC `DataSource` directly:
     val stormify = Stormify(AndroidDataSource(db))
     ```
 
-=== "iOS / macOS"
+=== "iOS"
 
     ```kotlin
     import onl.ycode.kdbc.KdbcDataSource

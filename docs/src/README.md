@@ -104,6 +104,8 @@ See [Database Configuration](Database_Configuration.md) for Windows and advanced
 
 ### Configure Your Database
 
+Stormify works with any JDBC `DataSource`. The examples below use HikariCP, but any connection pool or plain driver will work.
+
 === "Kotlin"
 
     ```kotlin
@@ -154,6 +156,7 @@ For a table `CREATE TABLE test (id INT PRIMARY KEY, name VARCHAR(255))`:
 === "Kotlin"
 
     ```kotlin
+    @DbTable("test")  // optional on JVM — class name is used by default
     data class Test(
         @DbField(primaryKey = true)
         var id: Int = 0,
@@ -277,6 +280,7 @@ The `examples/` directory contains self-contained demo applications:
 | **kotlin-jvm** | Kotlin JVM with `by db()` delegates | `gradle run` |
 | **kotlin-linux** | Native Linux binary (no JVM) | `gradle runDebugExecutableLinuxX64` |
 | **kotlin-multiplatform** | Shared code running on JVM and native | `gradle jvmRun` |
+| **android** | Compose app with ViewModel, CRUD, lazy refs, enums | `gradle :app:installDebug` |
 
 Each example demonstrates CRUD operations, enum properties with custom values, entity references with lazy loading, transactions with rollback, and raw SQL queries using an in-memory SQLite database.
 

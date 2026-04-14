@@ -52,8 +52,8 @@ time to bind the list to a specific one.
     // PagedList<Company> list = stormify.attach(new PagedList<>(Company.class));  // when not using a default instance
 
     list.addColumn(Company_.name);                                 // auto-detect TEXT
-    list.addColumn(Company_.contactPerson.firstName,               // OR across FK-traversed fields
-                   Company_.contactPerson.lastName);
+    list.addColumn(Company_.contactPerson().firstName,             // OR across FK-traversed fields
+                   Company_.contactPerson().lastName);
     list.addRawColumn("SUM(order_total)", Column.NUMERIC);
 
     list.getColumn(0).setFilter("Acme");
@@ -104,11 +104,18 @@ typed paths for free.
 
 A column is the unit of filtering and sorting. It can be backed by:
 
-- **A single entity field** — `addColumn(Company_.name)`
-- **Multiple fields with OR semantics** — `addColumn(Person_.firstName, Person_.lastName)`
-  filters with `firstName LIKE ? OR lastName LIKE ?`
-- **A foreign-key path** — `addColumn(Order_.customer.name)` auto-generates the JOIN
-- **A raw SQL expression** — `addRawColumn("SUM(total)", Column.NUMERIC)` for calculated columns
+- **A single entity field**
+    - `addColumn(Company_.name)`
+- **A foreign-key path** — auto-generates the JOIN
+    - `addColumn(Order_.customer.name)`
+- **Any combination of the above** — pass any number of paths on the same column;
+  they OR-filter together, and you can freely mix scalar fields and FK paths in the
+  same call:
+    - `addColumn(Person_.firstName, Person_.lastName)` → two scalar fields
+    - `addColumn(Order_.notes, Order_.customer.name)` → scalar field + FK path
+    - `addColumn(Order_.customer.name, Order_.shippingAddress.city)` → two FK paths
+- **A raw SQL expression** — for calculated columns
+    - `addRawColumn("SUM(total)", Column.NUMERIC)`
 
 Filters between different columns use AND semantics; multiple paths within the same
 column use OR.
@@ -130,12 +137,13 @@ column use OR.
 
     ```java
     PagedList<Order> list = new PagedList<>(Order.class);
-    Column nameCol   = list.addColumn(Order_.customer.name);
-    Column statusCol = list.addColumn(Order_.status);
+    Column nameCol   = list.addColumn(Order_.customer().name);   // FK traversal
+    Column statusCol = list.addColumn(Order_.status);            // scalar
     Column rawCol    = list.addRawColumn("total * tax_rate", Column.NUMERIC);
 
     nameCol.setFilter("Acme");
     statusCol.setFilter("ACTIVE");
+    // Both filters active → WHERE customer.name LIKE %Acme% AND status = 'ACTIVE'
     ```
 
 String paths with dot notation work too (`addColumn("customer.name")`) — useful for
@@ -418,8 +426,8 @@ so you can share it across multiple reads without re-querying.
 
 Raw user input (e.g., from a text field) often uses locale-specific formats —
 numbers like `1.234,56` (comma decimal), dates like `31/12/2026` (day-first).
-`PagedList` applies an `InputParser` (a SAM `fun interface`) that transforms the
-filter string before it reaches SQL.
+`PagedList` applies an input parser — a `(String, Column.Type) -> String` function —
+that transforms the filter string before it reaches SQL.
 
 Resolution order: **column → list → global → identity (no transformation)**.
 
@@ -427,7 +435,7 @@ Resolution order: **column → list → global → identity (no transformation)*
 
     ```kotlin
     // Global — applies to all PagedList instances unless overridden
-    PagedList.defaultInputParser = InputParser { input, type ->
+    PagedList.defaultInputParser = { input, type ->
         when (type) {
             Column.NUMERIC -> input.replace(".", "").replace(",", ".")
             Column.TEMPORAL -> flipDayMonthYear(input)
@@ -436,10 +444,10 @@ Resolution order: **column → list → global → identity (no transformation)*
     }
 
     // Per-list override
-    myList.inputParser = InputParser { input, type -> /* ... */ }
+    myList.inputParser = { input, type -> /* ... */ }
 
     // Per-column override
-    myList.getColumn(0).inputParser = InputParser { input, type -> /* ... */ }
+    myList.getColumn(0).inputParser = { input, type -> /* ... */ }
     ```
 
 === "Java"
@@ -459,13 +467,47 @@ Resolution order: **column → list → global → identity (no transformation)*
     myList.getColumn(0).setInputParser((input, type) -> /* ... */);
     ```
 
-Set to `InputParser.NONE` (the default) to fall through to the next level.
+Set to `null` (the default) to fall through to the next level.
 
-## Custom SQL Generators for Raw Columns
+## Raw Columns
 
-Raw columns can take a `SqlGenerator` — a SAM interface that produces the SQL fragment
-and stages bind parameters via a `SqlArgsCollector`. Use this to build non-trivial
-predicates over calculated expressions:
+A raw column is backed by a SQL expression instead of an entity field — useful for
+calculated values, concatenations, or expressions no entity property maps to. There
+are two forms:
+
+### Simple — just an expression and a type
+
+Pass the expression and the column type; the default converter decides the `WHERE`
+clause based on the type (`LIKE ?` for `TEXT`, `= ?` / `BETWEEN ? AND ?` for
+`NUMERIC`, date comparison for `TEMPORAL`, mapped equality for `ENUM`).
+
+=== "Kotlin"
+
+    ```kotlin
+    list.addRawColumn("firstName || ' ' || lastName")              // default TEXT → LIKE
+    list.addRawColumn("SUM(total)", Column.NUMERIC)                // numeric → = or BETWEEN
+    list.addRawColumn("YEAR(created_at)", Column.NUMERIC)
+    ```
+
+=== "Java"
+
+    ```java
+    list.addRawColumn("firstName || ' ' || lastName");             // default TEXT → LIKE
+    list.addRawColumn("SUM(total)", Column.NUMERIC);               // numeric → = or BETWEEN
+    list.addRawColumn("YEAR(created_at)", Column.NUMERIC);
+    ```
+
+This covers the majority of raw-column needs.
+
+### Custom — with a `SqlGenerator`
+
+When the default converter isn't enough, pass a `SqlGenerator` — a SAM interface
+that produces the SQL fragment and stages bind parameters via a `SqlArgsCollector`.
+Use it when you need to:
+
+- Translate the input value in a non-trivial way (e.g. `"50k"` → `50000`)
+- Emit more than one placeholder (e.g. `BETWEEN ? AND ?` with a computed upper bound)
+- Choose different SQL shapes based on the input format
 
 === "Kotlin"
 

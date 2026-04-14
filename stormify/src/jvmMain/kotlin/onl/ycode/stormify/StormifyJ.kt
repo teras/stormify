@@ -107,7 +107,7 @@ class StormifyJ(dataSource: DataSource, vararg registrars: EntityRegistrar) {
     fun getTableInfo(baseClass: Class<*>) = stormify.resolveTableInfo(baseClass.kotlin)
 
     /** Current [NamingPolicy]. See [Stormify.namingPolicy]. */
-    var namingPolicy: NamingPolicy
+    var namingPolicy: (String) -> String
         get() = stormify.namingPolicy
         set(value) { stormify.namingPolicy = value }
 

@@ -11,4 +11,8 @@ import kotlin.jvm.Transient
  */
 abstract class StormifyEntity : StormifyAware {
     @Transient internal var _stormify: Stormify? = null
+
+    override fun attachTo(stormify: Stormify) {
+        _stormify = stormify
+    }
 }

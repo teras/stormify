@@ -23,9 +23,8 @@ class PagedList<T : Any>(classType: KClass<T>) : PagedListBase<T>(classType) {
         /**
          * Global input parser for all PagedList instances. Backed by
          * [PagedListBase.defaultInputParser] — changing either reflects in both.
-         * @see InputParser
          */
-        var defaultInputParser: InputParser
+        var defaultInputParser: InputParser?
             get() = PagedListBase.defaultInputParser
             set(value) {
                 PagedListBase.defaultInputParser = value
