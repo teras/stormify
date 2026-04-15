@@ -1,13 +1,26 @@
 # PagedList: Lazy Paginated Views
 
-`PagedList<T>` is a column-based, on-demand paginated list backed by the database. It
+`PagedList<T>` is a facet-based, on-demand paginated list backed by the database. It
 targets UI scenarios — data grids, dropdown pickers, search screens — where you want to
 expose a potentially very large result set without materializing it in memory, while
-still supporting per-column filtering, sorting, and foreign-key traversal.
+still supporting per-facet filtering, sorting, and foreign-key traversal.
 
 It implements `kotlin.collections.AbstractList<T>` (and therefore Java's `List<T>`), so
 every `get(index)`, `size`, and `iterator()` call Just Works — the list loads pages
 behind the scenes.
+
+!!! warning "Use `PagedQuery` for server-side / REST use"
+
+    `PagedList` is a **stateful UI model**. Its per-facet filter/sort are mutable and
+    shared across callers, its cached page and `selected` entity have no meaning across
+    independent REST requests, and its `saveState` output was never designed as a wire
+    format — it is an internal round-trip contract.
+
+    For server-side use — REST handlers, RPC methods, any stateless request/response
+    context — use [`PagedQuery`](PagedQuery.md) instead. It shares the same underlying
+    query engine (same FK-aware filtering, sorting, raw facets, constraints) but
+    exposes a thread-safe, share-once-reuse-many API keyed exclusively by facet
+    aliases. No schema details or SQL fragments ever leak over the wire.
 
 ## Quick Start
 
@@ -20,20 +33,20 @@ time to bind the list to a specific one.
 === "Kotlin"
 
     ```kotlin
-    import onl.ycode.stormify.biglist.Column
+    import onl.ycode.stormify.biglist.Facet
     import onl.ycode.stormify.biglist.PagedList
     import db.stormify.Company_   // KSP-generated typed paths
 
     val list = PagedList<Company>()
     // val list = stormify.attach(PagedList<Company>())    // when not using a default instance
 
-    list.addColumn(Company_.name)                                 // auto-detect TEXT
-    list.addColumn(Company_.contactPerson.firstName,              // OR across FK-traversed fields
+    list.addFacet(Company_.name)                                 // auto-detect TEXT
+    list.addFacet(Company_.contactPerson.firstName,              // OR across FK-traversed fields
                    Company_.contactPerson.lastName)
-    list.addRawColumn("SUM(order_total)", Column.NUMERIC)
+    list.addSqlFacet("SUM(order_total)", Facet.NUMERIC)
 
-    list.getColumn(0).filter = "Acme"
-    list.getColumn(1).sort = Column.ASCENDING
+    list.getFacet(0).filter = "Acme"
+    list.getFacet(1).sort = Facet.ASCENDING
 
     // Consume as a normal List
     val firstCompany = list[0]                                    // triggers page load
@@ -44,20 +57,20 @@ time to bind the list to a specific one.
 === "Java"
 
     ```java
-    import onl.ycode.stormify.biglist.Column;
+    import onl.ycode.stormify.biglist.Facet;
     import onl.ycode.stormify.biglist.PagedList;
     import db.stormify.Company_;   // KSP-generated typed paths
 
     PagedList<Company> list = new PagedList<>(Company.class);
     // PagedList<Company> list = stormify.attach(new PagedList<>(Company.class));  // when not using a default instance
 
-    list.addColumn(Company_.name);                                 // auto-detect TEXT
-    list.addColumn(Company_.contactPerson().firstName,             // OR across FK-traversed fields
+    list.addFacet(Company_.name);                                 // auto-detect TEXT
+    list.addFacet(Company_.contactPerson().firstName,             // OR across FK-traversed fields
                    Company_.contactPerson().lastName);
-    list.addRawColumn("SUM(order_total)", Column.NUMERIC);
+    list.addSqlFacet("SUM(order_total)", Facet.NUMERIC);
 
-    list.getColumn(0).setFilter("Acme");
-    list.getColumn(1).setSort(Column.ASCENDING);
+    list.getFacet(0).setFilter("Acme");
+    list.getFacet(1).setSort(Facet.ASCENDING);
 
     // Consume as a normal List
     Company firstCompany = list.get(0);                            // triggers page load
@@ -100,36 +113,36 @@ package, with fields for each scalar property and nested objects for FK referenc
 On Native/Android/iOS, `annproc` is **required** anyway (for entity metadata) — you get
 typed paths for free.
 
-## Columns
+## Facets
 
-A column is the unit of filtering and sorting. It can be backed by:
+A facet is the unit of filtering and sorting. It can be backed by:
 
 - **A single entity field**
-    - `addColumn(Company_.name)`
+    - `addFacet(Company_.name)`
 - **A foreign-key path** — auto-generates the JOIN
-    - `addColumn(Order_.customer.name)`
-- **Any combination of the above** — pass any number of paths on the same column;
+    - `addFacet(Order_.customer.name)`
+- **Any combination of the above** — pass any number of paths on the same facet;
   they OR-filter together, and you can freely mix scalar fields and FK paths in the
   same call:
-    - `addColumn(Person_.firstName, Person_.lastName)` → two scalar fields
-    - `addColumn(Order_.notes, Order_.customer.name)` → scalar field + FK path
-    - `addColumn(Order_.customer.name, Order_.shippingAddress.city)` → two FK paths
-- **A raw SQL expression** — for calculated columns
-    - `addRawColumn("SUM(total)", Column.NUMERIC)`
+    - `addFacet(Person_.firstName, Person_.lastName)` → two scalar fields
+    - `addFacet(Order_.notes, Order_.customer.name)` → scalar field + FK path
+    - `addFacet(Order_.customer.name, Order_.shippingAddress.city)` → two FK paths
+- **A raw SQL expression** — for calculated facets
+    - `addSqlFacet("SUM(total)", Facet.NUMERIC)`
 
-Filters between different columns use AND semantics; multiple paths within the same
-column use OR.
+Filters between different facets use AND semantics; multiple paths within the same
+facet use OR.
 
 === "Kotlin"
 
     ```kotlin
     val list = PagedList<Order>()
-    val nameCol   = list.addColumn(Order_.customer.name)       // FK traversal
-    val statusCol = list.addColumn(Order_.status)              // scalar
-    val rawCol    = list.addRawColumn("total * tax_rate", Column.NUMERIC)
+    val nameFacet   = list.addFacet(Order_.customer.name)       // FK traversal
+    val statusFacet = list.addFacet(Order_.status)              // scalar
+    val rawFacet    = list.addSqlFacet("total * tax_rate", Facet.NUMERIC)
 
-    nameCol.filter = "Acme"
-    statusCol.filter = "ACTIVE"
+    nameFacet.filter = "Acme"
+    statusFacet.filter = "ACTIVE"
     // Both filters active → WHERE customer.name LIKE %Acme% AND status = 'ACTIVE'
     ```
 
@@ -137,25 +150,25 @@ column use OR.
 
     ```java
     PagedList<Order> list = new PagedList<>(Order.class);
-    Column nameCol   = list.addColumn(Order_.customer().name);   // FK traversal
-    Column statusCol = list.addColumn(Order_.status);            // scalar
-    Column rawCol    = list.addRawColumn("total * tax_rate", Column.NUMERIC);
+    Facet nameFacet   = list.addFacet(Order_.customer().name);   // FK traversal
+    Facet statusFacet = list.addFacet(Order_.status);            // scalar
+    Facet rawFacet    = list.addSqlFacet("total * tax_rate", Facet.NUMERIC);
 
-    nameCol.setFilter("Acme");
-    statusCol.setFilter("ACTIVE");
+    nameFacet.setFilter("Acme");
+    statusFacet.setFilter("ACTIVE");
     // Both filters active → WHERE customer.name LIKE %Acme% AND status = 'ACTIVE'
     ```
 
-String paths with dot notation work too (`addColumn("customer.name")`) — useful for
+String paths with dot notation work too (`addFacet("customer.name")`) — useful for
 cross-cutting code where a field is chosen at runtime. Mix both styles freely.
 
-## Column Types and Filter Syntax
+## Facet Types and Filter Syntax
 
-Each column has a `Column.Type` that controls how the filter string is parsed. The type
+Each facet has a `Facet.Type` that controls how the filter string is parsed. The type
 is auto-detected from the field's Kotlin type, or you can set it explicitly via the
-two-argument `addColumn(type, ...)` overload.
+two-argument `addFacet(type, ...)` overload.
 
-### Text (`Column.TEXT`)
+### Text (`Facet.TEXT`)
 
 Case-insensitive by default. Supports several patterns:
 
@@ -166,9 +179,9 @@ Case-insensitive by default. Supports several patterns:
 | `Ali*`        | Starts with: `LIKE Ali%` |
 | `"Alice"`     | Exact match (still case-insensitive unless `isCaseSensitive = true`) |
 
-Set `column.isCaseSensitive = true` for a case-sensitive column.
+Set `facet.isCaseSensitive = true` for a case-sensitive facet.
 
-### Numeric (`Column.NUMERIC`)
+### Numeric (`Facet.NUMERIC`)
 
 | Filter value  | Meaning |
 |--------------|---------|
@@ -179,13 +192,13 @@ Set `column.isCaseSensitive = true` for a case-sensitive column.
 | `<= 100`      | Less than or equal |
 | `10 ... 20`   | Range (inclusive) |
 
-### Temporal (`Column.TEMPORAL`)
+### Temporal (`Facet.TEMPORAL`)
 
 Covers `LocalDate`, `LocalTime`, `LocalDateTime`, `Instant`. Supports the same comparison
 operators and range syntax as `NUMERIC`. Values are parsed via the active [input
 parser](#input-parsing-and-locale).
 
-### Enum (`Column.ENUM`)
+### Enum (`Facet.ENUM`)
 
 For enum-backed fields. Auto-detected when the field's Kotlin type is an enum. The filter
 string is matched (case-insensitively, as a substring) against the enum's display names.
@@ -197,8 +210,8 @@ Multiple matching display names produce an `IN` clause of the corresponding DB v
     enum class Status { ACTIVE, INACTIVE, BANNED }
 
     val list = PagedList<User>()
-    list.addColumn(User_.status)            // auto-detects as ENUM
-    list.getColumn(0).filter = "active"     // matches ACTIVE and INACTIVE
+    list.addFacet(User_.status)            // auto-detects as ENUM
+    list.getFacet(0).filter = "active"     // matches ACTIVE and INACTIVE
     ```
 
 === "Java"
@@ -207,75 +220,75 @@ Multiple matching display names produce an `IN` clause of the corresponding DB v
     public enum Status { ACTIVE, INACTIVE, BANNED }
 
     PagedList<User> list = new PagedList<>(User.class);
-    list.addColumn(User_.status);
-    list.getColumn(0).setFilter("active");
+    list.addFacet(User_.status);
+    list.getFacet(0).setFilter("active");
     ```
 
 To customize the display names (e.g., localized UI strings), implement the
 [`HumanReadable`](#humanreadable-display-names) interface on the enum. For non-enum
 fields that you want to treat as enums (or to override the auto-built map), pass a
-display-to-DB-value `Map` as the first argument to `addColumn` — the same method
-name, resolved to the enum-column overload via the first-argument type:
+display-to-DB-value `Map` as the first argument to `addFacet` — the same method
+name, resolved to the enum-facet overload via the first-argument type:
 
 === "Kotlin"
 
     ```kotlin
     val displayMap = mapOf("Ενεργός" to 1, "Ανενεργός" to 0)
-    list.addColumn(displayMap, User_.statusCode)
+    list.addFacet(displayMap, User_.statusCode)
     ```
 
 === "Java"
 
     ```java
     Map<String, Object> displayMap = Map.of("Ενεργός", 1, "Ανενεργός", 0);
-    list.addColumn(displayMap, User_.statusCode);
+    list.addFacet(displayMap, User_.statusCode);
     ```
 
 ### NULL Filter
 
-Any column can filter for `NULL` using the sentinel constant `Column.NULL`:
+Any facet can filter for `NULL` using the sentinel constant `Facet.NULL`:
 
 === "Kotlin"
 
     ```kotlin
-    list.getColumn(0).filter = Column.NULL   // → WHERE name IS NULL
+    list.getFacet(0).filter = Facet.NULL   // → WHERE name IS NULL
     ```
 
 === "Java"
 
     ```java
-    list.getColumn(0).setFilter(Column.NULL);   // → WHERE name IS NULL
+    list.getFacet(0).setFilter(Facet.NULL);   // → WHERE name IS NULL
     ```
 
 ## Sorting
 
-Set `column.sort` to `Column.ASCENDING` or `Column.DESCENDING`. Any number of columns can
+Set `facet.sort` to `Facet.ASCENDING` or `Facet.DESCENDING`. Any number of facets can
 be active sorts at once; the list sorts by them in the order they were defined:
 
 === "Kotlin"
 
     ```kotlin
-    list.getColumn(0).sort = Column.ASCENDING    // primary
-    list.getColumn(1).sort = Column.DESCENDING   // secondary
+    list.getFacet(0).sort = Facet.ASCENDING    // primary
+    list.getFacet(1).sort = Facet.DESCENDING   // secondary
     ```
 
 === "Java"
 
     ```java
-    list.getColumn(0).setSort(Column.ASCENDING);
-    list.getColumn(1).setSort(Column.DESCENDING);
+    list.getFacet(0).setSort(Facet.ASCENDING);
+    list.getFacet(1).setSort(Facet.DESCENDING);
     ```
 
-`column.clearSort()` deactivates the sort for a single column; `list.reset()` clears
+`facet.clearSort()` deactivates the sort for a single facet; `list.reset()` clears
 all filters and sorts at once (but keeps constraints — see below).
 
-If no column has an active sort, rows are ordered by the entity's primary key. This
+If no facet has an active sort, rows are ordered by the entity's primary key. This
 requires a single-column PK; for composite keys you must explicitly set a sort on at
-least one column, otherwise the list throws `IllegalStateException`.
+least one facet, otherwise the list throws `IllegalStateException`.
 
 ## Constraints
 
-Constraints are a fixed `WHERE` clause that is always applied, independent of column
+Constraints are a fixed `WHERE` clause that is always applied, independent of facet
 filters. Use them to scope the list to a sub-query (e.g., "only orders for user 42"):
 
 === "Kotlin"
@@ -290,7 +303,7 @@ filters. Use them to scope the list to a sub-query (e.g., "only orders for user 
     list.setConstraints("customer_id = ?", 42);
     ```
 
-Constraints and column filters combine with `AND`. Unlike filters, constraints are **not**
+Constraints and facet filters combine with `AND`. Unlike filters, constraints are **not**
 cleared by `list.reset()` — they're considered part of the list's fundamental definition.
 
 ## Distinct Mode
@@ -363,37 +376,38 @@ change immediately without resetting the user's filters:
 
     ```java
     Company company = stormify.create(new Company("Acme"));
-    list.add(company);
+    list.add(company);        // appears first
 
     stormify.delete(company);
-    list.remove(company);
+    list.remove(company);     // selection cleared
     ```
 
-## Filter Values (Distinct Per-Column)
+## Filter Values (Distinct Per-Facet)
 
-For populating dropdown pickers, call `column.getFilterValues()`. This returns a
+For populating dropdown pickers, call `facet.getFilterValues()`. This returns a
 `FilterValues` — another lazy paginated list, but of the distinct values of that
-column, filtered by the **other** columns' active filters. The user only sees values that
+facet, filtered by the **other** facets' active filters. The user only sees values that
 would actually return results under the current filter state.
 
 === "Kotlin"
 
     ```kotlin
-    val statusCol = list.addColumn(User_.status)
-    val distinctStatuses = statusCol.getFilterValues()
+    val statusFacet = list.addFacet(User_.status)
+    val distinctStatuses = statusFacet.getFilterValues()
     distinctStatuses.forEach { println(it) }
     ```
 
 === "Java"
 
     ```java
-    Column statusCol = list.addColumn(User_.status);
-    FilterValues distinctStatuses = statusCol.getFilterValues();
+    Facet statusFacet = list.addFacet(User_.status);
+    FilterValues distinctStatuses = statusFacet.getFilterValues();
     distinctStatuses.forEach(System.out::println);
     ```
 
 `FilterValues` stays in sync with the parent list — any change to filters or
-constraints is reflected on the next access.
+constraints is reflected on the next access. For serialization purposes, its
+`toString()` emits a JSON array of the values (`["a","b","c"]`).
 
 ### Facet Counts (`withCounts`)
 
@@ -405,7 +419,7 @@ get a sibling `FilterCountedValues` — same lazy pagination, but each element i
 === "Kotlin"
 
     ```kotlin
-    val categoryCol = list.addColumn(Product_.category)
+    val categoryCol = list.addFacet(Product_.category)
     val counts = categoryCol.getFilterValues().withCounts()
     for (entry in counts) println("${entry.value} (${entry.count})")
     ```
@@ -413,23 +427,24 @@ get a sibling `FilterCountedValues` — same lazy pagination, but each element i
 === "Java"
 
     ```java
-    Column categoryCol = list.addColumn(Product_.category);
+    Facet categoryCol = list.addFacet(Product_.category);
     FilterCountedValues counts = categoryCol.getFilterValues().withCounts();
     for (FilterCountedValue entry : counts)
         System.out.println(entry.getValue() + " (" + entry.getCount() + ")");
     ```
 
 Repeated calls to `withCounts()` on the same `FilterValues` return the same instance,
-so you can share it across multiple reads without re-querying.
+so you can share it across multiple reads without re-querying. For serialization
+purposes, its `toString()` emits a JSON array of `{"value":"X","count":N}` objects.
 
 ## Input Parsing and Locale
 
 Raw user input (e.g., from a text field) often uses locale-specific formats —
 numbers like `1.234,56` (comma decimal), dates like `31/12/2026` (day-first).
-`PagedList` applies an input parser — a `(String, Column.Type) -> String` function —
+`PagedList` applies an input parser — a `(String, Facet.Type) -> String` function —
 that transforms the filter string before it reaches SQL.
 
-Resolution order: **column → list → global → identity (no transformation)**.
+Resolution order: **\*\*facet → list → global → identity (no transformation)**.
 
 === "Kotlin"
 
@@ -437,8 +452,8 @@ Resolution order: **column → list → global → identity (no transformation)*
     // Global — applies to all PagedList instances unless overridden
     PagedList.defaultInputParser = { input, type ->
         when (type) {
-            Column.NUMERIC -> input.replace(".", "").replace(",", ".")
-            Column.TEMPORAL -> flipDayMonthYear(input)
+            Facet.NUMERIC -> input.replace(".", "").replace(",", ".")
+            Facet.TEMPORAL -> flipDayMonthYear(input)
             else -> input
         }
     }
@@ -446,8 +461,8 @@ Resolution order: **column → list → global → identity (no transformation)*
     // Per-list override
     myList.inputParser = { input, type -> /* ... */ }
 
-    // Per-column override
-    myList.getColumn(0).inputParser = { input, type -> /* ... */ }
+    // Per-facet override
+    myList.getFacet(0).inputParser = { input, type -> /* ... */ }
     ```
 
 === "Java"
@@ -455,49 +470,49 @@ Resolution order: **column → list → global → identity (no transformation)*
     ```java
     // Global — applies to all PagedList instances unless overridden
     PagedList.setDefaultInputParser((input, type) -> {
-        if (type == Column.NUMERIC) return input.replace(".", "").replace(",", ".");
-        if (type == Column.TEMPORAL) return flipDayMonthYear(input);
+        if (type == Facet.NUMERIC) return input.replace(".", "").replace(",", ".");
+        if (type == Facet.TEMPORAL) return flipDayMonthYear(input);
         return input;
     });
 
     // Per-list override
     myList.setInputParser((input, type) -> /* ... */);
 
-    // Per-column override
-    myList.getColumn(0).setInputParser((input, type) -> /* ... */);
+    // Per-facet override
+    myList.getFacet(0).setInputParser((input, type) -> /* ... */);
     ```
 
 Set to `null` (the default) to fall through to the next level.
 
-## Raw Columns
+## Raw Facets
 
-A raw column is backed by a SQL expression instead of an entity field — useful for
+A SQL facet is backed by a SQL expression instead of an entity field — useful for
 calculated values, concatenations, or expressions no entity property maps to. There
 are two forms:
 
 ### Simple — just an expression and a type
 
-Pass the expression and the column type; the default converter decides the `WHERE`
+Pass the expression and the facet type; the default converter decides the `WHERE`
 clause based on the type (`LIKE ?` for `TEXT`, `= ?` / `BETWEEN ? AND ?` for
 `NUMERIC`, date comparison for `TEMPORAL`, mapped equality for `ENUM`).
 
 === "Kotlin"
 
     ```kotlin
-    list.addRawColumn("firstName || ' ' || lastName")              // default TEXT → LIKE
-    list.addRawColumn("SUM(total)", Column.NUMERIC)                // numeric → = or BETWEEN
-    list.addRawColumn("YEAR(created_at)", Column.NUMERIC)
+    list.addSqlFacet("firstName || ' ' || lastName")              // default TEXT → LIKE
+    list.addSqlFacet("SUM(total)", Facet.NUMERIC)                // numeric → = or BETWEEN
+    list.addSqlFacet("YEAR(created_at)", Facet.NUMERIC)
     ```
 
 === "Java"
 
     ```java
-    list.addRawColumn("firstName || ' ' || lastName");             // default TEXT → LIKE
-    list.addRawColumn("SUM(total)", Column.NUMERIC);               // numeric → = or BETWEEN
-    list.addRawColumn("YEAR(created_at)", Column.NUMERIC);
+    list.addSqlFacet("firstName || ' ' || lastName");             // default TEXT → LIKE
+    list.addSqlFacet("SUM(total)", Facet.NUMERIC);               // numeric → = or BETWEEN
+    list.addSqlFacet("YEAR(created_at)", Facet.NUMERIC);
     ```
 
-This covers the majority of raw-column needs.
+This covers the majority of raw-SQL-facet needs.
 
 ### Custom — with a `SqlGenerator`
 
@@ -512,28 +527,74 @@ Use it when you need to:
 === "Kotlin"
 
     ```kotlin
-    val col = list.addRawColumn("users.id", Column.NUMERIC) { column, value, args ->
-        val n = value.toIntOrNull() ?: 0
+    val col = list.addSqlFacet("users.id", Facet.NUMERIC) { columnRef, filterValue, args ->
+        val n = filterValue.toIntOrNull() ?: 0
         args.accept(n)
-        "$column % ? = 0"    // rows whose id is divisible by n
+        "$columnRef % ? = 0"    // rows whose id is divisible by n
     }
-    col.filter = "3"         // keep ids divisible by 3
+    col.filter = "3"            // keep ids divisible by 3
     ```
 
 === "Java"
 
     ```java
-    Column col = list.addRawColumn("users.id", Column.NUMERIC, (column, value, args) -> {
-        int n = Integer.parseInt(value);
+    Facet col = list.addSqlFacet("users.id", Facet.NUMERIC, (columnRef, filterValue, args) -> {
+        int n = Integer.parseInt(filterValue);
         args.accept(n);
-        return column + " % ? = 0";
+        return columnRef + " % ? = 0";    // rows whose id is divisible by n
     });
-    col.setFilter("3");
+    col.setFilter("3");                   // keep ids divisible by 3
     ```
+
+## Table Refs
+
+Raw SQL in [`setConstraints`](#constraints) or in a SQL facet sometimes needs
+to reference a joined table by its SQL alias. Engine-assigned aliases (`t1`,
+`t2`, …) are not stable across configuration changes, so instead of hardcoding
+them, register a [`TableRef`][TableRef] with `addTableRef(...)` and use its
+`alias` (via string interpolation or `getAlias()`):
+
+=== "Kotlin"
+
+    ```kotlin
+    val list = PagedList<Customer>()
+    val root    = list.addTableRef()                       // the root entity table
+    val address = list.addTableRef("address")              // FK-traversed
+    val hq      = list.addTableRef(Customer_.company.hq)   // KSP typed path
+
+    list.addFacet(Customer_.name)
+    list.addSqlFacet(
+        "CASE WHEN $address.city = $hq.city THEN 1 ELSE 0 END",
+        Facet.NUMERIC)
+    list.setConstraints("$root.tenant_id = ?", currentTenantId)
+    ```
+
+=== "Java"
+
+    ```java
+    PagedList<Customer> list = new PagedList<>(Customer.class);
+    TableRef root    = list.addTableRef();                          // the root entity table
+    TableRef address = list.addTableRef("address");                 // FK-traversed
+    TableRef hq      = list.addTableRef(Customer_.company().hq);    // KSP typed path
+
+    list.addFacet(Customer_.name);
+    list.addSqlFacet(
+        "CASE WHEN " + address.getAlias() + ".city = "
+            + hq.getAlias() + ".city THEN 1 ELSE 0 END",
+        Facet.NUMERIC);
+    list.setConstraints(root.getAlias() + ".tenant_id = ?", currentTenantId);
+    ```
+
+Registering a `TableRef` guarantees the corresponding JOIN is active in every
+subsequent SQL build while `TableRef.isActive` is `true` (the default). Set
+`isActive` to `false` to suppress the JOIN without removing the ref — useful
+when a ref is referenced only by a facet that may be conditionally inactive.
+
+[TableRef]: api-stormify/stormify/onl.ycode.stormify.biglist/-table-ref/index.html
 
 ## `HumanReadable` (Display Names)
 
-Implement `HumanReadable` on enums (or any class) that participate in enum columns to
+Implement `HumanReadable` on enums (or any class) that participate in enum facets to
 provide localized display names:
 
 === "Kotlin"
@@ -561,9 +622,9 @@ provide localized display names:
     }
     ```
 
-When the enum column auto-builds its display-name-to-DB-value map, it uses
+When the enum facet auto-builds its display-name-to-DB-value map, it uses
 `displayName` instead of `name`. This is also what `FilterValues` returns for enum
-columns — so your dropdown shows the localized labels instead of `ACTIVE`/`INACTIVE`/`BANNED`.
+facets — so your dropdown shows the localized labels instead of `ACTIVE`/`INACTIVE`/`BANNED`.
 
 ## Refreshing After External Changes
 
@@ -584,7 +645,7 @@ unaware of the change. Call `list.refresh()` to force the next read to re-query:
     ```java
     stormify.create(new Company("Acme"));
     list.refresh();           // next access will re-query
-    System.out.println(list.size());
+    System.out.println(list.size());   // includes the new row
     ```
 
 `refresh()` is pure cache invalidation — there are no listeners to notify. After calling
@@ -635,7 +696,7 @@ underlying mechanism.
 ## Aggregations
 
 `list.getAggregator()` returns a `PagedAggregator` — a fluent builder for SQL aggregate
-queries that respect the list's current constraints and per-column filters. `isDistinct`
+queries that respect the list's current constraints and per-facet filters. `isDistinct`
 is ignored for aggregates.
 
 The builder methods take a path (as `String` or typed `ScalarPath`) plus an optional
@@ -759,7 +820,7 @@ one yourself — although supplying an explicit alias is always an option.
 ## Saving and Restoring State
 
 For navigation flows where the user leaves a grid / picker screen and comes back, use
-`saveState()` / `restoreState()`. They capture the per-column filters, sorts,
+`saveState()` / `restoreState()`. They capture the per-facet filters, sorts,
 case-sensitivity flags, the page size, and the distinct flag into a plain
 `PagedListState` data object — easy to persist in a view model or session store:
 
@@ -772,8 +833,8 @@ case-sensitivity flags, the page size, and the distinct flag into a plain
 
     // When coming back
     val list = PagedList<Company>()
-    list.addColumn(Company_.name)
-    list.addColumn(Company_.revenue)
+    list.addFacet(Company_.name)
+    list.addFacet(Company_.revenue)
     viewModel.savedListState?.let { list.restoreState(it) }
     ```
 
@@ -786,17 +847,17 @@ case-sensitivity flags, the page size, and the distinct flag into a plain
 
     // When coming back
     PagedList<Company> list = new PagedList<>(Company.class);
-    list.addColumn(Company_.name);
-    list.addColumn(Company_.revenue);
+    list.addFacet(Company_.name);
+    list.addFacet(Company_.revenue);
     if (viewModel.savedListState != null)
         list.restoreState(viewModel.savedListState);
     ```
 
-`restoreState()` is permissive: column keys present in the saved state but missing from
-the current list are silently ignored (so your list can add/remove columns between
+`restoreState()` is permissive: facet keys present in the saved state but missing from
+the current list are silently ignored (so your list can add/remove facets between
 sessions without blowing up). Constraints, the selected entity, and input parsers are
 **not** part of the state — they are structural or ephemeral, not user-visible choices.
 
-State keys are derived from each column's paths (raw columns use their SQL expression;
-field columns use their paths joined alphabetically), so the order in which paths were
-passed to `addColumn` does not affect the key.
+State keys are derived from each facet's paths (raw facets use their SQL expression;
+field facets use their paths joined alphabetically), so the order in which paths were
+passed to `addFacet` does not affect the key.

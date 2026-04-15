@@ -16,13 +16,13 @@ import kotlin.jvm.JvmOverloads
  * alias).
  *
  * Aggregations inherit the parent list's constraints and per-column filters
- * — `list.getColumn(0).filter = "Acme"` is honored by `sum`/`avg`/… — but the
+ * — `list.getFacet(0).filter = "Acme"` is honored by `sum`/`avg`/… — but the
  * `isDistinct` flag is ignored for aggregates.
  *
  * ```kotlin
  * val list = PagedList<Company>()
  * stormify.attach(list)
- * list.addColumn("industry").filter = "Tech"
+ * list.addFacet("industry").filter = "Tech"
  *
  * // Single value
  * val total: BigDecimal? = list.getAggregator()

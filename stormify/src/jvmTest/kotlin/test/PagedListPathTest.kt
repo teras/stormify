@@ -6,7 +6,7 @@ import db.stormify.Paths.AutoChildEntity_
 import db.stormify.Paths.TreeNode_
 import db.stormify.Paths.Person_
 import onl.ycode.stormify.Stormify
-import onl.ycode.stormify.biglist.Column
+import onl.ycode.stormify.biglist.Facet
 import onl.ycode.stormify.biglist.PagedList
 import kotlin.test.*
 
@@ -24,7 +24,7 @@ class PagedListPathTest {
         s.create(listOf(TestC(1, "Alice"), TestC(2, "Bob"), TestC(3, "Alicia")))
 
         val list = PagedList<TestC>()
-        val col = list.addColumn(TestC_.name)
+        val col = list.addFacet(TestC_.name)
         col.filter = "Ali"
 
         assertEquals(2, list.size)
@@ -42,7 +42,7 @@ class PagedListPathTest {
         ))
 
         val list = PagedList<CamelEntity>()
-        val col = list.addColumn(CamelEntity_.firstName, CamelEntity_.lastName)
+        val col = list.addFacet(CamelEntity_.firstName, CamelEntity_.lastName)
         col.filter = "Ali"
 
         assertEquals(2, list.size)
@@ -65,7 +65,7 @@ class PagedListPathTest {
 
         val list = PagedList<AutoChildEntity>()
         // Type-safe FK path: AutoChildEntity_.parent.data → "parent.data"
-        val col = list.addColumn(AutoChildEntity_.parent.data)
+        val col = list.addFacet(AutoChildEntity_.parent.data)
         col.filter = "Parent1"
 
         assertEquals(2, list.size)
@@ -79,8 +79,8 @@ class PagedListPathTest {
         s.create(listOf(TestC(1, "Charlie"), TestC(2, "Alice"), TestC(3, "Bob")))
 
         val list = PagedList<TestC>()
-        val col = list.addColumn(TestC_.name)
-        col.sort = Column.ASCENDING
+        val col = list.addFacet(TestC_.name)
+        col.sort = Facet.ASCENDING
 
         assertEquals("Alice", list[0].name)
         assertEquals("Bob", list[1].name)
@@ -123,7 +123,7 @@ class PagedListPathTest {
 
         val list = PagedList<TreeNode>()
         // Filter: grandchild → parent(child) → parent(root).name = "root"
-        val col = list.addColumn(TreeNode_.parent.parent.name)
+        val col = list.addFacet(TreeNode_.parent.parent.name)
         col.filter = "root"
 
         assertEquals(1, list.size)

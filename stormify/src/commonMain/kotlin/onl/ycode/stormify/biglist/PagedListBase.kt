@@ -4,49 +4,56 @@
 
 package onl.ycode.stormify.biglist
 
-import kotlinx.atomicfu.atomic
 import onl.ycode.stormify.NativeBigInteger
-import onl.ycode.stormify.SiblingGroup
 import onl.ycode.stormify.Stormify
 import onl.ycode.stormify.StormifyAware
-import onl.ycode.stormify.TableInfo
 import onl.ycode.stormify.TypeUtils
-import onl.ycode.stormify.enumEntries
-import onl.ycode.stormify.enumToInt
-import kotlin.jvm.JvmOverloads
 import kotlin.jvm.Transient
 import kotlin.math.min
 import kotlin.reflect.KClass
 
 /**
- * Abstract base class for `PagedList` — contains the full column-based paginated-list
- * implementation. Users do not instantiate this directly; use the platform-specific
- * `PagedList` subclass instead (it provides language-idiomatic constructors for Kotlin
- * and Java).
+ * Abstract base class for `PagedList` — a UI-model façade over the shared
+ * [PagedQueryCore] engine. Users do not instantiate this directly; use the
+ * platform-specific `PagedList` subclass instead (it provides language-idiomatic
+ * constructors for Kotlin and Java).
  *
- * A `PagedList` implements [kotlin.collections.AbstractList], so it behaves as a normal
- * `List<T>` while loading pages on demand from the database. Filtering and sorting are
- * defined through [Column] objects set up at configuration time.
+ * A `PagedList` implements [kotlin.collections.AbstractList], so it behaves as a
+ * normal `List<T>` while loading pages on demand from the database. Filtering and
+ * sorting are defined through [Facet] objects set up at configuration time. The
+ * list caches the current page and the total size, and supports a "selected"
+ * entity that always appears first.
  *
- * The [Stormify] instance is not passed at construction. It is resolved lazily on first
- * access via (in order):
+ * ## When to use `PagedList`
+ *
+ * `PagedList` is intended for **UI consumers** — desktop/embedded grids (ZK,
+ * Compose, Swing, JavaFX) where a single long-lived list instance drives a view.
+ * It is not appropriate for stateless server-side request handling: its per-column
+ * filter/sort state is mutable and shared, and its cached page / size / selected
+ * entity have no meaning across independent REST requests.
+ *
+ * For REST/stateless server use, use `PagedQuery` — configure once at startup,
+ * call `execute(spec)` per request.
+ *
+ * The [Stormify] instance is not passed at construction. It is resolved lazily on
+ * first access via (in order):
  *  1. The instance explicitly attached via [Stormify.attach]
  *  2. The registered [Stormify.defaultInstance]
  *
- * If neither is available when the list first needs to touch the database, an error is
- * thrown.
+ * If neither is available when the list first needs to touch the database, an
+ * error is thrown.
  *
  * ## Usage
  * ```kotlin
  * val list = PagedList<Company>()        // no stormify yet
  * stormify.attach(list)                   // binds the instance
- * list.addColumn("name")                  // text filter + sort
- * list.addColumn("contactPerson.firstName",
+ * list.addFacet("name")                  // text filter + sort
+ * list.addFacet("contactPerson.firstName",
  *                "contactPerson.lastName") // OR filter via FK
- * list.addRawColumn("SUM(amount)", Column.NUMERIC)
+ * list.addSqlFacet("SUM(amount)", Facet.NUMERIC)
  *
- * list.getColumn(0).filter = "Acme"
- * list.getColumn(1).sort = Column.ASCENDING
+ * list.getFacet(0).filter = "Acme"
+ * list.getFacet(1).sort = Facet.ASCENDING
  *
  * val company = list[0]   // triggers page load
  * val total = list.size   // triggers COUNT query
@@ -61,16 +68,6 @@ abstract class PagedListBase<T : Any> internal constructor(
 
     @Transient internal var _stormify: Stormify? = null
 
-    override fun attachTo(stormify: Stormify) {
-        _stormify = stormify
-        // The attached Stormify may have different naming policies or registered entities
-        // than whatever resolved the cached state previously. Drop the cached metadata
-        // and query tree so they get rebuilt on next access.
-        _info = null
-        _root = null
-        refresh()
-    }
-
     /** Resolves the Stormify instance — explicitly attached, default, or error. */
     private val stormify: Stormify
         get() = _stormify ?: Stormify.defaultInstance
@@ -79,32 +76,41 @@ abstract class PagedListBase<T : Any> internal constructor(
                         "is configured. Call stormify.attach(list) or Stormify.asDefault() first."
             )
 
-    // Lazy table metadata — resolved on first access so construction does not require Stormify
-    private var _info: TableInfo<T>? = null
-    internal val info: TableInfo<T>
-        get() = _info ?: @Suppress("UNCHECKED_CAST") (stormify.resolveTableInfo(classType) as TableInfo<T>)
-            .also { _info = it }
+    internal val core: PagedQueryCore<T> = PagedQueryCore(
+        classType = classType,
+        stormifyAccessor = { stormify },
+        listInputParserAccessor = { inputParser },
+    ).also { c ->
+        c.invalidateHook = {
+            fragment = null
+            _size = null
+            c.facets.forEach { it.invalidateFilterValues() }
+        }
+    }
 
-    private val tableCounter = atomic(0)
-    private var _root: NodeTable? = null
-    private val root: NodeTable
-        get() = _root ?: NodeTable("", "", classType, null, stormify).also { _root = it }
+    internal val info get() = core.info
 
-    private val _columns = mutableListOf<Column>()
-    private var treeIsDirty = true
+    override fun attachTo(stormify: Stormify) {
+        _stormify = stormify
+        // The attached Stormify may have different naming policies or registered entities
+        // than whatever resolved the cached state previously. Drop the cached metadata
+        // and query tree so they get rebuilt on next access.
+        core.invalidateCachedMetadata()
+        refresh()
+    }
 
     // --- Configuration ---
 
     /**
-     * The columns defined on this list. Columns are added via [addColumn] or [addRawColumn]
+     * The columns defined on this list. Columns are added via [addFacet] or [addSqlFacet]
      * and define what can be filtered and sorted.
      */
-    val columns: List<Column> get() = _columns
+    val facets: List<Facet> get() = core.facets
 
     /**
      * Returns the column at the given index.
      */
-    fun getColumn(index: Int): Column = _columns[index]
+    fun getFacet(index: Int): Facet = core.getFacet(index)
 
     /**
      * The page size — the number of elements loaded into memory at a time. Default is 15.
@@ -124,10 +130,13 @@ abstract class PagedListBase<T : Any> internal constructor(
     /**
      * Whether the query should return only distinct results.
      */
-    var isDistinct = false
+    var isDistinct: Boolean
+        get() = core.isDistinct
         set(value) {
-            if (field != value) refresh()
-            field = value
+            if (core.isDistinct != value) {
+                core.isDistinct = value
+                refresh()
+            }
         }
 
     /**
@@ -144,20 +153,17 @@ abstract class PagedListBase<T : Any> internal constructor(
         }
 
     private var selectedID: NativeBigInteger? = null
-    private var constraintClause = ""
-    private var constraintArgs: Array<out Any> = emptyArray()
 
     /**
      * Sets a fixed constraint (WHERE clause) for this list. This constraint is always
      * applied in addition to any column filters.
      */
     fun setConstraints(query: String, vararg args: Any) {
-        constraintClause = query.trim()
-        this.constraintArgs = args
+        core.setConstraints(query, args)
         refresh()
     }
 
-    // --- Column setup ---
+    // --- Facet setup ---
 
     /**
      * Adds a column with one or more field paths. The column type is auto-detected
@@ -169,92 +175,91 @@ abstract class PagedListBase<T : Any> internal constructor(
      * @param fieldPaths One or more field paths (dot notation)
      * @return The created column
      */
-    fun addColumn(vararg fieldPaths: String): Column =
-        addColumnInternal(fieldPaths.map { FieldPath(it) }, null, null)
+    fun addFacet(vararg fieldPaths: String): Facet =
+        registerFacet(core.addFacet(fieldPaths.map { FieldPath(it) }, null, null, null))
 
     /**
      * Adds a column with an explicit [type] override. Use this when the auto-detected
      * type (based on the field's Kotlin type) is not what you want — for example, to
      * treat a string zip-code column as numeric.
      */
-    fun addColumn(type: Column.Type, vararg fieldPaths: String): Column =
-        addColumnInternal(fieldPaths.map { FieldPath(it) }, type, null)
+    fun addFacet(type: Facet.Type, vararg fieldPaths: String): Facet =
+        registerFacet(core.addFacet(fieldPaths.map { FieldPath(it) }, type, null, null))
 
     /**
-     * Adds an [ENUM][Column.Type.ENUM] column with a custom display-name-to-DB-value map.
+     * Adds an [ENUM][Facet.Type.ENUM] column with a custom display-name-to-DB-value map.
      * Use this when the field is not a Kotlin enum but logically represents one (e.g., a
      * status integer column with human-readable labels), or to override the auto-built
      * map for a real enum field. The `Map` first argument distinguishes this overload
      * from the scalar-typed variants at compile time.
      */
-    fun addColumn(enumValues: Map<String, Any>, vararg fieldPaths: String): Column =
-        addColumnInternal(fieldPaths.map { FieldPath(it) }, Column.Type.ENUM, enumValues)
+    fun addFacet(enumValues: Map<String, Any>, vararg fieldPaths: String): Facet =
+        registerFacet(core.addFacet(fieldPaths.map { FieldPath(it) }, Facet.Type.ENUM, enumValues, null))
 
     /**
      * Adds a column using type-safe KSP-generated path objects.
      */
-    fun addColumn(vararg paths: ScalarPath): Column =
-        addColumnInternal(paths.map { FieldPath(it.toPath()) }, null, null)
+    fun addFacet(vararg paths: ScalarPath): Facet =
+        registerFacet(core.addFacet(paths.map { FieldPath(it.toPath()) }, null, null, null))
 
-    /** Explicit-type variant of [addColumn] using typed paths. */
-    fun addColumn(type: Column.Type, vararg paths: ScalarPath): Column =
-        addColumnInternal(paths.map { FieldPath(it.toPath()) }, type, null)
+    /** Explicit-type variant of [addFacet] using typed paths. */
+    fun addFacet(type: Facet.Type, vararg paths: ScalarPath): Facet =
+        registerFacet(core.addFacet(paths.map { FieldPath(it.toPath()) }, type, null, null))
 
     /** Enum-column variant using typed paths — same rules as the `Map` + `String` overload. */
-    fun addColumn(enumValues: Map<String, Any>, vararg paths: ScalarPath): Column =
-        addColumnInternal(paths.map { FieldPath(it.toPath()) }, Column.Type.ENUM, enumValues)
-
-    private fun addColumnInternal(
-        paths: List<FieldPath>,
-        type: Column.Type?,
-        enumValues: Map<String, Any>?
-    ): Column {
-        require(paths.isNotEmpty()) { "At least one field path is required" }
-        paths.forEach { resolveFieldPath(it) } // validate + build tree
-        val resolvedType = type ?: detectType(paths.first())
-        val resolvedEnumValues = enumValues ?: if (resolvedType == Column.Type.ENUM)
-            buildEnumValues(resolveFieldPath(paths.first()).type) else null
-        val column = Column(this, paths, resolvedType, resolvedEnumValues, null, null)
-        _columns.add(column)
-        refresh()
-        return column
-    }
+    fun addFacet(enumValues: Map<String, Any>, vararg paths: ScalarPath): Facet =
+        registerFacet(core.addFacet(paths.map { FieldPath(it.toPath()) }, Facet.Type.ENUM, enumValues, null))
 
     /**
      * Adds a raw/custom column backed by an arbitrary SQL expression.
      *
      * @param expression The SQL expression (e.g., `"SUM(amount)"`, `"COALESCE(a, b)"`)
      * @param type The column type, which determines how filter values are interpreted.
-     *             Defaults to [Column.Type.TEXT].
+     *             Defaults to [Facet.Type.TEXT].
      * @return The created column
      */
-    @JvmOverloads
-    fun addRawColumn(
+    @kotlin.jvm.JvmOverloads
+    fun addSqlFacet(
         expression: String,
-        type: Column.Type = Column.Type.TEXT
-    ): Column = addRawColumnInternal(expression, type, null)
+        type: Facet.Type = Facet.Type.TEXT
+    ): Facet = registerFacet(core.addSqlFacet(expression, type, null, null))
 
     /**
      * Adds a raw/custom column with a custom SQL generator. The [sqlGenerator] receives
      * the column expression and the user's filter value, and returns a SQL fragment
      * while staging bind parameters via [SqlArgsCollector].
      */
-    fun addRawColumn(
+    fun addSqlFacet(
         expression: String,
-        type: Column.Type,
+        type: Facet.Type,
         sqlGenerator: SqlGenerator
-    ): Column = addRawColumnInternal(expression, type, sqlGenerator)
+    ): Facet = registerFacet(core.addSqlFacet(expression, type, sqlGenerator, null))
 
-    private fun addRawColumnInternal(
-        expression: String,
-        type: Column.Type,
-        sqlGenerator: SqlGenerator?
-    ): Column {
-        val column = Column(this, emptyList(), type, null, expression, sqlGenerator)
-        _columns.add(column)
+    private fun registerFacet(column: Facet): Facet {
         refresh()
         return column
     }
+
+    // --- Table refs ---
+
+    /**
+     * Registers a [TableRef] for the root entity table. The ref's [TableRef.alias]
+     * resolves to the underlying DB table name, so raw SQL in [setConstraints]
+     * or in an [addSqlFacet] expression can safely reference the root without
+     * hardcoding the table name.
+     */
+    fun addTableRef(): TableRef = core.addTableRef().also { refresh() }
+
+    /**
+     * Registers a [TableRef] for a table reached through the given dotted [path]
+     * (e.g. `"address"`, `"company.hq"`). The final segment must be an FK
+     * reference, not a scalar field. The associated JOIN is activated in
+     * every subsequent SQL build while the ref's [TableRef.isActive] is `true`.
+     */
+    fun addTableRef(path: String): TableRef = core.addTableRef(path).also { refresh() }
+
+    /** Registers a [TableRef] from a KSP-generated typed [ReferencePath]. */
+    fun addTableRef(path: ReferencePath): TableRef = core.addTableRef(path).also { refresh() }
 
     // --- List operations ---
 
@@ -270,9 +275,9 @@ abstract class PagedListBase<T : Any> internal constructor(
      */
     override val size: Int
         get() = _size ?: run {
-            val (query, arguments) = constraintPart
+            val (query, arguments) = core.buildConstraintPart(excludeFacet = null)
             (stormify.readOne<Int>(
-                "SELECT ${distinctPart}COUNT(*) FROM ${tablesPart}$query",
+                "SELECT ${core.distinctPart}COUNT(*) FROM ${core.tablesPart}$query",
                 *arguments.toTypedArray()
             ) ?: 0).also { _size = it }
         }
@@ -331,7 +336,7 @@ abstract class PagedListBase<T : Any> internal constructor(
      * Clears all column filters and sorting. Constraints are NOT cleared.
      */
     fun reset() {
-        for (column in _columns) {
+        for (column in core.facets) {
             column.filter = null
             column.sort = null
         }
@@ -350,18 +355,7 @@ abstract class PagedListBase<T : Any> internal constructor(
      * [PagedList docs](https://ycode.onl/stormify/PagedList/#streaming-with-foreachstreaming).
      */
     fun forEachStreaming(action: (T) -> Unit) {
-        val (query, arguments) = constraintPart
-        val sql = "SELECT ${distinctPart}${info.tableName}.* FROM ${tablesPart}$query ORDER BY $sortingPart"
-        // Chunk size matches the default sibling-batch size by design.
-        val buffer = ArrayList<T>(SiblingGroup.DEFAULT_BATCH_SIZE)
-        stormify.readCursor(null, classType, sql, *arguments.toTypedArray()) { row ->
-            buffer.add(row)
-            if (buffer.size >= SiblingGroup.DEFAULT_BATCH_SIZE) {
-                buffer.forEach(action)
-                buffer.clear()
-            }
-        }
-        buffer.forEach(action)
+        core.forEachStreaming(state = null, selectedId = selectedID, action = action)
     }
 
     /**
@@ -373,7 +367,7 @@ abstract class PagedListBase<T : Any> internal constructor(
         val filters = mutableMapOf<String, String>()
         val sorts = mutableMapOf<String, String>()
         val cs = mutableMapOf<String, Boolean>()
-        for (column in _columns) {
+        for (column in core.facets) {
             val key = column.stateKey()
             column.filter?.let { filters[key] = it }
             column.sort?.let {
@@ -393,7 +387,7 @@ abstract class PagedListBase<T : Any> internal constructor(
      * as absent.
      */
     fun restoreState(state: PagedListState) {
-        for (column in _columns) {
+        for (column in core.facets) {
             val key = column.stateKey()
             column.filter = state.filters[key]
             column.sort = when (state.sorts[key]) {
@@ -413,116 +407,7 @@ abstract class PagedListBase<T : Any> internal constructor(
      * fresh aggregator so users can build multiple independent aggregation
      * chains without interference.
      */
-    fun getAggregator(): PagedAggregator = PagedAggregator(SingleAggregatorCore(this))
-
-    // --- SQL generation ---
-
-    private val distinctPart: String
-        get() = if (isDistinct) "DISTINCT " else ""
-
-    private val sortingPart: String
-        get() {
-            resolveCurrentTree()
-            // Collect active column sorts
-            val columnSorts = _columns
-                .filter { it.hasActiveSort() }
-                .flatMap { col ->
-                    val direction = if (col.sort == SortState.DESCENDING) " DESC" else ""
-                    if (col.fields.isNotEmpty())
-                        listOf(resolveFieldPath(col.fields.first()).columnHandler + direction)
-                    else if (col.rawExpression != null)
-                        listOf(col.rawExpression + direction)
-                    else
-                        emptyList()
-                }
-
-            // Selected entity always appears first (regardless of explicit sort)
-            val singlePk = info.primaryKeys.singleOrNull()?.dbName
-            val selectedPrefix = if (singlePk != null && selectedID != null)
-                stormify.sqlDialect.orderByIdDialect(singlePk, selectedID)?.let { "$it, " } ?: ""
-            else ""
-
-            if (columnSorts.isNotEmpty())
-                return selectedPrefix + columnSorts.joinToString(", ")
-
-            // Default: selected first + PK
-            val pk = singlePk ?: throw IllegalStateException(
-                "PagedList for ${info.tableName} requires explicit sorting via column.sort = " +
-                        "because the entity has a composite primary key"
-            )
-            return selectedPrefix + info.tableName + "." + pk
-        }
-
-    private val tablesPart: String
-        get() {
-            resolveCurrentTree()
-            val out = StringBuilder(info.tableName)
-            root.appendJoins(out)
-            return out.toString()
-        }
-
-    private val constraintPart: Pair<String, List<Any>>
-        get() = buildConstraintPart(excludeColumn = null)
-
-    internal fun buildConstraintPart(excludeColumn: Column?): Pair<String, List<Any>> {
-        resolveCurrentTree()
-        val andOut = StringBuilder()
-        val args = constraintArgs.toMutableList()
-        val argsCollector = SqlArgsCollector { args.add(it) }
-
-        // Fixed constraints
-        if (constraintClause.isNotEmpty())
-            andOut.append(constraintClause)
-
-        // Column filters
-        for (column in _columns) {
-            if (column === excludeColumn) continue
-            val filterVal = column.filter ?: continue
-            val isNullFilter = filterVal == Column.NULL
-            val parser = resolveInputParser(column)
-            val orParts = mutableListOf<String>()
-
-            // Wrap custom sqlGenerator to apply the input parser before it sees the value
-            fun wrapUserGenerator(gen: SqlGenerator): (String, String, InputParser, SqlArgsCollector) -> String =
-                { col, input, p, a -> gen.generate(col, p(input, column.type), a) }
-
-            if (column.rawExpression != null) {
-                // Raw column
-                if (isNullFilter) {
-                    orParts.add("${column.rawExpression} IS NULL")
-                } else {
-                    val generator = column.sqlGenerator?.let(::wrapUserGenerator)
-                        ?: DefaultDataConverter.guessConverter(column.type, stormify.sqlDialect, column.enumValues)
-                    orParts.add(generator(column.rawExpression, filterVal, parser, argsCollector))
-                }
-            } else {
-                // Field-based column — OR between fields
-                for (fieldPath in column.fields) {
-                    val node = resolveFieldPath(fieldPath)
-                    if (isNullFilter) {
-                        orParts.add("${node.columnHandler} IS NULL")
-                    } else {
-                        val generator = column.sqlGenerator?.let(::wrapUserGenerator)
-                            ?: DefaultDataConverter.guessConverterForNode(
-                                node, column.type, stormify.sqlDialect,
-                                { column.isCaseSensitive }, column.enumValues
-                            )
-                        orParts.add(generator(node.columnHandler, filterVal, parser, argsCollector))
-                    }
-                }
-            }
-
-            if (orParts.isNotEmpty()) {
-                if (andOut.isNotEmpty()) andOut.append(" AND ")
-                if (orParts.size > 1)
-                    andOut.append("(").append(orParts.joinToString(" OR ")).append(")")
-                else
-                    andOut.append(orParts[0])
-            }
-        }
-
-        return (if (andOut.isEmpty()) "" else " WHERE $andOut") to args
-    }
+    fun getAggregator(): PagedAggregator = PagedAggregator(SingleAggregatorCore(core))
 
     private fun ensurePage(index: Int): List<T> {
         if (index < 0 || index >= size)
@@ -533,11 +418,12 @@ abstract class PagedListBase<T : Any> internal constructor(
             val page = index / pageSize
             lowBound = page * pageSize
             upperBound = min(size, (page + 1) * pageSize)
-            val (query, arguments) = constraintPart
+            val (query, arguments) = core.buildConstraintPart(excludeFacet = null)
             // Use `<table>.*` so JOINs with duplicate column names don't clobber entity mapping
             val result = stormify.read(
                 null, classType, stormify.sqlDialect.queryFormatter(
-                    "${info.tableName}.*", distinctPart, tablesPart, query, sortingPart, lowBound, upperBound
+                    "${info.tableName}.*", core.distinctPart, core.tablesPart, query,
+                    core.sortingPart(selectedID), lowBound, upperBound
                 ), *arguments.toTypedArray()
             )
             // Silent re-count: if page returned fewer items than expected
@@ -557,82 +443,8 @@ abstract class PagedListBase<T : Any> internal constructor(
      * — so the next read reflects the change.
      */
     fun refresh() {
-        fragment = null
-        _size = null
-        treeIsDirty = true
-        _columns.forEach { it.invalidateFilterValues() }
+        core.invalidate()
     }
-
-    internal fun getStormify(): Stormify = stormify
-
-    internal fun getTablesPart(): String = tablesPart
-
-    internal fun resolveColumnExpression(column: Column): String {
-        if (column.rawExpression != null) return column.rawExpression
-        require(column.fields.isNotEmpty()) { "Column has no fields" }
-        return resolveFieldPath(column.fields.first()).columnHandler
-    }
-
-    /**
-     * Resolves a dot-notation field path to its fully-qualified SQL column
-     * expression (with the necessary joins registered on the tree). Used by
-     * [SingleAggregatorCore] to build aggregate `SELECT` lists.
-     */
-    internal fun resolveAggregateExpression(path: String): String {
-        val node = resolveFieldPath(FieldPath(path))
-        node.activate()
-        treeIsDirty = true // ensures tablesPart regenerates joins on next access
-        return node.columnHandler
-    }
-
-    private fun resolveCurrentTree() {
-        if (!treeIsDirty) return
-        treeIsDirty = false
-        root.deactivate()
-        root.activate()
-        for (column in _columns) {
-            if (!column.hasActiveFilter() && !column.hasActiveSort()) continue
-            for (fieldPath in column.fields)
-                resolveFieldPath(fieldPath).activate()
-        }
-    }
-
-    private fun resolveFieldPath(fieldPath: FieldPath): NodeField {
-        var last: Node = root
-        for (segment in fieldPath.segments)
-            last = last.findChild(segment) { tableCounter.incrementAndGet() }
-        require(last is NodeField) { "Last field in path '${fieldPath.path}' must be a scalar, not a table reference" }
-        return last
-    }
-
-    private fun detectType(fieldPath: FieldPath): Column.Type {
-        val node = resolveFieldPath(fieldPath)
-        if (node.isEnum) return Column.Type.ENUM
-        val typeName = node.type.simpleName ?: return Column.Type.TEXT
-        return when {
-            typeName in setOf("String", "Char", "StringBuilder") -> Column.Type.TEXT
-            typeName in setOf(
-                "Int", "Long", "Short", "Byte", "Float", "Double",
-                "BigDecimal", "BigInteger"
-            ) -> Column.Type.NUMERIC
-
-            typeName.contains("Date") || typeName.contains("Time") ||
-                    typeName.contains("Instant") || typeName.contains("Timestamp") -> Column.Type.TEMPORAL
-
-            else -> Column.Type.TEXT
-        }
-    }
-
-    private fun buildEnumValues(enumType: KClass<*>): Map<String, Any>? {
-        val entries = enumEntries(enumType) ?: return null
-        return entries.associate { e ->
-            val display = if (e is HumanReadable) e.displayName else e.name
-            display to enumToInt(e)
-        }
-    }
-
-    internal fun resolveInputParser(column: Column): InputParser =
-        column.inputParser ?: inputParser ?: defaultInputParser ?: { s, _ -> s }
 
     internal companion object {
         // Backing storage for the user-facing `PagedList.defaultInputParser`

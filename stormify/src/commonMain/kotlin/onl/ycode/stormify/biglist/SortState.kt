@@ -3,9 +3,9 @@
 package onl.ycode.stormify.biglist
 
 /**
- * The sort direction of a [Column].
+ * The sort direction of a [Facet].
  *
- * Use `Column.ASCENDING` or `Column.DESCENDING` for convenience.
+ * Use `Facet.ASCENDING` or `Facet.DESCENDING` for convenience.
  */
 enum class SortState {
     /** Sort in ascending order (A-Z, 0-9). */

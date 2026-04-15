@@ -264,7 +264,7 @@ open class Stormify(val dataSource: DataSource, vararg registrars: EntityRegistr
      *
      * // Paged list — attach before use (or rely on Stormify.defaultInstance)
      * val list = stormify.attach(PagedList<Company>())
-     * list.addColumn("name")
+     * list.addFacet("name")
      * ```
      */
     fun <T : StormifyAware> attach(target: T): T = target.also { it.attachTo(this) }

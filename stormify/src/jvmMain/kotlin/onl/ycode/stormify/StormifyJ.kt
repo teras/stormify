@@ -191,7 +191,7 @@ class StormifyJ(dataSource: DataSource, vararg registrars: EntityRegistrar) {
      *
      * // Paged list — attach before use (or rely on Stormify.defaultInstance)
      * PagedList<Company> list = stormify.attach(new PagedList<>(Company.class));
-     * list.addColumn("name");
+     * list.addFacet("name");
      * ```
      */
     fun <T : StormifyAware> attach(target: T): T = stormify.attach(target)

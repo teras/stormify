@@ -15,7 +15,8 @@ import kotlin.reflect.KClass
  * lives here once.
  */
 internal class SingleAggregatorCore(
-    internal val pagedList: PagedListBase<*>
+    internal val core: PagedQueryCore<*>,
+    private val state: PagedQueryCore.RequestState? = null,
 ) {
     internal val entries: MutableList<AggregateEntry> = mutableListOf()
 
@@ -69,7 +70,7 @@ internal class SingleAggregatorCore(
         // column expressions — this handles FK traversal and join aliasing.
         val resolved = when (expression) {
             "*" -> "*"
-            else -> pagedList.resolveAggregateExpression(expression)
+            else -> core.resolveAggregateExpression(expression)
         }
         return when (function) {
             "sum" -> "SUM($resolved)"
@@ -120,25 +121,25 @@ internal class SingleAggregatorCore(
     }
 
     /** Builds the final SQL for the current entry list. */
-    internal fun buildQuery(): String {
-        require(entries.isNotEmpty()) { "Aggregator has no aggregations to run" }
-        val dialect = pagedList.getStormify().sqlDialect
-        val (where, _) = pagedList.buildConstraintPart(excludeColumn = null)
-        val select = entries.joinToString(", ") { "${it.expression} AS ${dialect.quoteAlias(it.alias)}" }
-        return "SELECT $select FROM ${pagedList.getTablesPart()}$where"
-    }
+    internal fun buildQuery(): String = buildPlan().first
 
     /** Returns the positional argument list that accompanies [buildQuery]. */
-    internal fun buildArgs(): List<Any> = pagedList.buildConstraintPart(excludeColumn = null).second
+    internal fun buildArgs(): List<Any> = buildPlan().second
+
+    private fun buildPlan(): Pair<String, List<Any>> {
+        require(entries.isNotEmpty()) { "Aggregator has no aggregations to run" }
+        val dialect = core.stormify.sqlDialect
+        val select = entries.joinToString(", ") { "${it.expression} AS ${dialect.quoteAlias(it.alias)}" }
+        return core.planAggregate(select, state)
+    }
 
     /**
      * Executes the query and returns a [Map] keyed by [AggregateEntry.alias]
      * with the raw column values (no type coercion — callers do the casting).
      */
     internal fun executeMulti(): Map<String, Any?> {
-        val stormify = pagedList.getStormify()
-        val sql = buildQuery()
-        val args = buildArgs()
+        val stormify = core.stormify
+        val (sql, args) = buildPlan()
         @Suppress("UNCHECKED_CAST")
         val row = stormify.readOne(
             null, Map::class as KClass<Map<String, Any?>>, sql, *args.toTypedArray()
@@ -157,9 +158,8 @@ internal class SingleAggregatorCore(
      * Executes a single-value query and casts the returned column to [type].
      */
     internal fun <R : Any> executeSingle(type: KClass<R>): R? {
-        val stormify = pagedList.getStormify()
-        val sql = buildQuery()
-        val args = buildArgs()
+        val stormify = core.stormify
+        val (sql, args) = buildPlan()
         @Suppress("UNCHECKED_CAST")
         val row = stormify.readOne(
             null, Map::class as KClass<Map<String, Any?>>, sql, *args.toTypedArray()

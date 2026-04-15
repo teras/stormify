@@ -100,7 +100,7 @@ package onl.ycode.stormify
  * )
  * ```
  *
- * ## Custom Column Mapping
+ * ## Custom Facet Mapping
  *
  * ```kotlin
  * data class User(
@@ -112,7 +112,7 @@ package onl.ycode.stormify
  *     @DbField(name = "email")
  *     var emailAddress: String,
  *
- *     // Column with different naming convention
+ *     // Facet with different naming convention
  *     @DbField(name = "FirstName")
  *     var firstName: String
  * )
@@ -136,7 +136,7 @@ package onl.ycode.stormify
  * var emailAddress: String
  *
  * // JPA equivalent (also supported)
- * @Column(name = "email")
+ * @Facet(name = "email")
  * var emailAddress: String
  * ```
  *

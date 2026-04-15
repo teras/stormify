@@ -153,7 +153,7 @@ internal actual fun <T : Any> tryReflection(type: KClass<T>): EntityMeta<T>? {
 
         val dbField = annotations.filterIsInstance<DbField>().firstOrNull()
         val jpaId = annotations.any { it.annotationClass.qualifiedName == "javax.persistence.Id" }
-        val jpaColumn = annotations.find { it.annotationClass.qualifiedName == "javax.persistence.Column" }
+        val jpaColumn = annotations.find { it.annotationClass.qualifiedName == "javax.persistence.Facet" }
         val jpaJoinColumn = annotations.find { it.annotationClass.qualifiedName == "javax.persistence.JoinColumn" }
         val jpaSequence = annotations.find { it.annotationClass.qualifiedName == "javax.persistence.SequenceGenerator" }
 

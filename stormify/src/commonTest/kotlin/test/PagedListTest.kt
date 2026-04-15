@@ -10,7 +10,7 @@ import kotlinx.datetime.toInstant
 import onl.ycode.logger.WatchLogger
 import onl.ycode.stormify.SqlDialect
 import onl.ycode.stormify.Stormify
-import onl.ycode.stormify.biglist.Column
+import onl.ycode.stormify.biglist.Facet
 import onl.ycode.stormify.biglist.InputParser
 import onl.ycode.stormify.biglist.PagedList
 import onl.ycode.stormify.biglist.PagedListSort
@@ -175,7 +175,7 @@ open class PagedListTest {
             assertTrue(list[i].id > 10)
     }
 
-    // --- Column text filter ---
+    // --- Facet text filter ---
 
     @Test
     fun testTextFilter() = withDb("PAGED-TEXT-FILTER") { s ->
@@ -185,7 +185,7 @@ open class PagedListTest {
         s.create(listOf(TestC(1, "Alice"), TestC(2, "Bob"), TestC(3, "Alicia"), TestC(4, "Charlie")))
 
         val list = PagedList<TestC>()
-        val col = list.addColumn("name")
+        val col = list.addFacet("name")
         col.filter = "Al"
 
         // Default: case-insensitive LIKE %Al%
@@ -200,7 +200,7 @@ open class PagedListTest {
         s.create(listOf(TestC(1, "Alice"), TestC(2, "Bob")))
 
         val list = PagedList<TestC>()
-        val col = list.addColumn("name")
+        val col = list.addFacet("name")
         col.filter = "Alice"
         assertEquals(1, list.size)
 
@@ -216,12 +216,12 @@ open class PagedListTest {
         s.create(listOf(TestC(1, "Alice"), TestC(2, null), TestC(3, null)))
 
         val list = PagedList<TestC>()
-        val col = list.addColumn("name")
-        col.filter = Column.NULL
+        val col = list.addFacet("name")
+        col.filter = Facet.NULL
         assertEquals(2, list.size)
     }
 
-    // --- Column sorting ---
+    // --- Facet sorting ---
 
     @Test
     fun testSortingAscending() = withDb("PAGED-SORT-ASC") { s ->
@@ -231,8 +231,8 @@ open class PagedListTest {
         s.create(listOf(TestC(1, "Charlie"), TestC(2, "Alice"), TestC(3, "Bob")))
 
         val list = PagedList<TestC>()
-        val col = list.addColumn("name")
-        col.sort = Column.ASCENDING
+        val col = list.addFacet("name")
+        col.sort = Facet.ASCENDING
         assertEquals("Alice", list[0].name)
         assertEquals("Bob", list[1].name)
         assertEquals("Charlie", list[2].name)
@@ -246,8 +246,8 @@ open class PagedListTest {
         s.create(listOf(TestC(1, "Charlie"), TestC(2, "Alice"), TestC(3, "Bob")))
 
         val list = PagedList<TestC>()
-        val col = list.addColumn("name")
-        col.sort = Column.DESCENDING
+        val col = list.addFacet("name")
+        col.sort = Facet.DESCENDING
         assertEquals("Charlie", list[0].name)
         assertEquals("Bob", list[1].name)
         assertEquals("Alice", list[2].name)
@@ -257,8 +257,8 @@ open class PagedListTest {
     fun testClearSort() = withDb("PAGED-SORT-CLEAR") { s ->
         setupTable(s, 5)
         val list = PagedList<TestC>()
-        val col = list.addColumn("name")
-        col.sort = Column.DESCENDING
+        val col = list.addFacet("name")
+        col.sort = Facet.DESCENDING
         assertEquals("Item5", list[0].name)
 
         col.clearSort()
@@ -281,7 +281,7 @@ open class PagedListTest {
 
         val list = PagedList<CamelEntity>()
         // Single column with two fields — OR between them
-        val col = list.addColumn("firstName", "lastName")
+        val col = list.addFacet("firstName", "lastName")
         col.filter = "Ali"
 
         // "Alice" matches firstName, "Alison" matches lastName
@@ -298,8 +298,8 @@ open class PagedListTest {
         s.create(listOf(TestC(1, "Alice"), TestC(2, "Bob"), TestC(3, "Alicia"), TestC(4, "Charlie")))
 
         val list = PagedList<TestC>()
-        val nameCol = list.addColumn("name")
-        val idCol = list.addColumn("id")
+        val nameCol = list.addFacet("name")
+        val idCol = list.addFacet("id")
 
         nameCol.filter = "Al"
         idCol.filter = "<= 2"
@@ -316,7 +316,7 @@ open class PagedListTest {
         setupParentChild(s)
 
         val list = PagedList<Child>()
-        val col = list.addColumn("parent.name")
+        val col = list.addFacet("parent.name")
         col.filter = "Parent1"
 
         assertEquals(2, list.size)
@@ -333,7 +333,7 @@ open class PagedListTest {
 
         val list = PagedList<TestC>()
         list.setConstraints("test.id <= ?", 3)
-        val col = list.addColumn("name")
+        val col = list.addFacet("name")
         col.filter = "Al"
 
         // id <= 3 AND name LIKE %al%  →  Alice (1), Alicia (3)
@@ -354,7 +354,7 @@ open class PagedListTest {
         ))
 
         val list = PagedList<CamelEntity>()
-        val col = list.addColumn("firstName")
+        val col = list.addFacet("firstName")
         col.filter = "Ali"
 
         assertEquals(2, list.size)
@@ -380,9 +380,9 @@ open class PagedListTest {
         s.create(listOf(TestC(1, "Alice"), TestC(2, "Bob")))
 
         val list = PagedList<TestC>()
-        val col = list.addColumn("name")
+        val col = list.addFacet("name")
         col.filter = "Alice"
-        col.sort = Column.DESCENDING
+        col.sort = Facet.DESCENDING
         assertEquals(1, list.size)
 
         list.reset()
@@ -398,7 +398,7 @@ open class PagedListTest {
         setupTable(s, 100)
         val list = PagedList<TestC>()
         list.pageSize = 7
-        list.addColumn("name")
+        list.addFacet("name")
 
         assertEquals(100, list.size)
 
@@ -484,7 +484,7 @@ open class PagedListTest {
         val list = PagedList<TestC>()
         // Enum mapping: display name → DB value
         val nameMap = mapOf("Alice" to "Alice", "Bob" to "Bob", "Charlie" to "Charlie")
-        val col = list.addColumn(nameMap, "name")
+        val col = list.addFacet(nameMap, "name")
         col.filter = "Ali"  // substring match → "Alice"
 
         assertEquals(1, list.size)
@@ -500,7 +500,7 @@ open class PagedListTest {
 
         val list = PagedList<TestC>()
         val nameMap = mapOf("Active" to "Active", "Inactive" to "Inactive", "Archived" to "Archived")
-        val col = list.addColumn(nameMap, "name")
+        val col = list.addFacet(nameMap, "name")
         col.filter = "active"  // case-insensitive → "Active", "Inactive"
 
         assertEquals(2, list.size)
@@ -515,7 +515,7 @@ open class PagedListTest {
 
         val list = PagedList<TestC>()
         val nameMap = mapOf("Alice" to "Alice", "Bob" to "Bob")
-        val col = list.addColumn(nameMap, "name")
+        val col = list.addFacet(nameMap, "name")
         col.filter = "xyz"  // no match → 0 results
 
         assertEquals(0, list.size)
@@ -534,7 +534,7 @@ open class PagedListTest {
 
         val list = PagedList<EnumEntity>()
         // No explicit type — auto-detects enum, auto-builds enumValues
-        val col = list.addColumn("plainStatus")
+        val col = list.addFacet("plainStatus")
         col.filter = "BANNED"
 
         assertEquals(1, list.size)
@@ -546,7 +546,7 @@ open class PagedListTest {
     fun testNumericFilterRange() = withDb("PAGED-NUM-RANGE") { s ->
         setupTable(s, 20)
         val list = PagedList<TestC>()
-        val col = list.addColumn("id")
+        val col = list.addFacet("id")
         col.filter = "5 ... 10"
 
         assertEquals(6, list.size)  // 5,6,7,8,9,10
@@ -556,7 +556,7 @@ open class PagedListTest {
     fun testNumericFilterGreaterThan() = withDb("PAGED-NUM-GT") { s ->
         setupTable(s, 10)
         val list = PagedList<TestC>()
-        val col = list.addColumn("id")
+        val col = list.addFacet("id")
         col.filter = "> 8"
         assertEquals(2, list.size)  // 9, 10
     }
@@ -565,7 +565,7 @@ open class PagedListTest {
     fun testNumericFilterGreaterOrEqual() = withDb("PAGED-NUM-GTE") { s ->
         setupTable(s, 10)
         val list = PagedList<TestC>()
-        val col = list.addColumn("id")
+        val col = list.addFacet("id")
         col.filter = ">= 8"
         assertEquals(3, list.size)  // 8, 9, 10
     }
@@ -574,7 +574,7 @@ open class PagedListTest {
     fun testNumericFilterLessThan() = withDb("PAGED-NUM-LT") { s ->
         setupTable(s, 10)
         val list = PagedList<TestC>()
-        val col = list.addColumn("id")
+        val col = list.addFacet("id")
         col.filter = "< 3"
         assertEquals(2, list.size)  // 1, 2
     }
@@ -583,7 +583,7 @@ open class PagedListTest {
     fun testNumericFilterLessOrEqual() = withDb("PAGED-NUM-LTE") { s ->
         setupTable(s, 10)
         val list = PagedList<TestC>()
-        val col = list.addColumn("id")
+        val col = list.addFacet("id")
         col.filter = "<= 3"
         assertEquals(3, list.size)  // 1, 2, 3
     }
@@ -598,7 +598,7 @@ open class PagedListTest {
         s.create(listOf(TestC(1, "Alice"), TestC(2, "Bob"), TestC(3, "Malice")))
 
         val list = PagedList<TestC>()
-        val col = list.addColumn("name")
+        val col = list.addFacet("name")
         col.filter = "*lice"  // ends with "lice"
 
         assertEquals(2, list.size)  // Alice, Malice
@@ -612,7 +612,7 @@ open class PagedListTest {
         s.create(listOf(TestC(1, "Alice"), TestC(2, "Alicia")))
 
         val list = PagedList<TestC>()
-        val col = list.addColumn("name")
+        val col = list.addFacet("name")
         col.filter = "\"alice\""  // exact match, case-insensitive
 
         assertEquals(1, list.size)
@@ -629,7 +629,7 @@ open class PagedListTest {
         s.create(listOf(TestC(1, "ALICE"), TestC(2, "alice"), TestC(3, "Alice"), TestC(4, "Bob")))
 
         val list = PagedList<TestC>()
-        val col = list.addColumn("name")
+        val col = list.addFacet("name")
         col.filter = "aLiCe"
 
         assertEquals(3, list.size)
@@ -649,7 +649,7 @@ open class PagedListTest {
         s.create(listOf(TestC(1, "ALICE"), TestC(2, "alice"), TestC(3, "Alice"), TestC(4, "Bob")))
 
         val list = PagedList<TestC>()
-        val col = list.addColumn("name")
+        val col = list.addFacet("name")
         col.isCaseSensitive = true
         col.filter = "Alice"
 
@@ -671,10 +671,10 @@ open class PagedListTest {
         ))
 
         val list = PagedList<CamelEntity>()
-        val lastCol = list.addColumn("lastName")
-        val firstCol = list.addColumn("firstName")
-        lastCol.sort = Column.ASCENDING
-        firstCol.sort = Column.ASCENDING
+        val lastCol = list.addFacet("lastName")
+        val firstCol = list.addFacet("firstName")
+        lastCol.sort = Facet.ASCENDING
+        firstCol.sort = Facet.ASCENDING
 
         // Sort by lastName ASC, then firstName ASC
         assertEquals("Brown", list[0].lastName)     // Alice Brown
@@ -726,7 +726,7 @@ open class PagedListTest {
         s.create(listOf(TestC(1, "Alice"), TestC(2, "Bob"), TestC(3, "Alice"), TestC(4, "Charlie")))
 
         val list = PagedList<TestC>()
-        val col = list.addColumn("name")
+        val col = list.addFacet("name")
         val values = col.getFilterValues()
 
         // Distinct names: Alice, Bob, Charlie
@@ -746,8 +746,8 @@ open class PagedListTest {
         ))
 
         val list = PagedList<CamelEntity>()
-        val lastNameCol = list.addColumn("lastName")
-        val firstNameCol = list.addColumn("firstName")
+        val lastNameCol = list.addFacet("lastName")
+        val firstNameCol = list.addFacet("firstName")
 
         // Without filter: all distinct first names
         val firstNames = firstNameCol.getFilterValues()
@@ -767,7 +767,7 @@ open class PagedListTest {
         s.create((1..20).map { TestC(it, "Name${it.toString().padStart(2, '0')}") })
 
         val list = PagedList<TestC>()
-        val col = list.addColumn("name")
+        val col = list.addFacet("name")
         val values = col.getFilterValues()
         values.pageSize = 5
 
@@ -785,8 +785,8 @@ open class PagedListTest {
         s.create(listOf(TestC(1, "Alice"), TestC(2, "Bob"), TestC(3, "Charlie")))
 
         val list = PagedList<TestC>()
-        val col = list.addColumn("name")
-        val idCol = list.addColumn("id")
+        val col = list.addFacet("name")
+        val idCol = list.addFacet("id")
 
         val values = col.getFilterValues()
         assertEquals(3, values.size)
@@ -802,7 +802,7 @@ open class PagedListTest {
     fun testRawColumnFilter() = withDb("PAGED-RAW") { s ->
         setupTable(s, 10)
         val list = PagedList<TestC>()
-        val col = list.addRawColumn("test.id", Column.NUMERIC)
+        val col = list.addSqlFacet("test.id", Facet.NUMERIC)
         col.filter = "> 7"
 
         assertEquals(3, list.size) // 8, 9, 10
@@ -816,8 +816,8 @@ open class PagedListTest {
         s.create(listOf(TestC(1, "Charlie"), TestC(2, "Alice"), TestC(3, "Bob")))
 
         val list = PagedList<TestC>()
-        val col = list.addRawColumn("test.name", Column.TEXT)
-        col.sort = Column.ASCENDING
+        val col = list.addSqlFacet("test.name", Facet.TEXT)
+        col.sort = Facet.ASCENDING
 
         assertEquals("Alice", list[0].name)
         assertEquals("Bob", list[1].name)
@@ -830,7 +830,7 @@ open class PagedListTest {
     fun testInvalidNumericInput() = withDb("PAGED-INVALID-NUM") { s ->
         setupTable(s, 10)
         val list = PagedList<TestC>()
-        val col = list.addColumn("id")
+        val col = list.addFacet("id")
         col.filter = "abc"  // invalid number → 0 results, no crash
 
         assertEquals(0, list.size)
@@ -840,7 +840,7 @@ open class PagedListTest {
     fun testInvalidDateInput() = withDb("PAGED-INVALID-DATE") { s ->
         setupDateTable(s)
         val list = PagedList<Event>()
-        val col = list.addColumn("eventDate")
+        val col = list.addFacet("eventDate")
         col.filter = "not-a-date"
 
         assertEquals(0, list.size)
@@ -851,7 +851,7 @@ open class PagedListTest {
         setupTable(s, 10)
         val list = PagedList<TestC>()
         val isOracle = s.sqlDialect == SqlDialect.ORACLE_NEW || s.sqlDialect == SqlDialect.ORACLE_OLD
-        val col = list.addRawColumn("test.id", Column.RAW) { column, value, args ->
+        val col = list.addSqlFacet("test.id", Facet.CUSTOM) { column, value, args ->
             val mod = value.toIntOrNull() ?: 0
             args.accept(mod)
             if (isOracle) "MOD($column, ?) = 0" else "$column % ? = 0"
@@ -867,7 +867,7 @@ open class PagedListTest {
     fun testInputParserPerColumn() = withDb("PAGED-PARSER-COL") { s ->
         setupTable(s, 20)
         val list = PagedList<TestC>()
-        val col = list.addColumn("id")
+        val col = list.addFacet("id")
         // Simulate Greek locale: "1.000" means 1000, not 1.000
         col.inputParser = { input, _ -> input.replace(".", "") }
         col.filter = "> 1.000"
@@ -883,9 +883,9 @@ open class PagedListTest {
         setupTable(s, 20)
         val list = PagedList<TestC>()
         list.inputParser = { input, type ->
-            if (type == Column.NUMERIC) input.replace(".", "") else input
+            if (type == Facet.NUMERIC) input.replace(".", "") else input
         }
-        val col = list.addColumn("id")
+        val col = list.addFacet("id")
         col.filter = "> 1.5"  // "1.5" → "15" after parser
 
         assertEquals(5, list.size) // ids 16..20
@@ -897,11 +897,11 @@ open class PagedListTest {
         try {
             // Simulate locale where dot is thousand separator
             PagedList.defaultInputParser = { input, type ->
-                if (type == Column.NUMERIC) input.replace(".", "") else input
+                if (type == Facet.NUMERIC) input.replace(".", "") else input
             }
             setupTable(s, 20)
             val list = PagedList<TestC>()
-            val col = list.addColumn("id")
+            val col = list.addFacet("id")
             col.filter = "> 1.8"  // "1.8" → "18"
 
             assertEquals(2, list.size) // ids 19, 20
@@ -922,8 +922,8 @@ open class PagedListTest {
             // List: replace dot
             list.inputParser = { input, _ -> input.replace(".", "") }
 
-            val col = list.addColumn("id")
-            // Column parser wins over list parser
+            val col = list.addFacet("id")
+            // Facet parser wins over list parser
             col.inputParser = { input, _ -> input.replace("X", "1") }
             col.filter = "> X8"  // column parser: "X8" → "18"
 
@@ -959,7 +959,7 @@ open class PagedListTest {
     fun testDateFilterGreaterThan() = withDb("PAGED-DATE-GT") { s ->
         setupDateTable(s)
         val list = PagedList<Event>()
-        val col = list.addColumn("eventDate")
+        val col = list.addFacet("eventDate")
         col.inputParser = dateParser
         col.filter = "> 01/06/2026"
 
@@ -970,7 +970,7 @@ open class PagedListTest {
     fun testDateFilterLessThan() = withDb("PAGED-DATE-LT") { s ->
         setupDateTable(s)
         val list = PagedList<Event>()
-        val col = list.addColumn("eventDate")
+        val col = list.addFacet("eventDate")
         col.inputParser = dateParser
         col.filter = "< 01/06/2026"
 
@@ -981,7 +981,7 @@ open class PagedListTest {
     fun testDateFilterRange() = withDb("PAGED-DATE-RANGE") { s ->
         setupDateTable(s)
         val list = PagedList<Event>()
-        val col = list.addColumn("eventDate")
+        val col = list.addFacet("eventDate")
         col.inputParser = dateParser
         col.filter = "01/03/2026 ... 30/09/2026"
 
@@ -992,7 +992,7 @@ open class PagedListTest {
     fun testDateFilterExact() = withDb("PAGED-DATE-EXACT") { s ->
         setupDateTable(s)
         val list = PagedList<Event>()
-        val col = list.addColumn("eventDate")
+        val col = list.addFacet("eventDate")
         col.inputParser = dateParser
         col.filter = "20/03/2026"
 
@@ -1022,7 +1022,7 @@ open class PagedListTest {
         s.create(listOf(DualKey(1, 1, "a"), DualKey(1, 2, "b")))
 
         val list = PagedList<DualKey>()
-        list.addColumn("id1").sort = Column.ASCENDING
+        list.addFacet("id1").sort = Facet.ASCENDING
         // With explicit sort it should work
         assertEquals(2, list.size)
     }
@@ -1038,7 +1038,7 @@ open class PagedListTest {
         val list = PagedList<Event>()
         // Raw column — the default TEMPORAL converter wraps the placeholder with
         // a dialect-aware cast (e.g., TO_DATE on Oracle, CAST on others)
-        val col = list.addRawColumn("event.event_date", Column.TEMPORAL)
+        val col = list.addSqlFacet("event.event_date", Facet.TEMPORAL)
         col.inputParser = dateParser
         // Use >= to avoid noon-vs-midnight edge case on Oracle (DATE includes time)
         col.filter = ">= 02/06/2026"  // Sep 10, Dec 25 (strictly after June 1)
@@ -1052,8 +1052,8 @@ open class PagedListTest {
     fun testSelectedWithSortAndFilter() = withDb("PAGED-SEL-SORT-FILTER") { s ->
         setupTable(s, 10)
         val list = PagedList<TestC>()
-        val col = list.addColumn("name")
-        col.sort = Column.DESCENDING
+        val col = list.addFacet("name")
+        col.sort = Facet.DESCENDING
         col.filter = "Item"
 
         val item5 = s.read<TestC>("SELECT * FROM test WHERE id = ?", 5).first()
@@ -1080,7 +1080,7 @@ open class PagedListTest {
         // The user types "Ενερ" — reverse substring lookup finds "Ενεργή" → "ACTIVE"
         // Note: "Ενερ" also matches "Ανενεργή" (contains "ενερ"), so we get 2 results
         val displayMap = HRStatus.entries.associate { it.displayName to it.name }
-        val col = list.addColumn(displayMap, "name")
+        val col = list.addFacet(displayMap, "name")
         col.filter = "Ενεργή"  // exact substring — matches "Ενεργή" and "Ανενεργή"
 
         // Should match both ACTIVE and INACTIVE (both contain "Ενεργή" in their display names)
@@ -1102,7 +1102,7 @@ open class PagedListTest {
 
         val list = PagedList<EnumEntity>()
         // Auto-detect — for CustomStatus the map should be { name → dbValue(Int) }
-        val col = list.addColumn("customStatus")
+        val col = list.addFacet("customStatus")
         col.filter = "BANNED"
 
         // Verify correct row and correct DB value is sent
@@ -1160,7 +1160,7 @@ open class PagedListTest {
         s.create(listOf(TestC(1, "ALICE"), TestC(2, "alice"), TestC(3, "Alice"), TestC(4, "Bob")))
 
         val list = PagedList<TestC>()
-        val col = list.addColumn("name")
+        val col = list.addFacet("name")
         col.filter = "Alice"
         assertEquals(3, list.size)  // case-insensitive default
 
@@ -1189,7 +1189,7 @@ open class PagedListTest {
     fun testForEachWithFilter() = withDb("PAGED-FOREACH-FILTER") { s ->
         setupTable(s, 20)
         val list = PagedList<TestC>()
-        val col = list.addColumn("id")
+        val col = list.addFacet("id")
         col.filter = "> 15"
 
         val ids = mutableListOf<Int>()
@@ -1392,7 +1392,7 @@ open class PagedListTest {
     fun testAggregatorWithFilter() = withDb("PAGED-AGG-FILTER") { s ->
         setupTable(s, 20)
         val list = PagedList<TestC>()
-        val col = list.addColumn("id")
+        val col = list.addFacet("id")
         col.filter = "<= 5"
 
         // Aggregator must honor the active filter
@@ -1752,7 +1752,7 @@ open class PagedListTest {
     fun testAggregatorMultiRespectsFilterAcrossAll() = withDb("PAGED-AGG-MULTI-FILTER") { s ->
         setupTable(s, 20)
         val list = PagedList<TestC>()
-        val col = list.addColumn("id")
+        val col = list.addFacet("id")
         col.filter = "5 ... 10"  // 6 rows: 5..10
 
         val row = list.getAggregator()
@@ -1803,7 +1803,7 @@ open class PagedListTest {
     fun testAggregatorMultiEmptyResult() = withDb("PAGED-AGG-MULTI-EMPTY") { s ->
         setupTable(s, 5)
         val list = PagedList<TestC>()
-        val col = list.addColumn("id")
+        val col = list.addFacet("id")
         col.filter = "> 1000"  // no rows match
 
         val row = list.getAggregator()
@@ -1917,7 +1917,7 @@ open class PagedListTest {
         ))
 
         val list = PagedList<TestC>()
-        val col = list.addColumn("name")
+        val col = list.addFacet("name")
         val counted = col.getFilterValues().withCounts()
 
         assertEquals(3, counted.size)  // 3 distinct names
@@ -1931,7 +1931,7 @@ open class PagedListTest {
     fun testFilterCountedValuesCached() = withDb("PAGED-FILTER-COUNTED-CACHE") { s ->
         setupTable(s, 5)
         val list = PagedList<TestC>()
-        val col = list.addColumn("name")
+        val col = list.addFacet("name")
         val values = col.getFilterValues()
         val a = values.withCounts()
         val b = values.withCounts()
@@ -1945,11 +1945,11 @@ open class PagedListTest {
     fun testSaveRestoreState() = withDb("PAGED-STATE") { s ->
         setupTable(s, 10)
         val list = PagedList<TestC>()
-        val nameCol = list.addColumn("name")
-        val idCol = list.addColumn("id")
+        val nameCol = list.addFacet("name")
+        val idCol = list.addFacet("id")
 
         nameCol.filter = "Item1"
-        idCol.sort = Column.DESCENDING
+        idCol.sort = Facet.DESCENDING
         list.pageSize = 7
         list.isDistinct = true
 
@@ -1965,7 +1965,7 @@ open class PagedListTest {
         list.restoreState(saved)
 
         assertEquals("Item1", nameCol.filter)
-        assertEquals(Column.DESCENDING, idCol.sort)
+        assertEquals(Facet.DESCENDING, idCol.sort)
         assertEquals(7, list.pageSize)
         assertTrue(list.isDistinct)
     }
@@ -1978,37 +1978,38 @@ open class PagedListTest {
         s.create(listOf(CamelEntity(1, "Alice", "Smith")))
 
         val list1 = PagedList<CamelEntity>()
-        list1.addColumn("firstName", "lastName").filter = "Ali"
+        list1.addFacet("firstName", "lastName").filter = "Ali"
 
         val list2 = PagedList<CamelEntity>()
-        list2.addColumn("lastName", "firstName")  // swapped order
+        list2.addFacet("lastName", "firstName")  // swapped order
 
         // state key is derived from sorted paths — save/restore across swapped order
         val saved = list1.saveState()
         list2.restoreState(saved)
-        assertEquals("Ali", list2.getColumn(0).filter)
+        assertEquals("Ali", list2.getFacet(0).filter)
     }
 
     @Test
     fun testRestoreIgnoresUnknownKeys() = withDb("PAGED-STATE-UNKNOWN") { s ->
         setupTable(s, 5)
         val list = PagedList<TestC>()
-        val col = list.addColumn("name")
+        val col = list.addFacet("name").also { it.alias = "name" }
         col.filter = "Item1"
         val saved = list.saveState()
 
-        // New list with different columns — restore must not throw
+        // New list with a different (explicit) alias — the saved "name" key has
+        // no match on list2 and must be silently ignored.
         val list2 = PagedList<TestC>()
-        list2.addColumn("id")
-        list2.restoreState(saved)  // should silently ignore the "name" key
-        assertNull(list2.getColumn(0).filter)
+        list2.addFacet("id").also { it.alias = "id" }
+        list2.restoreState(saved)
+        assertNull(list2.getFacet(0).filter)
     }
 
     @Test
     fun testRestoreEmptyState() = withDb("PAGED-STATE-EMPTY") { s ->
         setupTable(s, 5)
         val list = PagedList<TestC>()
-        val col = list.addColumn("name")
+        val col = list.addFacet("name")
         col.filter = "Item1"
         list.isDistinct = true
 
@@ -2025,11 +2026,11 @@ open class PagedListTest {
     fun testSavedStateSortsAreAscDescStrings() = withDb("PAGED-STATE-SORT-STR") { s ->
         setupTable(s, 5)
         val list = PagedList<TestC>()
-        val nameCol = list.addColumn("name")
-        val idCol = list.addColumn("id")
+        val nameCol = list.addFacet("name")
+        val idCol = list.addFacet("id")
 
-        nameCol.sort = Column.ASCENDING
-        idCol.sort = Column.DESCENDING
+        nameCol.sort = Facet.ASCENDING
+        idCol.sort = Facet.DESCENDING
 
         val saved = list.saveState()
 
@@ -2047,14 +2048,14 @@ open class PagedListTest {
     fun testRestoreSortFromHandCraftedPlainState() = withDb("PAGED-STATE-SORT-PLAIN") { s ->
         setupTable(s, 5)
         val list = PagedList<TestC>()
-        val nameCol = list.addColumn("name")
-        val idCol = list.addColumn("id")
+        val nameCol = list.addFacet("name")
+        val idCol = list.addFacet("id")
 
         // Build a reference state from saveState() so we know the keys, then
         // rebuild it from scratch using only plain data types — the shape any
         // serialization framework produces after a JSON round-trip.
-        nameCol.sort = Column.ASCENDING
-        idCol.sort = Column.DESCENDING
+        nameCol.sort = Facet.ASCENDING
+        idCol.sort = Facet.DESCENDING
         val reference = list.saveState()
         val handCrafted = PagedListState(
             filters = reference.filters.toMap(),
@@ -2069,16 +2070,16 @@ open class PagedListTest {
         idCol.sort = null
         list.restoreState(handCrafted)
 
-        assertEquals(Column.ASCENDING, nameCol.sort)
-        assertEquals(Column.DESCENDING, idCol.sort)
+        assertEquals(Facet.ASCENDING, nameCol.sort)
+        assertEquals(Facet.DESCENDING, idCol.sort)
     }
 
     @Test
     fun testRestoreSortIgnoresInvalidDirection() = withDb("PAGED-STATE-SORT-INVALID") { s ->
         setupTable(s, 5)
         val list = PagedList<TestC>()
-        val col = list.addColumn("name")
-        col.sort = Column.ASCENDING
+        val col = list.addFacet("name")
+        col.sort = Facet.ASCENDING
 
         // Grab the actual key from a save round-trip, then override the value with garbage.
         val reference = list.saveState()
@@ -2094,13 +2095,13 @@ open class PagedListTest {
     fun testPagedListStatePureDataRoundTrip() = withDb("PAGED-STATE-ROUND") { s ->
         setupTable(s, 5)
         val list = PagedList<TestC>()
-        val nameCol = list.addColumn("name")
-        val idCol = list.addColumn("id")
+        val nameCol = list.addFacet("name")
+        val idCol = list.addFacet("id")
 
         nameCol.filter = "Item"
-        nameCol.sort = Column.DESCENDING
+        nameCol.sort = Facet.DESCENDING
         nameCol.isCaseSensitive = true
-        idCol.sort = Column.ASCENDING
+        idCol.sort = Facet.ASCENDING
         list.pageSize = 25
         list.isDistinct = true
 
@@ -2126,14 +2127,14 @@ open class PagedListTest {
 
         // Apply the rebuilt state to a fresh list and verify everything came back.
         val list2 = PagedList<TestC>()
-        val name2 = list2.addColumn("name")
-        val id2 = list2.addColumn("id")
+        val name2 = list2.addFacet("name")
+        val id2 = list2.addFacet("id")
         list2.restoreState(rebuilt)
 
         assertEquals("Item", name2.filter)
-        assertEquals(Column.DESCENDING, name2.sort)
+        assertEquals(Facet.DESCENDING, name2.sort)
         assertTrue(name2.isCaseSensitive)
-        assertEquals(Column.ASCENDING, id2.sort)
+        assertEquals(Facet.ASCENDING, id2.sort)
         assertEquals(25, list2.pageSize)
         assertTrue(list2.isDistinct)
     }

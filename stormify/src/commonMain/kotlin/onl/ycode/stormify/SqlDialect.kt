@@ -344,7 +344,7 @@ enum class SqlDialect(
 
     /**
      * Wraps a bind placeholder with a dialect-specific cast to DATE.
-     * Used by raw columns with [onl.ycode.stormify.biglist.Column.Type.TEMPORAL] where the DB cannot
+     * Used by raw columns with [onl.ycode.stormify.biglist.Facet.Type.TEMPORAL] where the DB cannot
      * implicitly convert an ISO string bind parameter to a date.
      *
      * - Oracle: `TO_DATE(?, 'YYYY-MM-DD')` — Oracle ignores `CAST(? AS DATE)` for strings
@@ -360,7 +360,7 @@ enum class SqlDialect(
 
     /**
      * Wraps a bind placeholder with a dialect-specific cast to TIMESTAMP.
-     * Used by raw columns with [onl.ycode.stormify.biglist.Column.Type.TEMPORAL] for datetime values.
+     * Used by raw columns with [onl.ycode.stormify.biglist.Facet.Type.TEMPORAL] for datetime values.
      */
     fun castToTimestamp(placeholder: String): String = when (this) {
         ORACLE_NEW, ORACLE_OLD -> "TO_TIMESTAMP($placeholder, 'YYYY-MM-DD\"T\"HH24:MI:SS')"

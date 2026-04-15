@@ -241,3 +241,29 @@ data class EnumStringEntity(
     @DbField(enumAsString = true) var status: PlainStatus? = null,
     var priority: PlainStatus? = null  // ordinal for comparison
 )
+
+// --- Nested entities (annproc + reflection must discover both levels) ---
+
+class NestingOuter {
+    @DbTable(name = "nested_level1")
+    data class Level1(
+        @DbField(primaryKey = true) var id: Int = 0,
+        var label: String? = null,
+    )
+
+    class NestingInner {
+        @DbTable(name = "nested_level2")
+        data class Level2(
+            @DbField(primaryKey = true) var id: Int = 0,
+            var info: String? = null,
+        )
+
+        class NestingInnermost {
+            @DbTable(name = "nested_level3")
+            data class Level3(
+                @DbField(primaryKey = true) var id: Int = 0,
+                var tag: String? = null,
+            )
+        }
+    }
+}

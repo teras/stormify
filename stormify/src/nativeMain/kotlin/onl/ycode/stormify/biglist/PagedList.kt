@@ -6,7 +6,7 @@ import onl.ycode.stormify.Stormify
 import kotlin.reflect.KClass
 
 /**
- * Column-based lazy paginated list view of entities of type [T].
+ * Facet-based lazy paginated list view of entities of type [T].
  *
  * This is the native (Linux/iOS/macOS) entry point. Construction takes a Kotlin
  * [KClass] — use the reified [PagedList] factory for a cleaner call site.

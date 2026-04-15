@@ -17,15 +17,15 @@ internal object DefaultDataConverter {
      * Returns a filter converter based on column type.
      */
     fun guessConverter(
-        type: Column.Type,
+        type: Facet.Type,
         dialect: SqlDialect,
         enumValues: Map<String, Any>? = null
     ): Converter = when (type) {
-        Column.Type.TEXT -> withParser(textConverter(dialect) { false })
-        Column.Type.NUMERIC -> numericConverter(Double::class)
-        Column.Type.TEMPORAL -> rawDateConverter(dialect)
-        Column.Type.ENUM -> withParser(enumConverter(enumValues))
-        Column.Type.RAW -> withParser(textConverter(dialect) { false })
+        Facet.Type.TEXT -> withParser(textConverter(dialect) { false })
+        Facet.Type.NUMERIC -> numericConverter(Double::class)
+        Facet.Type.TEMPORAL -> rawDateConverter(dialect)
+        Facet.Type.ENUM -> withParser(enumConverter(enumValues))
+        Facet.Type.CUSTOM -> withParser(textConverter(dialect) { false })
     }
 
     /**
@@ -33,14 +33,14 @@ internal object DefaultDataConverter {
      */
     fun guessConverterForNode(
         node: NodeField,
-        type: Column.Type,
+        type: Facet.Type,
         dialect: SqlDialect,
         caseSensitive: () -> Boolean,
         enumValues: Map<String, Any>? = null
     ): Converter = when (type) {
-        Column.Type.TEXT -> withParser(textConverter(dialect, caseSensitive))
-        Column.Type.ENUM -> withParser(enumConverter(enumValues))
-        Column.Type.TEMPORAL -> dateConverter(node.type)
+        Facet.Type.TEXT -> withParser(textConverter(dialect, caseSensitive))
+        Facet.Type.ENUM -> withParser(enumConverter(enumValues))
+        Facet.Type.TEMPORAL -> dateConverter(node.type)
         else -> if (isTextualClass(node.type)) withParser(textConverter(dialect, caseSensitive))
         else numericConverter(node.type)
     }
@@ -52,7 +52,7 @@ internal object DefaultDataConverter {
     private fun withParser(
         converter: (String, String, SqlArgsCollector) -> String
     ): Converter =
-        { col, input, parser, args -> converter(col, parser(input, Column.Type.TEXT), args) }
+        { col, input, parser, args -> converter(col, parser(input, Facet.Type.TEXT), args) }
 
     private fun textConverter(
         dialect: SqlDialect,
@@ -128,7 +128,7 @@ internal object DefaultDataConverter {
 
     private fun dateConverter(type: KClass<*>): Converter =
         { column: String, input: String, parser: InputParser, args: SqlArgsCollector ->
-            safeBreakdown(column, input, parser, Column.Type.TEMPORAL, type, args)
+            safeBreakdown(column, input, parser, Facet.Type.TEMPORAL, type, args)
         }
 
     /**
@@ -138,7 +138,7 @@ internal object DefaultDataConverter {
      */
     private fun rawDateConverter(dialect: SqlDialect): Converter =
         { column: String, input: String, parser: InputParser, args: SqlArgsCollector ->
-            safeBreakdownRaw(column, input, parser, Column.Type.TEMPORAL, args) { dialect.castToDate("?") }
+            safeBreakdownRaw(column, input, parser, Facet.Type.TEMPORAL, args) { dialect.castToDate("?") }
         }
 
     /**
@@ -149,7 +149,7 @@ internal object DefaultDataConverter {
         column: String,
         input: String,
         parser: InputParser,
-        columnType: Column.Type,
+        columnType: Facet.Type,
         args: SqlArgsCollector,
         placeholder: () -> String
     ): String {
@@ -164,7 +164,7 @@ internal object DefaultDataConverter {
 
     private fun numericConverter(type: KClass<*>): Converter =
         { column: String, input: String, parser: InputParser, args: SqlArgsCollector ->
-            safeBreakdown(column, input, parser, Column.Type.NUMERIC, type, args)
+            safeBreakdown(column, input, parser, Facet.Type.NUMERIC, type, args)
         }
 
     /**
@@ -175,7 +175,7 @@ internal object DefaultDataConverter {
         column: String,
         input: String,
         parser: InputParser,
-        columnType: Column.Type,
+        columnType: Facet.Type,
         targetType: KClass<*>,
         args: SqlArgsCollector
     ): String {
@@ -201,7 +201,7 @@ internal object DefaultDataConverter {
         column: String,
         userInput: String,
         parser: InputParser,
-        type: Column.Type,
+        type: Facet.Type,
         args: (String) -> Unit
     ): String {
         val input = userInput.trim()

@@ -15,8 +15,8 @@ import kotlin.reflect.KClass
  * The constructor is `internal` so only the two built-in subclasses can extend it.
  */
 abstract class FilterValuesBase<E> internal constructor(
-    internal val pagedList: PagedListBase<*>,
-    internal val column: Column
+    internal val core: PagedQueryCore<*>,
+    internal val column: Facet
 ) : AbstractList<E>() {
 
     /** Page size for loading values. Default is 20. */
@@ -38,11 +38,11 @@ abstract class FilterValuesBase<E> internal constructor(
      */
     override val size: Int
         get() = _size ?: run {
-            val stormify = pagedList.getStormify()
-            val columnExpr = pagedList.resolveColumnExpression(column)
-            val (where, args) = pagedList.buildConstraintPart(excludeColumn = column)
+            val stormify = core.stormify
+            val columnExpr = core.resolveFacetExpression(column)
+            val (where, args) = core.buildConstraintPart(excludeFacet = column)
             (stormify.readOne<Int>(
-                "SELECT COUNT(DISTINCT $columnExpr) FROM ${pagedList.getTablesPart()}$where",
+                "SELECT COUNT(DISTINCT $columnExpr) FROM ${core.tablesPart}$where",
                 *args.toTypedArray()
             ) ?: 0).also { _size = it }
         }
@@ -76,7 +76,7 @@ abstract class FilterValuesBase<E> internal constructor(
 }
 
 /**
- * A lazy-loading paginated list of distinct string values for a [Column].
+ * A lazy-loading paginated list of distinct string values for a [Facet].
  *
  * Used to populate selection popups / autocomplete widgets. Values are
  * filtered by the active filters of **other** columns and the list constraints,
@@ -84,22 +84,22 @@ abstract class FilterValuesBase<E> internal constructor(
  *
  * Values are loaded in pages on demand — not all at once.
  *
- * Obtained via [Column.getFilterValues]. For value + count pairs (facet picker
+ * Obtained via [Facet.getFilterValues]. For value + count pairs (facet picker
  * style), use [withCounts].
  */
 class FilterValues internal constructor(
-    pagedList: PagedListBase<*>,
-    column: Column
-) : FilterValuesBase<String>(pagedList, column) {
+    core: PagedQueryCore<*>,
+    column: Facet
+) : FilterValuesBase<String>(core, column) {
 
     private var _counted: FilterCountedValues? = null
 
     override fun loadPage(low: Int, high: Int): List<String> {
-        val stormify = pagedList.getStormify()
-        val columnExpr = pagedList.resolveColumnExpression(column)
-        val (where, args) = pagedList.buildConstraintPart(excludeColumn = column)
+        val stormify = core.stormify
+        val columnExpr = core.resolveFacetExpression(column)
+        val (where, args) = core.buildConstraintPart(excludeFacet = column)
         val sql = stormify.sqlDialect.queryFormatter(
-            columnExpr, "DISTINCT ", pagedList.getTablesPart(), where, columnExpr,
+            columnExpr, "DISTINCT ", core.tablesPart, where, columnExpr,
             low, high
         )
         return stormify.read<String>(null, String::class, sql, *args.toTypedArray())
@@ -113,33 +113,41 @@ class FilterValues internal constructor(
      * Useful for facet pickers — "Category: Books (12), Movies (4)".
      */
     fun withCounts(): FilterCountedValues =
-        _counted ?: FilterCountedValues(pagedList, column).also { _counted = it }
+        _counted ?: FilterCountedValues(core, column).also { _counted = it }
 
     internal fun invalidateAll() {
         invalidate()
         _counted?.invalidate()
     }
+
+    /**
+     * Returns a JSON array of quoted strings — `["a","b","c"]` — composed by
+     * iterating the full list. Triggers page loads for any values not yet
+     * cached, so prefer this only after `size` is known to be reasonable.
+     */
+    override fun toString(): String =
+        joinToString(",", "[", "]") { jsonQuote(it) }
 }
 
 /**
- * A lazy-loading paginated list of distinct values for a [Column] together with
+ * A lazy-loading paginated list of distinct values for a [Facet] together with
  * the row count of each value under the parent list's current filter state
  * (excluding the owning column's own filter). Obtained via
  * [FilterValues.withCounts].
  */
 class FilterCountedValues internal constructor(
-    pagedList: PagedListBase<*>,
-    column: Column
-) : FilterValuesBase<FilterCountedValue>(pagedList, column) {
+    core: PagedQueryCore<*>,
+    column: Facet
+) : FilterValuesBase<FilterCountedValue>(core, column) {
 
     override fun loadPage(low: Int, high: Int): List<FilterCountedValue> {
-        val stormify = pagedList.getStormify()
-        val columnExpr = pagedList.resolveColumnExpression(column)
-        val (where, args) = pagedList.buildConstraintPart(excludeColumn = column)
+        val stormify = core.stormify
+        val columnExpr = core.resolveFacetExpression(column)
+        val (where, args) = core.buildConstraintPart(excludeFacet = column)
         // Use a subquery so LIMIT/OFFSET apply to the grouped output and the
         // dialect formatter can wrap it like any other paginated SELECT.
         val inner = "SELECT $columnExpr AS fv_val, COUNT(*) AS fv_cnt " +
-                "FROM ${pagedList.getTablesPart()}$where GROUP BY $columnExpr"
+                "FROM ${core.tablesPart}$where GROUP BY $columnExpr"
         val sql = stormify.sqlDialect.queryFormatter(
             "fv_val, fv_cnt", "", "($inner) fv_sub", "", "fv_val", low, high
         )
@@ -162,6 +170,14 @@ class FilterCountedValues internal constructor(
                 }
             )
         }
+    }
+
+    /**
+     * Returns a JSON array of counted-value objects — `[{"value":"X","count":N},…]`.
+     * Like [FilterValues.toString], triggers loads for any uncached pages.
+     */
+    override fun toString(): String = joinToString(",", "[", "]") {
+        "{\"value\":${jsonQuote(it.value)},\"count\":${it.count}}"
     }
 }
 

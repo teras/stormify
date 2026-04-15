@@ -85,8 +85,8 @@ class TableInfo<T : Any> internal constructor(
     internal fun setField(entity: T, dbName: String, value: Any?, stormify: Stormify, errorToLogger: Logger? = null) {
         val props = fieldByDbName[dbName.lowercase()]
         if (props.isNullOrEmpty()) {
-            if (errorToLogger == null) throw SQLException("Column $dbName has no matching field in ${meta.type.simpleName}")
-            else errorToLogger.warn("Column $dbName has no matching field in ${meta.type.simpleName}")
+            if (errorToLogger == null) throw SQLException("Facet $dbName has no matching field in ${meta.type.simpleName}")
+            else errorToLogger.warn("Facet $dbName has no matching field in ${meta.type.simpleName}")
             return
         }
         for (prop in props) prop.setter(entity, value, stormify)
