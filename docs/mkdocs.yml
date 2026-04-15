@@ -1,4 +1,4 @@
-site_name: Stormify
+site_name: !ENV [STORMIFY_VERSION_NAME, 'Stormify']
 site_url: https://stormify.org/docs/
 repo_url: https://github.com/teras/stormify
 docs_dir: src

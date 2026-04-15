@@ -32,36 +32,36 @@ Designed for developers seeking a simple yet powerful ORM, Stormify excels in pr
 === "Gradle (Kotlin)"
 
     ```kotlin
-    implementation("onl.ycode:stormify-jvm:2.0.1")
-    ksp("onl.ycode:annproc:2.0.1")          // optional on JVM
+    implementation("onl.ycode:stormify-jvm:2.1.0")
+    ksp("onl.ycode:annproc:2.1.0")          // optional on JVM
     ```
 
 === "Gradle (Android)"
 
     ```kotlin
-    implementation("onl.ycode:stormify-android:2.0.1")
-    ksp("onl.ycode:annproc:2.0.1")          // required on Android
+    implementation("onl.ycode:stormify-android:2.1.0")
+    ksp("onl.ycode:annproc:2.1.0")          // required on Android
     ```
 
 === "Gradle (Native)"
 
     ```kotlin
     // Pick the artifact for your target platform:
-    implementation("onl.ycode:stormify-linuxx64:2.0.1")        // Linux x64
-    implementation("onl.ycode:stormify-linuxarm64:2.0.1")      // Linux ARM64
-    implementation("onl.ycode:stormify-mingwx64:2.0.1")        // Windows x64
-    implementation("onl.ycode:stormify-macosarm64:2.0.1")      // macOS (Apple Silicon)
-    implementation("onl.ycode:stormify-macosx64:2.0.1")        // macOS (Intel)
-    implementation("onl.ycode:stormify-iosarm64:2.0.1")        // iOS (device)
-    implementation("onl.ycode:stormify-iossimulatorarm64:2.0.1") // iOS (simulator)
-    ksp("onl.ycode:annproc:2.0.1")                             // required (no reflection on native)
+    implementation("onl.ycode:stormify-linuxx64:2.1.0")        // Linux x64
+    implementation("onl.ycode:stormify-linuxarm64:2.1.0")      // Linux ARM64
+    implementation("onl.ycode:stormify-mingwx64:2.1.0")        // Windows x64
+    implementation("onl.ycode:stormify-macosarm64:2.1.0")      // macOS (Apple Silicon)
+    implementation("onl.ycode:stormify-macosx64:2.1.0")        // macOS (Intel)
+    implementation("onl.ycode:stormify-iosarm64:2.1.0")        // iOS (device)
+    implementation("onl.ycode:stormify-iossimulatorarm64:2.1.0") // iOS (simulator)
+    ksp("onl.ycode:annproc:2.1.0")                             // required (no reflection on native)
     ```
 
 === "Gradle (Java)"
 
     ```groovy
-    implementation 'onl.ycode:stormify-jvm:2.0.1'
-    ksp 'onl.ycode:annproc:2.0.1'  // optional on JVM
+    implementation 'onl.ycode:stormify-jvm:2.1.0'
+    ksp 'onl.ycode:annproc:2.1.0'  // optional on JVM
     ```
 
 === "Maven"
@@ -70,7 +70,7 @@ Designed for developers seeking a simple yet powerful ORM, Stormify excels in pr
     <dependency>
         <groupId>onl.ycode</groupId>
         <artifactId>stormify-jvm</artifactId>
-        <version>2.0.1</version>
+        <version>2.1.0</version>
     </dependency>
     ```
 

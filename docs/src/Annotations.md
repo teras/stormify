@@ -168,7 +168,7 @@ Add the KSP plugin and `annproc` dependency:
     }
 
     dependencies {
-        ksp("onl.ycode:annproc:2.0.1")
+        ksp("onl.ycode:annproc:2.1.0")
     }
     ```
 
@@ -180,7 +180,7 @@ Add the KSP plugin and `annproc` dependency:
     }
 
     dependencies {
-        ksp 'onl.ycode:annproc:2.0.1'
+        ksp 'onl.ycode:annproc:2.1.0'
     }
     ```
 
@@ -203,7 +203,7 @@ exclude it to reduce the dependency footprint:
 === "Gradle (Kotlin)"
 
     ```kotlin
-    implementation("onl.ycode:stormify-jvm:2.0.1") {
+    implementation("onl.ycode:stormify-jvm:2.1.0") {
         exclude(group = "org.jetbrains.kotlin", module = "kotlin-reflect")
     }
     ```
@@ -211,7 +211,7 @@ exclude it to reduce the dependency footprint:
 === "Gradle (Java)"
 
     ```groovy
-    implementation('onl.ycode:stormify-jvm:2.0.1') {
+    implementation('onl.ycode:stormify-jvm:2.1.0') {
         exclude group: 'org.jetbrains.kotlin', module: 'kotlin-reflect'
     }
     ```
@@ -222,7 +222,7 @@ exclude it to reduce the dependency footprint:
     <dependency>
         <groupId>onl.ycode</groupId>
         <artifactId>stormify-jvm</artifactId>
-        <version>2.0.1</version>
+        <version>2.1.0</version>
         <exclusions>
             <exclusion>
                 <groupId>org.jetbrains.kotlin</groupId>

@@ -1,37 +1,33 @@
 // Documentation build & publish tasks (loaded from root build.gradle.kts)
 //
-// ─── Tasks ──────────────────────────────────────────────────────────────────
-// createDocs        — local build: Dokka + Doxygen + MkDocs + static assets → docs/build/
-// publishDocs       — deploy stable site to stormify.org root (protects per-version subfolders)
-// publishDocsDevel  — deploy as pre-release under stormify.org/docs/<projectVersion>/,
-//                     rewrites built HTML so repo links → /tree/devel and backlinks → /docs/<ver>/
-// promoteDocs       — server-side ping-pong: archive current stable to /docs/<old>/ with
-//                     tree/v<old> rewrites, promote /docs/<new>/ to root with main-branch rewrites.
-//                     Run with -PoldVersion=X.Y.Z -PnewVersion=X.Y.Z
-// syncReadmeUrls    — rewrite README.md URLs based on current git branch (idempotent):
-//                     main → stable defaults; anything else → /docs/<ver>/ + examples tree/<ver>
+// ─── Model ──────────────────────────────────────────────────────────────────
+// Every version lives permanently at stormify.org/docs/<ver>/. There is no stable
+// /docs/ root and no archiving. The landing page at stormify.org/ points to whichever
+// version is currently "released" via a {{DOCS_VERSION}} placeholder in docs/static/.
 //
-// ─── Versioning strategy ────────────────────────────────────────────────────
-// Source of truth for the current version is project.version in build.gradle.kts.
-// Source files (README.md, mkdocs.yml, inject-backlink.sh) are kept in stable form.
-// Devel/versioned URLs are produced by the tasks above via post-build rewrites.
+// Folders under /docs/ come in two flavours:
+//   • preview  — carries a .devel-marker sentinel; overwritten by every publish,
+//                only one exists at a time.
+//   • released — marker stripped; immutable, kept forever.
+//
+// ─── Tasks ──────────────────────────────────────────────────────────────────
+// createDocs     — local build: Dokka + Doxygen + MkDocs + static assets → docs/build/
+// publishDocs    — deploy /docs/<projectVersion>/ as preview. Automatically removes
+//                  any other preview folder (any /docs/<X>/ with a .devel-marker).
+//                  Released folders have no marker and are never touched.
+// releaseDocs    — strip .devel-marker from /docs/<projectVersion>/ (makes it immutable)
+//                  and update the landing page at stormify.org/ to point to it.
+// syncReadmeUrls — rewrite README.md URLs to reference /docs/<projectVersion>/ and
+//                  stormify-examples/tree/<projectVersion>. Idempotent.
 //
 // ─── Workflow ───────────────────────────────────────────────────────────────
-// On devel branch (preview publish):
-//   gradle syncReadmeUrls       # sync README.md badges to /docs/<ver>/
-//   gradle publishDocsDevel     # build + rewrite + rsync to stormify.org/docs/<ver>/
-//   git commit -am "..." && git push origin devel
+// Publish a preview:
+//   gradle publishDocs           # build + deploy /docs/<ver>/ (replaces previous preview)
 //
-// Promoting devel to stable:
-//   git checkout main && git merge devel
-//   gradle syncReadmeUrls                                             # README → stable defaults
-//   gradle promoteDocs -PoldVersion=<prev> -PnewVersion=<projectVer>   # server ping-pong
-//   gradle publishDocs                                                 # redeploy landing/static if changed
-//
-// Notes:
-//   - publishDocs protects /docs/[0-9]*/ subfolders from rsync --delete.
-//   - promoteDocs refuses to run if /docs/<new>/ is missing or /docs/<old>/ already exists.
-//   - syncReadmeUrls is idempotent — safe to run multiple times.
+// Release:
+//   gradle releaseDocs           # strips marker + updates landing → /docs/<ver>/
+//   gradle syncReadmeUrls        # rewrites README.md links to /docs/<ver>/
+//   git commit -am "release <ver>" && git push
 
 tasks.register("createDocs") {
     group = "documentation"
@@ -42,14 +38,19 @@ tasks.register("createDocs") {
         ":logger:dokkaGenerateHtml"
     )
     doLast {
+        val ver = project.version.toString().removeSuffix("-SNAPSHOT")
+        if (ver.isBlank() || ver == "unspecified")
+            throw GradleException("project.version is not set")
         // 1. Doxygen: KDBC C API reference
         ProcessBuilder("doxygen", "Doxyfile")
             .directory(file("kdbc/src/c"))
             .inheritIO().start().waitFor()
-        // 2. MkDocs: main documentation site
-        ProcessBuilder("mkdocs", "build")
+        // 2. MkDocs: main documentation site (site_name picked up from env)
+        val mkdocs = ProcessBuilder("mkdocs", "build")
             .directory(file("docs"))
-            .inheritIO().start().waitFor()
+            .inheritIO()
+        mkdocs.environment()["STORMIFY_VERSION_NAME"] = "Stormify $ver"
+        mkdocs.start().waitFor()
         // 3. Doxygen again (mkdocs clean wipes the output dir)
         ProcessBuilder("doxygen", "Doxyfile")
             .directory(file("kdbc/src/c"))
@@ -62,41 +63,30 @@ tasks.register("createDocs") {
         ProcessBuilder("sh", inject, "docs/build/docs/api-stormify").inheritIO().start().waitFor()
         ProcessBuilder("sh", inject, "docs/build/docs/api-kdbc-kotlin").inheritIO().start().waitFor()
         ProcessBuilder("sh", inject, "docs/build/docs/kdbc-c").inheritIO().start().waitFor()
-        // 6. Copy static assets
+        // 6. Copy static assets with {{DOCS_VERSION}} substituted to current version
+        //    (so local preview under docs/build/ works end-to-end)
         file("docs/static").copyRecursively(file("docs/build"), overwrite = true)
+        file("docs/build").walkTopDown()
+            .filter { it.isFile && (it.extension == "html" || it.extension == "htm") }
+            .forEach { f ->
+                val content = f.readText()
+                if (content.contains("{{DOCS_VERSION}}"))
+                    f.writeText(content.replace("{{DOCS_VERSION}}", ver))
+            }
     }
 }
 
 tasks.register("publishDocs") {
     group = "documentation"
-    description = "Deploy documentation site to stormify.org (run createDocs first)"
-    dependsOn("createDocs")
-    // No declared outputs, so force execution on every invocation — otherwise Gradle
-    // caches this task as UP-TO-DATE and silently skips the rsync upload.
-    outputs.upToDateWhen { false }
-    doLast {
-        // --exclude protects per-version preview subfolders (docs/2.x/) from --delete
-        val exitCode = ProcessBuilder(
-            "rsync", "-ravz", "-e", "ssh -p 1971", "--delete",
-            "--exclude=docs/[0-9]*",
-            "docs/build/", "teras@yot.is:~/web/stormify.org/"
-        ).inheritIO().start().waitFor()
-        if (exitCode != 0)
-            throw GradleException("rsync failed with exit code $exitCode — docs not uploaded")
-    }
-}
-
-tasks.register("publishDocsDevel") {
-    group = "documentation"
-    description = "Deploy documentation as pre-release under stormify.org/docs/<projectVersion>/"
+    description = "Deploy documentation as preview under stormify.org/docs/<projectVersion>/ (replaces previous preview)"
     dependsOn("createDocs")
     outputs.upToDateWhen { false }
     doLast {
         val ver = project.version.toString().removeSuffix("-SNAPSHOT")
         if (ver.isBlank() || ver == "unspecified")
             throw GradleException("project.version is not set")
-        // Rewrite built HTML/sitemap to point to version-specific URLs (devel branch on GitHub,
-        // /docs/<ver>/ for backlink + canonical). Stable defaults in source stay untouched.
+        // Rewrite built HTML/sitemap so in-page links point to /docs/<ver>/ (versioned)
+        // and GitHub links point to the devel branch.
         val rewrite = """
             find docs/build/docs -type f \( -name '*.html' -o -name '*.xml' \) -exec sed -i \
               -e 's|href="https://github.com/teras/stormify"|href="https://github.com/teras/stormify/tree/devel"|g' \
@@ -106,97 +96,120 @@ tasks.register("publishDocsDevel") {
         """.trimIndent()
         val rc = ProcessBuilder("sh", "-c", rewrite).inheritIO().start().waitFor()
         if (rc != 0) throw GradleException("URL rewrite failed (exit $rc)")
+        // Remove any previous preview folder on the server (any /docs/<X>/ that carries
+        // .devel-marker and is not the current version). Released folders have no marker
+        // and are left alone.
+        val cleanup = """
+            set -euo pipefail
+            cd ~/web/stormify.org/docs 2>/dev/null || exit 0
+            for d in */; do
+                d="${'$'}{d%/}"
+                if [ -f "${'$'}d/.devel-marker" ] && [ "${'$'}d" != "$ver" ]; then
+                    echo "Removing stale preview: /docs/${'$'}d/"
+                    rm -rf -- "${'$'}d"
+                fi
+            done
+        """.trimIndent()
+        val cleanupRc = ProcessBuilder("ssh", "-p", "1971", "teras@yot.is", "bash -s")
+            .redirectInput(ProcessBuilder.Redirect.PIPE)
+            .redirectOutput(ProcessBuilder.Redirect.INHERIT)
+            .redirectError(ProcessBuilder.Redirect.INHERIT)
+            .start().apply {
+                outputStream.write(cleanup.toByteArray())
+                outputStream.close()
+            }.waitFor()
+        if (cleanupRc != 0) throw GradleException("Preview cleanup failed (exit $cleanupRc)")
+        // Rsync new preview
         val exitCode = ProcessBuilder(
             "rsync", "-ravz", "-e", "ssh -p 1971", "--delete",
             "docs/build/docs/", "teras@yot.is:~/web/stormify.org/docs/$ver/"
         ).inheritIO().start().waitFor()
         if (exitCode != 0)
-            throw GradleException("rsync failed with exit code $exitCode — devel docs not uploaded")
-        println("✓ Devel docs deployed: https://stormify.org/docs/$ver/")
+            throw GradleException("rsync failed with exit code $exitCode — preview docs not uploaded")
+        // Tag as preview
+        val markRc = ProcessBuilder("ssh", "-p", "1971", "teras@yot.is",
+            "touch ~/web/stormify.org/docs/$ver/.devel-marker").inheritIO().start().waitFor()
+        if (markRc != 0) throw GradleException("Failed to tag preview with .devel-marker (exit $markRc)")
+        println("✓ Preview deployed: https://stormify.org/docs/$ver/")
     }
 }
 
-tasks.register("promoteDocs") {
+tasks.register("releaseDocs") {
     group = "documentation"
-    description = "Ping-pong: archive current stable under /docs/<old>/ and promote /docs/<new>/ to stable root. " +
-        "Run with -PoldVersion=X.Y.Z -PnewVersion=X.Y.Z"
-    outputs.upToDateWhen { false }
-    doLast {
-        val oldVer = project.findProperty("oldVersion") as String?
-            ?: throw GradleException("missing -PoldVersion=<current stable version to archive>")
-        val newVer = project.findProperty("newVersion") as String?
-            ?: throw GradleException("missing -PnewVersion=<version currently living under /docs/<new>/ to promote>")
-        val script = """
-            set -euo pipefail
-            cd ~/web/stormify.org/docs
-            if [ ! -d "$newVer" ]; then echo "ERROR: /docs/$newVer/ not found on server" >&2; exit 1; fi
-            if [ -e "$oldVer" ]; then echo "ERROR: /docs/$oldVer/ already exists — refusing to overwrite" >&2; exit 1; fi
-            # 1. archive current stable: everything except numeric version subfolders
-            mkdir "$oldVer"
-            for entry in *; do
-                case "${'$'}entry" in
-                    [0-9]*) ;;
-                    "$oldVer") ;;
-                    *) mv -- "${'$'}entry" "$oldVer"/ ;;
-                esac
-            done
-            # 2. rewrite archived (old stable) pages: stable URLs → /docs/$oldVer/ + tree/v$oldVer
-            find "$oldVer" -type f \( -name '*.html' -o -name '*.xml' \) -exec sed -i \
-              -e 's|href="https://github.com/teras/stormify"|href="https://github.com/teras/stormify/tree/v$oldVer"|g' \
-              -e 's|https://stormify.org/docs/|https://stormify.org/docs/$oldVer/|g' \
-              -e 's|href="/docs/"|href="/docs/$oldVer/"|g' \
-              {} +
-            # 3. rewrite new-stable pages (currently at /docs/$newVer/): versioned URLs → stable root + main branch
-            find "$newVer" -type f \( -name '*.html' -o -name '*.xml' \) -exec sed -i \
-              -e 's|href="https://github.com/teras/stormify/tree/devel"|href="https://github.com/teras/stormify"|g' \
-              -e 's|https://stormify.org/docs/$newVer/|https://stormify.org/docs/|g' \
-              -e 's|href="/docs/$newVer/"|href="/docs/"|g' \
-              {} +
-            # 4. promote new stable to root
-            mv "$newVer"/* "$newVer"/.[!.]* . 2>/dev/null || true
-            rmdir "$newVer"
-            echo "✓ promoted $newVer to stable; archived previous stable under /docs/$oldVer/"
-        """.trimIndent()
-        val proc = ProcessBuilder("ssh", "-p", "1971", "teras@yot.is", "bash -s")
-            .redirectInput(ProcessBuilder.Redirect.PIPE)
-            .redirectOutput(ProcessBuilder.Redirect.INHERIT)
-            .redirectError(ProcessBuilder.Redirect.INHERIT)
-            .start()
-        proc.outputStream.write(script.toByteArray())
-        proc.outputStream.close()
-        val exit = proc.waitFor()
-        if (exit != 0) throw GradleException("Promotion failed (exit $exit)")
-    }
-}
-
-tasks.register("syncReadmeUrls") {
-    group = "documentation"
-    description = "Rewrite README.md URLs to match current git branch: stable (/docs/) on main, versioned (/docs/<ver>/) elsewhere. Idempotent."
+    description = "Promote /docs/<projectVersion>/ from preview to released (strip marker) and update the landing page to point to it"
     outputs.upToDateWhen { false }
     doLast {
         val ver = project.version.toString().removeSuffix("-SNAPSHOT")
         if (ver.isBlank() || ver == "unspecified")
             throw GradleException("project.version is not set")
-        val branchProc = ProcessBuilder("git", "rev-parse", "--abbrev-ref", "HEAD")
-            .redirectErrorStream(true).start()
-        branchProc.waitFor()
-        val branch = branchProc.inputStream.bufferedReader().readText().trim()
+        // 1. Server-side: validate preview exists and strip the marker
+        val remote = """
+            set -euo pipefail
+            cd ~/web/stormify.org/docs
+            if [ ! -d "$ver" ]; then
+                echo "ERROR: /docs/$ver/ not found on server — publish it first" >&2; exit 1
+            fi
+            if [ ! -f "$ver/.devel-marker" ]; then
+                echo "ERROR: /docs/$ver/ has no .devel-marker — already released?" >&2; exit 1
+            fi
+            rm -f "$ver/.devel-marker"
+            echo "✓ Released /docs/$ver/ (marker removed)"
+        """.trimIndent()
+        val remoteRc = ProcessBuilder("ssh", "-p", "1971", "teras@yot.is", "bash -s")
+            .redirectInput(ProcessBuilder.Redirect.PIPE)
+            .redirectOutput(ProcessBuilder.Redirect.INHERIT)
+            .redirectError(ProcessBuilder.Redirect.INHERIT)
+            .start().apply {
+                outputStream.write(remote.toByteArray())
+                outputStream.close()
+            }.waitFor()
+        if (remoteRc != 0) throw GradleException("Server-side release step failed (exit $remoteRc)")
+        // 2. Build landing bundle locally with placeholder substituted
+        val landingDir = file("docs/build-landing")
+        landingDir.deleteRecursively()
+        file("docs/static").copyRecursively(landingDir)
+        landingDir.walkTopDown()
+            .filter { it.isFile && (it.extension == "html" || it.extension == "htm") }
+            .forEach { f ->
+                val content = f.readText()
+                if (content.contains("{{DOCS_VERSION}}"))
+                    f.writeText(content.replace("{{DOCS_VERSION}}", ver))
+            }
+        // 3. Rsync landing to web root (exclude /docs so version folders are untouched)
+        val exitCode = ProcessBuilder(
+            "rsync", "-ravz", "-e", "ssh -p 1971",
+            "--exclude=/docs",
+            "${landingDir.absolutePath}/", "teras@yot.is:~/web/stormify.org/"
+        ).inheritIO().start().waitFor()
+        if (exitCode != 0)
+            throw GradleException("Landing rsync failed with exit code $exitCode")
+        println("✓ Landing updated: https://stormify.org/ → /docs/$ver/")
+    }
+}
+
+tasks.register("syncReadmeUrls") {
+    group = "documentation"
+    description = "Rewrite README.md URLs to point to /docs/<projectVersion>/ and stormify-examples/tree/<projectVersion>. Idempotent."
+    outputs.upToDateWhen { false }
+    doLast {
+        val ver = project.version.toString().removeSuffix("-SNAPSHOT")
+        if (ver.isBlank() || ver == "unspecified")
+            throw GradleException("project.version is not set")
         val readme = file("README.md")
-        // Step 1 — normalize to stable defaults (strips any previous version-specific rewrites)
-        val normalized = readme.readText()
+        val original = readme.readText()
+        // Step 1 — normalize: strip any previous version-specific rewrites back to canonical form
+        val normalized = original
             .replace(Regex("""https://stormify\.org/docs/[0-9][^/"]*/"""), "https://stormify.org/docs/")
             .replace(Regex("""https://github\.com/teras/stormify-examples/tree/[^"\)]+"""), "https://github.com/teras/stormify-examples")
-        // Step 2 — if we're not on main, apply devel rewrites using current project.version
-        val out = if (branch == "main") normalized else {
-            normalized
-                .replace("https://stormify.org/docs/", "https://stormify.org/docs/$ver/")
-                .replace(Regex("""https://github\.com/teras/stormify-examples(?=["\)])"""), "https://github.com/teras/stormify-examples/tree/$ver")
-        }
-        if (out != readme.readText()) {
+        // Step 2 — apply current-version rewrites
+        val out = normalized
+            .replace("https://stormify.org/docs/", "https://stormify.org/docs/$ver/")
+            .replace(Regex("""https://github\.com/teras/stormify-examples(?=["\)])"""), "https://github.com/teras/stormify-examples/tree/$ver")
+        if (out != original) {
             readme.writeText(out)
-            println("✓ README.md synced for branch '$branch' (version $ver)")
+            println("✓ README.md synced to version $ver")
         } else {
-            println("README.md already in sync for branch '$branch'")
+            println("README.md already in sync (version $ver)")
         }
     }
 }
