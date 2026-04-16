@@ -370,6 +370,7 @@ open class PagedListTest {
         assertEquals(10, list.size)
     }
 
+
     // --- Reset ---
 
     @Test
@@ -617,6 +618,93 @@ open class PagedListTest {
 
         assertEquals(1, list.size)
         assertEquals("Alice", list[0].name)
+    }
+
+    // --- Boolean text queries ---
+
+    private fun setupBooleanTestData(s: Stormify) {
+        TestDDL.dropTable("test")
+        s.executeUpdate(TestDDL.createTable("test",
+            "${TestDDL.intPrimaryKey("id")}, name ${TestDDL.textType()}"))
+        s.create(listOf(
+            TestC(1, "Alice"), TestC(2, "Bob"), TestC(3, "Charlie"),
+            TestC(4, "Alicia"), TestC(5, "New York"), TestC(6, "New Jersey")
+        ))
+    }
+
+    @Test
+    fun testBooleanAndImplicit() = withDb("BOOL-AND") { s ->
+        setupBooleanTestData(s)
+        val list = PagedList<TestC>()
+        val col = list.addFacet("name")
+        col.filter = "new york"
+        assertEquals(1, list.size)
+        assertEquals("New York", list[0].name)
+    }
+
+    @Test
+    fun testBooleanOr() = withDb("BOOL-OR") { s ->
+        setupBooleanTestData(s)
+        val list = PagedList<TestC>()
+        val col = list.addFacet("name")
+        col.filter = "Alice OR Bob"
+        assertEquals(2, list.size) // Alice, Bob
+    }
+
+    @Test
+    fun testBooleanNot() = withDb("BOOL-NOT") { s ->
+        setupBooleanTestData(s)
+        val list = PagedList<TestC>()
+        val col = list.addFacet("name")
+        col.filter = "-Bob"
+        assertEquals(5, list.size) // all except Bob
+    }
+
+    @Test
+    fun testBooleanNotPhrase() = withDb("BOOL-NOT-PHRASE") { s ->
+        setupBooleanTestData(s)
+        val list = PagedList<TestC>()
+        val col = list.addFacet("name")
+        col.filter = "-\"New\""
+        assertEquals(4, list.size) // all except "New York" and "New Jersey"
+    }
+
+    @Test
+    fun testBooleanPhraseWithSpace() = withDb("BOOL-PHRASE") { s ->
+        setupBooleanTestData(s)
+        val list = PagedList<TestC>()
+        val col = list.addFacet("name")
+        col.filter = "\"New Y\""
+        assertEquals(1, list.size)
+        assertEquals("New York", list[0].name)
+    }
+
+    @Test
+    fun testBooleanComplex() = withDb("BOOL-COMPLEX") { s ->
+        setupBooleanTestData(s)
+        val list = PagedList<TestC>()
+        val col = list.addFacet("name")
+        col.filter = "(Alice OR Bob) -Alicia"
+        assertEquals(2, list.size) // Alice, Bob (not Alicia)
+    }
+
+    @Test
+    fun testBooleanWildcardInAnd() = withDb("BOOL-WILD-AND") { s ->
+        setupBooleanTestData(s)
+        val list = PagedList<TestC>()
+        val col = list.addFacet("name")
+        col.filter = "Ali* -Alicia"
+        assertEquals(1, list.size)
+        assertEquals("Alice", list[0].name)
+    }
+
+    @Test
+    fun testBooleanAllNegated() = withDb("BOOL-ALL-NEG") { s ->
+        setupBooleanTestData(s)
+        val list = PagedList<TestC>()
+        val col = list.addFacet("name")
+        col.filter = "-Alice -Bob -Alicia"
+        assertEquals(3, list.size) // Charlie, New York, New Jersey
     }
 
     // --- Case-insensitive (ASCII) ---

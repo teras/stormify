@@ -170,14 +170,33 @@ two-argument `addFacet(type, ...)` overload.
 
 ### Text (`Facet.TEXT`)
 
-Case-insensitive by default. Supports several patterns:
+Case-insensitive by default. Supports Google-like boolean search syntax with
+wildcards:
+
+#### Basic patterns
 
 | Filter value  | Meaning |
 |--------------|---------|
 | `Alice`       | Substring match: `LIKE %Alice%` |
 | `*lice`       | Ends with: `LIKE %lice` |
 | `Ali*`        | Starts with: `LIKE Ali%` |
-| `"Alice"`     | Exact match (still case-insensitive unless `isCaseSensitive = true`) |
+| `"foo bar"`   | Phrase match: `LIKE %foo bar%` (treats content as literal substring) |
+
+#### Boolean operators
+
+Multiple terms are combined with boolean logic following Google search conventions:
+
+| Filter value              | Meaning |
+|--------------------------|---------|
+| `foo bar`                 | AND — both must match (implicit) |
+| `foo OR bar`              | OR — either must match (`OR` must be uppercase) |
+| `-foo`                    | NOT — exclude matches |
+| `-"foo bar"`              | NOT phrase — exclude phrase matches |
+| `(foo OR bar) baz`        | Grouping with parentheses |
+| `(Alice OR Bob) -Alicia`  | Combined: Alice or Bob, but not Alicia |
+
+Precedence: AND binds tighter than OR (same as Google). A hyphen inside a word
+(e.g. `part-number`) is treated as literal text, not as a negation operator.
 
 Set `facet.isCaseSensitive = true` for a case-sensitive facet.
 

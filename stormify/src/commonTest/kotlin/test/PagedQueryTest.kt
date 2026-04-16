@@ -199,6 +199,34 @@ class PagedQueryTest {
     }
 
     @Test
+    fun filterValuesDistinctPagination() = withDb("PQ-FV-PAGE") { s ->
+        TestDDL.dropTable("test")
+        s.executeUpdate(TestDDL.createTable("test",
+            "${TestDDL.intPrimaryKey("id")}, name ${TestDDL.textType()}"))
+        // 4 distinct values with 5 duplicates each (20 rows total).
+        // With ROW_NUMBER, DISTINCT would fail (each row gets unique rn).
+        // With DENSE_RANK, duplicates share rn → DISTINCT collapses them → pagination works.
+        val rows = mutableListOf<TestC>()
+        var id = 1
+        for (name in listOf("A", "B", "C", "D")) {
+            repeat(5) { rows.add(TestC(id++, name)) }
+        }
+        s.create(rows)
+
+        val query = PagedQuery<TestC>().apply { addFacet("name", "name") }
+
+        val page0 = query.filterValues("name", PageSpec(0, 2))
+        val page1 = query.filterValues("name", PageSpec(1, 2))
+
+        assertEquals(4L, page0.total)
+        assertEquals(4L, page1.total)
+        assertEquals(listOf("A", "B"), page0.rows.sorted())
+        assertEquals(listOf("C", "D"), page1.rows.sorted())
+        // No overlap between pages
+        assertEquals(emptySet<String>(), page0.rows.toSet().intersect(page1.rows.toSet()))
+    }
+
+    @Test
     fun filterValuesRespectsOtherFacetFilters() = withDb("PQ-FV-OTHER") { s ->
         TestDDL.dropTable("test")
         s.executeUpdate(TestDDL.createTable("test",

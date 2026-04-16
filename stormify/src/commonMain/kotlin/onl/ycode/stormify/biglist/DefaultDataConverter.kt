@@ -59,45 +59,8 @@ internal object DefaultDataConverter {
         caseSensitive: () -> Boolean
     ): (String, String, SqlArgsCollector) -> String =
         { col: String, input: String, args: SqlArgsCollector ->
-            val isCaseSensitive = caseSensitive()
-            var text = input
-
-            // Quoted exact match: "text"
-            if (text.length >= 2 && text.startsWith("\"") && text.endsWith("\"")) {
-                text = text.substring(1, text.length - 1)
-                if (!isCaseSensitive) {
-                    // Exact match always needs LOWER — `=` is case-sensitive on all DBs
-                    args.accept(text.lowercase())
-                    "LOWER($col) = ?"
-                } else {
-                    args.accept(text)
-                    "$col = ?"
-                }
-            } else {
-                var column = col
-                var likeOp = "LIKE"
-
-                // Dialect-aware case folding for LIKE
-                if (!isCaseSensitive) {
-                    val (foldedCol, op) = dialect.caseInsensitiveLike(column)
-                    column = foldedCol
-                    likeOp = op
-                    text = dialect.transformLikeValue(text)
-                }
-
-                // Wildcard handling
-                if (!text.startsWith("*") && !text.endsWith("*")) text = "*$text*"
-                // Collapse multiple wildcards
-                text = text.replace(Regex("\\*+"), "*")
-                // Escape SQL LIKE metacharacters before converting wildcards
-                text = text.replace("\\", "\\\\")
-                    .replace("_", "\\_")
-                    .replace("%", "\\%")
-                // Convert wildcards
-                text = text.replace('*', '%')
-                args.accept(text)
-                "$column $likeOp ? ${dialect.likeEscapeClause()}"
-            }
+            TextQueryParser.parseAndRender(input, col, dialect, caseSensitive(), args)
+                ?: IMPOSSIBLE
         }
 
     private fun enumConverter(

@@ -38,7 +38,9 @@ private val formatterRowNumber =
         val innerColumns = if (columns == "*") "$baseTable.*" else columns
         // Outer select uses unqualified column names (subquery alias scope)
         val outerColumns = if (columns == "*") "*" else columns.substringAfterLast(".")
-        "SELECT $outerColumns FROM (SELECT $distinct$innerColumns, ROW_NUMBER() OVER (ORDER BY $sorting) rn FROM $tableName$constraints) b WHERE b.rn > $lowBound AND b.rn <= $upperBound ORDER BY rn"
+        // DISTINCT requires DENSE_RANK: ROW_NUMBER makes every row unique, defeating DISTINCT
+        val rankFn = if (distinct.isNotEmpty()) "DENSE_RANK()" else "ROW_NUMBER()"
+        "SELECT $outerColumns FROM (SELECT $distinct$innerColumns, $rankFn OVER (ORDER BY $sorting) rn FROM $tableName$constraints) b WHERE b.rn > $lowBound AND b.rn <= $upperBound ORDER BY rn"
     }
 
 /***********************************************************************

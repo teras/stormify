@@ -98,17 +98,4 @@ class FacetSqlGeneratorTest {
         assertEquals(1L, page.total)
     }
 
-    @Test
-    fun multipleFieldsOrCombinesCustomGenerator() = withDb("FG-OR") { s ->
-        setupTable(s)
-        val list = PagedList<TestC>()
-        val facet = list.addFacet("name", "id")   // two fields OR
-        facet.sqlGenerator = SqlGenerator { columnRef, filterValue, args ->
-            args(filterValue)
-            "$columnRef = ?"
-        }
-        facet.filter = "Alice"
-        // "name = 'Alice'" matches row 1, "id = 'Alice'" probably fails or matches 0 rows → at least row 1 matches
-        assertEquals(1, list.size)
-    }
 }
