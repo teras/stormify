@@ -16,7 +16,7 @@ internal class ApacheCommonsLogger : Logger {
      *
      * @param clazz the class to create a logger for
      */
-    internal constructor(clazz: Class<*>?) {
+    internal constructor(clazz: Class<*>?) : super() {
         logger = LogFactory.getLog(clazz)
     }
 
@@ -25,22 +25,24 @@ internal class ApacheCommonsLogger : Logger {
      *
      * @param name the name to create a logger for
      */
-    internal constructor(name: String?) {
+    internal constructor(name: String?) : super() {
         logger = LogFactory.getLog(name)
     }
 
-    override fun debug(message: String, throwable: Throwable?, vararg args: Any?) =
-        logger.debug(format(message, *args), throwable)
 
-    override fun info(message: String, throwable: Throwable?, vararg args: Any?) =
-        logger.info(format(message, *args), throwable)
-
-    override fun warn(message: String, throwable: Throwable?, vararg args: Any?) =
-        logger.warn(format(message, *args), throwable)
-
-    override fun error(message: String, throwable: Throwable?, vararg args: Any?) =
-        logger.error(format(message, *args), throwable)
-
-    override fun fatal(message: String, throwable: Throwable?, vararg args: Any?) =
-        logger.fatal(format(message, *args), throwable)
+    override fun log(
+        level: LogLevel,
+        message: String,
+        throwable: Throwable?,
+        vararg args: Any?
+    ) {
+        if (level < this.level) return
+        when (level) {
+            LogLevel.DEBUG -> logger.debug(format(message, *args), throwable)
+            LogLevel.INFO -> logger.info(format(message, *args), throwable)
+            LogLevel.WARN -> logger.warn(format(message, *args), throwable)
+            LogLevel.ERROR -> logger.error(format(message, *args), throwable)
+            LogLevel.FATAL -> logger.fatal(format(message, *args), throwable)
+        }
+    }
 }

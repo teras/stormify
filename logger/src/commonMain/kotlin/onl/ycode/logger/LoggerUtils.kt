@@ -7,9 +7,5 @@ internal fun format(message: String, vararg args: Any?): String {
     return messageFormat(msg, args)
 }
 
-internal enum class LogLevel {
-    DEBUG, INFO, WARN, ERROR, FATAL
-}
-
 internal expect fun messageFormat(message: String, args: Array<out Any?>): String
 internal expect fun nowFormat(): String

@@ -8,6 +8,7 @@ import kotlinx.datetime.LocalTime
 import kotlinx.datetime.TimeZone
 import kotlinx.datetime.toInstant
 import onl.ycode.logger.WatchLogger
+import onl.ycode.logger.LogLevel
 import onl.ycode.stormify.SqlDialect
 import onl.ycode.stormify.Stormify
 import onl.ycode.stormify.biglist.Facet
@@ -48,7 +49,7 @@ open class PagedListTest {
         logger = WatchLogger(previousLogger) { _, message, _ ->
             if (message.trimStart().startsWith("SELECT", ignoreCase = true))
                 captured += message
-        }
+        }.also { it.level = LogLevel.DEBUG }
         try {
             block()
         } finally {

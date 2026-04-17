@@ -7,44 +7,40 @@ import org.slf4j.LoggerFactory
 import java.io.OutputStream
 import java.io.PrintStream
 
-/**
- * A logger implementation that uses SLF4J.
- */
 internal class SLF4JLogger : onl.ycode.logger.Logger {
     private val logger: Logger
 
-    internal constructor(clazz: Class<*>?) {
+    internal constructor(clazz: Class<*>?) : super() {
         logger = LoggerFactory.getLogger(clazz)
     }
 
-    internal constructor(name: String?) {
+    internal constructor(name: String?) : super() {
         logger = LoggerFactory.getLogger(name)
     }
 
-    override fun debug(message: String, throwable: Throwable?, vararg args: Any?) =
-        logger.debug(format(message, *args), throwable)
 
-    override fun info(message: String, throwable: Throwable?, vararg args: Any?) =
-        logger.info(format(message, *args), throwable)
-
-    override fun warn(message: String, throwable: Throwable?, vararg args: Any?) =
-        logger.warn(format(message, *args), throwable)
-
-    override fun error(message: String, throwable: Throwable?, vararg args: Any?) =
-        logger.error(format(message, *args), throwable)
-
-    override fun fatal(message: String, throwable: Throwable?, vararg args: Any?) =
-        logger.error(format(message, *args), throwable)
+    override fun log(
+        level: LogLevel,
+        message: String,
+        throwable: Throwable?,
+        vararg args: Any?
+    ) {
+        if (level < this.level) return
+        when (level) {
+            LogLevel.DEBUG -> logger.debug(format(message, *args), throwable)
+            LogLevel.INFO -> logger.info(format(message, *args), throwable)
+            LogLevel.WARN -> logger.warn(format(message, *args), throwable)
+            LogLevel.ERROR -> logger.error(format(message, *args), throwable)
+            LogLevel.FATAL -> logger.error(format(message, *args), throwable)
+        }
+    }
 
     private class DummyPrintStream : PrintStream(object : OutputStream() {
-        override fun write(b: Int) {
-            // Do nothing - it's a dummy stream.
-        }
+        override fun write(b: Int) {}
     })
 
     companion object {
         init {
-            // Check that an actual logger is properly loaded.
             val originalErr = System.err
             try {
                 DummyPrintStream().use { dummy ->

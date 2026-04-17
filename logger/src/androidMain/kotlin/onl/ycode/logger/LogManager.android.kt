@@ -12,29 +12,16 @@ actual object LogManager {
     actual fun getLogger(kclass: KClass<*>?): Logger = AndroidLogger(kclass?.simpleName ?: "App")
 }
 
-private class AndroidLogger(private val tag: String) : Logger {
-    override fun debug(message: String, throwable: Throwable?, vararg args: Any?) {
-        if (args.isNotEmpty()) Log.d(tag, messageFormat(message, args), throwable)
-        else Log.d(tag, message, throwable)
-    }
-
-    override fun info(message: String, throwable: Throwable?, vararg args: Any?) {
-        if (args.isNotEmpty()) Log.i(tag, messageFormat(message, args), throwable)
-        else Log.i(tag, message, throwable)
-    }
-
-    override fun warn(message: String, throwable: Throwable?, vararg args: Any?) {
-        if (args.isNotEmpty()) Log.w(tag, messageFormat(message, args), throwable)
-        else Log.w(tag, message, throwable)
-    }
-
-    override fun error(message: String, throwable: Throwable?, vararg args: Any?) {
-        if (args.isNotEmpty()) Log.e(tag, messageFormat(message, args), throwable)
-        else Log.e(tag, message, throwable)
-    }
-
-    override fun fatal(message: String, throwable: Throwable?, vararg args: Any?) {
-        if (args.isNotEmpty()) Log.wtf(tag, messageFormat(message, args), throwable)
-        else Log.wtf(tag, message, throwable)
+private class AndroidLogger(private val tag: String) : Logger() {
+    override fun log(level: LogLevel, message: String, throwable: Throwable?, vararg args: Any?) {
+        if (level < this.level) return
+        val msg = if (args.isNotEmpty()) format(message, *args) else message
+        when (level) {
+            LogLevel.DEBUG -> Log.d(tag, msg, throwable)
+            LogLevel.INFO -> Log.i(tag, msg, throwable)
+            LogLevel.WARN -> Log.w(tag, msg, throwable)
+            LogLevel.ERROR -> Log.e(tag, msg, throwable)
+            LogLevel.FATAL -> Log.wtf(tag, msg, throwable)
+        }
     }
 }
