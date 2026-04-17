@@ -11,6 +11,7 @@ import onl.ycode.logger.WatchLogger
 import onl.ycode.stormify.SqlDialect
 import onl.ycode.stormify.Stormify
 import onl.ycode.stormify.biglist.Facet
+import onl.ycode.stormify.biglist.FilterSyntax
 import onl.ycode.stormify.biglist.InputParser
 import onl.ycode.stormify.biglist.PagedList
 import onl.ycode.stormify.biglist.PagedListSort
@@ -217,7 +218,7 @@ open class PagedListTest {
 
         val list = PagedList<TestC>()
         val col = list.addFacet("name")
-        col.filter = Facet.NULL
+        col.filter = "NULL"
         assertEquals(2, list.size)
     }
 
@@ -539,6 +540,234 @@ open class PagedListTest {
         col.filter = "BANNED"
 
         assertEquals(1, list.size)
+    }
+
+    // --- NULL in boolean AST ---
+
+    @Test
+    fun testNullOrText() = withDb("PAGED-NULL-OR") { s ->
+        TestDDL.dropTable("test")
+        s.executeUpdate(TestDDL.createTable("test",
+            "${TestDDL.intPrimaryKey("id")}, name ${TestDDL.textType()}"))
+        s.create(listOf(TestC(1, "Alice"), TestC(2, null), TestC(3, "Bob"), TestC(4, null)))
+
+        val list = PagedList<TestC>()
+        val col = list.addFacet("name")
+        col.filter = "Alice OR NULL"
+        assertEquals(3, list.size) // Alice + 2 nulls
+    }
+
+    @Test
+    fun testNotNull() = withDb("PAGED-NOT-NULL") { s ->
+        TestDDL.dropTable("test")
+        s.executeUpdate(TestDDL.createTable("test",
+            "${TestDDL.intPrimaryKey("id")}, name ${TestDDL.textType()}"))
+        s.create(listOf(TestC(1, "Alice"), TestC(2, null), TestC(3, "Bob")))
+
+        val list = PagedList<TestC>()
+        val col = list.addFacet("name")
+        col.filter = "-NULL"
+        assertEquals(2, list.size) // Alice, Bob (not null)
+    }
+
+    @Test
+    fun testNullNumeric() = withDb("PAGED-NULL-NUM") { s ->
+        setupTable(s, 5)
+        val list = PagedList<TestC>()
+        val col = list.addFacet("id")
+        col.filter = "NULL"
+        assertEquals(0, list.size) // no null ids
+    }
+
+    @Test
+    fun testNumericOrNull() = withDb("PAGED-NUM-OR-NULL") { s ->
+        TestDDL.dropTable("test")
+        s.executeUpdate(TestDDL.createTable("test",
+            "${TestDDL.intPrimaryKey("id")}, name ${TestDDL.textType()}"))
+        s.create(listOf(TestC(1, "Alice"), TestC(2, null), TestC(3, "Bob")))
+
+        val list = PagedList<TestC>()
+        val col = list.addFacet("name")
+        col.filter = "Bob OR NULL"
+        assertEquals(2, list.size) // Bob + null
+    }
+
+    // --- Custom FilterSyntax ---
+
+    @Test
+    fun testCustomSyntaxPipe() = withDb("PAGED-SYNTAX-PIPE") { s ->
+        val oldSyntax = s.filterSyntax
+        try {
+            s.filterSyntax = FilterSyntax(or = "|", not = "!", nullToken = "--")
+
+            TestDDL.dropTable("test")
+            s.executeUpdate(TestDDL.createTable("test",
+                "${TestDDL.intPrimaryKey("id")}, name ${TestDDL.textType()}"))
+            s.create(listOf(TestC(1, "Alice"), TestC(2, "Bob"), TestC(3, "Charlie")))
+
+            val list = PagedList<TestC>()
+            val col = list.addFacet("name")
+            col.filter = "Alice | Bob"
+            assertEquals(2, list.size) // Alice, Bob
+        } finally {
+            s.filterSyntax = oldSyntax
+        }
+    }
+
+    @Test
+    fun testCustomSyntaxNot() = withDb("PAGED-SYNTAX-NOT") { s ->
+        val oldSyntax = s.filterSyntax
+        try {
+            s.filterSyntax = FilterSyntax(not = "!")
+
+            TestDDL.dropTable("test")
+            s.executeUpdate(TestDDL.createTable("test",
+                "${TestDDL.intPrimaryKey("id")}, name ${TestDDL.textType()}"))
+            s.create(listOf(TestC(1, "Alice"), TestC(2, "Bob"), TestC(3, "Charlie")))
+
+            val list = PagedList<TestC>()
+            val col = list.addFacet("name")
+            col.filter = "!Bob"
+            assertEquals(2, list.size) // Alice, Charlie
+        } finally {
+            s.filterSyntax = oldSyntax
+        }
+    }
+
+    @Test
+    fun testCustomSyntaxNullToken() = withDb("PAGED-SYNTAX-NULL") { s ->
+        val oldSyntax = s.filterSyntax
+        try {
+            s.filterSyntax = FilterSyntax(nullToken = "--")
+
+            TestDDL.dropTable("test")
+            s.executeUpdate(TestDDL.createTable("test",
+                "${TestDDL.intPrimaryKey("id")}, name ${TestDDL.textType()}"))
+            s.create(listOf(TestC(1, "Alice"), TestC(2, null), TestC(3, "Bob")))
+
+            val list = PagedList<TestC>()
+            val col = list.addFacet("name")
+            col.filter = "--"
+            assertEquals(1, list.size) // null row only
+        } finally {
+            s.filterSyntax = oldSyntax
+        }
+    }
+
+    // --- Enum boolean filter (Google AST on enum) ---
+
+    @Test
+    fun testEnumFilterOr() = withDb("PAGED-ENUM-OR") { s ->
+        TestDDL.dropTable("test")
+        s.executeUpdate(TestDDL.createTable("test",
+            "${TestDDL.intPrimaryKey("id")}, name ${TestDDL.textType()}"))
+        s.create(listOf(TestC(1, "Active"), TestC(2, "Inactive"), TestC(3, "Archived"), TestC(4, "Pending")))
+
+        val list = PagedList<TestC>()
+        val nameMap = mapOf("Active" to "Active", "Inactive" to "Inactive", "Archived" to "Archived", "Pending" to "Pending")
+        val col = list.addFacet(nameMap, "name")
+        col.filter = "Active OR Pending"
+
+        assertEquals(3, list.size) // Active, Inactive (contains "active"), Pending
+    }
+
+    @Test
+    fun testEnumFilterNot() = withDb("PAGED-ENUM-NOT") { s ->
+        TestDDL.dropTable("test")
+        s.executeUpdate(TestDDL.createTable("test",
+            "${TestDDL.intPrimaryKey("id")}, name ${TestDDL.textType()}"))
+        s.create(listOf(TestC(1, "Active"), TestC(2, "Inactive"), TestC(3, "Archived")))
+
+        val list = PagedList<TestC>()
+        val nameMap = mapOf("Active" to "Active", "Inactive" to "Inactive", "Archived" to "Archived")
+        val col = list.addFacet(nameMap, "name")
+        col.filter = "-Archived"
+
+        assertEquals(2, list.size) // Active, Inactive
+    }
+
+    @Test
+    fun testEnumFilterExactPhrase() = withDb("PAGED-ENUM-EXACT") { s ->
+        TestDDL.dropTable("test")
+        s.executeUpdate(TestDDL.createTable("test",
+            "${TestDDL.intPrimaryKey("id")}, name ${TestDDL.textType()}"))
+        s.create(listOf(TestC(1, "Active"), TestC(2, "Inactive"), TestC(3, "Archived")))
+
+        val list = PagedList<TestC>()
+        val nameMap = mapOf("Active" to "Active", "Inactive" to "Inactive", "Archived" to "Archived")
+        val col = list.addFacet(nameMap, "name")
+        col.filter = "\"Active\""  // exact phrase: only Active, NOT Inactive
+
+        assertEquals(1, list.size)
+        assertEquals("Active", list[0].name)
+    }
+
+    @Test
+    fun testEnumFilterComplex() = withDb("PAGED-ENUM-COMPLEX") { s ->
+        TestDDL.dropTable("test")
+        s.executeUpdate(TestDDL.createTable("test",
+            "${TestDDL.intPrimaryKey("id")}, name ${TestDDL.textType()}"))
+        s.create(listOf(TestC(1, "Active"), TestC(2, "Inactive"), TestC(3, "Archived"), TestC(4, "Pending")))
+
+        val list = PagedList<TestC>()
+        val nameMap = mapOf("Active" to "Active", "Inactive" to "Inactive", "Archived" to "Archived", "Pending" to "Pending")
+        val col = list.addFacet(nameMap, "name")
+        col.filter = "active -Inactive"  // contains "active" AND NOT "Inactive" → Active only
+
+        assertEquals(1, list.size)
+        assertEquals("Active", list[0].name)
+    }
+
+    // --- SQL facet scenarios ---
+
+    @Test
+    fun testSqlFacetNumericComputed() = withDb("PAGED-SQL-NUM") { s ->
+        setupTable(s, 10)
+        val list = PagedList<TestC>()
+        val col = list.addSqlFacet("(test.id * 2)", Facet.NUMERIC)
+        col.filter = ">= 16"   // id*2 >= 16 → id ∈ {8,9,10}
+        assertEquals(3, list.size)
+    }
+
+    @Test
+    fun testSqlFacetNumericRange() = withDb("PAGED-SQL-NUM-RANGE") { s ->
+        setupTable(s, 10)
+        val list = PagedList<TestC>()
+        val col = list.addSqlFacet("(test.id * 3)", Facet.NUMERIC)
+        col.filter = "9...18"   // id*3 in [9,18] → id ∈ {3,4,5,6}
+        assertEquals(4, list.size)
+    }
+
+    @Test
+    fun testSqlFacetTextBooleanOnComputed() = withDb("PAGED-SQL-TXT-BOOL") { s ->
+        TestDDL.dropTable("test")
+        s.executeUpdate(TestDDL.createTable("test",
+            "${TestDDL.intPrimaryKey("id")}, name ${TestDDL.textType()}"))
+        s.create(listOf(
+            TestC(1, "New York"), TestC(2, "New Jersey"),
+            TestC(3, "Boston"), TestC(4, "Los Angeles")
+        ))
+
+        val list = PagedList<TestC>()
+        val col = list.addSqlFacet("test.name", Facet.TEXT)
+        col.filter = "New -Jersey"  // contains "New" AND NOT "Jersey"
+        assertEquals(1, list.size)
+        assertEquals("New York", list[0].name)
+    }
+
+    @Test
+    fun testSqlFacetWithCustomConverter() = withDb("PAGED-SQL-CUSTOM-CONV") { s ->
+        setupTable(s, 10)
+        val isOracle = s.sqlDialect == SqlDialect.ORACLE_NEW || s.sqlDialect == SqlDialect.ORACLE_OLD
+        val list = PagedList<TestC>()
+        val col = list.addSqlFacet("test.id", Facet.NUMERIC)
+        col.converter = { column, value, _, args ->
+            val n = value.toIntOrNull() ?: 0
+            args.add(n)
+            if (isOracle) "MOD($column, ?) = 0" else "$column % ? = 0"
+        }
+        col.filter = "2"
+        assertEquals(5, list.size)  // id 2,4,6,8,10
     }
 
     // --- Numeric filter details ---
@@ -935,13 +1164,14 @@ open class PagedListTest {
     }
 
     @Test
-    fun testRawColumnCustomSqlGenerator() = withDb("PAGED-RAW-CUSTOM") { s ->
+    fun testRawColumnCustomConverter() = withDb("PAGED-RAW-CUSTOM") { s ->
         setupTable(s, 10)
         val list = PagedList<TestC>()
         val isOracle = s.sqlDialect == SqlDialect.ORACLE_NEW || s.sqlDialect == SqlDialect.ORACLE_OLD
-        val col = list.addSqlFacet("test.id", Facet.CUSTOM) { column, value, args ->
+        val col = list.addSqlFacet("test.id", Facet.NUMERIC)
+        col.converter = { column, value, _, args ->
             val mod = value.toIntOrNull() ?: 0
-            args.accept(mod)
+            args.add(mod)
             if (isOracle) "MOD($column, ?) = 0" else "$column % ? = 0"
         }
         col.filter = "3"
@@ -981,10 +1211,10 @@ open class PagedListTest {
 
     @Test
     fun testInputParserGlobal() = withDb("PAGED-PARSER-GLOBAL") { s ->
-        val oldParser = PagedList.defaultInputParser
+        val oldParser = s.inputParser
         try {
             // Simulate locale where dot is thousand separator
-            PagedList.defaultInputParser = { input, type ->
+            s.inputParser = { input, type ->
                 if (type == Facet.NUMERIC) input.replace(".", "") else input
             }
             setupTable(s, 20)
@@ -994,16 +1224,16 @@ open class PagedListTest {
 
             assertEquals(2, list.size) // ids 19, 20
         } finally {
-            PagedList.defaultInputParser = oldParser
+            s.inputParser = oldParser
         }
     }
 
     @Test
     fun testInputParserResolutionOrder() = withDb("PAGED-PARSER-ORDER") { s ->
-        val oldParser = PagedList.defaultInputParser
+        val oldParser = s.inputParser
         try {
-            // Global: replace comma
-            PagedList.defaultInputParser = { input, _ -> input.replace(",", ".") }
+            // Stormify-level: replace comma
+            s.inputParser = { input, _ -> input.replace(",", ".") }
 
             setupTable(s, 20)
             val list = PagedList<TestC>()
@@ -1017,7 +1247,7 @@ open class PagedListTest {
 
             assertEquals(2, list.size) // ids 19, 20
         } finally {
-            PagedList.defaultInputParser = oldParser
+            s.inputParser = oldParser
         }
     }
 

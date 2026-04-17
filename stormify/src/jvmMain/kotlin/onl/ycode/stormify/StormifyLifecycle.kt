@@ -47,7 +47,7 @@ import onl.ycode.stormify.biglist.PagedListBase
  * - The cached `StormifyJ` wrapper exposed by [StormifyJ.getDefault]
  * - [EntityMeta] registry (compile-time entity metadata populated by annproc)
  * - [EnumRegistry] registry (native enum metadata populated by annproc)
- * - [PagedListBase.defaultInputParser] (resets to `null`)
+ * - Input parser defaults (now on [Stormify] instance, cleared with the instance)
  *
  * After this call, the library returns to its initial state. To continue using
  * it in the same JVM, construct a fresh [Stormify] or [StormifyJ] instance and
@@ -70,6 +70,5 @@ object StormifyLifecycle {
         StormifyJ.clearDefaultWrapper()
         EntityMeta.clearRegistry()
         EnumRegistry.clearRegistry()
-        PagedListBase.clearDefaultInputParser()
     }
 }

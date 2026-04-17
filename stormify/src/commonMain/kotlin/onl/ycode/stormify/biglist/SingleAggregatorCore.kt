@@ -170,9 +170,14 @@ internal class SingleAggregatorCore(
     }
 
     private fun sanitize(s: String): String {
-        val clean = s.replace(Regex("[^a-zA-Z0-9_]"), "_")
-            .replace(Regex("_+"), "_")
+        val clean = SANITIZE_NON_ALNUM.replace(s, "_")
+            .let { SANITIZE_MULTI_UNDERSCORE.replace(it, "_") }
             .trim('_')
         return if (clean.length > 32) clean.take(32).trimEnd('_') else clean
+    }
+
+    companion object {
+        private val SANITIZE_NON_ALNUM = Regex("[^a-zA-Z0-9_]")
+        private val SANITIZE_MULTI_UNDERSCORE = Regex("_+")
     }
 }

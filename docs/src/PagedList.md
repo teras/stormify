@@ -198,6 +198,50 @@ Multiple terms are combined with boolean logic following Google search conventio
 Precedence: AND binds tighter than OR (same as Google). A hyphen inside a word
 (e.g. `part-number`) is treated as literal text, not as a negation operator.
 
+#### NULL matching
+
+The `NULL` token matches rows where the column is SQL `NULL`:
+
+| Filter value       | Meaning |
+|-------------------|---------|
+| `NULL`             | `col IS NULL` |
+| `-NULL`            | `col IS NOT NULL` |
+| `foo OR NULL`      | contains "foo" OR is null |
+
+NULL works across all facet types (TEXT, NUMERIC, TEMPORAL, ENUM).
+
+#### Configurable tokens
+
+All syntactic tokens can be overridden via `FilterSyntax`:
+
+| Property           | Default | Role |
+|--------------------|---------|------|
+| `or`               | `OR`    | OR operator |
+| `not`              | `-`     | NOT operator |
+| `nullToken`        | `NULL`  | NULL match |
+| `phraseDelimiter`  | `"`     | Phrase open/close |
+| `groupOpen`        | `(`     | Grouping open |
+| `groupClose`       | `)`     | Grouping close |
+| `wildcard`         | `*`     | Prefix/suffix wildcard |
+
+Word-like tokens (containing letters, e.g. `OR`, `NULL`) require word
+boundaries to match — `OR` inside `CONSTRUCTOR` is not confused for the
+operator. Symbol-like tokens (`|`, `-`, `--`) match at any token boundary,
+and longest-match wins (so `--` takes precedence over `-`).
+
+For non-English installations, override the tokens globally on the `Stormify`
+instance:
+
+=== "Kotlin"
+
+    ```kotlin
+    stormify.filterSyntax = FilterSyntax(
+        or = "|",           // `foo | bar` instead of `foo OR bar`
+        not = "!",          // `!foo` instead of `-foo`
+        nullToken = "--",   // `--` instead of `NULL`
+    )
+    ```
+
 Set `facet.isCaseSensitive = true` for a case-sensitive facet.
 
 ### Numeric (`Facet.NUMERIC`)
@@ -222,6 +266,10 @@ parser](#input-parsing-and-locale).
 For enum-backed fields. Auto-detected when the field's Kotlin type is an enum. The filter
 string is matched (case-insensitively, as a substring) against the enum's display names.
 Multiple matching display names produce an `IN` clause of the corresponding DB values.
+
+Supports the full boolean syntax from TEXT facets — `active OR pending`,
+`-archived`, `"active"` (exact phrase, does not match `INACTIVE`), `(a OR b) -c` —
+applied as set operations over the resolved enum values.
 
 === "Kotlin"
 
@@ -261,22 +309,6 @@ name, resolved to the enum-facet overload via the first-argument type:
     ```java
     Map<String, Object> displayMap = Map.of("Ενεργός", 1, "Ανενεργός", 0);
     list.addFacet(displayMap, User_.statusCode);
-    ```
-
-### NULL Filter
-
-Any facet can filter for `NULL` using the sentinel constant `Facet.NULL`:
-
-=== "Kotlin"
-
-    ```kotlin
-    list.getFacet(0).filter = Facet.NULL   // → WHERE name IS NULL
-    ```
-
-=== "Java"
-
-    ```java
-    list.getFacet(0).setFilter(Facet.NULL);   // → WHERE name IS NULL
     ```
 
 ## Sorting
@@ -463,13 +495,13 @@ numbers like `1.234,56` (comma decimal), dates like `31/12/2026` (day-first).
 `PagedList` applies an input parser — a `(String, Facet.Type) -> String` function —
 that transforms the filter string before it reaches SQL.
 
-Resolution order: **\*\*facet → list → global → identity (no transformation)**.
+Resolution order: **facet → list → Stormify instance → identity (no transformation)**.
 
 === "Kotlin"
 
     ```kotlin
-    // Global — applies to all PagedList instances unless overridden
-    PagedList.defaultInputParser = { input, type ->
+    // Stormify instance — applies to all PagedList instances that use it
+    stormify.inputParser = { input, type ->
         when (type) {
             Facet.NUMERIC -> input.replace(".", "").replace(",", ".")
             Facet.TEMPORAL -> flipDayMonthYear(input)
@@ -487,8 +519,8 @@ Resolution order: **\*\*facet → list → global → identity (no transformatio
 === "Java"
 
     ```java
-    // Global — applies to all PagedList instances unless overridden
-    PagedList.setDefaultInputParser((input, type) -> {
+    // Stormify instance — applies to all PagedList instances that use it
+    stormify.setInputParser((input, type) -> {
         if (type == Facet.NUMERIC) return input.replace(".", "").replace(",", ".");
         if (type == Facet.TEMPORAL) return flipDayMonthYear(input);
         return input;
@@ -533,22 +565,27 @@ clause based on the type (`LIKE ?` for `TEXT`, `= ?` / `BETWEEN ? AND ?` for
 
 This covers the majority of raw-SQL-facet needs.
 
-### Custom — with a `SqlGenerator`
+### Custom Converter
 
-When the default converter isn't enough, pass a `SqlGenerator` — a SAM interface
-that produces the SQL fragment and stages bind parameters via a `SqlArgsCollector`.
+When the default converter isn't enough, assign a custom `Converter` to the facet.
+`Converter` is a function type `(column, input, parser, args) -> String` — use a
+plain lambda. It receives the column expression, the raw user input, an
+`InputParser`, and a `SqlArgsCollector`, and returns a SQL fragment.
+
 Use it when you need to:
 
 - Translate the input value in a non-trivial way (e.g. `"50k"` → `50000`)
 - Emit more than one placeholder (e.g. `BETWEEN ? AND ?` with a computed upper bound)
 - Choose different SQL shapes based on the input format
+- Implement full-text search (e.g. `MATCH ... AGAINST` for MySQL)
 
 === "Kotlin"
 
     ```kotlin
-    val col = list.addSqlFacet("users.id", Facet.NUMERIC) { columnRef, filterValue, args ->
+    val col = list.addSqlFacet("users.id", Facet.NUMERIC)
+    col.converter = { columnRef, filterValue, _, args ->
         val n = filterValue.toIntOrNull() ?: 0
-        args.accept(n)
+        args.add(n)
         "$columnRef % ? = 0"    // rows whose id is divisible by n
     }
     col.filter = "3"            // keep ids divisible by 3
@@ -557,13 +594,25 @@ Use it when you need to:
 === "Java"
 
     ```java
-    Facet col = list.addSqlFacet("users.id", Facet.NUMERIC, (columnRef, filterValue, args) -> {
+    Facet col = list.addSqlFacet("users.id", Facet.NUMERIC);
+    col.setConverter((columnRef, filterValue, parser, args) -> {
         int n = Integer.parseInt(filterValue);
-        args.accept(n);
+        args.add(n);
         return columnRef + " % ? = 0";    // rows whose id is divisible by n
     });
     col.setFilter("3");                   // keep ids divisible by 3
     ```
+
+Custom converters can leverage `TextQuery.parse()` to get boolean query support
+for free (for full-text backends that take a single bound parameter):
+
+```kotlin
+facet.converter = converter@{ col, input, _, args ->
+    if (TextQuery.parse(input) == null) return@converter "1 = 0"
+    args.add(input)  // websearch_to_tsquery / MATCH AGAINST accept Google syntax
+    "MATCH($col) AGAINST(? IN BOOLEAN MODE)"
+}
+```
 
 ## Table Refs
 
@@ -572,6 +621,11 @@ to reference a joined table by its SQL alias. Engine-assigned aliases (`t1`,
 `t2`, …) are not stable across configuration changes, so instead of hardcoding
 them, register a [`TableRef`][TableRef] with `addTableRef(...)` and use its
 `alias` (via string interpolation or `getAlias()`):
+
+!!! note
+    FK-path facets like `addFacet("parent.name")` resolve JOINs automatically —
+    no `TableRef` needed. Table refs are only required when you write raw SQL
+    that references a joined table by alias.
 
 === "Kotlin"
 

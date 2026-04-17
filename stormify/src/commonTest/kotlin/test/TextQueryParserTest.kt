@@ -7,14 +7,14 @@ import kotlin.test.assertEquals
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
-class TextQueryParserTest {
+class TextQueryTest {
 
-    private fun parse(input: String): TextNode? = TextQueryParser.parse(input)
+    private fun parse(input: String): TextNode? = TextQuery.parse(input)
 
     private fun render(input: String, caseSensitive: Boolean = false): Pair<String, List<Any>> {
         val args = mutableListOf<Any>()
         val collector = SqlArgsCollector { args.add(it) }
-        val sql = TextQueryParser.parseAndRender(input, "col", SqlDialect.SQLITE, caseSensitive, collector)
+        val sql = TextQuery.parseAndRender(input, "col", SqlDialect.SQLITE, caseSensitive, collector)
         return (sql ?: "1 = 0") to args
     }
 
@@ -133,21 +133,20 @@ class TextQueryParserTest {
 
     @Test
     fun leadingOr() {
-        val node = parse("OR foo")
-        assertEquals(AndNode(listOf(TermNode("OR"), TermNode("foo"))), node)
+        // OR without left operand — no valid expression
+        assertNull(parse("OR foo"))
     }
 
     @Test
     fun onlyMinus() {
-        val node = parse("-")
-        assertEquals(TermNode("-"), node)
+        // Standalone NOT token without atom — null (no filter)
+        assertNull(parse("-"))
     }
 
     @Test
     fun onlyOr() {
-        val (sql, _) = render("OR")
-        val node = parse("OR")
-        assertEquals(TermNode("OR"), node)
+        // Standalone OR token — null (no filter)
+        assertNull(parse("OR"))
     }
 
     @Test

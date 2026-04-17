@@ -17,20 +17,7 @@ import kotlin.reflect.KClass
  *
  * See [PagedListBase] for the full API (filtering, sorting, pagination, etc.).
  */
-class PagedList<T : Any>(classType: KClass<T>) : PagedListBase<T>(classType) {
-    /** Re-export of [PagedListBase.defaultInputParser] for native callers. */
-    companion object {
-        /**
-         * Global input parser for all PagedList instances. Backed by
-         * [PagedListBase.defaultInputParser] — changing either reflects in both.
-         */
-        var defaultInputParser: InputParser?
-            get() = PagedListBase.defaultInputParser
-            set(value) {
-                PagedListBase.defaultInputParser = value
-            }
-    }
-}
+class PagedList<T : Any>(classType: KClass<T>) : PagedListBase<T>(classType)
 
 /**
  * Creates a new [PagedList] for the reified entity type [T].

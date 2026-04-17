@@ -123,7 +123,7 @@ abstract class PagedListBase<T : Any> internal constructor(
         }
 
     /**
-     * Input parser for this list. Overrides [defaultInputParser].
+     * Input parser for this list. Overrides `Stormify.inputParser`.
      */
     var inputParser: InputParser? = null
 
@@ -225,15 +225,15 @@ abstract class PagedListBase<T : Any> internal constructor(
     ): Facet = registerFacet(core.addSqlFacet(expression, type, null, null))
 
     /**
-     * Adds a raw/custom column with a custom SQL generator. The [sqlGenerator] receives
+     * Adds a raw/custom column with a custom [Converter]. The converter receives
      * the column expression and the user's filter value, and returns a SQL fragment
      * while staging bind parameters via [SqlArgsCollector].
      */
     fun addSqlFacet(
         expression: String,
         type: Facet.Type,
-        sqlGenerator: SqlGenerator
-    ): Facet = registerFacet(core.addSqlFacet(expression, type, sqlGenerator, null))
+        converter: Converter
+    ): Facet = registerFacet(core.addSqlFacet(expression, type, converter, null))
 
     private fun registerFacet(column: Facet): Facet {
         refresh()
@@ -446,13 +446,4 @@ abstract class PagedListBase<T : Any> internal constructor(
         core.invalidate()
     }
 
-    internal companion object {
-        // Backing storage for the user-facing `PagedList.defaultInputParser`
-        // wrappers (jvmBasedMain and nativeMain). Not intended for direct user
-        // access — go through `PagedList.defaultInputParser` instead.
-        internal var defaultInputParser: InputParser? = null
-
-        // Classloader-leak cleanup hook — on JVM, invoked by `StormifyLifecycle.clear()`.
-        internal fun clearDefaultInputParser() { defaultInputParser = null }
-    }
 }

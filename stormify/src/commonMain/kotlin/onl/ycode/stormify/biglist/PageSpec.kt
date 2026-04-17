@@ -34,7 +34,7 @@ import kotlin.jvm.JvmStatic
  * @property page Zero-based page index.
  * @property pageSize Number of rows per page. Must be at least 1.
  * @property filters Per-alias filter values. Missing aliases → no filter.
- *   The sentinel value [Facet.NULL] produces `IS NULL`.
+ *   The configured `nullToken` (default `"NULL"`) produces `IS NULL`.
  * @property sorts Per-alias sort directions.
  * @property caseSensitive Per-alias case-sensitivity overrides for text
  *   facets. Missing aliases default to `false`.
@@ -65,6 +65,7 @@ data class PageSpec @JvmOverloads constructor(
         caseSensitive: Map<String, Boolean> = emptyMap(),
     ) : this(0, 15, filters, sorts, caseSensitive)
 
+    /** Factory and JSON-parsing helpers for [PageSpec]. */
     companion object {
         /**
          * Parses a JSON object matching the exact shape of [PageSpec] into a

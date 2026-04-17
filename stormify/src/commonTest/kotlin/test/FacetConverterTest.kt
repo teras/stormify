@@ -5,15 +5,13 @@ import onl.ycode.stormify.biglist.Facet
 import onl.ycode.stormify.biglist.PageSpec
 import onl.ycode.stormify.biglist.PagedList
 import onl.ycode.stormify.biglist.PagedQuery
-import onl.ycode.stormify.biglist.SqlGenerator
 import onl.ycode.stormify.biglist.execute
 import kotlin.test.Test
 import kotlin.test.assertEquals
-import kotlin.test.assertFails
 import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
 
-class FacetSqlGeneratorTest {
+class FacetConverterTest {
     private fun withDb(name: String, test: (Stormify) -> Unit) = TestHelper.withDb(name) {
         it.asDefault(test)
     }
@@ -27,57 +25,54 @@ class FacetSqlGeneratorTest {
     }
 
     @Test
-    fun customGeneratorOnFieldFacet() = withDb("FG-FIELD") { s ->
+    fun customConverterOnFieldFacet() = withDb("FC-FIELD") { s ->
         setupTable(s)
         val list = PagedList<TestC>()
         val facet = list.addFacet("name")
-        facet.sqlGenerator = SqlGenerator { columnRef, filterValue, args ->
-            args("%$filterValue")
+        facet.converter = { columnRef, filterValue, _, args ->
+            args.add("%$filterValue")
             "$columnRef LIKE ?"
         }
-        facet.filter = "lice"   // suffix match: "Alice" ends with "lice"
+        facet.filter = "lice"
         assertEquals(1, list.size)
         assertEquals("Alice", list[0].name)
     }
 
     @Test
-    fun customGeneratorPrefixMatch() = withDb("FG-PREFIX") { s ->
+    fun customConverterPrefixMatch() = withDb("FC-PREFIX") { s ->
         setupTable(s)
         val list = PagedList<TestC>()
         val facet = list.addFacet("name")
-        facet.sqlGenerator = SqlGenerator { columnRef, filterValue, args ->
-            args("$filterValue%")
+        facet.converter = { columnRef, filterValue, _, args ->
+            args.add("$filterValue%")
             "$columnRef LIKE ?"
         }
-        facet.filter = "Alic"   // prefix match: both "Alice" and "Alice2" start with "Alic"
+        facet.filter = "Alic"
         assertEquals(2, list.size)
     }
 
     @Test
-    fun placeholderMismatchThrows() = withDb("FG-MISMATCH") { s ->
+    fun placeholderMismatchThrows() = withDb("FC-MISMATCH") { s ->
         setupTable(s)
         val list = PagedList<TestC>()
         val facet = list.addFacet("name")
-        facet.sqlGenerator = SqlGenerator { columnRef, _, args ->
-            // Bug: two args but only one placeholder
-            args("x")
-            args("y")
+        facet.converter = { columnRef, _, _, args ->
+            args.add("x")
+            args.add("y")
             "$columnRef = ?"
         }
         facet.filter = "anything"
         val err = assertFailsWith<IllegalArgumentException> { list.size }
-        // Message should mention the facet
         assertTrue(err.message!!.contains("emitted 1 placeholders but pushed 2"))
     }
 
     @Test
-    fun invokeSyntaxForArgs() = withDb("FG-INVOKE") { s ->
+    fun customConverterAddForArgs() = withDb("FC-ADD") { s ->
         setupTable(s)
         val list = PagedList<TestC>()
         val facet = list.addFacet("name")
-        // Use invoke syntax: args(x) instead of args.accept(x)
-        facet.sqlGenerator = SqlGenerator { columnRef, filterValue, args ->
-            args(filterValue)  // Kotlin invoke sugar
+        facet.converter = { columnRef, filterValue, _, args ->
+            args.add(filterValue)
             "$columnRef = ?"
         }
         facet.filter = "Bob"
@@ -86,16 +81,15 @@ class FacetSqlGeneratorTest {
     }
 
     @Test
-    fun customGeneratorOnStatelessPagedQuery() = withDb("FG-QUERY") { s ->
+    fun customConverterOnStatelessPagedQuery() = withDb("FC-QUERY") { s ->
         setupTable(s)
         val query = PagedQuery<TestC>().apply {
-            addFacet("name", "name").sqlGenerator = SqlGenerator { col, v, args ->
-                args(v.uppercase())   // Normalize to uppercase before compare
+            addFacet("name", "name").converter = { col, v, _, args ->
+                args.add(v.uppercase())
                 "UPPER($col) = ?"
             }
         }
         val page = query.execute(PageSpec(filters = mapOf("name" to "alice")))
         assertEquals(1L, page.total)
     }
-
 }

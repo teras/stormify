@@ -24,20 +24,6 @@ class PagedList<T : Any> : PagedListBase<T> {
 
     /** Construct for the given Java class — the Java-friendly constructor. */
     constructor(entityClass: Class<T>) : super(entityClass.kotlin)
-
-    /** Java-facing re-export of [PagedListBase.defaultInputParser]. */
-    companion object {
-        /**
-         * Global input parser for all PagedList instances. Backed by
-         * [PagedListBase.defaultInputParser] — changing either reflects in both.
-         */
-        @JvmStatic
-        var defaultInputParser: InputParser?
-            get() = PagedListBase.defaultInputParser
-            set(value) {
-                PagedListBase.defaultInputParser = value
-            }
-    }
 }
 
 /**

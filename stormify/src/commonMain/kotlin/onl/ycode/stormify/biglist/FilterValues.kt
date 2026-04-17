@@ -158,18 +158,7 @@ class FilterCountedValues internal constructor(
             sql,
             *args.toTypedArray()
         )
-        return rows.map { row ->
-            val rawValue = row["fv_val"]
-            val rawCount = row["fv_cnt"] ?: 0L
-            FilterCountedValue(
-                value = rawValue?.toString() ?: "",
-                count = when (rawCount) {
-                    is Long -> rawCount
-                    is Number -> rawCount.toLong()
-                    else -> rawCount.toString().toLong()
-                }
-            )
-        }
+        return rows.map { FilterCountedValue.fromRow(it) }
     }
 
     /**
@@ -191,4 +180,19 @@ data class FilterCountedValue(
     val value: String,
     /** Number of rows in the parent list that match this value. */
     val count: Long
-)
+) {
+    internal companion object {
+        fun fromRow(row: Map<String, Any?>): FilterCountedValue {
+            val rawValue = row["fv_val"]
+            val rawCount = row["fv_cnt"] ?: 0L
+            return FilterCountedValue(
+                value = rawValue?.toString() ?: "",
+                count = when (rawCount) {
+                    is Long -> rawCount
+                    is Number -> rawCount.toLong()
+                    else -> rawCount.toString().toLong()
+                }
+            )
+        }
+    }
+}

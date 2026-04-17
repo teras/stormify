@@ -27,13 +27,13 @@ class Facet internal constructor(
     internal val type: Type,
     internal val enumValues: Map<String, Any>?,
     internal val rawExpression: String?,
-    initialSqlGenerator: SqlGenerator?,
+    initialConverter: Converter?,
     initialAlias: String,
 ) {
     /**
-     * Custom SQL fragment generator for this facet's filter. When `null`
-     * (the default), the engine uses its built-in generator for the facet's
-     * [type] (e.g., `LIKE` with wildcard parsing for [Type.TEXT], comparison
+     * Custom converter for this facet's filter. When `null` (the default),
+     * the engine uses its built-in converter for the facet's [type]
+     * (e.g., boolean text query with LIKE for [Type.TEXT], comparison
      * parsing for [Type.NUMERIC], …).
      *
      * Set to a non-null value to override the default and translate the
@@ -48,7 +48,7 @@ class Facet internal constructor(
      * Setting this on a facet belonging to a stateless `PagedQuery` is
      * forbidden — configuration is supposed to happen at setup time only.
      */
-    var sqlGenerator: SqlGenerator? = initialSqlGenerator
+    var converter: Converter? = initialConverter
         set(value) {
             core.checkMutable()
             field = value
@@ -126,14 +126,7 @@ class Facet internal constructor(
         TEMPORAL,
 
         /** Enum/quantize — maps display names to DB values via reverse substring matching. */
-        ENUM,
-
-        /**
-         * Custom — default SQL generation is disabled; the caller must provide
-         * a [SqlGenerator] that knows how to interpret the filter value for
-         * this facet.
-         */
-        CUSTOM
+        ENUM
     }
 
     /** Exposes facet [Type] and [SortState] constants as short aliases (e.g. `Facet.TEXT`, `Facet.ASCENDING`). */
@@ -146,20 +139,11 @@ class Facet internal constructor(
         @JvmField val TEMPORAL = Type.TEMPORAL
         /** Enum/quantize facet type. */
         @JvmField val ENUM = Type.ENUM
-        /** Custom facet type — caller supplies a [SqlGenerator] for filter semantics. */
-        @JvmField val CUSTOM = Type.CUSTOM
 
         /** Ascending sort order. */
         @JvmField val ASCENDING = SortState.ASCENDING
         /** Descending sort order. */
         @JvmField val DESCENDING = SortState.DESCENDING
-
-        /**
-         * Sentinel string used to filter a facet for SQL `NULL`. Assign as the
-         * facet filter (`facet.filter = Facet.NULL`) to generate
-         * `WHERE <column> IS NULL` in the underlying query.
-         */
-        const val NULL: String = "―"
     }
 
     /**
@@ -228,7 +212,7 @@ class Facet internal constructor(
      * Resolution order: facet → list → global → identity (no transformation).
      *
      * @see PagedListBase.inputParser
-     * @see PagedListBase.defaultInputParser
+     * @see onl.ycode.stormify.Stormify.inputParser
      */
     var inputParser: InputParser? = null
         set(value) {
@@ -255,10 +239,6 @@ class Facet internal constructor(
     internal fun invalidateFilterValues() {
         _filterValues?.invalidateAll()
     }
-
-    internal fun hasActiveFilter(): Boolean = filter != null
-
-    internal fun hasActiveSort(): Boolean = sort != null
 
     /**
      * Opaque key used by [PagedListBase.saveState] / [PagedListBase.restoreState]
@@ -304,36 +284,33 @@ data class FieldPath(
 /**
  * Transforms user filter input before it reaches the database — e.g. locale-aware
  * number/date parsing. Resolution chain: [Facet.inputParser] → [PagedListBase.inputParser]
- * → [PagedListBase.defaultInputParser] → identity.
+ * → [onl.ycode.stormify.Stormify.inputParser] → identity.
  */
 typealias InputParser = (String, Facet.Type) -> String
 
 
 /**
- * Callback used by [SqlGenerator] implementations to stage a bind parameter for the
+ * Callback used by [Converter] implementations to stage a bind parameter for the
  * generated SQL placeholder. Each call adds one `?` value to the query in order.
  */
 fun interface SqlArgsCollector {
     /** Adds [arg] as a bind parameter. */
-    fun accept(arg: Any)
-
-    /** Kotlin-idiomatic shortcut: `args(value)` instead of `args.accept(value)`. */
-    operator fun invoke(arg: Any): Unit = accept(arg)
+    fun add(arg: Any)
 }
 
 /**
- * Generates the SQL condition for a facet's filter. Implementations receive
- * the fully-qualified DB column reference (e.g. `"customer.name"`, `"t2.city"`,
- * or the raw expression of an [PagedListBase.addSqlFacet] facet) and the user-
- * supplied filter value already passed through the active [InputParser]. They
- * must return a SQL fragment (e.g. `"col = ?"`) and stage any bind arguments
- * through the [SqlArgsCollector].
+ * Converts a facet filter value into a SQL condition fragment.
+ *
+ * Parameters: column reference, raw filter value, [InputParser] for locale-aware
+ * transformation, and [SqlArgsCollector] for staging bind parameters.
+ *
+ * Built-in converters handle text (Google-like boolean syntax), numeric
+ * (operators and ranges), temporal (date/time operators), and enum (set
+ * algebra over display names). Set [Facet.converter] to override the
+ * default for any facet type.
  *
  * The number of `?` placeholders in the returned fragment must match the
- * number of values pushed through [args] — the engine validates this and
- * throws if they disagree.
+ * number of values pushed through the args collector — the engine validates
+ * this and throws if they disagree.
  */
-fun interface SqlGenerator {
-    /** Returns the SQL fragment and stages its bind args through [args]. */
-    fun generate(columnRef: String, filterValue: String, args: SqlArgsCollector): String
-}
+typealias Converter = (column: String, input: String, parser: InputParser, args: SqlArgsCollector) -> String

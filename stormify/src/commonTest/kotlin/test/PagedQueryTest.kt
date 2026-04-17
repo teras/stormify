@@ -184,6 +184,50 @@ class PagedQueryTest {
     }
 
     @Test
+    fun sqlFacetNumericExpressionWithOperators() = withDb("PQ-SQL-NUM-EXPR") { s ->
+        // Use TestC.id as base; computed expression "id * 2" simulates a generated field.
+        // Without parsing of operators against the SQL expression, none of these would work.
+        setupTable(s, 10)  // creates rows with id 1..10
+        val query = PagedQuery<TestC>().apply {
+            addSqlFacet("dbl", "(test.id * 2)", Facet.NUMERIC)
+        }
+
+        // dbl < 10  →  id*2 < 10  →  id ∈ {1,2,3,4}  →  4 rows
+        val lt = query.execute(PageSpec(filters = mapOf("dbl" to "< 10")))
+        assertEquals(4L, lt.total)
+
+        // dbl >= 16  →  id*2 >= 16  →  id ∈ {8,9,10}  →  3 rows
+        val gte = query.execute(PageSpec(filters = mapOf("dbl" to ">= 16")))
+        assertEquals(3L, gte.total)
+
+        // dbl between 6 and 12  →  id*2 in [6,12]  →  id ∈ {3,4,5,6}  →  4 rows
+        val range = query.execute(PageSpec(filters = mapOf("dbl" to "6...12")))
+        assertEquals(4L, range.total)
+
+        // dbl = 4  →  id*2 = 4  →  id=2  →  1 row
+        val exact = query.execute(PageSpec(filters = mapOf("dbl" to "4")))
+        assertEquals(1L, exact.total)
+    }
+
+    @Test
+    fun sqlFacetTextExpressionWithBooleanOps() = withDb("PQ-SQL-TXT-EXPR") { s ->
+        // Computed text expression — verify Google AST works on SQL facets too
+        setupTable(s, 5)  // Item1..Item5
+        val query = PagedQuery<TestC>().apply {
+            // UPPER() simulates a generated text field
+            addSqlFacet("upper", "UPPER(test.name)", Facet.TEXT)
+        }
+
+        // Boolean OR on computed expression
+        val orQ = query.execute(PageSpec(filters = mapOf("upper" to "ITEM1 OR ITEM3")))
+        assertEquals(2L, orQ.total)
+
+        // Boolean NOT
+        val notQ = query.execute(PageSpec(filters = mapOf("upper" to "-ITEM1 -ITEM2")))
+        assertEquals(3L, notQ.total)
+    }
+
+    @Test
     fun filterValuesDistinct() = withDb("PQ-FV") { s ->
         TestDDL.dropTable("test")
         s.executeUpdate(TestDDL.createTable("test",

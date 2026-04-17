@@ -8,6 +8,8 @@ import kotlinx.atomicfu.locks.synchronized
 import onl.ycode.kdbc.*
 import onl.ycode.logger.LogManager
 import onl.ycode.stormify.SqlDialect.GeneratedKeyRetrieval
+import onl.ycode.stormify.biglist.FilterSyntax
+import onl.ycode.stormify.biglist.InputParser
 import onl.ycode.stormify.biglist.PagedListBase
 import onl.ycode.stormify.TypeUtils.castTo
 import onl.ycode.stormify.biglist.ReferencePath
@@ -143,6 +145,20 @@ open class Stormify(val dataSource: DataSource, vararg registrars: EntityRegistr
 
     /** The logger used by this Stormify instance. Defaults to a logger named "Stormify". */
     var logger = LogManager.getLogger("Stormify")
+
+    /**
+     * The filter syntax used by facets on this instance. Controls which tokens
+     * represent OR, NOT, NULL, phrase delimiters, grouping, and wildcards.
+     * Default is Google-like syntax: `OR`, `-`, `NULL`, `"`, `()`, `*`.
+     */
+    var filterSyntax: FilterSyntax = FilterSyntax()
+
+    /**
+     * Default input parser for facet filter values. Applied after per-facet and
+     * per-list parsers in the resolution chain. Use for locale-aware number/date
+     * parsing across all facets.
+     */
+    var inputParser: InputParser? = null
 
     // --- Internal connection management ---
 

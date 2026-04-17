@@ -56,6 +56,7 @@ import kotlin.reflect.KClass
  * ```
  */
 abstract class PagedQueryBase<T : Any> internal constructor(
+    /** The entity class whose rows this query paginates. */
     val classType: KClass<T>
 ) : StormifyAware {
 
@@ -158,13 +159,13 @@ abstract class PagedQueryBase<T : Any> internal constructor(
         type: Facet.Type = Facet.Type.TEXT,
     ): Facet = core.addSqlFacet(expression, type, null, alias)
 
-    /** Raw column with a custom SQL generator for filter semantics. */
+    /** Raw column with a custom [Converter] for filter semantics. */
     fun addSqlFacet(
         alias: String,
         expression: String,
         type: Facet.Type,
-        sqlGenerator: SqlGenerator,
-    ): Facet = core.addSqlFacet(expression, type, sqlGenerator, alias)
+        converter: Converter,
+    ): Facet = core.addSqlFacet(expression, type, converter, alias)
 
     // --- Table refs ---
 
@@ -333,18 +334,7 @@ abstract class PagedQueryBase<T : Any> internal constructor(
                 null, Map::class as kotlin.reflect.KClass<Map<String, Any?>>,
                 sql, *args.toTypedArray()
             )
-            raw.map { row ->
-                val rawValue = row["fv_val"]
-                val rawCount = row["fv_cnt"] ?: 0L
-                FilterCountedValue(
-                    value = rawValue?.toString() ?: "",
-                    count = when (rawCount) {
-                        is Long -> rawCount
-                        is Number -> rawCount.toLong()
-                        else -> rawCount.toString().toLong()
-                    }
-                )
-            }
+            raw.map { FilterCountedValue.fromRow(it) }
         }
         return Page(rows = rows, total = total, page = spec.page, pageSize = spec.pageSize)
     }

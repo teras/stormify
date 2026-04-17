@@ -66,7 +66,7 @@ internal class PagedQueryCore<T : Any>(
     /**
      * When `true`, setup-time configuration is locked: adding facets, table
      * refs or constraints, mutating per-facet aliases / flags / parsers /
-     * sqlGenerators, or toggling `isDistinct` / `TableRef.isActive` throws.
+     * converters, or toggling `isDistinct` / `TableRef.isActive` throws.
      * Stateless façades set this automatically on first execution so that
      * concurrent callers cannot observe a half-reconfigured engine.
      */
@@ -146,12 +146,12 @@ internal class PagedQueryCore<T : Any>(
     internal fun addSqlFacet(
         expression: String,
         type: Facet.Type,
-        sqlGenerator: SqlGenerator?,
+        converter: Converter?,
         alias: String?,
     ): Facet {
         checkMutable()
         val resolvedAlias = resolveAliasForNewFacet(alias)
-        val column = Facet(this, emptyList(), type, null, expression, sqlGenerator, resolvedAlias)
+        val column = Facet(this, emptyList(), type, null, expression, converter, resolvedAlias)
         _facets.add(column)
         return column
     }
@@ -392,44 +392,35 @@ internal class PagedQueryCore<T : Any>(
         for (column in _facets) {
             if (column === excludeFacet) continue
             val filterVal = facetFilter(column, state) ?: continue
-            val isNullFilter = filterVal == Facet.NULL
             val parser = resolveInputParser(column)
             val caseSensitive = facetCaseSensitive(column, state)
             val orParts = mutableListOf<String>()
 
-            fun wrapUserGenerator(gen: SqlGenerator): (String, String, InputParser, SqlArgsCollector) -> String =
+            fun wrapUserConverter(conv: Converter): Converter =
                 { col, input, p, a ->
                     val before = args.size
-                    val fragment = gen.generate(col, p(input, column.type), a)
+                    val fragment = conv(col, input, p, a)
                     val pushed = args.size - before
                     val placeholders = fragment.count { it == '?' }
                     require(placeholders == pushed) {
-                        "Facet '${column.alias}' sqlGenerator emitted $placeholders placeholders but pushed $pushed args"
+                        "Facet '${column.alias}' converter emitted $placeholders placeholders but pushed $pushed args"
                     }
                     fragment
                 }
 
             if (column.rawExpression != null) {
-                if (isNullFilter) {
-                    orParts.add("${column.rawExpression} IS NULL")
-                } else {
-                    val generator = column.sqlGenerator?.let(::wrapUserGenerator)
-                        ?: DefaultDataConverter.guessConverter(column.type, stormify.sqlDialect, column.enumValues)
-                    orParts.add(generator(column.rawExpression, filterVal, parser, argsCollector))
-                }
+                val conv = column.converter?.let(::wrapUserConverter)
+                    ?: DefaultDataConverter.guessConverter(column.type, stormify.sqlDialect, stormify.filterSyntax, column.enumValues)
+                orParts.add(conv(column.rawExpression, filterVal, parser, argsCollector))
             } else {
                 for (fieldPath in column.fields) {
                     val node = resolveFieldPath(fieldPath)
-                    if (isNullFilter) {
-                        orParts.add("${node.columnHandler} IS NULL")
-                    } else {
-                        val generator = column.sqlGenerator?.let(::wrapUserGenerator)
-                            ?: DefaultDataConverter.guessConverterForNode(
-                                node, column.type, stormify.sqlDialect,
-                                { caseSensitive }, column.enumValues
-                            )
-                        orParts.add(generator(node.columnHandler, filterVal, parser, argsCollector))
-                    }
+                    val conv = column.converter?.let(::wrapUserConverter)
+                        ?: DefaultDataConverter.guessConverterForNode(
+                            node, column.type, stormify.sqlDialect, stormify.filterSyntax,
+                            { caseSensitive }, column.enumValues
+                        )
+                    orParts.add(conv(node.columnHandler, filterVal, parser, argsCollector))
                 }
             }
 
@@ -514,5 +505,5 @@ internal class PagedQueryCore<T : Any>(
 
     internal fun resolveInputParser(column: Facet): InputParser =
         column.inputParser ?: listInputParserAccessor()
-            ?: PagedListBase.defaultInputParser ?: { s, _ -> s }
+            ?: stormify.inputParser ?: { s, _ -> s }
 }
