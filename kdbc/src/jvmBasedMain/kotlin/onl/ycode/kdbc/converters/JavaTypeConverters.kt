@@ -66,6 +66,16 @@ internal object JavaTypeConverters {
         }
         toBigDecimal[String::class] = { BigDecimal(it as String) }
         toBigInteger[String::class] = { BigInteger(it as String) }
+
+        registry[Number::class]?.let { toNumber ->
+            toNumber[String::class] = { s ->
+                val str = s as String
+                str.toLongOrNull() ?: str.toDoubleOrNull()
+                    ?: runCatching { BigInteger(str) }.getOrNull()
+                    ?: runCatching { BigDecimal(str) }.getOrNull()
+                    ?: throw SQLException("Cannot parse '$str' as Number")
+            }
+        }
     }
 
     private fun registerJavaTime(registry: MutableMap<KClass<*>, MutableMap<KClass<*>, (Any) -> Any>>) {

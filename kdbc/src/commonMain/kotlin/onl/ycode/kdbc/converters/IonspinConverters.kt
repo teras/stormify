@@ -52,5 +52,15 @@ internal object IonspinConverters {
         }
         toBDN[String::class] = { BDN.parseString(it as String) }
         toBIN[String::class] = { BIN.parseString(it as String) }
+
+        registry[Number::class]?.let { toNumber ->
+            toNumber[String::class] = { s ->
+                val str = s as String
+                str.toLongOrNull() ?: str.toDoubleOrNull()
+                    ?: runCatching { BIN.parseString(str) }.getOrNull()
+                    ?: runCatching { BDN.parseString(str) }.getOrNull()
+                    ?: throw SQLException("Cannot parse '$str' as Number")
+            }
+        }
     }
 }

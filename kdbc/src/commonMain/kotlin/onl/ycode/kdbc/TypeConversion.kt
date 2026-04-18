@@ -106,6 +106,13 @@ object TypeConversion {
             toString[target] = { it.toString() }
         }
 
+        val toNumber = mutableMapOf<KClass<*>, (Any) -> Any>().also { registry[Number::class] = it }
+        toNumber[String::class] = { s ->
+            val str = s as String
+            str.toLongOrNull() ?: str.toDoubleOrNull()
+                ?: throw SQLException("Cannot parse '$str' as Number")
+        }
+
         try { IonspinConverters.register(registry) } catch (_: Throwable) {}
         // Platform converters (JVM: java.math / java.sql / java.time) run BEFORE
         // KotlinxTimeConverters so that kotlinx direct pair-wise converters registered

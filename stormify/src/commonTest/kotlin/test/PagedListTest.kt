@@ -722,7 +722,7 @@ open class PagedListTest {
     // --- SQL facet scenarios ---
 
     @Test
-    fun testSqlFacetNumericComputed() = withDb("PAGED-SQL-NUM") { s ->
+    open fun testSqlFacetNumericComputed() = withDb("PAGED-SQL-NUM") { s ->
         setupTable(s, 10)
         val list = PagedList<TestC>()
         val col = list.addSqlFacet("(test.id * 2)", Facet.NUMERIC)
@@ -731,7 +731,7 @@ open class PagedListTest {
     }
 
     @Test
-    fun testSqlFacetNumericRange() = withDb("PAGED-SQL-NUM-RANGE") { s ->
+    open fun testSqlFacetNumericRange() = withDb("PAGED-SQL-NUM-RANGE") { s ->
         setupTable(s, 10)
         val list = PagedList<TestC>()
         val col = list.addSqlFacet("(test.id * 3)", Facet.NUMERIC)

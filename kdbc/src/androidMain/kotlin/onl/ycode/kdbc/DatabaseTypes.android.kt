@@ -5,6 +5,8 @@ package onl.ycode.kdbc
 import android.database.Cursor
 import android.database.sqlite.SQLiteDatabase
 import android.database.sqlite.SQLiteStatement
+import java.math.BigDecimal
+import java.math.BigInteger
 import kotlin.reflect.KClass
 
 /**
@@ -264,6 +266,10 @@ private class AndroidStatement(
                 is Float -> stmt.bindDouble(index, value.toDouble())
                 is String -> stmt.bindString(index, value)
                 is ByteArray -> stmt.bindBlob(index, value)
+                is BigInteger ->
+                    runCatching { stmt.bindLong(index, value.longValueExact()) }
+                        .getOrElse { stmt.bindString(index, value.toString()) }
+                is BigDecimal -> stmt.bindString(index, value.toPlainString())
                 else -> stmt.bindString(index, value.toString())
             }
         }

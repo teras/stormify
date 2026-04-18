@@ -17,7 +17,7 @@ internal object DefaultDataConverter {
         enumValues: Map<String, Any>? = null
     ): Converter = when (type) {
         Facet.Type.TEXT -> textConverter(dialect, syntax) { false }
-        Facet.Type.NUMERIC -> orderedConverter(Double::class, syntax)
+        Facet.Type.NUMERIC -> orderedConverter(Number::class, syntax)
         Facet.Type.TEMPORAL -> rawDateConverter(dialect, syntax)
         Facet.Type.ENUM -> enumConverter(enumValues, syntax)
     }
