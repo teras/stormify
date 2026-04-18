@@ -53,7 +53,6 @@ open class SuspendTransactionTest {
         val testDb = databases.first()
         testDbCloseHook = testDb.close
         stormify = Stormify(testDb.dataSource)
-        stormify.isStrictMode = false
         stormify.registerPrimaryKeyResolver(0) { _, field -> field.lowercase().startsWith("id") }
         TestDDL.init(stormify)
 

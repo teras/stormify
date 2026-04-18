@@ -157,10 +157,10 @@ class StormifyJ(dataSource: DataSource, vararg registrars: EntityRegistrar) {
     fun registerPrimaryKeyResolver(priority: Int, resolver: (String, String) -> Boolean) =
         stormify.registerPrimaryKeyResolver(priority, resolver)
 
-    /** Whether strict mapping mode is enabled. See [Stormify.isStrictMode]. */
-    var isStrictMode: Boolean
-        get() = stormify.isStrictMode
-        set(value) { stormify.isStrictMode = value }
+    /** Policy for unmatched result-set columns. See [Stormify.unmatchedColumnPolicy]. */
+    var unmatchedColumnPolicy: UnmatchedColumnPolicy
+        get() = stormify.unmatchedColumnPolicy
+        set(value) { stormify.unmatchedColumnPolicy = value }
 
     /** The logger used by the underlying [Stormify] instance. */
     var logger

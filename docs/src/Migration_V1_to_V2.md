@@ -280,7 +280,7 @@ V2 uses a single unified exception type across all platforms.
 
     ```kotlin
     stormify.namingPolicy = NamingPolicy.CAMEL_CASE
-    stormify.isStrictMode = true
+    stormify.unmatchedColumnPolicy = UnmatchedColumnPolicy.THROW
     ```
 
 The naming policies and annotations (`@DbTable`, `@DbField`, `@Id`, `@Table`, `@Column`,

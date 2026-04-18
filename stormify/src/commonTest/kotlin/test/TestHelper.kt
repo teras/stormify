@@ -46,7 +46,6 @@ object TestHelper {
             println("[$testName] Running on: ${testDb.name}")
             maxBlobTestSize = testDb.maxBlobTestSize
             val s = Stormify(testDb.dataSource)
-            s.isStrictMode = false
             s.registerPrimaryKeyResolver(0) { _, field -> field.lowercase().startsWith("id") }
             TestDDL.init(s)
             try {

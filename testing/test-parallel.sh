@@ -189,7 +189,10 @@ run_bg() {
     done
 
     for pid in "${pids[@]}"; do wait "$pid" || true; done
-    collect "$target" "${items[@]}"
+    # Intentionally NOT calling `collect` here: every caller that reaches this
+    # code path already invokes collect after `run` returns, and letting
+    # collect's non-zero return (= number of failed items) propagate would
+    # trip `set -e` and abort the multi-phase `all` flow before later phases.
 }
 
 # ========================================================================
@@ -298,9 +301,17 @@ case "$TARGET" in
         run native $("$T" list dbs)
         collect native $("$T" list dbs) || all_failed=$((all_failed + $?))
 
-        echo "=== Phase 2: JVM tests ==="
+        echo "=== Phase 2: JVM tests (sequential — KSP cache is not safe for concurrent gradle invocations) ==="
         "$T" build jvm
-        run jvm $("$T" list dbs)
+        for db in $("$T" list dbs); do
+            log="$LOG_DIR/jvm_${db}.log"
+            t0=$SECONDS
+            if "$T" jvm "$db" > "$log" 2>&1; then
+                echo "PASS:$((SECONDS - t0))" > "$LOG_DIR/jvm_${db}.result"
+            else
+                echo "FAIL:$?:$((SECONDS - t0))" > "$LOG_DIR/jvm_${db}.result"
+            fi
+        done
         collect jvm $("$T" list dbs) || all_failed=$((all_failed + $?))
 
         echo "=== Phase 3: Kotlin/Native tests ==="

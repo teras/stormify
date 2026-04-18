@@ -3,7 +3,6 @@
 package onl.ycode.stormify
 
 import onl.ycode.kdbc.SQLException
-import onl.ycode.logger.Logger
 import kotlin.reflect.KClass
 
 /**
@@ -82,11 +81,24 @@ class TableInfo<T : Any> internal constructor(
     internal fun isEnumField(dbName: String): Boolean =
         enumFieldSet.contains(dbName.lowercase())
 
-    internal fun setField(entity: T, dbName: String, value: Any?, stormify: Stormify, errorToLogger: Logger? = null) {
+    internal fun setField(
+        entity: T,
+        dbName: String,
+        value: Any?,
+        stormify: Stormify,
+        policy: UnmatchedColumnPolicy = UnmatchedColumnPolicy.THROW,
+    ) {
         val props = fieldByDbName[dbName.lowercase()]
         if (props.isNullOrEmpty()) {
-            if (errorToLogger == null) throw SQLException("Facet $dbName has no matching field in ${meta.type.simpleName}")
-            else errorToLogger.warn("Facet $dbName has no matching field in ${meta.type.simpleName}")
+            when (policy) {
+                UnmatchedColumnPolicy.THROW -> throw SQLException(
+                    "Facet $dbName has no matching field in ${meta.type.simpleName}"
+                )
+                UnmatchedColumnPolicy.WARN -> stormify.logger.warn(
+                    "Facet $dbName has no matching field in ${meta.type.simpleName}"
+                )
+                UnmatchedColumnPolicy.IGNORE -> Unit
+            }
             return
         }
         for (prop in props) prop.setter(entity, value, stormify)
@@ -105,12 +117,9 @@ class TableInfo<T : Any> internal constructor(
 
     internal fun getIdValues(entity: T): List<Any?> = idProps.map { it.getter(entity) }
 
-    // SQL queries (lazy)
-    internal val selectFieldNames by lazy {
-        resolved.map { it.dbName }.toSet().joinToString(", ")
-    }
+    // SELECT * is intentional; unmatched DB columns go through Stormify.unmatchedColumnPolicy.
     internal val populateQuery by lazy {
-        "SELECT $selectFieldNames FROM $tableName WHERE ${idProps.joinToString(" AND ") { "${it.dbName} = ?" }}"
+        "SELECT * FROM $tableName WHERE ${idProps.joinToString(" AND ") { "${it.dbName} = ?" }}"
     }
     internal val createQuery by lazy {
         val fields = insertableProps.joinToString(", ") { it.dbName }

@@ -73,26 +73,24 @@ Stormify includes a feature to manage fields that should be ignored during datab
     stormify.addBlacklistField("temporaryField");
     ```
 
-## Strict Mode vs. Lenient Mode
+## Unmatched Column Policy
 
-### Lenient Mode (Default)
+Controls how Stormify reacts when a result-set column has no matching field on the target entity (typical when the database has extra columns the entity does not declare — audit columns, trigger-populated fields, legacy leftovers).
 
-By default, Stormify operates in lenient mode, logging warnings instead of throwing exceptions for mismatches between classes and database columns. This mode is useful for development or scenarios where flexibility is more important than strict validation.
-
-### Strict Mode
-
-Strict mode enforces strict mapping between classes and database tables. When enabled, Stormify throws exceptions if fields are missing or do not match between the class and the database schema.
-
-To enable strict mode:
+| Policy   | Behaviour                                    |
+| -------- | -------------------------------------------- |
+| `THROW`  | Raise `SQLException` on the first mismatch.  |
+| `WARN`   | Log a warning and continue.                  |
+| `IGNORE` | Silently skip the column. **Default.**       |
 
 === "Kotlin"
 
     ```kotlin
-    stormify.isStrictMode = true
+    stormify.unmatchedColumnPolicy = UnmatchedColumnPolicy.THROW
     ```
 
 === "Java"
 
     ```java
-    stormify.setStrictMode(true);
+    stormify.setUnmatchedColumnPolicy(UnmatchedColumnPolicy.THROW);
     ```

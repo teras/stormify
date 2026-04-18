@@ -25,7 +25,6 @@ class SpringJdbcTest {
         dsClass.getMethod("setUrl", String::class.java).invoke(springDs, "jdbc:sqlite:${tmpFile.absolutePath}")
 
         val s = Stormify(JdbcDataSource(springDs as javax.sql.DataSource))
-        s.isStrictMode = false
         s.registerPrimaryKeyResolver(0) { _, field -> field.lowercase().startsWith("id") }
 
         s.executeUpdate("CREATE TABLE test (id INT PRIMARY KEY, name TEXT)")

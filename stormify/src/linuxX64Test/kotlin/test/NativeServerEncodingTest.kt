@@ -123,7 +123,6 @@ class NativeServerEncodingTest {
                 "Stormify1!"
             )
             val s = Stormify(ds)
-            s.isStrictMode = false
             s.registerPrimaryKeyResolver(0) { _, field -> field.lowercase().startsWith("id") }
 
             // Drop any leftover from a previous run so the test is idempotent.
@@ -166,7 +165,6 @@ class NativeServerEncodingTest {
             try {
                 val ds = KdbcDataSource("jdbc:sqlite:$path")
                 val s = Stormify(ds)
-                s.isStrictMode = false
                 s.registerPrimaryKeyResolver(0) { _, field -> field.lowercase().startsWith("id") }
 
                 // The whole PRAGMA → CREATE TABLE → INSERT → SELECT sequence
@@ -221,7 +219,6 @@ class NativeServerEncodingTest {
 
         val ds = createTestDatabases()[0].dataSource
         val s = Stormify(ds)
-        s.isStrictMode = false
         s.registerPrimaryKeyResolver(0) { _, field -> field.lowercase().startsWith("id") }
 
         try { s.executeUpdate("DROP TABLE enc_nchar") } catch (_: Throwable) {}

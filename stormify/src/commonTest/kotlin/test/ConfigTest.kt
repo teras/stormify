@@ -1,6 +1,7 @@
 package test
 
 import onl.ycode.stormify.Stormify
+import onl.ycode.stormify.UnmatchedColumnPolicy
 import kotlin.test.*
 
 open class ConfigTest {
@@ -55,25 +56,60 @@ open class ConfigTest {
     }
 
     @Test
-    fun testStrictMode() = withDb("STRICT") { s ->
+    fun testUnmatchedColumnPolicy() = withDb("UNMATCHED") { s ->
         TestDDL.dropTable("strict_test")
         s.executeUpdate(TestDDL.createTable("strict_test",
             "${TestDDL.intPrimaryKey("id")}, name ${TestDDL.textType()}"))
         s.executeUpdate("INSERT INTO strict_test (id, name) VALUES (?, ?)", 1, "test")
 
-        // Non-strict: extra columns ignored
-        s.isStrictMode = false
-        val result = s.readOne<TestC>("SELECT id, name, id as bonus FROM strict_test WHERE id = ?", 1)
-        assertNotNull(result)
-        assertEquals("test", result.name)
+        val queryWithBonus = "SELECT id, name, id as bonus FROM strict_test WHERE id = ?"
 
-        // Strict: extra columns throw
-        s.isStrictMode = true
+        // WARN: extra columns skipped, logged
+        s.unmatchedColumnPolicy = UnmatchedColumnPolicy.WARN
+        val warnResult = s.readOne<TestC>(queryWithBonus, 1)
+        assertNotNull(warnResult)
+        assertEquals("test", warnResult.name)
+
+        // IGNORE: extra columns skipped silently
+        s.unmatchedColumnPolicy = UnmatchedColumnPolicy.IGNORE
+        val ignoreResult = s.readOne<TestC>(queryWithBonus, 1)
+        assertNotNull(ignoreResult)
+        assertEquals("test", ignoreResult.name)
+
+        // THROW: extra columns raise SQLException
+        s.unmatchedColumnPolicy = UnmatchedColumnPolicy.THROW
         assertFailsWith<onl.ycode.kdbc.SQLException> {
-            s.readOne<TestC>("SELECT id, name, id as bonus FROM strict_test WHERE id = ?", 1)
+            s.readOne<TestC>(queryWithBonus, 1)
         }
 
-        s.isStrictMode = false
+        s.unmatchedColumnPolicy = UnmatchedColumnPolicy.IGNORE
+    }
+
+    @Test
+    fun testExtraDbColumnIgnoredBySelectStar() = withDb("EXTRA-DB-COL") { s ->
+        // DB has an extra column `audit` that TestC does not declare.
+        // findById uses SELECT * — WARN/IGNORE must tolerate the extra column.
+        TestDDL.dropTable("test")
+        s.executeUpdate(TestDDL.createTable("test",
+            "${TestDDL.intPrimaryKey("id")}, name ${TestDDL.textType()}, audit ${TestDDL.textType()}"))
+        s.executeUpdate("INSERT INTO test (id, name, audit) VALUES (?, ?, ?)", 1, "alice", "trigger")
+
+        s.unmatchedColumnPolicy = UnmatchedColumnPolicy.WARN
+        val warn = s.findById<TestC>(1)
+        assertNotNull(warn)
+        assertEquals("alice", warn.name)
+
+        s.unmatchedColumnPolicy = UnmatchedColumnPolicy.IGNORE
+        val ignore = s.findById<TestC>(1)
+        assertNotNull(ignore)
+        assertEquals("alice", ignore.name)
+
+        s.unmatchedColumnPolicy = UnmatchedColumnPolicy.THROW
+        assertFailsWith<onl.ycode.kdbc.SQLException> {
+            s.findById<TestC>(1)
+        }
+
+        s.unmatchedColumnPolicy = UnmatchedColumnPolicy.IGNORE
     }
 
     @Test

@@ -140,8 +140,11 @@ open class Stormify(val dataSource: DataSource, vararg registrars: EntityRegistr
 
     // --- Configuration ---
 
-    /** When enabled, throws on field/column mismatches; when disabled, logs warnings. */
-    var isStrictMode: Boolean = false
+    /**
+     * Policy for `ResultSet` columns that have no matching field on the target
+     * entity. Default is [UnmatchedColumnPolicy.IGNORE].
+     */
+    var unmatchedColumnPolicy: UnmatchedColumnPolicy = UnmatchedColumnPolicy.IGNORE
 
     /** The logger used by this Stormify instance. Defaults to a logger named "Stormify". */
     var logger = LogManager.getLogger("Stormify")
@@ -465,11 +468,11 @@ open class Stormify(val dataSource: DataSource, vararg registrars: EntityRegistr
                         e
                     )
                 }
-                info.setField(item, col, ref, this, if (isStrictMode) null else logger)
+                info.setField(item, col, ref, this, unmatchedColumnPolicy)
                 continue
             }
             try {
-                info.setField(item, col, value, this, if (isStrictMode) null else logger)
+                info.setField(item, col, value, this, unmatchedColumnPolicy)
             } catch (e: NullPointerException) {
                 throw SQLException("Null value for non-null field '$col' in ${item::class.simpleName}", e)
             }
@@ -499,7 +502,7 @@ open class Stormify(val dataSource: DataSource, vararg registrars: EntityRegistr
 
         val placeholders = nCopies("?", ", ", uniqueIds.size)
         val query =
-            "SELECT ${info.selectFieldNames} FROM ${info.tableName} WHERE ${info.idDbNames[0]} IN ($placeholders)"
+            "SELECT * FROM ${info.tableName} WHERE ${info.idDbNames[0]} IN ($placeholders)"
 
         val pkDbName = info.idDbNames[0]
         val nestedContext = PopulationContext()
@@ -735,7 +738,7 @@ open class Stormify(val dataSource: DataSource, vararg registrars: EntityRegistr
         val details = read(
             conn,
             detailsClass,
-            "SELECT ${detailInfo.selectFieldNames} FROM ${detailInfo.tableName} WHERE $propertyDbName = ?",
+            "SELECT * FROM ${detailInfo.tableName} WHERE $propertyDbName = ?",
             parentId[0]
         )
         for (detail in details)
@@ -758,7 +761,7 @@ open class Stormify(val dataSource: DataSource, vararg registrars: EntityRegistr
     ): List<T> = read(
         conn,
         kclass,
-        resolveTableInfo(kclass).let { "SELECT ${it.selectFieldNames} FROM ${it.tableName}" + (if (whereClause.isEmpty()) "" else " $whereClause") },
+        resolveTableInfo(kclass).let { "SELECT * FROM ${it.tableName}" + (if (whereClause.isEmpty()) "" else " $whereClause") },
         *arguments
     )
 
@@ -768,7 +771,7 @@ open class Stormify(val dataSource: DataSource, vararg registrars: EntityRegistr
 
     @PublishedApi
     internal fun <T : Any> findById(conn: Connection?, kclass: KClass<T>, id: Any) = resolveTableInfo(kclass).let {
-        readOne(conn, kclass, "SELECT ${it.selectFieldNames} FROM ${it.tableName} WHERE ${it.singleKeyDbName} = ?", id)
+        readOne(conn, kclass, "SELECT * FROM ${it.tableName} WHERE ${it.singleKeyDbName} = ?", id)
     }
 
     // --- Transaction ---
