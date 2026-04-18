@@ -29,9 +29,6 @@ extra["pomScmUrl"] = "https://github.com/teras/stormify"
 extra["pomScmConnection"] = "scm:git:git://github.com/teras/stormify.git"
 extra["pomScmDevConnection"] = "scm:git:ssh://github.com/teras/stormify.git"
 
-// Apply native build tasks for Docker-based distribution builds
-apply(from = "native-build.gradle.kts")
-
 // Dokka configuration for all subprojects
 subprojects {
     pluginManager.withPlugin("org.jetbrains.dokka") {

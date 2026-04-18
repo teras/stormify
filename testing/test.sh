@@ -434,23 +434,32 @@ run_example_one() {
     echo "Example: $example"
     echo "========================================="
 
+    # Examples default to the last-released stormify version so they build
+    # standalone from Maven Central. When run from inside the parent stormify
+    # checkout (as here), we override that default with the parent's in-dev
+    # version so the example resolves against whatever `publishToMavenLocal`
+    # produced — validating the unreleased code end-to-end.
+    local parent_version
+    parent_version=$(grep -oE 'version = "[^"]+"' "$PROJECT_DIR/build.gradle.kts" \
+        | head -1 | sed -E 's/version = "(.*)"/\1/')
+
     local rc=0
     case "$example" in
         java)
             cd "$example_dir"
-            mvn clean compile exec:java -q 2>&1 || rc=$?
+            mvn clean compile exec:java -q -Dstormify.version="$parent_version" 2>&1 || rc=$?
             ;;
         kotlin-jvm)
             cd "$example_dir"
-            gradle clean run --console=plain 2>&1 || rc=$?
+            gradle clean run -PstormifyVersion="$parent_version" --console=plain 2>&1 || rc=$?
             ;;
         kotlin-linux)
             cd "$example_dir"
-            gradle clean runDebugExecutableLinuxX64 --console=plain 2>&1 || rc=$?
+            gradle clean runDebugExecutableLinuxX64 -PstormifyVersion="$parent_version" --console=plain 2>&1 || rc=$?
             ;;
         kotlin-multiplatform)
             cd "$example_dir"
-            gradle clean jvmRun -DmainClass=demo.MainKt --console=plain 2>&1 || rc=$?
+            gradle clean jvmRun -DmainClass=demo.MainKt -PstormifyVersion="$parent_version" --console=plain 2>&1 || rc=$?
             ;;
     esac
 

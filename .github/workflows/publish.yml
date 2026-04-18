@@ -1,16 +1,12 @@
 name: Publish to Maven Central
 
-# Single-host build on macOS — the only host that can produce every target
-# (JVM, Android, linuxX64, linuxArm64, mingwX64, macos*, ios*) thanks to
-# Kotlin/Native cross-compile + Homebrew GCC cross-toolchains. A single host
-# means a single complete root KMP module, no merge hacks.
+# Publish workflow — reuses test.yml for build + test, then adds the final
+# upload step. The test.yml workflow_call produces three staging artifacts
+# (staging-jvm-android, staging-linux-native, staging-apple); the publish
+# job merges their root KMP facade modules, re-signs them, and uploads.
 #
-# Tests run in parallel with the build. Publish gates on both — nothing reaches
-# Maven Central unless the test matrix is green.
-#
-# Version suffix `-SNAPSHOT` routes to the snapshots repo (mutable, auto);
-# otherwise the bundle is uploaded to the Central Portal as USER_MANAGED
-# (manual approve in the UI).
+# Version ending in -SNAPSHOT → per-file PUT to the Central Portal snapshots
+# repo. Otherwise → zipped bundle uploaded as USER_MANAGED (manual approve).
 
 on:
   push:
@@ -18,65 +14,46 @@ on:
   workflow_dispatch:
 
 jobs:
-  tests:
+  # Run the full build + test pipeline. Secrets are inherited so the build
+  # jobs can sign the Maven Central artifacts they produce.
+  build-and-test:
     uses: ./.github/workflows/test.yml
+    secrets: inherit
 
-  build:
-    runs-on: macos-latest
+  publish:
+    needs: build-and-test
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up JDKs
-        uses: actions/setup-java@v4
+      - name: Download JVM/Android/annproc staging
+        uses: actions/download-artifact@v4
         with:
-          java-version: |
-            8
-            17
-          distribution: 'zulu'
+          name: staging-jvm-android
+          path: staging-jvm-android/
 
-      - name: Set up Gradle
-        uses: gradle/actions/setup-gradle@v4
+      - name: Download linux-native staging
+        uses: actions/download-artifact@v4
         with:
-          gradle-version: '9.3.1'
+          name: staging-linux-native
+          path: staging-linux-native/
 
-      - name: Install cross-compile toolchains (Linux + MinGW)
-        run: |
-          brew tap messense/macos-cross-toolchains
-          brew install x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu mingw-w64
-          # The kdbc Makefile expects unprefixed `aarch64-linux-gnu-*` and
-          # `x86_64-linux-gnu-*` names; messense ships them with the
-          # `unknown-` prefix. Bridge with symlinks on PATH.
-          mkdir -p $HOME/cross-bin
-          ln -sf $(brew --prefix)/bin/aarch64-unknown-linux-gnu-gcc $HOME/cross-bin/aarch64-linux-gnu-gcc
-          ln -sf $(brew --prefix)/bin/aarch64-unknown-linux-gnu-ar  $HOME/cross-bin/aarch64-linux-gnu-ar
-          ln -sf $(brew --prefix)/bin/x86_64-unknown-linux-gnu-gcc  $HOME/cross-bin/x86_64-linux-gnu-gcc
-          ln -sf $(brew --prefix)/bin/x86_64-unknown-linux-gnu-ar   $HOME/cross-bin/x86_64-linux-gnu-ar
-          echo "$HOME/cross-bin" >> $GITHUB_PATH
+      - name: Download apple staging
+        uses: actions/download-artifact@v4
+        with:
+          name: staging-apple
+          path: staging-apple/
 
-      - name: Pre-build native C libraries for every target
+      # Two-step merge. First combine the two Linux-side stagings into one
+      # (they both produce root .module files with disjoint variant sets —
+      # jvm/android vs linuxX64/linuxArm64/mingwX64). Then merge that with
+      # the macOS staging for the final union.
+      - name: Merge stagings
         run: |
-          cd kdbc/src/c
-          make lib                                                # macOS host native
-          make TARGET=linux  BUILDDIR=build-linux   lib           # Linux x64
-          make TARGET=arm64  BUILDDIR=build-arm64   lib           # Linux ARM64
-          make TARGET=mingw  BUILDDIR=build-mingw   lib           # Windows x64
-          make TARGET=ios    BUILDDIR=build-ios     build-ios/libkdbc.a
-          make TARGET=ios-sim BUILDDIR=build-ios-sim build-ios-sim/libkdbc.a
-
-      - name: Publish all targets to local staging
-        env:
-          ORG_GRADLE_PROJECT_mavenCentralUsername: ${{ secrets.MAVEN_CENTRAL_USERNAME }}
-          ORG_GRADLE_PROJECT_mavenCentralPassword: ${{ secrets.MAVEN_CENTRAL_PASSWORD }}
-          ORG_GRADLE_PROJECT_signingInMemoryKey: ${{ secrets.SIGNING_IN_MEMORY_KEY }}
-          ORG_GRADLE_PROJECT_signingInMemoryKeyId: ${{ secrets.SIGNING_IN_MEMORY_KEY_ID }}
-          ORG_GRADLE_PROJECT_signingInMemoryKeyPassword: ${{ secrets.SIGNING_IN_MEMORY_KEY_PASSWORD }}
-        run: |
-          gradle \
-            :stormify:publishAllPublicationsToLocalStagingRepository \
-            :kdbc:publishAllPublicationsToLocalStagingRepository \
-            :logger:publishAllPublicationsToLocalStagingRepository \
-            :annproc:publishAllPublicationsToLocalStagingRepository \
-            --no-daemon --stacktrace
+          python3 .github/scripts/merge-staging.py \
+            staging-jvm-android staging-linux-native staging-linux/
+          python3 .github/scripts/merge-staging.py \
+            staging-linux staging-apple staging/
 
       - name: Read project version
         id: v
@@ -88,32 +65,34 @@ jobs:
           else
             echo "is_snapshot=false" >> "$GITHUB_OUTPUT"
           fi
-          echo "Version: $VERSION"
 
-      - name: Upload staging artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: staging
-          path: build/staging-deploy/
-          if-no-files-found: error
-          retention-days: 1
-
-    outputs:
-      is_snapshot: ${{ steps.v.outputs.is_snapshot }}
-      version: ${{ steps.v.outputs.version }}
-
-  publish:
-    needs: [tests, build]
-    runs-on: ubuntu-latest
-    steps:
-      - name: Download staging
-        uses: actions/download-artifact@v4
-        with:
-          name: staging
-          path: staging/
+      - name: Re-sign merged root .module files
+        env:
+          SIGNING_KEY: ${{ secrets.SIGNING_IN_MEMORY_KEY }}
+          SIGNING_KEY_PASSWORD: ${{ secrets.SIGNING_IN_MEMORY_KEY_PASSWORD }}
+        run: |
+          echo "$SIGNING_KEY" | gpg --batch --import
+          KEY_ID=$(gpg --list-secret-keys --with-colons | awk -F: '/^sec:/ {print $5; exit}')
+          # Only root KMP facade modules (stormify/kdbc/logger) were modified.
+          # Per-target modules keep their original signatures — bytes unchanged.
+          # annproc isn't KMP, so no root module to re-sign.
+          for art in stormify kdbc logger; do
+            find "staging/onl/ycode/$art" -maxdepth 3 -name "$art-*.module" | while read f; do
+              parent_artifact=$(basename "$(dirname "$(dirname "$f")")")
+              if [ "$parent_artifact" != "$art" ]; then continue; fi
+              echo "  re-signing $f"
+              rm -f "$f.asc" "$f.md5" "$f.sha1" "$f.sha256" "$f.sha512"
+              gpg --batch --pinentry-mode loopback --passphrase "$SIGNING_KEY_PASSWORD" \
+                  --local-user "$KEY_ID" --armor --detach-sign "$f"
+              md5sum    "$f" | awk '{print $1}' > "$f.md5"
+              sha1sum   "$f" | awk '{print $1}' > "$f.sha1"
+              sha256sum "$f" | awk '{print $1}' > "$f.sha256"
+              sha512sum "$f" | awk '{print $1}' > "$f.sha512"
+            done
+          done
 
       - name: Upload snapshot to Central Portal snapshots repo
-        if: needs.build.outputs.is_snapshot == 'true'
+        if: steps.v.outputs.is_snapshot == 'true'
         env:
           USER: ${{ secrets.MAVEN_CENTRAL_USERNAME }}
           PASS: ${{ secrets.MAVEN_CENTRAL_PASSWORD }}
@@ -140,11 +119,10 @@ jobs:
             | xargs -0 -n1 -P16 bash -c 'upload_one "$0"' || {
                 echo "One or more uploads failed"; exit 1;
               }
-          echo ""
-          echo "Snapshot ${{ needs.build.outputs.version }} published."
+          echo "Snapshot ${{ steps.v.outputs.version }} published."
 
       - name: Bundle and upload release to Central Portal (USER_MANAGED)
-        if: needs.build.outputs.is_snapshot == 'false'
+        if: steps.v.outputs.is_snapshot == 'false'
         env:
           USER: ${{ secrets.MAVEN_CENTRAL_USERNAME }}
           PASS: ${{ secrets.MAVEN_CENTRAL_PASSWORD }}

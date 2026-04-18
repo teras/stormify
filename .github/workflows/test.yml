@@ -1,8 +1,32 @@
-name: Database Tests
+name: Build + Test
+
+# ---------------------------------------------------------------------------
+# Three-phase pipeline — build once, test everywhere, publish at the end.
+#
+# PHASE 1 (build-*):  produce publishable staging artifacts + ready-to-run
+#                     native test binaries (test.kexe / test.exe). Each target
+#                     is built on a host with the right toolchain. The output
+#                     feeds BOTH the test phase and (when called from publish.yml)
+#                     the final Maven Central upload.
+#
+# PHASE 2 (test-*):   matrix of tests per (target, database). Native tests
+#                     download their prebuilt binary and execute against a
+#                     docker/brew-managed database server. JVM/Android tests
+#                     run Gradle directly (no gain from pre-building the JVM
+#                     test jar — Gradle task graph rebuild is cheap).
+#
+# PHASE 3 (publish):  only when this workflow is called from publish.yml on
+#                     a tag push. All staging-* artifacts are merged, the
+#                     root KMP facade modules are re-signed, and the result
+#                     is uploaded to the Central Portal.
+#
+# Tests gate the publish step. Nothing reaches Maven Central unless every
+# target + DB combination is green.
+# ---------------------------------------------------------------------------
 
 on:
   push:
-    tags-ignore: ['**']   # tags trigger publish.yml instead, which calls this workflow
+    tags-ignore: ['**']   # tags trigger publish.yml, which calls us
   pull_request:
   workflow_call:
 
@@ -15,57 +39,280 @@ on:
 #   the Gradle host JVM, not as a compilation target.
 #
 # Native database runtime libraries:
-#   Database client headers are vendored in kdbc/src/c/include/vendor/ and
-#   committed to the repo — no -dev packages are needed for compilation.
-#   Only runtime shared libraries are required for test execution (dlopen).
-#   Missing libraries cause graceful "driver not available" errors.
+#   Client headers are vendored in kdbc/src/c/include/vendor/ and committed
+#   to the repo — no -dev packages needed for compilation. Only runtime
+#   shared libraries are required for test execution (dlopen).
 #
 #   Runtime packages installed via apt:
-#     - libsqlite3-0       → libsqlite3.so (SQLite)
-#     - libpq5             → libpq.so (PostgreSQL)
-#     - libmariadb3        → libmariadb.so (MariaDB/MySQL)
-#     - libsybdb5          → libsybdb.so (MS SQL Server via FreeTDS)
-#     - libaio1t64         → async I/O library required by Oracle IC
+#     libsqlite3-0 · libpq5 · libmariadb3 · libsybdb5 · libaio1t64
 #
-#   libaio symlink:
-#     Ubuntu 24.04 transitioned to 64-bit time_t, renaming the library to
-#     libaio.so.1t64. Oracle Instant Client still looks for libaio.so.1,
-#     so we create a compatibility symlink.
+#   libaio symlink: Ubuntu 24.04 renamed the library to libaio.so.1t64;
+#   Oracle Instant Client still looks for libaio.so.1.
 #
-#   ODPI-C (Oracle Database Programming Interface for C):
-#     Not available as an Ubuntu apt package. Built from source
-#     (github.com/oracle/odpi, Apache 2.0 license). The header (dpi.h) is
-#     vendored; only the runtime library (libodpic.so) is needed here.
-#     ODPI-C itself loads libclntsh.so from Oracle Instant Client.
+#   ODPI-C: Oracle Database Programming Interface. Built from source
+#   (github.com/oracle/odpi, Apache 2.0) because no apt package exists.
 #
-#   Oracle Instant Client (basic-lite):
-#     Free download from Oracle (~72MB, no login required). Provides
-#     libclntsh.so (the OCI library that ODPI-C wraps). Installed to
-#     /opt/oracle/ and registered via ldconfig so dlopen finds it.
+#   Oracle Instant Client (basic-lite): ~72MB, no login required.
+#   Provides libclntsh.so; ODPI-C loads it dynamically.
 #
-# mingwX64 (Windows cross-compilation):
-#   The mingw-w64 package provides the cross-compiler for building
-#   libkdbc.a targeting Windows. Kotlin/Native handles its own
-#   cross-compilation via its bundled LLVM toolchain.
-#
-# linuxArm64 (ARM64 cross-compilation):
-#   The gcc-aarch64-linux-gnu package provides the cross-compiler for
-#   building libkdbc.a targeting ARM64 Linux. The test binary runs on
-#   an ubuntu-24.04-arm runner (native ARM64 GitHub Actions runner).
-#   The -mno-outline-atomics flag is needed in the Makefile because
-#   Kotlin/Native links with its own LLVM runtime, not libgcc.
+# Cross-compilers:
+#   mingw-w64                → Windows x64 (kdbc C library)
+#   gcc-aarch64-linux-gnu    → Linux ARM64 (kdbc C library)
+#   (Kotlin/Native handles its own cross-compilation via bundled LLVM.)
 # ---------------------------------------------------------------------------
 
+# Env reused by several install steps — keeps each job's script short.
+env:
+  INSTALL_DB_RUNTIME: |
+    sudo apt-get update
+    sudo apt-get install -y libsqlite3-0 libpq5 libmariadb3 libsybdb5 libaio1t64
+    sudo ln -sf /lib/x86_64-linux-gnu/libaio.so.1t64 /lib/x86_64-linux-gnu/libaio.so.1
+    git clone --depth 1 --branch v5.6.4 https://github.com/oracle/odpi.git /tmp/odpi
+    make -C /tmp/odpi -j4
+    sudo make -C /tmp/odpi install PREFIX=/usr/local
+    rm -rf /tmp/odpi
+    wget -q https://download.oracle.com/otn_software/linux/instantclient/instantclient-basiclite-linuxx64.zip -O /tmp/ic.zip
+    sudo unzip -q /tmp/ic.zip -d /opt/oracle
+    echo /opt/oracle/instantclient_* | sudo tee /etc/ld.so.conf.d/oracle.conf
+    sudo ldconfig
+
 jobs:
-  jvm-test:
+
+  # =========================================================================
+  # PHASE 1 — BUILD
+  # Each job produces (a) staging-deploy/ for Maven Central and, where
+  # applicable, (b) a prebuilt native test binary uploaded as an artifact
+  # for downstream test jobs to download and execute.
+  # =========================================================================
+
+  # JVM + Android + annproc publications. No test binary — JVM/Android tests
+  # rebuild via Gradle in Phase 2 (no gain from pre-building a JVM test jar).
+  build-jvm-android:
+    runs-on: ubuntu-latest
+    name: build · jvm+android+annproc
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Set up JDK
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '9.3.1'
+
+      - name: Publish JVM/Android/annproc publications to local staging
+        env:
+          ORG_GRADLE_PROJECT_mavenCentralUsername: ${{ secrets.MAVEN_CENTRAL_USERNAME }}
+          ORG_GRADLE_PROJECT_mavenCentralPassword: ${{ secrets.MAVEN_CENTRAL_PASSWORD }}
+          ORG_GRADLE_PROJECT_signingInMemoryKey: ${{ secrets.SIGNING_IN_MEMORY_KEY }}
+          ORG_GRADLE_PROJECT_signingInMemoryKeyId: ${{ secrets.SIGNING_IN_MEMORY_KEY_ID }}
+          ORG_GRADLE_PROJECT_signingInMemoryKeyPassword: ${{ secrets.SIGNING_IN_MEMORY_KEY_PASSWORD }}
+        run: |
+          gradle \
+            :stormify:publishJvmPublicationToLocalStagingRepository \
+            :stormify:publishAndroidReleasePublicationToLocalStagingRepository \
+            :kdbc:publishJvmPublicationToLocalStagingRepository \
+            :kdbc:publishAndroidReleasePublicationToLocalStagingRepository \
+            :logger:publishJvmPublicationToLocalStagingRepository \
+            :logger:publishAndroidReleasePublicationToLocalStagingRepository \
+            :annproc:publishAllPublicationsToLocalStagingRepository \
+            --no-daemon --stacktrace
+
+      - name: Read project version
+        id: v
+        run: |
+          VERSION=$(grep -E '^version = ' build.gradle.kts | head -1 | sed -E 's/.*"([^"]+)".*/\1/')
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          if [[ "$VERSION" == *-SNAPSHOT ]]; then
+            echo "is_snapshot=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "is_snapshot=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: staging-jvm-android
+          path: build/staging-deploy/
+          if-no-files-found: error
+          retention-days: 1
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+      is_snapshot: ${{ steps.v.outputs.is_snapshot }}
+
+  # Linux/mingw native targets in one Gradle invocation — all three use the
+  # same ubuntu host + same cross-toolchain setup, so combining avoids
+  # re-installing packages three times.
+  build-linux-native:
+    runs-on: ubuntu-latest
+    name: build · linuxX64+linuxArm64+mingwX64
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Set up JDK
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '9.3.1'
+
+      - name: Install cross-compilers
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends \
+            mingw-w64 gcc-aarch64-linux-gnu libc6-dev-arm64-cross
+
+      - name: Publish native publications + link test binaries
+        env:
+          ORG_GRADLE_PROJECT_mavenCentralUsername: ${{ secrets.MAVEN_CENTRAL_USERNAME }}
+          ORG_GRADLE_PROJECT_mavenCentralPassword: ${{ secrets.MAVEN_CENTRAL_PASSWORD }}
+          ORG_GRADLE_PROJECT_signingInMemoryKey: ${{ secrets.SIGNING_IN_MEMORY_KEY }}
+          ORG_GRADLE_PROJECT_signingInMemoryKeyId: ${{ secrets.SIGNING_IN_MEMORY_KEY_ID }}
+          ORG_GRADLE_PROJECT_signingInMemoryKeyPassword: ${{ secrets.SIGNING_IN_MEMORY_KEY_PASSWORD }}
+        run: |
+          gradle \
+            :stormify:publishLinuxX64PublicationToLocalStagingRepository \
+            :stormify:publishLinuxArm64PublicationToLocalStagingRepository \
+            :stormify:publishMingwX64PublicationToLocalStagingRepository \
+            :stormify:publishKotlinMultiplatformPublicationToLocalStagingRepository \
+            :kdbc:publishLinuxX64PublicationToLocalStagingRepository \
+            :kdbc:publishLinuxArm64PublicationToLocalStagingRepository \
+            :kdbc:publishMingwX64PublicationToLocalStagingRepository \
+            :kdbc:publishKotlinMultiplatformPublicationToLocalStagingRepository \
+            :logger:publishLinuxX64PublicationToLocalStagingRepository \
+            :logger:publishLinuxArm64PublicationToLocalStagingRepository \
+            :logger:publishMingwX64PublicationToLocalStagingRepository \
+            :logger:publishKotlinMultiplatformPublicationToLocalStagingRepository \
+            :stormify:linkDebugTestLinuxX64 \
+            :stormify:linkDebugTestLinuxArm64 \
+            :stormify:linkDebugTestMingwX64 \
+            --no-daemon --stacktrace
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: staging-linux-native
+          path: build/staging-deploy/
+          if-no-files-found: error
+          retention-days: 1
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: test-bin-linuxX64
+          path: stormify/build/bin/linuxX64/debugTest/
+          if-no-files-found: error
+          retention-days: 1
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: test-bin-linuxArm64
+          path: stormify/build/bin/linuxArm64/debugTest/
+          if-no-files-found: error
+          retention-days: 1
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: test-bin-mingwX64
+          path: stormify/build/bin/mingwX64/debugTest/
+          if-no-files-found: error
+          retention-days: 1
+
+  # Apple targets — publications + macos native test binaries. iOS targets
+  # have no ios*Test source set, so no test binary.
+  build-apple:
+    runs-on: macos-latest
+    name: build · apple (macos+ios)
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Set up JDKs
+        uses: actions/setup-java@v4
+        with:
+          java-version: |
+            8
+            17
+          distribution: 'zulu'
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '9.3.1'
+
+      - name: Publish apple publications + link macos test binaries + compile iOS
+        env:
+          ORG_GRADLE_PROJECT_mavenCentralUsername: ${{ secrets.MAVEN_CENTRAL_USERNAME }}
+          ORG_GRADLE_PROJECT_mavenCentralPassword: ${{ secrets.MAVEN_CENTRAL_PASSWORD }}
+          ORG_GRADLE_PROJECT_signingInMemoryKey: ${{ secrets.SIGNING_IN_MEMORY_KEY }}
+          ORG_GRADLE_PROJECT_signingInMemoryKeyId: ${{ secrets.SIGNING_IN_MEMORY_KEY_ID }}
+          ORG_GRADLE_PROJECT_signingInMemoryKeyPassword: ${{ secrets.SIGNING_IN_MEMORY_KEY_PASSWORD }}
+        run: |
+          gradle \
+            :stormify:publishIosArm64PublicationToLocalStagingRepository \
+            :stormify:publishIosX64PublicationToLocalStagingRepository \
+            :stormify:publishIosSimulatorArm64PublicationToLocalStagingRepository \
+            :stormify:publishMacosArm64PublicationToLocalStagingRepository \
+            :stormify:publishMacosX64PublicationToLocalStagingRepository \
+            :stormify:publishKotlinMultiplatformPublicationToLocalStagingRepository \
+            :kdbc:publishIosArm64PublicationToLocalStagingRepository \
+            :kdbc:publishIosX64PublicationToLocalStagingRepository \
+            :kdbc:publishIosSimulatorArm64PublicationToLocalStagingRepository \
+            :kdbc:publishMacosArm64PublicationToLocalStagingRepository \
+            :kdbc:publishMacosX64PublicationToLocalStagingRepository \
+            :kdbc:publishKotlinMultiplatformPublicationToLocalStagingRepository \
+            :logger:publishIosArm64PublicationToLocalStagingRepository \
+            :logger:publishIosX64PublicationToLocalStagingRepository \
+            :logger:publishIosSimulatorArm64PublicationToLocalStagingRepository \
+            :logger:publishMacosArm64PublicationToLocalStagingRepository \
+            :logger:publishMacosX64PublicationToLocalStagingRepository \
+            :logger:publishKotlinMultiplatformPublicationToLocalStagingRepository \
+            :stormify:linkDebugTestMacosArm64 \
+            :stormify:compileKotlinIosArm64 \
+            :stormify:compileKotlinIosX64 \
+            :stormify:compileKotlinIosSimulatorArm64 \
+            --no-daemon --stacktrace
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: staging-apple
+          path: build/staging-deploy/
+          if-no-files-found: error
+          retention-days: 1
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: test-bin-macosArm64
+          path: stormify/build/bin/macosArm64/debugTest/
+          if-no-files-found: error
+          retention-days: 1
+
+  # =========================================================================
+  # PHASE 2 — TEST
+  # Native tests download their prebuilt binary and execute it against a
+  # live database. JVM/Android tests run Gradle directly (cheap).
+  # =========================================================================
+
+  test-jvm:
+    needs: build-jvm-android
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
         db: [sqlite, postgresql, postgresql9, mysql, mysql5, mariadb, oracle, oracle11, mssql]
-
-    name: jvm / ${{ matrix.db }}
-
+    name: test · jvm · ${{ matrix.db }}
     steps:
       - uses: actions/checkout@v4
 
@@ -91,98 +338,10 @@ jobs:
         if: always() && matrix.db != 'sqlite'
         run: testing/test.sh down ${{ matrix.db }}
 
-  native-test:
+  test-android:
+    needs: build-jvm-android
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        db: [sqlite, postgresql, postgresql9, mysql, mysql5, mariadb, oracle, oracle11, mssql]
-
-    name: native / ${{ matrix.db }}
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Install database runtime libraries
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libsqlite3-0 libpq5 libmariadb3 libsybdb5 libaio1t64
-          # libaio compat symlink (see header comment)
-          sudo ln -sf /lib/x86_64-linux-gnu/libaio.so.1t64 /lib/x86_64-linux-gnu/libaio.so.1
-          # ODPI-C: build from source — only the runtime .so is needed (header is vendored)
-          git clone --depth 1 --branch v5.6.4 https://github.com/oracle/odpi.git /tmp/odpi
-          make -C /tmp/odpi -j4
-          sudo make -C /tmp/odpi install PREFIX=/usr/local
-          rm -rf /tmp/odpi
-          # Oracle Instant Client basic-lite (see header comment)
-          wget -q https://download.oracle.com/otn_software/linux/instantclient/instantclient-basiclite-linuxx64.zip -O /tmp/ic.zip
-          sudo unzip -q /tmp/ic.zip -d /opt/oracle
-          echo /opt/oracle/instantclient_* | sudo tee /etc/ld.so.conf.d/oracle.conf
-          sudo ldconfig
-
-      - name: Start database
-        if: matrix.db != 'sqlite'
-        run: testing/test.sh up ${{ matrix.db }}
-
-      - name: Run tests
-        run: testing/test.sh native ${{ matrix.db }}
-
-      - name: Stop database
-        if: always() && matrix.db != 'sqlite'
-        run: testing/test.sh down ${{ matrix.db }}
-
-  linux-test:
-    runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        db: [sqlite, postgresql, postgresql9, mysql, mysql5, mariadb, oracle, oracle11, mssql]
-
-    name: linux / ${{ matrix.db }}
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Set up JDK
-        uses: actions/setup-java@v4
-        with:
-          java-version: '17'
-          distribution: 'temurin'
-
-      - name: Set up Gradle
-        uses: gradle/actions/setup-gradle@v4
-        with:
-          gradle-version: '9.3.1'
-
-      - name: Install database runtime libraries
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libsqlite3-0 libpq5 libmariadb3 libsybdb5 libaio1t64
-          sudo ln -sf /lib/x86_64-linux-gnu/libaio.so.1t64 /lib/x86_64-linux-gnu/libaio.so.1
-          git clone --depth 1 --branch v5.6.4 https://github.com/oracle/odpi.git /tmp/odpi
-          make -C /tmp/odpi -j4
-          sudo make -C /tmp/odpi install PREFIX=/usr/local
-          rm -rf /tmp/odpi
-          wget -q https://download.oracle.com/otn_software/linux/instantclient/instantclient-basiclite-linuxx64.zip -O /tmp/ic.zip
-          sudo unzip -q /tmp/ic.zip -d /opt/oracle
-          echo /opt/oracle/instantclient_* | sudo tee /etc/ld.so.conf.d/oracle.conf
-          sudo ldconfig
-
-      - name: Start database
-        if: matrix.db != 'sqlite'
-        run: testing/test.sh up ${{ matrix.db }}
-
-      - name: Run tests
-        run: testing/test.sh linux ${{ matrix.db }}
-
-      - name: Stop database
-        if: always() && matrix.db != 'sqlite'
-        run: testing/test.sh down ${{ matrix.db }}
-
-  android-test:
-    runs-on: ubuntu-latest
-    name: android / robolectric
-
+    name: test · android · robolectric
     steps:
       - uses: actions/checkout@v4
 
@@ -200,169 +359,76 @@ jobs:
       - name: Run Android unit tests
         run: testing/test.sh android
 
-  example:
+  # C native tests — don't use any Kotlin artifacts, but gate publish too.
+  test-c-native:
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        example: [java, kotlin-jvm, kotlin-linux, kotlin-multiplatform]
-
-    name: example / ${{ matrix.example }}
-
+        db: [sqlite, postgresql, postgresql9, mysql, mysql5, mariadb, oracle, oracle11, mssql]
+    name: test · c-native · ${{ matrix.db }}
     steps:
       - uses: actions/checkout@v4
+      - name: Install database runtime libraries
+        run: eval "$INSTALL_DB_RUNTIME"
+      - name: Start database
+        if: matrix.db != 'sqlite'
+        run: testing/test.sh up ${{ matrix.db }}
+      - name: Run tests
+        run: testing/test.sh native ${{ matrix.db }}
+      - name: Stop database
+        if: always() && matrix.db != 'sqlite'
+        run: testing/test.sh down ${{ matrix.db }}
 
-      - name: Set up JDK
-        uses: actions/setup-java@v4
-        with:
-          java-version: '17'
-          distribution: 'temurin'
-
-      - name: Set up Gradle
-        uses: gradle/actions/setup-gradle@v4
-        with:
-          gradle-version: '9.3.1'
-
-      # publishToMavenLocal compiles all targets including mingwX64, so the
-      # cross-compiler is needed. Runtime libraries are needed for linuxX64
-      # examples that dlopen database drivers.
-      - name: Install runtime libraries and cross-compilers
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libsqlite3-0 libpq5 libmariadb3 libsybdb5 libaio1t64 mingw-w64 gcc-aarch64-linux-gnu
-          sudo ln -sf /lib/x86_64-linux-gnu/libaio.so.1t64 /lib/x86_64-linux-gnu/libaio.so.1
-          git clone --depth 1 --branch v5.6.4 https://github.com/oracle/odpi.git /tmp/odpi
-          make -C /tmp/odpi -j4
-          sudo make -C /tmp/odpi install PREFIX=/usr/local
-          rm -rf /tmp/odpi
-          wget -q https://download.oracle.com/otn_software/linux/instantclient/instantclient-basiclite-linuxx64.zip -O /tmp/ic.zip
-          sudo unzip -q /tmp/ic.zip -d /opt/oracle
-          echo /opt/oracle/instantclient_* | sudo tee /etc/ld.so.conf.d/oracle.conf
-          sudo ldconfig
-
-      - name: Publish to Maven Local
-        run: gradle publishToMavenLocal --console=plain
-
-      - name: Run example
-        run: testing/test.sh examples ${{ matrix.example }}
-
-  # ---------------------------------------------------------------------------
-  # Windows native (mingwX64) — cross-compile on Linux, test on Windows
-  # ---------------------------------------------------------------------------
-
-  windows-native-build:
+  test-linuxX64:
+    needs: build-linux-native
     runs-on: ubuntu-latest
-    name: windows-native / build
-
+    strategy:
+      fail-fast: false
+      matrix:
+        db: [sqlite, postgresql, postgresql9, mysql, mysql5, mariadb, oracle, oracle11, mssql]
+    name: test · linuxX64 · ${{ matrix.db }}
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up JDK
-        uses: actions/setup-java@v4
-        with:
-          java-version: '17'
-          distribution: 'temurin'
+      - name: Install database runtime libraries
+        run: eval "$INSTALL_DB_RUNTIME"
 
-      - name: Set up Gradle
-        uses: gradle/actions/setup-gradle@v4
-        with:
-          gradle-version: '9.3.1'
-
-      - name: Install cross-compilation toolchain
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y mingw-w64
-
-      - name: Cross-compile libkdbc.a for mingwX64
-        run: make -C kdbc/src/c TARGET=mingw BUILDDIR=build-mingw lib
-
-      - name: Build mingwX64 test binary
-        run: gradle :stormify:linkDebugTestMingwX64 --console=plain
-
-      - name: Upload test binary
-        uses: actions/upload-artifact@v4
-        with:
-          name: mingw-test-binary
-          path: stormify/build/bin/mingwX64/debugTest/test.exe
-          retention-days: 1
-
-  windows-native-test:
-    runs-on: windows-latest
-    needs: windows-native-build
-    name: windows-native / sqlite
-
-    steps:
-      - name: Download test binary
+      - name: Download prebuilt test binary
         uses: actions/download-artifact@v4
         with:
-          name: mingw-test-binary
+          name: test-bin-linuxX64
+          path: stormify/build/bin/linuxX64/debugTest/
 
-      - name: Download SQLite DLL
-        shell: pwsh
-        run: |
-          Invoke-WebRequest -Uri "https://www.sqlite.org/2024/sqlite-dll-win-x64-3470200.zip" -OutFile sqlite.zip
-          Expand-Archive sqlite.zip -DestinationPath .
+      - name: Make test binary executable
+        run: chmod +x stormify/build/bin/linuxX64/debugTest/test.kexe
 
-      - name: Run tests
+      - name: Start database
+        if: matrix.db != 'sqlite'
+        run: testing/test.sh up ${{ matrix.db }}
+
+      - name: Run tests (prebuilt binary)
         env:
-          STORMIFY_TEST_DB: sqlite
-        run: .\test.exe
+          STORMIFY_TEST_DB: ${{ matrix.db }}
+        run: stormify/build/bin/linuxX64/debugTest/test.kexe
 
-  # ---------------------------------------------------------------------------
-  # Linux ARM64 (linuxArm64) — cross-compile on Linux x64, test on ARM64
-  # ---------------------------------------------------------------------------
+      - name: Stop database
+        if: always() && matrix.db != 'sqlite'
+        run: testing/test.sh down ${{ matrix.db }}
 
-  linux-arm64-build:
-    runs-on: ubuntu-latest
-    name: linux-arm64 / build
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Set up JDK
-        uses: actions/setup-java@v4
-        with:
-          java-version: '17'
-          distribution: 'temurin'
-
-      - name: Set up Gradle
-        uses: gradle/actions/setup-gradle@v4
-        with:
-          gradle-version: '9.3.1'
-
-      - name: Install cross-compilation toolchain
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y gcc-aarch64-linux-gnu
-
-      - name: Cross-compile libkdbc.a for linuxArm64
-        run: make -C kdbc/src/c TARGET=arm64 BUILDDIR=build-arm64 lib
-
-      - name: Build linuxArm64 test binary
-        run: gradle :stormify:linkDebugTestLinuxArm64 --console=plain
-
-      - name: Upload test binary
-        uses: actions/upload-artifact@v4
-        with:
-          name: arm64-test-binary
-          path: stormify/build/bin/linuxArm64/debugTest/test.kexe
-          retention-days: 1
-
-  linux-arm64-test:
+  test-linuxArm64:
+    needs: build-linux-native
     runs-on: ubuntu-24.04-arm
-    needs: linux-arm64-build
     strategy:
       fail-fast: false
       matrix:
-        # mysql5, mssql, oracle, oracle11 have no linux/arm64 Docker images; excluded.
+        # mysql5/mssql/oracle/oracle11 have no linux/arm64 Docker images.
         db: [sqlite, postgresql, postgresql9, mysql, mariadb]
-
-    name: linux-arm64 / ${{ matrix.db }}
-
+    name: test · linuxArm64 · ${{ matrix.db }}
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install runtime libraries
+      - name: Install runtime libraries (arm64)
         run: |
           sudo apt-get update
           sudo apt-get install -y libsqlite3-0 libpq5 libmariadb3 libsybdb5 libatomic1 libaio1t64
@@ -376,10 +442,10 @@ jobs:
           echo /opt/oracle/instantclient_* | sudo tee /etc/ld.so.conf.d/oracle.conf
           sudo ldconfig
 
-      - name: Download test binary
+      - name: Download prebuilt test binary
         uses: actions/download-artifact@v4
         with:
-          name: arm64-test-binary
+          name: test-bin-linuxArm64
           path: stormify/build/bin/linuxArm64/debugTest/
 
       - name: Make test binary executable
@@ -389,32 +455,132 @@ jobs:
         if: matrix.db != 'sqlite'
         run: testing/test.sh up ${{ matrix.db }}
 
-      - name: Run tests
-        run: testing/test.sh linux-arm64 ${{ matrix.db }}
+      - name: Run tests (prebuilt binary)
+        env:
+          STORMIFY_TEST_DB: ${{ matrix.db }}
+        run: stormify/build/bin/linuxArm64/debugTest/test.kexe
 
       - name: Stop database
         if: always() && matrix.db != 'sqlite'
         run: testing/test.sh down ${{ matrix.db }}
 
-  # ---------------------------------------------------------------------------
-  # macOS — JVM + native (SQLite) + iOS cross-compile
-  #
-  # macos-latest is arm64 (Apple Silicon). macos-13 is Intel (x64).
-  # Native drivers beyond SQLite would need Homebrew (libpq, libmariadb, etc.);
-  # limited to SQLite here, which ships with macOS.
-  # ---------------------------------------------------------------------------
-
-  macos-jvm:
-    runs-on: macos-latest
-    name: macos / jvm-sqlite
-
+  # mingwX64 tests — run the Windows test.exe under Wine on Linux. This avoids
+  # Docker Desktop engine switching on Windows runners (Docker Desktop is not
+  # preinstalled on windows-latest) and reuses the Linux docker-compose DB
+  # infrastructure. Windows-native DLLs (libpq.dll, libmariadb.dll, libsybdb.dll,
+  # oci.dll, …) are already vendored under kdbc/src/c/libs/mingw/ and copied
+  # next to the test.exe by the Gradle build.
+  test-mingwX64:
+    needs: build-linux-native
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        db: [sqlite, postgresql, postgresql9, mysql, mysql5, mariadb, oracle, oracle11, mssql]
+    name: test · mingwX64 · ${{ matrix.db }}
     steps:
       - uses: actions/checkout@v4
 
-      # Gradle toolchain spec requires both JDK 8 (for test execution, JVM 1.8 target)
-      # and JDK 17 (to run Gradle itself). On Linux runners JDK 8 is preinstalled;
-      # on macOS it is not, so we install it explicitly.
-      # Zulu distributes JDK 8 for Apple Silicon (arm64); Temurin does not.
+      - name: Install Wine and mingw cross-compiler
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        run: |
+          sudo dpkg --add-architecture i386
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends \
+            wine wine32:i386 wine64 xvfb zstd mingw-w64 winetricks cabextract
+          wine --version
+
+      - name: Download prebuilt test binary
+        uses: actions/download-artifact@v4
+        with:
+          name: test-bin-mingwX64
+          path: stormify/build/bin/mingwX64/debugTest/
+
+      - name: Fetch Windows runtime DLLs (upstream sources)
+        run: .github/scripts/fetch-mingw-dlls.sh stormify/build/bin/mingwX64/debugTest
+
+      - name: Install VC++ runtime in Wine prefix (Oracle needs VCRUNTIME140)
+        if: matrix.db == 'oracle' || matrix.db == 'oracle11'
+        env:
+          WINEDEBUG: -all
+        run: xvfb-run -a winetricks -q vcrun2019
+
+      - name: Start database
+        if: matrix.db != 'sqlite'
+        run: testing/test.sh up ${{ matrix.db }}
+
+      - name: Run tests (Wine)
+        env:
+          STORMIFY_TEST_DB: ${{ matrix.db }}
+          # err+module gives a one-line cause when a DLL fails to load.
+          WINEDEBUG: -all,err+module,err+loaddll
+        # Headless Wine under xvfb — otherwise Wine may try to open a display.
+        run: |
+          cd stormify/build/bin/mingwX64/debugTest
+          xvfb-run -a wine ./test.exe
+
+      - name: Stop database
+        if: always() && matrix.db != 'sqlite'
+        run: testing/test.sh down ${{ matrix.db }}
+
+  # macOS native tests — macos-latest is arm64. Intel (macosX64) intentionally
+  # omitted: macos-13 runners are deprecated, Apple ended Intel hardware, and
+  # Kotlin/Native's codegen path is identical between the two Mac targets.
+  # Brew services host the DBs (no Docker on macOS without colima/VM).
+  test-macosNative:
+    needs: build-apple
+    runs-on: macos-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # Excluded: oracle/oracle11/mssql (no macOS server exists),
+        # mysql5/postgresql9 (no arm64 brew bottle as of 2026-04).
+        db: [sqlite, postgresql, mysql, mariadb]
+    name: test · macosArm64 · ${{ matrix.db }}
+    # DYLD_LIBRARY_PATH needed job-level — keg-only brew libs aren't on the
+    # default loader path. Only the matching directory exists per matrix entry;
+    # dyld silently ignores missing entries.
+    env:
+      DYLD_LIBRARY_PATH: /opt/homebrew/opt/postgresql@15/lib:/opt/homebrew/opt/mariadb/lib:/opt/homebrew/opt/mysql/lib:/opt/homebrew/lib
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download prebuilt test binary
+        uses: actions/download-artifact@v4
+        with:
+          name: test-bin-macosArm64
+          path: stormify/build/bin/macosArm64/debugTest/
+
+      - name: Make test binary executable
+        run: chmod +x stormify/build/bin/macosArm64/debugTest/test.kexe
+
+      - name: Start database (brew services)
+        if: matrix.db != 'sqlite'
+        run: testing/macos-services.sh up ${{ matrix.db }}
+
+      - name: Run tests (prebuilt binary)
+        env:
+          STORMIFY_TEST_DB: ${{ matrix.db }}
+        run: stormify/build/bin/macosArm64/debugTest/test.kexe
+
+      - name: Stop database
+        if: always() && matrix.db != 'sqlite'
+        run: testing/macos-services.sh down ${{ matrix.db }}
+
+  # macOS JVM tests — same 4 DBs as macos-native (brew services limit).
+  test-macosJvm:
+    needs: build-jvm-android
+    runs-on: macos-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        db: [sqlite, postgresql, mysql, mariadb]
+    name: test · macos-jvm · ${{ matrix.db }}
+    steps:
+      - uses: actions/checkout@v4
+
+      # JDK 8 for test JVM (matches jvmTarget); JDK 17 to run Gradle.
       - name: Set up JDKs
         uses: actions/setup-java@v4
         with:
@@ -428,45 +594,41 @@ jobs:
         with:
           gradle-version: '9.3.1'
 
-      - name: Run JVM tests (SQLite)
-        run: testing/test.sh jvm sqlite
+      - name: Start database (brew services)
+        if: matrix.db != 'sqlite'
+        run: testing/macos-services.sh up ${{ matrix.db }}
 
-  macos-native:
-    runs-on: macos-latest
-    # Intel macOS (MacosX64) intentionally omitted: Apple has discontinued
-    # Intel hardware, macos-13 runners are deprecated with long queue times,
-    # and the Kotlin/Native compiler path is identical to MacosArm64.
-    name: macos / MacosArm64 build
+      # Bypass testing/test.sh's require_db check (docker-compose-based). brew
+      # services exposes the same ports as docker-compose.yml, so the same
+      # hikari.properties works. We pass the DB-specific config explicitly,
+      # otherwise TestDataSourceFactory falls back to an in-memory SQLite.
+      - name: Run JVM tests
+        run: |
+          CONFIG="$(pwd)/testing/config/${{ matrix.db }}/hikari.properties"
+          gradle :stormify:jvmTest \
+            -Dstormify.test.db=${{ matrix.db }} \
+            ${CONFIG:+-Dstormify.test.config="$CONFIG"} \
+            --console=plain --no-daemon
 
-    steps:
-      - uses: actions/checkout@v4
+      - name: Stop database
+        if: always() && matrix.db != 'sqlite'
+        run: testing/macos-services.sh down ${{ matrix.db }}
 
-      - name: Set up JDK
-        uses: actions/setup-java@v4
-        with:
-          java-version: '17'
-          distribution: 'temurin'
-
-      - name: Set up Gradle
-        uses: gradle/actions/setup-gradle@v4
-        with:
-          gradle-version: '9.3.1'
-
-      # No macos*Test source set exists; compile main code only.
-      - name: Compile Kotlin/Native MacosArm64
-        run: gradle :stormify:compileKotlinMacosArm64 --console=plain
-
-  ios-build:
-    runs-on: macos-latest
+  # Example consumer projects — validate that published artifacts are usable
+  # from a real consumer build. Uses publishToMavenLocal instead of downloading
+  # staging-* artifacts so we exercise the full POM/module resolution path.
+  test-examples:
+    needs: [build-jvm-android, build-linux-native]
+    runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        target: [IosArm64, IosX64, IosSimulatorArm64]
-
-    name: ios / ${{ matrix.target }} build
-
+        example: [java, kotlin-jvm, kotlin-linux, kotlin-multiplatform]
+    name: test · example · ${{ matrix.example }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: recursive
 
       - name: Set up JDK
         uses: actions/setup-java@v4
@@ -479,6 +641,18 @@ jobs:
         with:
           gradle-version: '9.3.1'
 
-      # No ios*Test source set exists; compile main code only.
-      - name: Compile iOS target
-        run: gradle :stormify:compileKotlin${{ matrix.target }} --console=plain
+      - name: Install cross-compilers + runtime libs
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends \
+            libsqlite3-0 libpq5 libmariadb3 libsybdb5 libaio1t64 \
+            mingw-w64 gcc-aarch64-linux-gnu libc6-dev-arm64-cross
+          sudo ln -sf /lib/x86_64-linux-gnu/libaio.so.1t64 /lib/x86_64-linux-gnu/libaio.so.1
+
+      - name: Publish to Maven Local
+        run: gradle publishToMavenLocal --console=plain
+
+      - name: Run example
+        run: testing/test.sh examples ${{ matrix.example }}

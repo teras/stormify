@@ -93,8 +93,21 @@ for f in "${CORE_DOCS[@]}"; do
 done
 
 # 6. Submodule examples/ — only if initialized
+#
+# Examples use property-based versions so they build both standalone (picking
+# up this default) and inside this repo (overridden via -PstormifyVersion /
+# -Dstormify.version). We update the defaults here:
+#
+#   - Gradle: val stormifyVersion … .getOrElse("X.Y.Z")
+#   - Maven:  <stormify.version>X.Y.Z</stormify.version>
+#
+# Any remaining hardcoded onl.ycode:*:<old> coordinates (e.g. in docs or
+# legacy examples not yet migrated to property-based) are also updated.
 if [[ -d examples/.git || -f examples/.git ]]; then
     echo "Also updating examples/ submodule…"
+    find examples -type f -name "*.gradle.kts" \
+        ! -path "*/build/*" ! -path "*/.gradle/*" \
+        -exec sed -i -E "s|(getOrElse\\(\")$OLD_E(\"\\))|\\1$NEW\\2|g" {} +
     find examples -type f \( -name "*.gradle.kts" -o -name "pom.xml" \) \
         ! -path "*/build/*" ! -path "*/.gradle/*" \
         -exec sed -i -E "s|(onl\\.ycode:[a-zA-Z0-9-]+):$OLD_E|\\1:$NEW|g" {} +

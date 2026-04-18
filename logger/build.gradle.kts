@@ -18,16 +18,22 @@ kotlin {
     androidTarget {
         publishLibraryVariants("release")
     }
-    // See the comment in stormify/build.gradle.kts for the target rationale.
-    linuxX64()
-    linuxArm64()
-    mingwX64()
-    if (System.getProperty("os.name").startsWith("Mac")) {
-        iosArm64()
-        iosX64()
-        iosSimulatorArm64()
+    // Host-gated target declarations — see the comment in stormify/build.gradle.kts.
+    // Non-apple native targets depend on host C cross-compilers (mingw-w64,
+    // gcc-aarch64-linux-gnu). To avoid forcing macOS runners to install those,
+    // we declare linux/mingw only on non-Mac hosts; the Linux runner publishes
+    // those variants and the merge step unions them with Mac's apple variants.
+    val isMac = System.getProperty("os.name").startsWith("Mac")
+    if (isMac) {
         macosArm64()
         macosX64()
+        iosSimulatorArm64()
+        iosArm64()
+        iosX64()
+    } else {
+        linuxX64()
+        linuxArm64()
+        mingwX64()
     }
     
     // Target Java 8 bytecode for the JVM artifact.

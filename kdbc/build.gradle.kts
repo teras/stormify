@@ -84,18 +84,7 @@ kotlin {
         }
     }
 
-    // libkdbc layout:
-    //   src/c                 — host-native build (Linux libkdbc on Linux, mac libkdbc on macOS)
-    //   src/c/build-linux     — Linux x64 cross-compile (used when host is not Linux)
-    //   src/c/build-arm64     — Linux ARM64 cross-compile
-    //   src/c/build-mingw     — Windows x64 cross-compile
-    //   src/c/build-ios       — iOS device
-    //   src/c/build-ios-sim   — iOS simulator
     val linuxX64LibDir = if (isMac) "src/c/build-linux" else "src/c"
-
-    linuxX64    { kdbcCinterop(linuxX64LibDir) }
-    mingwX64    { kdbcCinterop("src/c/build-mingw") }
-    linuxArm64  { kdbcCinterop("src/c/build-arm64") }
 
     if (isMac) {
         macosArm64        { kdbcCinterop("src/c") }
@@ -103,6 +92,10 @@ kotlin {
         iosSimulatorArm64 { kdbcCinterop("src/c/build-ios-sim") }
         iosArm64          { kdbcCinterop("src/c/build-ios") }
         iosX64            { kdbcCinterop("src/c/build-ios-sim") }
+    } else {
+        linuxX64    { kdbcCinterop(linuxX64LibDir) }
+        linuxArm64  { kdbcCinterop("src/c/build-arm64") }
+        mingwX64    { kdbcCinterop("src/c/build-mingw") }
     }
 
     // Target Java 8 bytecode for the JVM artifact (matches stormify's Java 8 floor).

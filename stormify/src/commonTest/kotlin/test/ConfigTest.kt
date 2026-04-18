@@ -87,12 +87,12 @@ open class ConfigTest {
 
     @Test
     fun testExtraDbColumnIgnoredBySelectStar() = withDb("EXTRA-DB-COL") { s ->
-        // DB has an extra column `audit` that TestC does not declare.
+        // DB has an extra column `audit_col` that TestC does not declare.
         // findById uses SELECT * — WARN/IGNORE must tolerate the extra column.
         TestDDL.dropTable("test")
         s.executeUpdate(TestDDL.createTable("test",
-            "${TestDDL.intPrimaryKey("id")}, name ${TestDDL.textType()}, audit ${TestDDL.textType()}"))
-        s.executeUpdate("INSERT INTO test (id, name, audit) VALUES (?, ?, ?)", 1, "alice", "trigger")
+            "${TestDDL.intPrimaryKey("id")}, name ${TestDDL.textType()}, audit_col ${TestDDL.textType()}"))
+        s.executeUpdate("INSERT INTO test (id, name, audit_col) VALUES (?, ?, ?)", 1, "alice", "trigger")
 
         s.unmatchedColumnPolicy = UnmatchedColumnPolicy.WARN
         val warn = s.findById<TestC>(1)

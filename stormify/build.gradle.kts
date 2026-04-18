@@ -20,24 +20,23 @@ kotlin {
     androidTarget {
         publishLibraryVariants("release")
     }
-    // Linux/Windows native targets are always declared — Kotlin/Native ships
-    // its own LLVM-based cross-compile toolchain so they build from any host.
-    // The C library (libkdbc) requires system cross-compilers though; install
-    // via `brew tap messense/macos-cross-toolchains && brew install
-    // x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu mingw-w64` on macOS,
-    // or `apt install gcc-aarch64-linux-gnu mingw-w64` on Linux.
-    linuxX64()
-    linuxArm64()
-    mingwX64()
-
-    // Apple targets need the macOS SDK + Xcode — only declarable on macOS.
+    // Host-gated target declarations. Kotlin/Native itself cross-compiles
+    // between hosts via bundled LLVM, but the kdbc C library needs host
+    // system cross-compilers (mingw-w64, gcc-aarch64-linux-gnu). Rather than
+    // install those on macOS runners, we split: Linux hosts declare
+    // linux/mingw targets; macOS hosts declare apple targets. The two sets
+    // are union-merged into a single root KMP module at publish time.
     val isMac = System.getProperty("os.name").startsWith("Mac")
     if (isMac) {
-        iosArm64()
-        iosX64()
-        iosSimulatorArm64()
         macosArm64()
         macosX64()
+        iosSimulatorArm64()
+        iosArm64()
+        iosX64()
+    } else {
+        linuxX64()
+        linuxArm64()
+        mingwX64()
     }
     
     targets.all {
