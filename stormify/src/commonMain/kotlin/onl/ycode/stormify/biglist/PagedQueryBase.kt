@@ -210,14 +210,30 @@ abstract class PagedQueryBase<T : Any> internal constructor(
         val page = spec.page
         val low = page * pageSize
         val high = low + pageSize
+        val info = core.info
 
-        val countSql = "SELECT ${plan.distinctPart}COUNT(*) FROM ${plan.tablesPart}${plan.wherePart}"
-        val total = (stormify.readOne<Long>(countSql, *plan.args.toTypedArray()) ?: 0L)
+        if (stormify.sqlDialect.supportsWindowFunctions) {
+            var observedTotal: Long? = null
+            val pageSql = stormify.sqlDialect.queryFormatter(
+                core.windowCountColumns(), plan.distinctPart, plan.tablesPart, plan.wherePart,
+                plan.orderBy, low, high
+            )
+            val rows = stormify.read(
+                null, classType, pageSql, *plan.args.toTypedArray(),
+                customFields = mapOf(TOTAL_ALIAS to { v -> observedTotal = (v as Number).toLong() })
+            )
+            observedTotal?.let { return Page(rows = rows, total = it, page = page, pageSize = pageSize) }
+            // Empty page: out-of-range or truly empty. Fall through to classic COUNT.
+        }
+
+        val total = stormify.readOne<Long>(
+            core.countSql(plan.tablesPart, plan.wherePart), *plan.args.toTypedArray()
+        ) ?: 0L
 
         val rows: List<T> = if (total == 0L || low >= total) emptyList()
         else {
             val pageSql = stormify.sqlDialect.queryFormatter(
-                "${core.info.tableName}.*",
+                "${info.tableName}.*",
                 plan.distinctPart, plan.tablesPart, plan.wherePart, plan.orderBy,
                 low, high.toInt().coerceAtMost(total.toInt())
             )

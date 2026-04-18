@@ -8,10 +8,10 @@ import kotlinx.atomicfu.locks.synchronized
 import onl.ycode.kdbc.*
 import onl.ycode.logger.LogManager
 import onl.ycode.stormify.SqlDialect.GeneratedKeyRetrieval
+import onl.ycode.stormify.Stormify.Companion.defaultInstance
+import onl.ycode.stormify.TypeUtils.castTo
 import onl.ycode.stormify.biglist.FilterSyntax
 import onl.ycode.stormify.biglist.InputParser
-import onl.ycode.stormify.biglist.PagedListBase
-import onl.ycode.stormify.TypeUtils.castTo
 import onl.ycode.stormify.biglist.ReferencePath
 import kotlin.reflect.KClass
 
@@ -299,9 +299,21 @@ open class Stormify(val dataSource: DataSource, vararg registrars: EntityRegistr
         return performQuery(conn, query, params.toList(), code = { it.executeUpdate() })
     }
 
-    /** Executes a SELECT query and processes results row-by-row via [consumer]. Returns row count. */
-    inline fun <reified T : Any> readCursor(query: String, vararg params: Any?, noinline consumer: (T) -> Unit) =
-        readCursor(null, T::class, query, *params, consumer = consumer)
+    /**
+     * Executes a SELECT query and processes results row-by-row via [consumer]. Returns row count.
+     *
+     * @param customFields optional per-column interceptors. Any column whose label matches a
+     * key (case-insensitively) is passed to the associated lambda instead of being mapped onto the
+     * entity, allowing sidecar aggregates (e.g. `COUNT(*) OVER () AS __total`) to be captured in
+     * a single roundtrip without breaking entity mapping. Ignored for `Map` and scalar result
+     * types since those expose every column to the caller directly.
+     */
+    inline fun <reified T : Any> readCursor(
+        query: String,
+        vararg params: Any?,
+        customFields: Map<String, (Any?) -> Unit>? = null,
+        noinline consumer: (T) -> Unit
+    ) = readCursor(null, T::class, query, *params, customFields = customFields, consumer = consumer)
 
     @PublishedApi
     internal fun <T : Any> readCursor(
@@ -309,10 +321,12 @@ open class Stormify(val dataSource: DataSource, vararg registrars: EntityRegistr
         baseClass: KClass<T>,
         query: String,
         vararg params: Any?,
+        customFields: Map<String, (Any?) -> Unit>? = null,
         consumer: (T) -> Unit
     ) = performQuery(conn, query, params.toList(), code = { statement ->
         val isMap = Map::class == baseClass
         val info = if (isScalarClass(baseClass) || isMap) null else resolveTableInfo(baseClass)
+        val normalizedCustomFields = customFields?.mapKeys { it.key.lowercase() }
         statement.executeQuery().use { rs ->
             val context = if (info != null) PopulationContext() else null
             var count = 0
@@ -327,7 +341,9 @@ open class Stormify(val dataSource: DataSource, vararg registrars: EntityRegistr
                     consumer(row as T)
                 } else {
                     consumer(
-                        if (info != null) populate(info.create().also { attachStormify(it) }, rs, context)
+                        if (info != null) populate(
+                            info.create().also { attachStormify(it) }, rs, context, normalizedCustomFields
+                        )
                         else castTo(baseClass, rs.getObject(1, baseClass), this)
                             ?: throw SQLException("Expecting type ${baseClass.fullName} but found null")
                     )
@@ -337,14 +353,27 @@ open class Stormify(val dataSource: DataSource, vararg registrars: EntityRegistr
         }
     })
 
-    /** Executes a SELECT query and returns all results as a list. */
-    inline fun <reified T : Any> read(query: String, vararg params: Any?): List<T> =
-        read(null, T::class, query, *params)
+    /**
+     * Executes a SELECT query and returns all results as a list.
+     *
+     * @param customFields optional per-column interceptors. See [readCursor] for semantics.
+     */
+    inline fun <reified T : Any> read(
+        query: String,
+        vararg params: Any?,
+        customFields: Map<String, (Any?) -> Unit>? = null
+    ): List<T> = read(null, T::class, query, *params, customFields = customFields)
 
     @PublishedApi
-    internal fun <T : Any> read(conn: Connection?, baseClass: KClass<T>, query: String, vararg params: Any?): List<T> =
+    internal fun <T : Any> read(
+        conn: Connection?,
+        baseClass: KClass<T>,
+        query: String,
+        vararg params: Any?,
+        customFields: Map<String, (Any?) -> Unit>? = null
+    ): List<T> =
         with(mutableListOf<T>()) {
-            readCursor(conn, baseClass, query, *params) { add(it) }
+            readCursor(conn, baseClass, query, *params, customFields = customFields) { add(it) }
             return this
         }
 
@@ -394,7 +423,12 @@ open class Stormify(val dataSource: DataSource, vararg registrars: EntityRegistr
     }
 
     @Suppress("UNCHECKED_CAST")
-    private fun <T : Any> populate(item: T, rs: ResultSet, context: PopulationContext? = null): T {
+    private fun <T : Any> populate(
+        item: T,
+        rs: ResultSet,
+        context: PopulationContext? = null,
+        customFields: Map<String, (Any?) -> Unit>? = null
+    ): T {
         attachStormify(item)
         if (item is AutoTable) item.markPopulated()
         val info = resolveTableInfo(item::class) as TableInfo<T>
@@ -402,6 +436,17 @@ open class Stormify(val dataSource: DataSource, vararg registrars: EntityRegistr
         val columnCount = metaData.columnCount
         for (i in 1..columnCount) {
             val col = metaData.getColumnLabel(i)
+
+            val handler = customFields?.get(col.lowercase())
+            if (handler != null) {
+                try {
+                    handler(transformResultValue(rs.getObject(i, Any::class)))
+                } catch (e: Exception) {
+                    throw SQLException("Custom field handler for column '$col' threw", e)
+                }
+                continue
+            }
+
             val colType = info.getScalarType(col)
             val value =
                 transformResultValue(if (colType != null) rs.getObject(i, colType) else rs.getObject(i, Any::class))

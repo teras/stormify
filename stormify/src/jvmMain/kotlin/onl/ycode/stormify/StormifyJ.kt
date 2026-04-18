@@ -31,6 +31,21 @@ class StormifyJ(dataSource: DataSource, vararg registrars: EntityRegistrar) {
     fun <T : Any> read(baseClass: Class<T>, query: String, vararg params: Any?) =
         stormify.read(null, baseClass.kotlin, query, *params)
 
+    /**
+     * Executes a SELECT and returns the rows, capturing values from columns named in [customFields]
+     * (e.g. `COUNT(*) OVER () AS __total`) via the supplied consumers — those columns are not mapped
+     * onto the entity. Column names are matched case-insensitively.
+     */
+    fun <T : Any> read(
+        baseClass: Class<T>,
+        query: String,
+        customFields: Map<String, Consumer<Any?>>,
+        vararg params: Any?
+    ) = stormify.read(
+        null, baseClass.kotlin, query, *params,
+        customFields = customFields.mapValues { (_, c) -> { v: Any? -> c.accept(v) } }
+    )
+
     /** Executes a SELECT and returns the first row as a [baseClass] instance, or `null` if empty. */
     fun <T : Any> readOne(baseClass: Class<T>, query: String, vararg params: Any?) =
         stormify.readOne(null, baseClass.kotlin, query, *params)
@@ -38,6 +53,23 @@ class StormifyJ(dataSource: DataSource, vararg registrars: EntityRegistrar) {
     /** Executes a SELECT and streams each row to [consumer] — avoids materializing the full result. */
     fun <T : Any> readCursor(baseClass: Class<T>, query: String, consumer: Consumer<T>, vararg params: Any?) =
         stormify.readCursor(null, baseClass.kotlin, query, *params, consumer = { consumer.accept(it) })
+
+    /**
+     * Streaming variant that captures values from columns named in [customFields] via the supplied
+     * consumers instead of mapping them onto the entity. See the list-returning [read] overload
+     * for the capture semantics.
+     */
+    fun <T : Any> readCursor(
+        baseClass: Class<T>,
+        query: String,
+        customFields: Map<String, Consumer<Any?>>,
+        consumer: Consumer<T>,
+        vararg params: Any?
+    ) = stormify.readCursor(
+        null, baseClass.kotlin, query, *params,
+        customFields = customFields.mapValues { (_, c) -> { v: Any? -> c.accept(v) } },
+        consumer = { consumer.accept(it) }
+    )
 
     /** Executes an INSERT / UPDATE / DELETE and returns the affected row count. */
     fun executeUpdate(query: String, vararg params: Any?) = stormify.executeUpdate(null, query, *params)

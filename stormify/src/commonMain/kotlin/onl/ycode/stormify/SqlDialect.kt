@@ -370,6 +370,17 @@ enum class SqlDialect(
         else -> "CAST($placeholder AS TIMESTAMP)"
     }
 
+    /**
+     * Whether this dialect supports standard SQL window functions
+     * (`COUNT(*) OVER ()`, `DENSE_RANK()`, `ROW_NUMBER()`). Used to merge
+     * count and page into a single roundtrip where possible.
+     */
+    val supportsWindowFunctions: Boolean
+        get() = when (this) {
+            MARIA_DB_OLD, MYSQL_OLD, UNKNOWN, FAILSAFE -> false
+            else -> true
+        }
+
     internal fun prepareForInsert(
         conn: Connection,
         query: String,

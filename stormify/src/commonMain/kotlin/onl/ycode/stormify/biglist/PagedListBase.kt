@@ -270,16 +270,14 @@ abstract class PagedListBase<T : Any> internal constructor(
 
     /**
      * Total number of rows that match the current filters and constraints. The first
-     * access issues a `COUNT(*)` (or `COUNT(DISTINCT ...)` if [isDistinct]) query and
-     * caches the result for reuse.
+     * access issues a `COUNT(*)` (or `COUNT(*) FROM (SELECT DISTINCT ...)` if
+     * [isDistinct]) query and caches the result for reuse.
      */
     override val size: Int
         get() = _size ?: run {
             val (query, arguments) = core.buildConstraintPart(excludeFacet = null)
-            (stormify.readOne<Int>(
-                "SELECT ${core.distinctPart}COUNT(*) FROM ${core.tablesPart}$query",
-                *arguments.toTypedArray()
-            ) ?: 0).also { _size = it }
+            (stormify.readOne<Int>(core.countSql(core.tablesPart, query), *arguments.toTypedArray()) ?: 0)
+                .also { _size = it }
         }
 
     /**
@@ -410,26 +408,51 @@ abstract class PagedListBase<T : Any> internal constructor(
     fun getAggregator(): PagedAggregator = PagedAggregator(SingleAggregatorCore(core))
 
     private fun ensurePage(index: Int): List<T> {
-        if (index < 0 || index >= size)
-            throw IndexOutOfBoundsException("Index $index out of bounds for size $size")
+        if (index < 0)
+            throw IndexOutOfBoundsException("Index $index out of bounds")
+        if (_size != null && index >= _size!!)
+            throw IndexOutOfBoundsException("Index $index out of bounds for size ${_size}")
         if (index < lowBound || index >= upperBound)
             fragment = null
         return fragment ?: run {
             val page = index / pageSize
             lowBound = page * pageSize
-            upperBound = min(size, (page + 1) * pageSize)
             val (query, arguments) = core.buildConstraintPart(excludeFacet = null)
+
+            val useMerged = _size == null && stormify.sqlDialect.supportsWindowFunctions
+            val columns = if (useMerged) core.windowCountColumns() else "${info.tableName}.*"
+            val customFields: Map<String, (Any?) -> Unit>? = if (useMerged)
+                mapOf(TOTAL_ALIAS to { v -> _size = (v as Number).toInt() })
+            else null
+
+            upperBound = if (_size != null) min(_size!!, lowBound + pageSize) else lowBound + pageSize
             // Use `<table>.*` so JOINs with duplicate column names don't clobber entity mapping
             val result = stormify.read(
                 null, classType, stormify.sqlDialect.queryFormatter(
-                    "${info.tableName}.*", core.distinctPart, core.tablesPart, query,
+                    columns, core.distinctPart, core.tablesPart, query,
                     core.sortingPart(selectedID), lowBound, upperBound
-                ), *arguments.toTypedArray()
+                ), *arguments.toTypedArray(),
+                customFields = customFields
             )
-            // Silent re-count: if page returned fewer items than expected
-            if (result.size < (upperBound - lowBound) && upperBound <= size) {
-                _size = null // force re-count on next access
+            val observedViaMerged = useMerged && _size != null
+
+            if (_size == null) {
+                // Merged query returned 0 rows or dialect lacks window functions —
+                // fall back to an explicit count reusing the already-built constraints.
+                val resolvedSize = stormify.readOne<Int>(
+                    core.countSql(core.tablesPart, query), *arguments.toTypedArray()
+                ) ?: 0
+                _size = resolvedSize
+                if (index >= resolvedSize)
+                    throw IndexOutOfBoundsException("Index $index out of bounds for size $resolvedSize")
             }
+
+            upperBound = min(_size!!, lowBound + pageSize)
+            // A short page from a classic-path fetch means the cached size is stale
+            // (someone deleted rows). When the merged query delivered the size in
+            // this same statement, the short page is authoritative — not staleness.
+            if (!observedViaMerged && result.size < (upperBound - lowBound) && upperBound <= _size!!)
+                _size = null
             fragment = result
             result
         }

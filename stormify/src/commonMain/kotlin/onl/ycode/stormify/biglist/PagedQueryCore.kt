@@ -13,6 +13,8 @@ import onl.ycode.stormify.enumEntries
 import onl.ycode.stormify.enumToInt
 import kotlin.reflect.KClass
 
+internal const val TOTAL_ALIAS = "__stormify_total"
+
 /**
  * Stateless SQL-generation engine shared by the UI-model façade
  * ([PagedListBase]) and the stateless query executor façade ([PagedQueryBase]).
@@ -217,6 +219,27 @@ internal class PagedQueryCore<T : Any>(
 
     internal fun buildConstraintPart(excludeFacet: Facet?): Pair<String, List<Any>> =
         buildConstraintPartImpl(excludeFacet, null)
+
+    /**
+     * Column expression suffixed with a `__stormify_total` sidecar that carries
+     * the total count via a window function — COUNT(*) OVER () for the plain
+     * path, or DENSE_RANK ASC + DESC − 1 for DISTINCT (COUNT(*) counts rows
+     * before DISTINCT, which inflates the total when joins duplicate).
+     */
+    internal fun windowCountColumns(): String {
+        if (!isDistinct) return "${info.tableName}.*, COUNT(*) OVER () AS $TOTAL_ALIAS"
+        val pkAsc = info.primaryKeys.joinToString(", ") { "${info.tableName}.${it.dbName}" }
+        val pkDesc = info.primaryKeys.joinToString(", ") { "${info.tableName}.${it.dbName} DESC" }
+        return "${info.tableName}.*, DENSE_RANK() OVER (ORDER BY $pkAsc) + DENSE_RANK() OVER (ORDER BY $pkDesc) - 1 AS $TOTAL_ALIAS"
+    }
+
+    /**
+     * Classic count SQL for the two-roundtrip fallback path. Wraps DISTINCT
+     * in a subquery so `SELECT DISTINCT COUNT(*)` (a no-op) is avoided.
+     */
+    internal fun countSql(tables: String, where: String): String =
+        if (isDistinct) "SELECT COUNT(*) FROM (SELECT DISTINCT ${info.tableName}.* FROM $tables$where) sub"
+        else "SELECT COUNT(*) FROM $tables$where"
 
     // --- Stateless plan (spec-driven, thread-safe) ---
 
