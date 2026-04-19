@@ -146,10 +146,8 @@ class FilterCountedValues internal constructor(
         val (where, args) = core.buildConstraintPart(excludeFacet = column)
         // Use a subquery so LIMIT/OFFSET apply to the grouped output and the
         // dialect formatter can wrap it like any other paginated SELECT.
-        val inner = "SELECT $columnExpr AS fv_val, COUNT(*) AS fv_cnt " +
-                "FROM ${core.tablesPart}$where GROUP BY $columnExpr"
-        val sql = stormify.sqlDialect.queryFormatter(
-            "fv_val, fv_cnt", "", "($inner) fv_sub", "", "fv_val", low, high
+        val sql = buildFilterValuesSql(
+            stormify.sqlDialect, columnExpr, "${core.tablesPart}$where", low, high
         )
         @Suppress("UNCHECKED_CAST")
         val rows = stormify.read(
@@ -183,8 +181,8 @@ data class FilterCountedValue(
 ) {
     internal companion object {
         fun fromRow(row: Map<String, Any?>): FilterCountedValue {
-            val rawValue = row["fv_val"]
-            val rawCount = row["fv_cnt"] ?: 0L
+            val rawValue = row[FV_VAL_ALIAS]
+            val rawCount = row[FV_CNT_ALIAS] ?: 0L
             return FilterCountedValue(
                 value = rawValue?.toString() ?: "",
                 count = when (rawCount) {

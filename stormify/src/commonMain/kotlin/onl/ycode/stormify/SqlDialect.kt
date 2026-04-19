@@ -21,26 +21,26 @@ private val sequenceMariaDb = { it: String, count: Int -> "SELECT NEXTVAL($it) F
  * This part defines the pagination dialects for different databases. *
  ********************************************************************/
 
-private val formatterLimitOffset =
-    { columns: String, distinct: String, tableName: String, constraints: String, sorting: String, lowBound: Int, upperBound: Int ->
+private val formatterLimitOffset: SqlDialect.(String, String, String, String, String, Int, Int) -> String =
+    { columns, distinct, tableName, constraints, sorting, lowBound, upperBound ->
         "SELECT $distinct$columns FROM $tableName$constraints ORDER BY $sorting LIMIT ${upperBound - lowBound} OFFSET $lowBound"
     }
 
-private val formatterRowsFetch =
-    { columns: String, distinct: String, tableName: String, constraints: String, sorting: String, lowBound: Int, upperBound: Int ->
+private val formatterRowsFetch: SqlDialect.(String, String, String, String, String, Int, Int) -> String =
+    { columns, distinct, tableName, constraints, sorting, lowBound, upperBound ->
         "SELECT $distinct$columns FROM $tableName$constraints ORDER BY $sorting OFFSET $lowBound ROWS FETCH NEXT ${upperBound - lowBound} ROWS ONLY"
     }
 
-private val formatterRowNumber =
-    { columns: String, distinct: String, tableName: String, constraints: String, sorting: String, lowBound: Int, upperBound: Int ->
+private val formatterRowNumber: SqlDialect.(String, String, String, String, String, Int, Int) -> String =
+    { columns, distinct, tableName, constraints, sorting, lowBound, upperBound ->
         // Oracle doesn't support `SELECT *, ROW_NUMBER()...` — use base table prefix
         val baseTable = tableName.substringBefore(" ")
         val innerColumns = if (columns == "*") "$baseTable.*" else columns
-        // Outer select uses unqualified column names (subquery alias scope)
-        val outerColumns = if (columns == "*") "*" else columns.substringAfterLast(".")
         // DISTINCT requires DENSE_RANK: ROW_NUMBER makes every row unique, defeating DISTINCT
         val rankFn = if (distinct.isNotEmpty()) "DENSE_RANK()" else "ROW_NUMBER()"
-        "SELECT $outerColumns FROM (SELECT $distinct$innerColumns, $rankFn OVER (ORDER BY $sorting) rn FROM $tableName$constraints) b WHERE b.rn > $lowBound AND b.rn <= $upperBound ORDER BY rn"
+        val outer = quoteAlias("__strm_p")
+        val rn = quoteAlias("__strm_rn")
+        "SELECT * FROM (SELECT $distinct$innerColumns, $rankFn OVER (ORDER BY $sorting) $rn FROM $tableName$constraints) $outer WHERE $rn > $lowBound AND $rn <= $upperBound ORDER BY $rn"
     }
 
 /***********************************************************************
@@ -141,7 +141,7 @@ enum class SqlDialect(
      * A query formatter that generates SQL queries with different pagination methods
      * (LIMIT/OFFSET, FETCH FIRST, ROWNUM, TOP, etc.) based on the dialect's conventions.
      */
-    val queryFormatter: (columns: String, distinct: String, tableName: String, constraints: String, sorting: String, lowBound: Int, upperBound: Int) -> String,
+    private val queryFormatterImpl: SqlDialect.(columns: String, distinct: String, tableName: String, constraints: String, sorting: String, lowBound: Int, upperBound: Int) -> String,
     /**
      * The method to create the query, how to retrieve the generated key from the database.
      */
@@ -332,6 +332,10 @@ enum class SqlDialect(
         MYSQL_OLD, MYSQL_NEW, MARIA_DB_OLD, MARIA_DB_NEW -> "ESCAPE '\\\\'"
         else -> "ESCAPE '\\'"
     }
+
+    /** Builds a paginated `SELECT` — required wrapper: Kotlin won't auto-bind the extension receiver when `queryFormatterImpl` is invoked as a member property. */
+    fun queryFormatter(columns: String, distinct: String, tableName: String, constraints: String, sorting: String, lowBound: Int, upperBound: Int): String =
+        queryFormatterImpl(columns, distinct, tableName, constraints, sorting, lowBound, upperBound)
 
     /**
      * Quotes a column alias if it would be rejected as an unquoted identifier.

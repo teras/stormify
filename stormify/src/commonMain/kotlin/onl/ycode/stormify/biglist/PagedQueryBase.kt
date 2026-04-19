@@ -339,11 +339,8 @@ abstract class PagedQueryBase<T : Any> internal constructor(
         val high = low + spec.pageSize
         val rows: List<FilterCountedValue> = if (total == 0L || low >= total) emptyList()
         else {
-            val inner = "SELECT $columnExpr AS fv_val, COUNT(*) AS fv_cnt FROM $fromWhere " +
-                    "GROUP BY $columnExpr"
-            val sql = stormify.sqlDialect.queryFormatter(
-                "fv_val, fv_cnt", "", "($inner) fv_sub", "", "fv_val",
-                low, high.coerceAtMost(total.toInt())
+            val sql = buildFilterValuesSql(
+                stormify.sqlDialect, columnExpr, fromWhere, low, high.coerceAtMost(total.toInt())
             )
             @Suppress("UNCHECKED_CAST")
             val raw = stormify.read(

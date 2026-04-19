@@ -7,13 +7,33 @@ import kotlinx.atomicfu.locks.reentrantLock
 import kotlinx.atomicfu.locks.withLock
 import onl.ycode.stormify.NativeBigInteger
 import onl.ycode.stormify.SiblingGroup
+import onl.ycode.stormify.SqlDialect
 import onl.ycode.stormify.Stormify
 import onl.ycode.stormify.TableInfo
 import onl.ycode.stormify.enumEntries
 import onl.ycode.stormify.enumToInt
 import kotlin.reflect.KClass
 
-internal const val TOTAL_ALIAS = "__stormify_total"
+// Internal SQL aliases — emitted via `SqlDialect.quoteAlias` to stay valid on Oracle.
+internal const val TOTAL_ALIAS = "__strm_total"
+internal const val FV_VAL_ALIAS = "__strm_fv_v"
+internal const val FV_CNT_ALIAS = "__strm_fv_c"
+private const val FV_SUB_ALIAS = "__strm_fv_s"
+private const val COUNT_SUB_ALIAS = "__strm_ds"
+
+internal fun buildFilterValuesSql(
+    dialect: SqlDialect,
+    columnExpr: String,
+    fromWhere: String,
+    low: Int,
+    high: Int,
+): String {
+    val v = dialect.quoteAlias(FV_VAL_ALIAS)
+    val c = dialect.quoteAlias(FV_CNT_ALIAS)
+    val s = dialect.quoteAlias(FV_SUB_ALIAS)
+    val inner = "SELECT $columnExpr AS $v, COUNT(*) AS $c FROM $fromWhere GROUP BY $columnExpr"
+    return dialect.queryFormatter("$v, $c", "", "($inner) $s", "", v, low, high)
+}
 
 /**
  * Stateless SQL-generation engine shared by the UI-model façade
@@ -221,25 +241,28 @@ internal class PagedQueryCore<T : Any>(
         buildConstraintPartImpl(excludeFacet, null)
 
     /**
-     * Column expression suffixed with a `__stormify_total` sidecar that carries
+     * Column expression suffixed with a `__strm_total` sidecar that carries
      * the total count via a window function — COUNT(*) OVER () for the plain
      * path, or DENSE_RANK ASC + DESC − 1 for DISTINCT (COUNT(*) counts rows
      * before DISTINCT, which inflates the total when joins duplicate).
      */
     internal fun windowCountColumns(): String {
-        if (!isDistinct) return "${info.tableName}.*, COUNT(*) OVER () AS $TOTAL_ALIAS"
+        val alias = stormify.sqlDialect.quoteAlias(TOTAL_ALIAS)
+        if (!isDistinct) return "${info.tableName}.*, COUNT(*) OVER () AS $alias"
         val pkAsc = info.primaryKeys.joinToString(", ") { "${info.tableName}.${it.dbName}" }
         val pkDesc = info.primaryKeys.joinToString(", ") { "${info.tableName}.${it.dbName} DESC" }
-        return "${info.tableName}.*, DENSE_RANK() OVER (ORDER BY $pkAsc) + DENSE_RANK() OVER (ORDER BY $pkDesc) - 1 AS $TOTAL_ALIAS"
+        return "${info.tableName}.*, DENSE_RANK() OVER (ORDER BY $pkAsc) + DENSE_RANK() OVER (ORDER BY $pkDesc) - 1 AS $alias"
     }
 
     /**
      * Classic count SQL for the two-roundtrip fallback path. Wraps DISTINCT
      * in a subquery so `SELECT DISTINCT COUNT(*)` (a no-op) is avoided.
      */
-    internal fun countSql(tables: String, where: String): String =
-        if (isDistinct) "SELECT COUNT(*) FROM (SELECT DISTINCT ${info.tableName}.* FROM $tables$where) sub"
-        else "SELECT COUNT(*) FROM $tables$where"
+    internal fun countSql(tables: String, where: String): String {
+        if (!isDistinct) return "SELECT COUNT(*) FROM $tables$where"
+        val sub = stormify.sqlDialect.quoteAlias(COUNT_SUB_ALIAS)
+        return "SELECT COUNT(*) FROM (SELECT DISTINCT ${info.tableName}.* FROM $tables$where) $sub"
+    }
 
     // --- Stateless plan (spec-driven, thread-safe) ---
 
