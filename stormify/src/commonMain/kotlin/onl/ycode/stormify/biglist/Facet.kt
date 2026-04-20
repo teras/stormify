@@ -7,8 +7,8 @@ package onl.ycode.stormify.biglist
 import kotlin.jvm.JvmField
 
 /**
- * A facet is a named, user-facing filter/sort slot exposed by a [PagedListBase]
- * or `PagedQueryBase`. It is the only point of interaction between the outside
+ * A facet is a named, user-facing filter/sort slot exposed by a [PagedList]
+ * or [PagedQuery]. It is the only point of interaction between the outside
  * world and the underlying query — the facet's [alias] is the opaque public
  * identifier, and SQL paths / expressions behind it are kept internal.
  *
@@ -16,8 +16,8 @@ import kotlin.jvm.JvmField
  * filtering) or a raw SQL expression. Filtering between different facets uses
  * AND logic; filtering between multiple fields on the same facet uses OR.
  *
- * Facets are defined at setup time via [PagedListBase.addFacet] /
- * [PagedListBase.addSqlFacet] (or their `PagedQueryBase` equivalents).
+ * Facets are defined at setup time via [PagedList.addFacet] /
+ * [PagedList.addSqlFacet] (or their [PagedQuery] equivalents).
  * After setup, UI consumers toggle [filter] / [sort] per facet; REST
  * consumers pass the same information through `PageSpec` by alias.
  */
@@ -38,8 +38,8 @@ class Facet internal constructor(
      *
      * Set to a non-null value to override the default and translate the
      * filter string into an arbitrary SQL fragment. Works on both
-     * field-backed facets ([PagedListBase.addFacet]) and SQL-backed facets
-     * ([PagedListBase.addSqlFacet]).
+     * field-backed facets ([PagedList.addFacet]) and SQL-backed facets
+     * ([PagedList.addSqlFacet]).
      *
      * The number of `?` placeholders in the returned fragment must exactly
      * match the number of arguments pushed via the [SqlArgsCollector];
@@ -57,8 +57,8 @@ class Facet internal constructor(
 
     /**
      * Opaque, stable identifier for this facet — the only identity exposed
-     * to the outside world. Used as the key in [PagedListBase.saveState] /
-     * [PagedListBase.restoreState] output and (in the stateless REST façade)
+     * to the outside world. Used as the key in [PagedList.saveState] /
+     * [PagedList.restoreState] output and (in the stateless REST façade)
      * as the key in filter / sort maps on the wire.
      *
      * Defaults to the facet's index-at-creation as a string (`"0"`, `"1"`, …).
@@ -221,7 +221,7 @@ class Facet internal constructor(
      *
      * Resolution order: facet → list → global → identity (no transformation).
      *
-     * @see PagedListBase.inputParser
+     * @see AbstractPagedList.inputParser
      * @see onl.ycode.stormify.Stormify.inputParser
      */
     var inputParser: InputParser? = null
@@ -251,7 +251,7 @@ class Facet internal constructor(
     }
 
     /**
-     * Opaque key used by [PagedListBase.saveState] / [PagedListBase.restoreState]
+     * Opaque key used by [PagedList.saveState] / [PagedList.restoreState]
      * — simply the facet's [alias]. Never derived from fields or SQL
      * expressions, so persisted state never leaks schema or query internals.
      */
@@ -293,7 +293,7 @@ data class FieldPath(
 
 /**
  * Transforms user filter input before it reaches the database — e.g. locale-aware
- * number/date parsing. Resolution chain: [Facet.inputParser] → [PagedListBase.inputParser]
+ * number/date parsing. Resolution chain: [Facet.inputParser] → [PagedList.inputParser]
  * → [onl.ycode.stormify.Stormify.inputParser] → identity.
  */
 typealias InputParser = (String, Facet.Type) -> String

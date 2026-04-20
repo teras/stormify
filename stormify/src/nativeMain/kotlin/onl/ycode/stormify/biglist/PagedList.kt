@@ -15,9 +15,9 @@ import kotlin.reflect.KClass
  * [Stormify.attach] after construction, or register a [Stormify.defaultInstance]
  * and the list will pick it up on first use.
  *
- * See [PagedListBase] for the full API (filtering, sorting, pagination, etc.).
+ * See the members below for the full API (filtering, sorting, pagination, etc.).
  */
-class PagedList<T : Any>(classType: KClass<T>) : PagedListBase<T>(classType)
+open class PagedList<T : Any>(classType: KClass<T>) : AbstractPagedList<T>(classType)
 
 /**
  * Creates a new [PagedList] for the reified entity type [T].

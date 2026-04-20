@@ -5,7 +5,7 @@ package onl.ycode.stormify.biglist
 /**
  * Interface for entities or enum values that provide a localized, human-readable display name.
  *
- * Used by [PagedListBase] enum/quantize columns to map
+ * Used by [PagedList] enum/quantize columns to map
  * between display names (what the user sees/types) and database values.
  *
  * Example (mirrors the [onl.ycode.stormify.DbValue] pattern — constructor param

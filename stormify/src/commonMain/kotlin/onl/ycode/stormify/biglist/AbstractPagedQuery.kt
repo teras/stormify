@@ -55,7 +55,7 @@ import kotlin.reflect.KClass
  * )
  * ```
  */
-abstract class PagedQueryBase<T : Any> internal constructor(
+abstract class AbstractPagedQuery<T : Any> internal constructor(
     /** The entity class whose rows this query paginates. */
     val classType: KClass<T>
 ) : StormifyAware {
@@ -197,7 +197,7 @@ abstract class PagedQueryBase<T : Any> internal constructor(
      * and run the database roundtrip in parallel.
      *
      * Aliases in [spec] that do not correspond to any configured column are
-     * silently ignored, mirroring [PagedListBase.restoreState] semantics.
+     * silently ignored, mirroring [PagedList.restoreState] semantics.
      * Filters on columns whose [Facet.isFilterable] is `false`, or sorts on
      * columns whose [Facet.isSortable] is `false`, throw — the server
      * contract is explicit.
@@ -245,7 +245,7 @@ abstract class PagedQueryBase<T : Any> internal constructor(
     /**
      * Streams every row matching the filters/sorts/constraints in [spec]
      * through [action] via a database cursor. Uses the same chunked
-     * sibling-batching as [PagedListBase.forEachStreaming]: FK touches
+     * sibling-batching as [PagedList.forEachStreaming]: FK touches
      * inside [action] resolve in batches of
      * [onl.ycode.stormify.SiblingGroup.DEFAULT_BATCH_SIZE], not one-per-row.
      *

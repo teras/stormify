@@ -1614,7 +1614,7 @@ open class PagedListTest {
     }
 
     /**
-     * Direct verification that [PagedListBase.forEachStreaming] really drives
+     * Direct verification that [PagedList.forEachStreaming] really drives
      * a single cursor SELECT — not a fallback to paged iteration. Captures
      * every SELECT emitted during a 20-row scan and asserts there is exactly
      * one query, no `LIMIT … OFFSET …`. If this ever reverts to paged mode

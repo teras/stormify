@@ -10,7 +10,7 @@ import kotlin.reflect.KClass
  *
  * Holds the mutable list of [AggregateEntry]s, generates default aliases,
  * builds the final aggregate SQL and executes it against the parent
- * [PagedListBase]. Both the JVM and Native `SingleAggregator` actuals
+ * [PagedList]. Both the JVM and Native `SingleAggregator` actuals
  * delegate to a single instance of this class, so the aggregation logic
  * lives here once.
  */
@@ -66,7 +66,7 @@ internal class SingleAggregatorCore(
 
     private fun buildExpressionSql(function: String, expression: String): String {
         if (function == "raw") return expression
-        // Resolve field paths using the same tree that PagedListBase uses for
+        // Resolve field paths using the same tree that AbstractPagedList uses for
         // column expressions — this handles FK traversal and join aliasing.
         val resolved = when (expression) {
             "*" -> "*"

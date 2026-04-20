@@ -16,9 +16,9 @@ import kotlin.reflect.KClass
  * [Stormify.attach] after construction, or register a [Stormify.defaultInstance]
  * and the query will pick it up on first use.
  *
- * See [PagedQueryBase] for the full API.
+ * See the members below for the full API.
  */
-class PagedQuery<T : Any> : PagedQueryBase<T> {
+open class PagedQuery<T : Any> : AbstractPagedQuery<T> {
     /** Construct for the given Kotlin class. */
     constructor(classType: KClass<T>) : super(classType)
 

@@ -176,7 +176,7 @@ into a `PageSpec` directly via `PageSpec.fromJson(String)`.
 
 ## Fixed constraints
 
-Use [`setConstraints`][PagedQueryBase.setConstraints] to pin a baseline `WHERE` that
+Use [`setConstraints`][PagedQuery.setConstraints] to pin a baseline `WHERE` that
 the client **cannot** override — tenant scoping, soft-delete filters, permission
 gates, etc:
 
@@ -413,4 +413,4 @@ views, sharing nothing but your entity classes.
 [Facet.alias]: api-stormify/stormify/onl.ycode.stormify.biglist/-facet/alias.html
 [PageSpec]: api-stormify/stormify/onl.ycode.stormify.biglist/-page-spec/index.html
 [Page]: api-stormify/stormify/onl.ycode.stormify.biglist/-page/index.html
-[PagedQueryBase.setConstraints]: api-stormify/stormify/onl.ycode.stormify.biglist/-paged-query-base/set-constraints.html
+[PagedQuery.setConstraints]: api-stormify/stormify/onl.ycode.stormify.biglist/-abstract-paged-query/set-constraints.html

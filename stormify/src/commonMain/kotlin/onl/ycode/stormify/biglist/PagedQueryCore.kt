@@ -37,7 +37,7 @@ internal fun buildFilterValuesSql(
 
 /**
  * Stateless SQL-generation engine shared by the UI-model façade
- * ([PagedListBase]) and the stateless query executor façade ([PagedQueryBase]).
+ * ([PagedList]) and the stateless query executor façade ([PagedQuery]).
  * Holds column definitions, constraints, the JOIN-tree and all SQL-building
  * logic — but owns no per-request mutable view state (no cached page, no
  * selected entity, no AbstractList surface).
@@ -122,7 +122,7 @@ internal class PagedQueryCore<T : Any>(
     /**
      * Lock held around SQL-plan generation in stateless mode. Building the
      * plan mutates per-node active flags; without serialization, concurrent
-     * `execute()` calls on a shared [PagedQueryBase] instance would corrupt
+     * `execute()` calls on a shared [PagedQuery] instance would corrupt
      * each other's JOIN activation. UI mode does not take this lock — it
      * runs single-threaded by convention.
      */
@@ -267,7 +267,7 @@ internal class PagedQueryCore<T : Any>(
     // --- Stateless plan (spec-driven, thread-safe) ---
 
     /**
-     * Captures the per-request filter/sort state passed through [PagedQueryBase.execute]
+     * Captures the per-request filter/sort state passed through [PagedQuery.execute]
      * so the engine can build SQL without touching per-column mutable state.
      */
     internal class RequestState(
@@ -285,7 +285,7 @@ internal class PagedQueryCore<T : Any>(
     )
 
     /**
-     * Produces a full SQL plan for a single [PagedQueryBase.execute] call.
+     * Produces a full SQL plan for a single [PagedQuery.execute] call.
      * Serialized via the per-core lock because it mutates the join tree's
      * active flags during tree resolution.
      */

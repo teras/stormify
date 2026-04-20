@@ -62,7 +62,7 @@ import kotlin.reflect.KClass
  * @param T The entity type
  * @param classType The KClass of the entity type
  */
-abstract class PagedListBase<T : Any> internal constructor(
+abstract class AbstractPagedList<T : Any> internal constructor(
     val classType: KClass<T>
 ) : AbstractList<T>(), StormifyAware {
 
