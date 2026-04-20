@@ -360,7 +360,11 @@ The MariaDB Connector/C client library works with both MariaDB and MySQL servers
     brew install mariadb-connector-c
     ```
 
-### MS SQL Server (via FreeTDS)
+### MS SQL Server / Sybase ASE (via FreeTDS)
+
+FreeTDS implements the TDS protocol used by both Microsoft SQL Server and SAP
+(formerly Sybase) Adaptive Server Enterprise — the same `kdbc-freetds` driver
+connects to either.
 
 === "Linux"
 

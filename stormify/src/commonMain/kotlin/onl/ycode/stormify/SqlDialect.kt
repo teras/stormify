@@ -428,7 +428,9 @@ enum class SqlDialect(
                 val minorVersion: Int = metadata.databaseMinorVersion
                 return when {
                     productName.contains("oracle") -> if (majorVersion >= 12) ORACLE_NEW else ORACLE_OLD
-                    productName.contains("sqlserver") || productName.contains("sql server") -> if (majorVersion >= 11) SQL_SERVER_NEW else SQL_SERVER_OLD
+                    productName.contains("sqlserver") || productName.contains("sql server") ||
+                    productName.contains("adaptive server") || productName.contains("sybase") ->
+                        if (majorVersion >= 11) SQL_SERVER_NEW else SQL_SERVER_OLD
                     productName.contains("postgresql") -> POSTGRESQL
                     productName.contains("sqlite") -> SQLITE
                     productName.contains("h2") -> H2
