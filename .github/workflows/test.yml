@@ -29,6 +29,7 @@ on:
     tags-ignore: ['**']   # tags trigger publish.yml, which calls us
   pull_request:
   workflow_call:
+  workflow_dispatch:
 
 # ---------------------------------------------------------------------------
 # CI environment notes (Ubuntu 24.04 / ubuntu-latest as of 2026-04)
