@@ -3,6 +3,7 @@
 package onl.ycode.stormify
 
 import onl.ycode.kdbc.SQLException
+import onl.ycode.kdbc.TypeConversion
 import kotlin.reflect.KClass
 
 /**
@@ -70,7 +71,7 @@ class TableInfo<T : Any> internal constructor(
         fieldTypeMap[dbName.lowercase()] ?: Any::class
 
     internal fun getScalarType(dbName: String): KClass<*>? =
-        fieldTypeMap[dbName.lowercase()]?.takeIf { isScalarClass(it) }
+        fieldTypeMap[dbName.lowercase()]?.takeIf { TypeConversion.isKnownScalar(it) }
 
     internal fun isReferenceField(dbName: String): Boolean =
         referenceFieldMap.containsKey(dbName.lowercase())

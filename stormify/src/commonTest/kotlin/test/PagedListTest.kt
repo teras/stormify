@@ -1286,6 +1286,24 @@ open class PagedListTest {
     }
 
     @Test
+    fun testInputParserReceivesCorrectFacetTypeForTypedDate() = withDb("PAGED-DATE-INPUTPARSER") { s ->
+        setupDateTable(s)
+        val list = PagedList<Event>()
+        val col = list.addFacet("eventDate")
+        val capturedTypes = mutableListOf<Facet.Type>()
+        col.inputParser = { input, type ->
+            capturedTypes.add(type)
+            val parts = input.split("/")
+            if (parts.size == 3) "${parts[2]}-${parts[1]}-${parts[0]}" else input
+        }
+        col.filter = ">= 02/06/2026"
+        assertEquals(2, list.size)
+
+        assertEquals(listOf(Facet.Type.DATE), capturedTypes.distinct(),
+            "InputParser should receive Facet.Type.DATE for a LocalDate field, got $capturedTypes")
+    }
+
+    @Test
     fun testDateFilterLessThan() = withDb("PAGED-DATE-LT") { s ->
         setupDateTable(s)
         val list = PagedList<Event>()
@@ -1346,21 +1364,77 @@ open class PagedListTest {
         assertEquals(2, list.size)
     }
 
-    // --- Raw column TEMPORAL ---
+    // --- Raw facet DATE ---
 
     @Test
-    fun testRawColumnTemporal() = withDb("PAGED-RAW-DATE") { s ->
+    fun testRawFacetDate() = withDb("PAGED-RAW-DATE") { s ->
         if (s.sqlDialect == SqlDialect.SQLITE)
             skipTest(SkipReason.LIBRARY_LIMITATION,
                 "SQLite stores LocalDate as epoch ms (kdbc choice) — raw ISO comparison mismatches")
         setupDateTable(s)
         val list = PagedList<Event>()
-        // Raw column — the default TEMPORAL converter wraps the placeholder with
-        // a dialect-aware cast (e.g., TO_DATE on Oracle, CAST on others)
-        val col = list.addSqlFacet("event.event_date", Facet.TEMPORAL)
+        val col = list.addSqlFacet("event.event_date", Facet.DATE)
         col.inputParser = dateParser
         // Use >= to avoid noon-vs-midnight edge case on Oracle (DATE includes time)
         col.filter = ">= 02/06/2026"  // Sep 10, Dec 25 (strictly after June 1)
+
+        assertEquals(2, list.size)
+    }
+
+    // --- Raw facet TIMESTAMP / TIME ---
+
+    private fun setupWideEventTable(s: Stormify) {
+        TestDDL.dropTable("event")
+        val timeType = if (s.sqlDialect == SqlDialect.ORACLE_NEW || s.sqlDialect == SqlDialect.ORACLE_OLD)
+            "TIMESTAMP" else "TIME"
+        s.executeUpdate(
+            TestDDL.createTable(
+                "event",
+                "${TestDDL.intPrimaryKey("id")}, title ${TestDDL.textType()}, " +
+                    "event_date DATE, event_ts ${TestDDL.timestampType()}, event_tm $timeType"
+            )
+        )
+        s.executeUpdate(
+            "INSERT INTO event (id, title, event_ts, event_tm) VALUES (?, ?, ?, ?)",
+            1, "morning", LocalDateTime(2026, 1, 15, 8, 0), LocalTime(8, 0)
+        )
+        s.executeUpdate(
+            "INSERT INTO event (id, title, event_ts, event_tm) VALUES (?, ?, ?, ?)",
+            2, "afternoon", LocalDateTime(2026, 6, 1, 14, 30), LocalTime(14, 30)
+        )
+        s.executeUpdate(
+            "INSERT INTO event (id, title, event_ts, event_tm) VALUES (?, ?, ?, ?)",
+            3, "evening", LocalDateTime(2026, 12, 25, 19, 45), LocalTime(19, 45)
+        )
+    }
+
+    @Test
+    fun testRawFacetTimestamp() = withDb("PAGED-RAW-TS") { s ->
+        if (s.sqlDialect == SqlDialect.SQLITE)
+            skipTest(SkipReason.LIBRARY_LIMITATION,
+                "SQLite stores temporals as epoch ms — raw ISO comparison mismatches")
+        setupWideEventTable(s)
+
+        val list = PagedList<Event>()
+        val col = list.addSqlFacet("event.event_ts", Facet.TIMESTAMP)
+        col.filter = ">= 2026-06-01T00:00:00"
+
+        assertEquals(2, list.size)
+    }
+
+    @Test
+    fun testRawFacetTime() = withDb("PAGED-RAW-TIME") { s ->
+        if (s.sqlDialect == SqlDialect.SQLITE)
+            skipTest(SkipReason.LIBRARY_LIMITATION,
+                "SQLite stores temporals as epoch ms — raw ISO comparison mismatches")
+        if (s.sqlDialect == SqlDialect.ORACLE_NEW || s.sqlDialect == SqlDialect.ORACLE_OLD)
+            skipTest(SkipReason.LIBRARY_LIMITATION,
+                "Oracle has no native TIME type — the castToTime fallback is best-effort")
+        setupWideEventTable(s)
+
+        val list = PagedList<Event>()
+        val col = list.addSqlFacet("event.event_tm", Facet.TIME)
+        col.filter = ">= 12:00:00"
 
         assertEquals(2, list.size)
     }

@@ -79,28 +79,8 @@ internal fun isScalarObject(request: Any) =
     request is Number || request is CharSequence || request is Char || request is Boolean
             || request is ByteArray || request is CharArray || request.isOtherPrimitive
 
-internal fun isScalarClass(request: KClass<*>) = allPrimitives.contains(request.fullName)
-
-internal fun isTextualClass(request: KClass<*>) = with(request.fullName) {
-    this == "kotlin.String" || this == "kotlin.Char" || this == "kotlin.text.StringBuilder"
-}
-
 internal fun Throwable.throwQuery(reason: String): Nothing =
     if (this is SQLException) throw this else throw SQLException(reason, this)
-
-private val allPrimitives: Set<String> = (listOf(
-    Byte::class,
-    Short::class,
-    Int::class,
-    Long::class,
-    Float::class,
-    Double::class,
-    String::class,
-    Char::class,
-    StringBuilder::class,
-    Boolean::class,
-    Number::class,
-) + getNativeAllPrimitives()).mapTo(LinkedHashSet()) { it.fullName }
 
 internal val KClass<*>.fullName get() = qualifiedName ?: throw SQLException("Unknown class name of class $this")
 

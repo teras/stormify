@@ -328,7 +328,7 @@ open class Stormify(val dataSource: DataSource, vararg registrars: EntityRegistr
         consumer: (T) -> Unit
     ) = performQuery(conn, query, params.toList(), code = { statement ->
         val isMap = Map::class == baseClass
-        val info = if (isScalarClass(baseClass) || isMap) null else resolveTableInfo(baseClass)
+        val info = if (TypeConversion.isKnownScalar(baseClass) || isMap) null else resolveTableInfo(baseClass)
         val normalizedCustomFields = customFields?.mapKeys { it.key.lowercase() }
         statement.executeQuery().use { rs ->
             val context = if (info != null) PopulationContext() else null

@@ -122,8 +122,14 @@ class Facet internal constructor(
         /** Numeric — supports exact match, comparisons (`>`, `<`, `>=`, `<=`), and ranges (`10 ... 20`). */
         NUMERIC,
 
-        /** Temporal — covers date, time, datetime, timestamp. Supports comparisons and ranges. */
-        TEMPORAL,
+        /** Date-only — calendar dates without time component. Supports comparisons and ranges. */
+        DATE,
+
+        /** Time-only — time of day without date. Supports comparisons and ranges. */
+        TIME,
+
+        /** Timestamp/datetime — wall-clock date+time or absolute instant. Supports comparisons and ranges. */
+        TIMESTAMP,
 
         /** Enum/quantize — maps display names to DB values via reverse substring matching. */
         ENUM
@@ -135,8 +141,12 @@ class Facet internal constructor(
         @JvmField val TEXT = Type.TEXT
         /** Numeric facet type. */
         @JvmField val NUMERIC = Type.NUMERIC
-        /** Temporal facet type (date, time, datetime, timestamp). */
-        @JvmField val TEMPORAL = Type.TEMPORAL
+        /** Date-only facet type. */
+        @JvmField val DATE = Type.DATE
+        /** Time-only facet type. */
+        @JvmField val TIME = Type.TIME
+        /** Timestamp/datetime facet type. */
+        @JvmField val TIMESTAMP = Type.TIMESTAMP
         /** Enum/quantize facet type. */
         @JvmField val ENUM = Type.ENUM
 

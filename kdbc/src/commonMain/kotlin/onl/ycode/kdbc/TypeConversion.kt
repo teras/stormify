@@ -23,6 +23,9 @@ object TypeConversion {
     @JvmSynthetic
     internal val registry: MutableMap<KClass<*>, MutableMap<KClass<*>, (Any) -> Any>> = HashMap()
 
+    /** True if kdbc has a scalar converter registered for [type]. */
+    fun isKnownScalar(type: KClass<*>): Boolean = registry.containsKey(type)
+
     /**
      * Convert a scalar value to the target class.
      *
@@ -32,14 +35,16 @@ object TypeConversion {
     @Suppress("UNCHECKED_CAST")
     fun <T : Any> castScalar(targetClass: KClass<T>, value: Any?): T? {
         if (value == null || targetClass.isInstance(value)) return value as T?
-        val givenClass = value::class
+        val normalized: Any = if (value is CharSequence && value !is String) value.toString() else value
+        if (targetClass.isInstance(normalized)) return normalized as T
+        val givenClass = normalized::class
         val converters = registry[targetClass]
             ?: throw SQLException("Target class ${targetClass.qualifiedName} is not convertible")
         val typeConv = converters[givenClass]
-            ?: (if (value is Number) converters[Number::class] else null)
+            ?: (if (normalized is Number) converters[Number::class] else null)
             ?: throw SQLException("Unable to convert ${givenClass.qualifiedName} to ${targetClass.qualifiedName}")
         return try {
-            typeConv(value) as T
+            typeConv(normalized) as T
         } catch (e: Throwable) {
             if (e is SQLException) throw e
             throw SQLException("Error converting ${givenClass.qualifiedName} to ${targetClass.qualifiedName}", e)

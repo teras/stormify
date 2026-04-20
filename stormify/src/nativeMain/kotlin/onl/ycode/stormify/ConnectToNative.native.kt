@@ -8,21 +8,6 @@ import kotlin.reflect.KClass
 /** Maps to ionspin [com.ionspin.kotlin.bignum.integer.BigInteger] on Native. */
 actual typealias NativeBigInteger = com.ionspin.kotlin.bignum.integer.BigInteger
 
-internal actual fun getNativeAllPrimitives(): Collection<KClass<*>> = listOf(
-    com.ionspin.kotlin.bignum.decimal.BigDecimal::class,
-    com.ionspin.kotlin.bignum.integer.BigInteger::class,
-    kotlinx.datetime.LocalDate::class,
-    kotlinx.datetime.LocalDateTime::class,
-    kotlinx.datetime.LocalTime::class,
-    kotlin.time.Instant::class,
-    // On native we promote binary/char array types to scalars so that the TableInfo-based
-    // column dispatch routes BLOB/CLOB columns to the typed NativeResultSet.getObject path.
-    // JVM relies on jdbc.getObject(i) to hand back `byte[]` through the Any::class path;
-    // the native C layer has no equivalent natural-type lookup, so we need the explicit hint.
-    ByteArray::class,
-    CharArray::class
-)
-
 @OptIn(kotlin.experimental.ExperimentalNativeApi::class)
 internal actual class WeakRef<T : Any> actual constructor(referent: T) {
     private val ref = kotlin.native.ref.WeakReference(referent)

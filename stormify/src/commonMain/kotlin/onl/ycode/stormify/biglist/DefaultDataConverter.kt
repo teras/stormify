@@ -5,7 +5,6 @@ package onl.ycode.stormify.biglist
 import onl.ycode.kdbc.SQLException
 import onl.ycode.stormify.SqlDialect
 import onl.ycode.stormify.TypeUtils.castTo
-import onl.ycode.stormify.isTextualClass
 import kotlin.reflect.KClass
 
 internal object DefaultDataConverter {
@@ -17,8 +16,8 @@ internal object DefaultDataConverter {
         enumValues: Map<String, Any>? = null
     ): Converter = when (type) {
         Facet.Type.TEXT -> textConverter(dialect, syntax) { false }
-        Facet.Type.NUMERIC -> orderedConverter(Number::class, syntax)
-        Facet.Type.TEMPORAL -> rawDateConverter(dialect, syntax)
+        Facet.Type.NUMERIC -> orderedConverter(Number::class, Facet.Type.NUMERIC, syntax)
+        Facet.Type.DATE, Facet.Type.TIME, Facet.Type.TIMESTAMP -> rawConverterWithCast(type, dialect, syntax)
         Facet.Type.ENUM -> enumConverter(enumValues, syntax)
     }
 
@@ -32,9 +31,19 @@ internal object DefaultDataConverter {
     ): Converter = when (type) {
         Facet.Type.TEXT -> textConverter(dialect, syntax, caseSensitive)
         Facet.Type.ENUM -> enumConverter(enumValues, syntax)
-        Facet.Type.TEMPORAL -> orderedConverter(node.type, syntax)
-        else -> if (isTextualClass(node.type)) textConverter(dialect, syntax, caseSensitive)
-        else orderedConverter(node.type, syntax)
+        Facet.Type.NUMERIC,
+        Facet.Type.DATE,
+        Facet.Type.TIME,
+        Facet.Type.TIMESTAMP -> orderedConverter(node.type, type, syntax)
+    }
+
+    // Exhaustive dispatcher: adding a new Facet.Type bucket forces a decision here.
+    // Non-temporals return identity — safe no-op when wrapped into SQL.
+    private fun dialectCastFor(type: Facet.Type, dialect: SqlDialect): (String) -> String = when (type) {
+        Facet.Type.DATE -> dialect::castToDate
+        Facet.Type.TIME -> dialect::castToTime
+        Facet.Type.TIMESTAMP -> dialect::castToTimestamp
+        Facet.Type.TEXT, Facet.Type.NUMERIC, Facet.Type.ENUM -> { placeholder -> placeholder }
     }
 
     private fun textConverter(
@@ -49,18 +58,26 @@ internal object DefaultDataConverter {
     private fun enumConverter(
         enumValues: Map<String, Any>?,
         syntax: FilterSyntax
-    ): Converter = conv@{ column, input, _, args ->
+    ): Converter {
         if (enumValues.isNullOrEmpty()) {
-            args.add(input)
-            "$column = ?"
-        } else {
+            return { column, input, _, args ->
+                args.add(input)
+                "$column = ?"
+            }
+        }
+        // Precompute lowercased keys once — filters repeatedly lowercased keys and
+        // search text on every atom, producing N × K String allocations per parse.
+        val entries = enumValues.entries.map { it.key to it.value }
+        val lowercaseEntries = entries.map { (k, v) -> k.lowercase() to v }
+        return conv@{ column, input, _, args ->
             val ast = TextQuery.parse(input, syntax) ?: return@conv IMPOSSIBLE
-            val allValues = enumValues.entries.toSet()
             TextQuery.renderAst(ast, column) { text, isPhrase ->
-                val matched = if (isPhrase)
-                    allValues.filter { it.key.equals(text, ignoreCase = true) }.map { it.value }
-                else
-                    allValues.filter { it.key.lowercase().contains(text.lowercase()) }.map { it.value }
+                val matched = if (isPhrase) {
+                    entries.filter { (k, _) -> k.equals(text, ignoreCase = true) }.map { it.second }
+                } else {
+                    val needle = text.lowercase()
+                    lowercaseEntries.filter { (k, _) -> k.contains(needle) }.map { it.second }
+                }
                 when {
                     matched.isEmpty() -> IMPOSSIBLE
                     matched.size == 1 -> { args.add(matched[0]); "$column = ?" }
@@ -73,17 +90,28 @@ internal object DefaultDataConverter {
         }
     }
 
-    private fun orderedConverter(type: KClass<*>, syntax: FilterSyntax): Converter = { column, input, parser, args ->
-        orderedWithBoolean(input, column, parser, Facet.Type.NUMERIC, syntax) { value ->
+    private fun orderedConverter(
+        type: KClass<*>,
+        columnType: Facet.Type,
+        syntax: FilterSyntax
+    ): Converter = { column, input, parser, args ->
+        orderedWithBoolean(input, column, parser, columnType, syntax) { value ->
             args.add(castOrFail(type, value))
         }
     }
 
-    private fun rawDateConverter(dialect: SqlDialect, syntax: FilterSyntax): Converter = { column, input, parser, args ->
-        val sql = orderedWithBoolean(input, column, parser, Facet.Type.TEMPORAL, syntax) { value ->
-            args.add(value)
+    private fun rawConverterWithCast(
+        columnType: Facet.Type,
+        dialect: SqlDialect,
+        syntax: FilterSyntax
+    ): Converter {
+        val castedPlaceholder = dialectCastFor(columnType, dialect)("?")
+        return { column, input, parser, args ->
+            val sql = orderedWithBoolean(input, column, parser, columnType, syntax) { value ->
+                args.add(value)
+            }
+            sql.replace("?", castedPlaceholder)
         }
-        sql.replace("?", dialect.castToDate("?"))
     }
 
     private fun orderedWithBoolean(

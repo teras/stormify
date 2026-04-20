@@ -208,7 +208,7 @@ The `NULL` token matches rows where the column is SQL `NULL`:
 | `-NULL`            | `col IS NOT NULL` |
 | `foo OR NULL`      | contains "foo" OR is null |
 
-NULL works across all facet types (TEXT, NUMERIC, TEMPORAL, ENUM).
+NULL works across all facet types (TEXT, NUMERIC, DATE, TIME, TIMESTAMP, ENUM).
 
 #### Configurable tokens
 
@@ -255,11 +255,38 @@ Set `facet.isCaseSensitive = true` for a case-sensitive facet.
 | `<= 100`      | Less than or equal |
 | `10 ... 20`   | Range (inclusive) |
 
-### Temporal (`Facet.TEMPORAL`)
+### Temporal (`Facet.DATE`, `Facet.TIME`, `Facet.TIMESTAMP`)
 
-Covers `LocalDate`, `LocalTime`, `LocalDateTime`, `Instant`. Supports the same comparison
-operators and range syntax as `NUMERIC`. Values are parsed via the active [input
-parser](#input-parsing-and-locale).
+Three separate buckets cover the common wall-clock types:
+
+| Bucket            | Kotlin types                                                      | Dialect cast (raw facets)                                                                                                  |
+| ----------------- | ----------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
+| `Facet.DATE`      | `LocalDate`, `java.sql.Date`                                      | `TO_DATE(?, 'YYYY-MM-DD')` on Oracle; `CAST(? AS DATE)` elsewhere                                                          |
+| `Facet.TIME`      | `LocalTime`, `java.sql.Time`                                      | `TO_TIMESTAMP(?, 'HH24:MI:SS')` on Oracle (no native TIME); `CAST(? AS TIME)` elsewhere                                    |
+| `Facet.TIMESTAMP` | `LocalDateTime`, `Instant`, `OffsetDateTime`, `ZonedDateTime`, `Timestamp` | `CAST(? AS DATETIME)` on MySQL/MariaDB; `CAST(? AS DATETIME2)` on MSSQL; `TO_TIMESTAMP(...)` on Oracle; `CAST(? AS TIMESTAMP)` elsewhere |
+
+All three support the same comparison and range syntax as `NUMERIC`. Values are parsed via
+the active [input parser](#input-parsing-and-locale), which runs after the operator/range
+AST is resolved.
+
+The bucket for a typed facet is inferred from the field's `KClass`. For raw facets, the
+caller picks the bucket explicitly:
+
+=== "Kotlin"
+
+    ```kotlin
+    list.addSqlFacet("event.event_ts", Facet.TIMESTAMP)
+    list.addSqlFacet("event.event_tm", Facet.TIME)
+    list.addSqlFacet("event.event_date", Facet.DATE)
+    ```
+
+=== "Java"
+
+    ```java
+    list.addSqlFacet("event.event_ts", Facet.TIMESTAMP);
+    list.addSqlFacet("event.event_tm", Facet.TIME);
+    list.addSqlFacet("event.event_date", Facet.DATE);
+    ```
 
 ### Enum (`Facet.ENUM`)
 
@@ -504,7 +531,7 @@ Resolution order: **facet → list → Stormify instance → identity (no transf
     stormify.inputParser = { input, type ->
         when (type) {
             Facet.NUMERIC -> input.replace(".", "").replace(",", ".")
-            Facet.TEMPORAL -> flipDayMonthYear(input)
+            Facet.DATE, Facet.TIMESTAMP -> flipDayMonthYear(input)
             else -> input
         }
     }
@@ -522,7 +549,7 @@ Resolution order: **facet → list → Stormify instance → identity (no transf
     // Stormify instance — applies to all PagedList instances that use it
     stormify.setInputParser((input, type) -> {
         if (type == Facet.NUMERIC) return input.replace(".", "").replace(",", ".");
-        if (type == Facet.TEMPORAL) return flipDayMonthYear(input);
+        if (type == Facet.DATE || type == Facet.TIMESTAMP) return flipDayMonthYear(input);
         return input;
     });
 
@@ -545,7 +572,7 @@ are two forms:
 
 Pass the expression and the facet type; the default converter decides the `WHERE`
 clause based on the type (`LIKE ?` for `TEXT`, `= ?` / `BETWEEN ? AND ?` for
-`NUMERIC`, date comparison for `TEMPORAL`, mapped equality for `ENUM`).
+`NUMERIC`, typed comparison with dialect-aware casts for `DATE`/`TIME`/`TIMESTAMP`, mapped equality for `ENUM`).
 
 === "Kotlin"
 

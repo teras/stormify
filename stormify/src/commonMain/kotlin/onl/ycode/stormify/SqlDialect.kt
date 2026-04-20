@@ -349,13 +349,12 @@ enum class SqlDialect(
     }
 
     /**
-     * Wraps a bind placeholder with a dialect-specific cast to DATE.
-     * Used by raw columns with [onl.ycode.stormify.biglist.Facet.Type.TEMPORAL] where the DB cannot
-     * implicitly convert an ISO string bind parameter to a date.
+     * Wraps a bind placeholder with a dialect-specific cast to DATE. Used by
+     * raw facets with [onl.ycode.stormify.biglist.Facet.Type.DATE] where the
+     * DB cannot implicitly convert an ISO string bind parameter to a date.
      *
      * - Oracle: `TO_DATE(?, 'YYYY-MM-DD')` — Oracle ignores `CAST(? AS DATE)` for strings
-     * - SQLite: no cast needed — SQLite stores dates as epoch ms, but the caller
-     *   should pass a typed value (epoch ms or ISO string) that matches the storage
+     * - SQLite: no cast needed — the caller should pass a value that matches the storage
      * - others: `CAST(? AS DATE)` — standard SQL
      */
     fun castToDate(placeholder: String): String = when (this) {
@@ -365,12 +364,33 @@ enum class SqlDialect(
     }
 
     /**
-     * Wraps a bind placeholder with a dialect-specific cast to TIMESTAMP.
-     * Used by raw columns with [onl.ycode.stormify.biglist.Facet.Type.TEMPORAL] for datetime values.
+     * Wraps a bind placeholder with a dialect-specific cast to TIME. Oracle
+     * has no native `TIME`, so it falls back to `TO_TIMESTAMP`; SQLite and
+     * MySQL/MariaDB are passthrough (MySQL prepared-statement `CAST(? AS TIME)`
+     * mis-parses a bound string to `00:00:00` — plain comparison relies on
+     * implicit coercion instead); everyone else uses `CAST(? AS TIME)`.
+     */
+    fun castToTime(placeholder: String): String = when (this) {
+        ORACLE_NEW, ORACLE_OLD -> "TO_TIMESTAMP($placeholder, 'HH24:MI:SS')"
+        SQLITE, MYSQL_OLD, MYSQL_NEW, MARIA_DB_OLD, MARIA_DB_NEW -> placeholder
+        else -> "CAST($placeholder AS TIME)"
+    }
+
+    /**
+     * Wraps a bind placeholder with a dialect-specific cast to the datetime
+     * type. Used by raw facets with [onl.ycode.stormify.biglist.Facet.Type.TIMESTAMP].
+     *
+     * - Oracle: `TO_TIMESTAMP(?, 'YYYY-MM-DD"T"HH24:MI:SS')`.
+     * - SQLite: passthrough.
+     * - MySQL / MariaDB: `CAST(? AS DATETIME)` — `TIMESTAMP` is not a valid CAST target in these dialects.
+     * - MSSQL: `CAST(? AS DATETIME2)` — `TIMESTAMP` in SQL Server is a rowversion, not a datetime.
+     * - PostgreSQL, H2, others: `CAST(? AS TIMESTAMP)`.
      */
     fun castToTimestamp(placeholder: String): String = when (this) {
         ORACLE_NEW, ORACLE_OLD -> "TO_TIMESTAMP($placeholder, 'YYYY-MM-DD\"T\"HH24:MI:SS')"
         SQLITE -> placeholder
+        MYSQL_OLD, MYSQL_NEW, MARIA_DB_OLD, MARIA_DB_NEW -> "CAST($placeholder AS DATETIME)"
+        SQL_SERVER_NEW, SQL_SERVER_OLD -> "CAST($placeholder AS DATETIME2)"
         else -> "CAST($placeholder AS TIMESTAMP)"
     }
 

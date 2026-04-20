@@ -12,8 +12,11 @@ import kotlinx.datetime.TimeZone
 import kotlinx.datetime.toInstant
 import kotlinx.datetime.toLocalDateTime
 import kotlin.reflect.KClass
-import kotlin.time.Clock
 import kotlin.time.Instant as KtInstant
+
+private val EPOCH_DATE = LocalDate(1970, 1, 1)
+private val NOON = LocalTime(12, 0)
+private val ANCHOR_TZ = TimeZone.UTC
 
 /**
  * Registers conversions between kotlinx-datetime / kotlin.time types and Kotlin primitives (Long millis).
@@ -23,83 +26,70 @@ import kotlin.time.Instant as KtInstant
  */
 internal object KotlinxTimeConverters {
     fun register(registry: MutableMap<KClass<*>, MutableMap<KClass<*>, (Any) -> Any>>) {
-        // Long/Double/Float/String → kotlinx types (via milliseconds)
+        // Long/Double/Float/String → kotlinx types (via milliseconds, UTC-anchored)
         registerTimeTarget(LocalDate::class, registry) {
-            KtInstant.fromEpochMilliseconds(it).toLocalDateTime(TimeZone.currentSystemDefault()).date
+            KtInstant.fromEpochMilliseconds(it).toLocalDateTime(ANCHOR_TZ).date
         }
         registerTimeTarget(LocalDateTime::class, registry) {
-            KtInstant.fromEpochMilliseconds(it).toLocalDateTime(TimeZone.currentSystemDefault())
+            KtInstant.fromEpochMilliseconds(it).toLocalDateTime(ANCHOR_TZ)
         }
         registerTimeTarget(LocalTime::class, registry) {
-            KtInstant.fromEpochMilliseconds(it).toLocalDateTime(TimeZone.currentSystemDefault()).time
+            KtInstant.fromEpochMilliseconds(it).toLocalDateTime(ANCHOR_TZ).time
         }
         registerTimeTarget(KtInstant::class, registry) {
             KtInstant.fromEpochMilliseconds(it)
         }
 
-        // kotlinx types → Long/Double/Float/String (to milliseconds)
+        // kotlinx types → Long/Double/Float/String (to milliseconds, UTC-anchored)
         registerTimeSource(LocalDate::class, registry) {
-            LocalDateTime(it as LocalDate, LocalTime(12, 0))
-                .toInstant(TimeZone.currentSystemDefault()).toEpochMilliseconds()
+            LocalDateTime(it as LocalDate, NOON).toInstant(ANCHOR_TZ).toEpochMilliseconds()
         }
         registerTimeSource(LocalDateTime::class, registry) {
-            (it as LocalDateTime).toInstant(TimeZone.currentSystemDefault()).toEpochMilliseconds()
+            (it as LocalDateTime).toInstant(ANCHOR_TZ).toEpochMilliseconds()
         }
         registerTimeSource(LocalTime::class, registry) {
-            val date = Clock.System.now().toLocalDateTime(TimeZone.currentSystemDefault()).date
-            LocalDateTime(date, it as LocalTime)
-                .toInstant(TimeZone.currentSystemDefault()).toEpochMilliseconds()
+            LocalDateTime(EPOCH_DATE, it as LocalTime).toInstant(ANCHOR_TZ).toEpochMilliseconds()
         }
         registerTimeSource(KtInstant::class, registry) {
             (it as KtInstant).toEpochMilliseconds()
         }
 
-        // Cross-conversions between kotlinx types
         val allTypes = listOf<Pair<KClass<*>, (Long) -> Any>>(
-            LocalDate::class to { KtInstant.fromEpochMilliseconds(it).toLocalDateTime(TimeZone.currentSystemDefault()).date },
-            LocalDateTime::class to { KtInstant.fromEpochMilliseconds(it).toLocalDateTime(TimeZone.currentSystemDefault()) },
-            LocalTime::class to { KtInstant.fromEpochMilliseconds(it).toLocalDateTime(TimeZone.currentSystemDefault()).time },
+            LocalDate::class to { KtInstant.fromEpochMilliseconds(it).toLocalDateTime(ANCHOR_TZ).date },
+            LocalDateTime::class to { KtInstant.fromEpochMilliseconds(it).toLocalDateTime(ANCHOR_TZ) },
+            LocalTime::class to { KtInstant.fromEpochMilliseconds(it).toLocalDateTime(ANCHOR_TZ).time },
             KtInstant::class to { KtInstant.fromEpochMilliseconds(it) },
         )
         val toMillis = mapOf<KClass<*>, (Any) -> Long>(
-            LocalDate::class to { LocalDateTime(it as LocalDate, LocalTime(12, 0)).toInstant(TimeZone.currentSystemDefault()).toEpochMilliseconds() },
-            LocalDateTime::class to { (it as LocalDateTime).toInstant(TimeZone.currentSystemDefault()).toEpochMilliseconds() },
-            LocalTime::class to { val d = Clock.System.now().toLocalDateTime(TimeZone.currentSystemDefault()).date; LocalDateTime(d, it as LocalTime).toInstant(TimeZone.currentSystemDefault()).toEpochMilliseconds() },
+            LocalDate::class to { LocalDateTime(it as LocalDate, NOON).toInstant(ANCHOR_TZ).toEpochMilliseconds() },
+            LocalDateTime::class to { (it as LocalDateTime).toInstant(ANCHOR_TZ).toEpochMilliseconds() },
+            LocalTime::class to { LocalDateTime(EPOCH_DATE, it as LocalTime).toInstant(ANCHOR_TZ).toEpochMilliseconds() },
             KtInstant::class to { (it as KtInstant).toEpochMilliseconds() },
         )
+        // Wall-clock ↔ wall-clock pairs never go through epoch: the direct
+        // converters below cover the decomposed cases, and LocalDate ↔ LocalTime
+        // is intentionally unsupported (meaningless). Only KtInstant pivots remain.
+        val wallClocks = setOf<KClass<*>>(LocalDate::class, LocalDateTime::class, LocalTime::class)
         for ((targetClass, fromMillis) in allTypes) {
             val group = registry.getOrPut(targetClass) { mutableMapOf() }
             for ((sourceClass, sourceToMillis) in toMillis) {
-                if (sourceClass != targetClass)
-                    group[sourceClass] = { fromMillis(sourceToMillis(it)) }
+                if (sourceClass == targetClass) continue
+                if (targetClass in wallClocks && sourceClass in wallClocks) continue
+                group[sourceClass] = { fromMillis(sourceToMillis(it)) }
             }
         }
 
-        // Direct pair-wise converters for pure-decomposed pairs. Two things make
-        // these the final writers in the registry:
-        //   1) They come AFTER the epoch-pivot block in this file.
-        //   2) TypeConversion.kt calls KotlinxTimeConverters AFTER JavaTypeConverters,
-        //      so any `registry[String][kotlinx.Local*]` that the platform module
-        //      filled in via epoch pivot is overwritten here.
-        // The epoch-pivot entries (including the noon hack at line 42 et al.) stay
-        // intact for pairs that genuinely need an Instant-via-timezone intermediary
-        // (Long ↔ temporal, String → LocalDate via multi-format parseTemporalString,
-        // etc.).
-        direct(registry, LocalDateTime::class, LocalDate::class) {
-            LocalDateTime(it as LocalDate, LocalTime(0, 0))
-        }
-        direct(registry, LocalDate::class, LocalDateTime::class) {
-            (it as LocalDateTime).date
-        }
-        direct(registry, LocalTime::class, LocalDateTime::class) {
-            (it as LocalDateTime).time
-        }
-        // Pure-decomposed → String: preserves the exact decomposed value via
-        // ISO `toString()` instead of round-tripping through a noon-anchored
-        // Instant (which would discard hour/minute/second for LocalDateTime
-        // and yield e.g. "2026-03-20T12:00:00Z" for LocalDate).
+        // Direct pair-wise converters. Registered last so they override any
+        // overlapping epoch-pivot entry (see `direct` kdoc).
+        direct(registry, LocalDateTime::class, LocalDate::class) { LocalDateTime(it as LocalDate, LocalTime(0, 0)) }
+        direct(registry, LocalDate::class, LocalDateTime::class) { (it as LocalDateTime).date }
+        direct(registry, LocalTime::class, LocalDateTime::class) { (it as LocalDateTime).time }
+        direct(registry, LocalDateTime::class, LocalTime::class) { LocalDateTime(EPOCH_DATE, it as LocalTime) }
         listOf(LocalDate::class, LocalDateTime::class, LocalTime::class)
             .forEach { t -> direct(registry, String::class, t) { it.toString() } }
+        direct(registry, LocalDate::class, String::class) { LocalDate.parse(it as String) }
+        direct(registry, LocalDateTime::class, String::class) { LocalDateTime.parse(it as String) }
+        direct(registry, LocalTime::class, String::class) { LocalTime.parse(it as String) }
     }
 
     /** Registers a direct (pair-wise) converter in the registry. Later registrations
@@ -142,11 +132,10 @@ internal object KotlinxTimeConverters {
         KtInstant.parse(s).toEpochMilliseconds()
     } catch (_: Exception) {
         try {
-            LocalDateTime.parse(s).toInstant(TimeZone.currentSystemDefault()).toEpochMilliseconds()
+            LocalDateTime.parse(s).toInstant(ANCHOR_TZ).toEpochMilliseconds()
         } catch (_: Exception) {
             try {
-                LocalDateTime(LocalDate.parse(s), LocalTime(12, 0))
-                    .toInstant(TimeZone.currentSystemDefault()).toEpochMilliseconds()
+                LocalDateTime(LocalDate.parse(s), NOON).toInstant(ANCHOR_TZ).toEpochMilliseconds()
             } catch (e: Exception) {
                 throw SQLException("Unable to parse temporal string: $s", e)
             }

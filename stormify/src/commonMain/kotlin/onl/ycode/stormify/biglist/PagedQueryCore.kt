@@ -526,19 +526,7 @@ internal class PagedQueryCore<T : Any>(
     private fun detectType(fieldPath: FieldPath): Facet.Type {
         val node = resolveFieldPath(fieldPath)
         if (node.isEnum) return Facet.Type.ENUM
-        val typeName = node.type.simpleName ?: return Facet.Type.TEXT
-        return when {
-            typeName in setOf("String", "Char", "StringBuilder") -> Facet.Type.TEXT
-            typeName in setOf(
-                "Int", "Long", "Short", "Byte", "Float", "Double",
-                "BigDecimal", "BigInteger"
-            ) -> Facet.Type.NUMERIC
-
-            typeName.contains("Date") || typeName.contains("Time") ||
-                    typeName.contains("Instant") || typeName.contains("Timestamp") -> Facet.Type.TEMPORAL
-
-            else -> Facet.Type.TEXT
-        }
+        return ScalarTypes.categoryOf(node.type) ?: Facet.Type.TEXT
     }
 
     private fun buildEnumValues(enumType: KClass<*>): Map<String, Any>? {

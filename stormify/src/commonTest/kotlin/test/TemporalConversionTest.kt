@@ -45,6 +45,14 @@ open class TemporalConversionTest {
         assertEquals(LocalTime(14, 30, 45, 0), time)
     }
 
+    @Test
+    fun localTimeToLocalDateTime() {
+        val time = LocalTime(14, 30, 45, 0)
+        val dt = TypeConversion.castScalar(LocalDateTime::class, time)
+        // EPOCH-anchored: preserves the time-of-day with a deterministic date.
+        assertEquals(LocalDateTime(1970, 1, 1, 14, 30, 45, 0), dt)
+    }
+
     // --- String formatting preserves the exact decomposed value ------------
 
     @Test

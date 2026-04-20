@@ -3,44 +3,26 @@
 
 package onl.ycode.stormify
 
+import onl.ycode.kdbc.TypeConversion
 import kotlin.reflect.KClass
 
 /** Maps to [java.math.BigInteger] on JVM. */
 actual typealias NativeBigInteger = java.math.BigInteger
 
-private val supportsIonspinBigNumbers = try {
-    com.ionspin.kotlin.bignum.decimal.BigDecimal::class.simpleName
-    true
-} catch (e: Throwable) {
-    false
-}
-
-private val supportsKotlinxDatetime = try {
+// kotlinx-datetime and ionspin are compileOnly on JVM; probe before referencing.
+internal val supportsKotlinxDatetime = try {
     kotlinx.datetime.LocalDate::class.simpleName
     true
-} catch (e: Throwable) {
+} catch (_: Throwable) {
     false
 }
 
-internal actual fun getNativeAllPrimitives(): Collection<KClass<*>> =
-    listOf(
-        java.math.BigInteger::class,
-        java.math.BigDecimal::class,
-        java.util.Date::class,
-        java.sql.Date::class,
-        java.sql.Timestamp::class,
-        java.sql.Time::class
-    ) +
-            (if (supportsIonspinBigNumbers) listOf(
-                com.ionspin.kotlin.bignum.decimal.BigDecimal::class,
-                com.ionspin.kotlin.bignum.integer.BigInteger::class
-            ) else emptyList()) +
-            (if (supportsKotlinxDatetime) listOf(
-                kotlinx.datetime.LocalDate::class,
-                kotlinx.datetime.LocalDateTime::class,
-                kotlinx.datetime.LocalTime::class,
-                kotlin.time.Instant::class
-            ) else emptyList())
+internal val supportsIonspinBigNumbers = try {
+    com.ionspin.kotlin.bignum.decimal.BigDecimal::class.simpleName
+    true
+} catch (_: Throwable) {
+    false
+}
 
 internal actual class WeakRef<T : Any> actual constructor(referent: T) {
     private val ref = java.lang.ref.WeakReference(referent)
@@ -203,7 +185,7 @@ internal actual fun <T : Any> tryReflection(type: KClass<T>): EntityMeta<T>? {
         // Generic type variables (erased to Any) are not entity references
         val isGenericTypeVar = javaGetter?.genericReturnType is java.lang.reflect.TypeVariable<*>
         val isEnum = propType.java.isEnum
-        val isReference = !isGenericTypeVar && !isEnum && !isScalarClass(propType)
+        val isReference = !isGenericTypeVar && !isEnum && !TypeConversion.isKnownScalar(propType)
                 && propType != ByteArray::class && propType != CharArray::class
 
         // Build getter/setter — prefer Java getter/setter for interop with Java POJOs

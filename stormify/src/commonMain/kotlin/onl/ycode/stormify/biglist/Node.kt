@@ -2,8 +2,8 @@
 // (C) Panayotis Katsaloulis
 package onl.ycode.stormify.biglist
 
+import onl.ycode.kdbc.TypeConversion
 import onl.ycode.stormify.Stormify
-import onl.ycode.stormify.isScalarClass
 import kotlin.reflect.KClass
 
 
@@ -56,7 +56,7 @@ internal class NodeTable(
     override fun findChild(fieldName: String, tableCounter: () -> Int) = children[fieldName] ?: run {
         val field = tableInfo.getField(fieldName)
             ?: throw IllegalArgumentException("Field '$fieldName' not found in ${tableInfo.tableName}")
-        val node = if (isScalarClass(field.type) || field.isEnum)
+        val node = if (TypeConversion.isKnownScalar(field.type) || field.isEnum)
             NodeField("$tableHandler.${field.dbName}", field.type, this, field.isEnum)
         else
             NodeTable("t${tableCounter()}", field.dbName, field.type, this, stormify)

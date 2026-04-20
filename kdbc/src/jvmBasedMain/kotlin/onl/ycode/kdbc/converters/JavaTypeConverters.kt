@@ -8,7 +8,6 @@ import onl.ycode.kdbc.SQLException
 import java.math.BigDecimal
 import java.math.BigInteger
 import java.time.Instant
-import java.time.ZoneId
 import java.time.ZoneOffset
 import java.time.format.DateTimeFormatter
 import kotlin.reflect.KClass
@@ -20,6 +19,10 @@ import kotlinx.datetime.toKotlinLocalDate
 import kotlinx.datetime.toKotlinLocalDateTime
 import kotlinx.datetime.toKotlinLocalTime
 import kotlinx.datetime.toLocalDateTime
+
+// Deterministic anchor for temporal ↔ millis conversions. UTC makes the
+// numeric encoding portable across machines and platforms.
+private val ANCHOR_ZONE: ZoneOffset = ZoneOffset.UTC
 
 /**
  * Platform hook for registering direct `java.sql.* ↔ java.time.*` converters.
@@ -92,15 +95,15 @@ internal object JavaTypeConverters {
         registerTimeRelated(java.sql.Time::class, false, supportsKotlinxTime, { java.sql.Time(it) }, registry)
         registerTimeRelated(
             java.time.LocalDateTime::class, false, supportsKotlinxTime,
-            { Instant.ofEpochMilli(it).atZone(ZoneId.systemDefault()).toLocalDateTime() }, registry
+            { Instant.ofEpochMilli(it).atOffset(ANCHOR_ZONE).toLocalDateTime() }, registry
         )
         registerTimeRelated(
             java.time.LocalDate::class, false, supportsKotlinxTime,
-            { Instant.ofEpochMilli(it).atZone(ZoneId.systemDefault()).toLocalDate() }, registry
+            { Instant.ofEpochMilli(it).atOffset(ANCHOR_ZONE).toLocalDate() }, registry
         )
         registerTimeRelated(
             java.time.LocalTime::class, false, supportsKotlinxTime,
-            { Instant.ofEpochMilli(it).atZone(ZoneId.systemDefault()).toLocalTime() }, registry
+            { Instant.ofEpochMilli(it).atOffset(ANCHOR_ZONE).toLocalTime() }, registry
         )
         // Core types: Long, Double, Float, String — add java.sql/time sources to existing groups
         registerTimeRelated(Long::class, true, supportsKotlinxTime, { it }, registry)
@@ -108,7 +111,7 @@ internal object JavaTypeConverters {
         registerTimeRelated(Float::class, true, supportsKotlinxTime, { it / 1000f }, registry)
         registerTimeRelated(
             String::class, true, supportsKotlinxTime,
-            { Instant.ofEpochMilli(it).atZone(ZoneId.systemDefault()).format(DateTimeFormatter.ISO_INSTANT) }, registry
+            { Instant.ofEpochMilli(it).atOffset(ANCHOR_ZONE).format(DateTimeFormatter.ISO_INSTANT) }, registry
         )
         if (supportsKotlinxTime) {
             registerKotlinxTimeTargets(registry)
@@ -157,9 +160,8 @@ internal object JavaTypeConverters {
             { it.atStartOfDay() },
             { it.toLocalDate() }
         )
-        direct(registry, java.time.LocalTime::class, java.time.LocalDateTime::class) {
-            (it as java.time.LocalDateTime).toLocalTime()
-        }
+        direct(registry, java.time.LocalTime::class, java.time.LocalDateTime::class) { (it as java.time.LocalDateTime).toLocalTime() }
+        direct(registry, java.time.LocalDateTime::class, java.time.LocalTime::class) { (it as java.time.LocalTime).atDate(java.time.LocalDate.EPOCH) }
 
         // java.sql ↔ java.time direct pairs are registered per-platform:
         // JVM desktop can use the JDK 8 bridge methods (toLocalDate(),
@@ -175,6 +177,11 @@ internal object JavaTypeConverters {
             java.time.LocalDateTime::class,
             java.time.LocalTime::class
         ).forEach { t -> direct(registry, String::class, t) { it.toString() } }
+
+        // String → java.time via ISO `.parse()` — no timezone, no epoch pivot.
+        direct(registry, java.time.LocalDate::class, String::class) { java.time.LocalDate.parse(it as String) }
+        direct(registry, java.time.LocalDateTime::class, String::class) { java.time.LocalDateTime.parse(it as String) }
+        direct(registry, java.time.LocalTime::class, String::class) { java.time.LocalTime.parse(it as String) }
 
         // Cross-type: kotlinx.datetime ↔ java.time via the official interop
         // extensions. These don't touch a timezone — they just rewrap the wire
@@ -206,8 +213,8 @@ internal object JavaTypeConverters {
             java.sql.Date::class to { (it as java.sql.Date).time },
             java.sql.Timestamp::class to { (it as java.sql.Timestamp).time },
             java.sql.Time::class to { (it as java.sql.Time).time },
-            java.time.LocalDateTime::class to { (it as java.time.LocalDateTime).atZone(ZoneId.systemDefault()).toInstant().toEpochMilli() },
-            java.time.LocalDate::class to { (it as java.time.LocalDate).atTime(12, 0).atZone(ZoneId.systemDefault()).toInstant().toEpochMilli() },
+            java.time.LocalDateTime::class to { (it as java.time.LocalDateTime).atOffset(ANCHOR_ZONE).toInstant().toEpochMilli() },
+            java.time.LocalDate::class to { (it as java.time.LocalDate).atTime(12, 0).atOffset(ANCHOR_ZONE).toInstant().toEpochMilli() },
             // Deterministic anchor: 1970-01-01 UTC. Previously used LocalDate.now() +
             // ZonedDateTime.now().offset, which made the result depend on the current
             // DST era — same LocalTime produced different Longs before/after a DST
@@ -217,13 +224,13 @@ internal object JavaTypeConverters {
         )
         val kotlinxFromMillis: List<Pair<KClass<*>, (Long) -> Any>> = listOf(
             kotlinx.datetime.LocalDate::class to { m: Long ->
-                kotlin.time.Instant.fromEpochMilliseconds(m).toLocalDateTime(kotlinx.datetime.TimeZone.currentSystemDefault()).date
+                kotlin.time.Instant.fromEpochMilliseconds(m).toLocalDateTime(kotlinx.datetime.TimeZone.UTC).date
             },
             kotlinx.datetime.LocalDateTime::class to { m: Long ->
-                kotlin.time.Instant.fromEpochMilliseconds(m).toLocalDateTime(kotlinx.datetime.TimeZone.currentSystemDefault())
+                kotlin.time.Instant.fromEpochMilliseconds(m).toLocalDateTime(kotlinx.datetime.TimeZone.UTC)
             },
             kotlinx.datetime.LocalTime::class to { m: Long ->
-                kotlin.time.Instant.fromEpochMilliseconds(m).toLocalDateTime(kotlinx.datetime.TimeZone.currentSystemDefault()).time
+                kotlin.time.Instant.fromEpochMilliseconds(m).toLocalDateTime(kotlinx.datetime.TimeZone.UTC).time
             },
             kotlin.time.Instant::class to { m: Long -> kotlin.time.Instant.fromEpochMilliseconds(m) },
         )
@@ -258,10 +265,10 @@ internal object JavaTypeConverters {
         if (destClass != java.sql.Time::class)
             converters[java.sql.Time::class] = { toNative((it as java.sql.Time).time) }
         if (destClass != java.time.LocalDateTime::class) converters[java.time.LocalDateTime::class] = {
-            toNative((it as java.time.LocalDateTime).atZone(ZoneId.systemDefault()).toInstant().toEpochMilli())
+            toNative((it as java.time.LocalDateTime).atOffset(ANCHOR_ZONE).toInstant().toEpochMilli())
         }
         if (destClass != java.time.LocalDate::class) converters[java.time.LocalDate::class] = {
-            toNative((it as java.time.LocalDate).atTime(12, 0).atZone(ZoneId.systemDefault()).toInstant().toEpochMilli())
+            toNative((it as java.time.LocalDate).atTime(12, 0).atOffset(ANCHOR_ZONE).toInstant().toEpochMilli())
         }
         // Deterministic anchor: 1970-01-01 UTC (see commentary at the matching
         // line inside registerKotlinxTimeTargets for the rationale).
@@ -275,17 +282,16 @@ internal object JavaTypeConverters {
             if (destClass != kotlinx.datetime.LocalDate::class) converters[kotlinx.datetime.LocalDate::class] = {
                 toNative(
                     kotlinx.datetime.LocalDateTime(it as kotlinx.datetime.LocalDate, kotlinx.datetime.LocalTime(12, 0))
-                        .toInstant(kotlinx.datetime.TimeZone.currentSystemDefault()).toEpochMilliseconds()
+                        .toInstant(kotlinx.datetime.TimeZone.UTC).toEpochMilliseconds()
                 )
             }
             if (destClass != kotlinx.datetime.LocalDateTime::class) converters[kotlinx.datetime.LocalDateTime::class] = {
-                toNative((it as kotlinx.datetime.LocalDateTime).toInstant(kotlinx.datetime.TimeZone.currentSystemDefault()).toEpochMilliseconds())
+                toNative((it as kotlinx.datetime.LocalDateTime).toInstant(kotlinx.datetime.TimeZone.UTC).toEpochMilliseconds())
             }
             if (destClass != kotlinx.datetime.LocalTime::class) converters[kotlinx.datetime.LocalTime::class] = {
-                val date = kotlin.time.Clock.System.now().toLocalDateTime(kotlinx.datetime.TimeZone.currentSystemDefault()).date
                 toNative(
-                    kotlinx.datetime.LocalDateTime(date, it as kotlinx.datetime.LocalTime)
-                        .toInstant(kotlinx.datetime.TimeZone.currentSystemDefault()).toEpochMilliseconds()
+                    kotlinx.datetime.LocalDateTime(kotlinx.datetime.LocalDate(1970, 1, 1), it as kotlinx.datetime.LocalTime)
+                        .toInstant(kotlinx.datetime.TimeZone.UTC).toEpochMilliseconds()
                 )
             }
             if (destClass != kotlin.time.Instant::class) converters[kotlin.time.Instant::class] = {
@@ -332,10 +338,10 @@ internal object JavaTypeConverters {
         Instant.parse(s).toEpochMilli()
     } catch (_: Exception) {
         try {
-            java.time.LocalDateTime.parse(s).atZone(ZoneId.systemDefault()).toInstant().toEpochMilli()
+            java.time.LocalDateTime.parse(s).atOffset(ANCHOR_ZONE).toInstant().toEpochMilli()
         } catch (_: Exception) {
             try {
-                java.time.LocalDate.parse(s).atTime(12, 0).atZone(ZoneId.systemDefault()).toInstant().toEpochMilli()
+                java.time.LocalDate.parse(s).atTime(12, 0).atOffset(ANCHOR_ZONE).toInstant().toEpochMilli()
             } catch (e: Exception) {
                 throw SQLException("Unable to parse temporal string: $s", e)
             }
