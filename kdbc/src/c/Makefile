@@ -6,8 +6,11 @@
 #   linux   — x86_64-linux-gnu-gcc, cross-compiles Linux x64 from non-Linux hosts
 #   mingw   — x86_64-w64-mingw32-gcc, produces Windows x64 binaries
 #   arm64   — aarch64-linux-gnu-gcc, produces Linux ARM64 binaries
-#   ios     — Xcode clang, produces iOS device (arm64) binaries
-#   ios-sim — Xcode clang, produces iOS simulator (arm64) binaries
+#   ios         — Xcode clang, produces iOS device (arm64) binaries
+#   ios-sim     — Xcode clang, produces iOS simulator (arm64) binaries
+#   ios-sim-x64 — Xcode clang, produces iOS simulator (x86_64) binaries
+#   macos-arm64 — Xcode clang, produces macOS (arm64) binaries
+#   macos-x64   — Xcode clang, produces macOS (x86_64) binaries
 #
 # BUILDDIR places all outputs (objects, libraries) in a separate directory
 # so multiple targets can coexist without cleaning between builds.
@@ -46,13 +49,32 @@ else ifeq ($(TARGET),ios-sim)
   AR       = ar
   LDFLAGS  = -ldl
   LIB_SHARED = $(BUILDDIR)/libkdbc.dylib
-  EXTRA_CFLAGS = -target arm64-apple-ios-simulator -isysroot $(shell xcrun --sdk iphonesimulator --show-sdk-path)
+  # Explicit version in -target so clang emits LC_BUILD_VERSION (platform=iOSSim).
+  EXTRA_CFLAGS = -target arm64-apple-ios14.0-simulator -isysroot $(shell xcrun --sdk iphonesimulator --show-sdk-path)
+else ifeq ($(TARGET),ios-sim-x64)
+  CC       = $(shell xcrun --sdk iphonesimulator --find clang)
+  AR       = ar
+  LDFLAGS  = -ldl
+  LIB_SHARED = $(BUILDDIR)/libkdbc.dylib
+  EXTRA_CFLAGS = -target x86_64-apple-ios14.0-simulator -isysroot $(shell xcrun --sdk iphonesimulator --show-sdk-path)
 else ifeq ($(TARGET),ios)
   CC       = $(shell xcrun --sdk iphoneos --find clang)
   AR       = ar
   LDFLAGS  = -ldl
   LIB_SHARED = $(BUILDDIR)/libkdbc.dylib
-  EXTRA_CFLAGS = -target arm64-apple-ios -isysroot $(shell xcrun --sdk iphoneos --show-sdk-path)
+  EXTRA_CFLAGS = -target arm64-apple-ios14.0 -isysroot $(shell xcrun --sdk iphoneos --show-sdk-path)
+else ifeq ($(TARGET),macos-arm64)
+  CC       = $(shell xcrun --sdk macosx --find clang)
+  AR       = ar
+  LDFLAGS  = -ldl
+  LIB_SHARED = $(BUILDDIR)/libkdbc.dylib
+  EXTRA_CFLAGS = -arch arm64 -mmacosx-version-min=11.0 -isysroot $(shell xcrun --sdk macosx --show-sdk-path)
+else ifeq ($(TARGET),macos-x64)
+  CC       = $(shell xcrun --sdk macosx --find clang)
+  AR       = ar
+  LDFLAGS  = -ldl
+  LIB_SHARED = $(BUILDDIR)/libkdbc.dylib
+  EXTRA_CFLAGS = -arch x86_64 -mmacosx-version-min=11.0 -isysroot $(shell xcrun --sdk macosx --show-sdk-path)
 else
   CC       = gcc
   AR       = ar

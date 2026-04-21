@@ -26,38 +26,26 @@ val cSrcInputs: Action<Task> = Action {
     inputs.file("src/c/Makefile")
 }
 
-val buildNativeKdbc = tasks.register<Exec>("buildNativeKdbc") {
+// All native C outputs land under $buildDir/c/<target>/ so the standard
+// gradle `clean` wipes them along with every other generated artifact.
+fun nativeBuildDir(subdir: String): File =
+    layout.buildDirectory.dir("c/$subdir").get().asFile
+
+fun registerNativeKdbcBuild(
+    taskName: String,
+    target: String,
+    subdir: String,
+): TaskProvider<Exec> = tasks.register<Exec>(taskName) {
+    val out = nativeBuildDir(subdir)
     workingDir = file("src/c")
-    commandLine("make", "lib")
+    commandLine("make", "TARGET=$target", "BUILDDIR=${out.absolutePath}", "${out.absolutePath}/libkdbc.a")
     cSrcInputs.execute(this)
-    outputs.file("src/c/libkdbc.a")
-    outputs.file("src/c/libkdbc.so")
+    outputs.file("${out.absolutePath}/libkdbc.a")
 }
 
-val buildNativeKdbcMingw = tasks.register<Exec>("buildNativeKdbcMingw") {
-    workingDir = file("src/c")
-    commandLine("make", "TARGET=mingw", "BUILDDIR=build-mingw", "lib")
-    cSrcInputs.execute(this)
-    outputs.file("src/c/build-mingw/libkdbc.a")
-    outputs.file("src/c/build-mingw/libkdbc.dll")
-}
-
-val buildNativeKdbcArm64 = tasks.register<Exec>("buildNativeKdbcArm64") {
-    workingDir = file("src/c")
-    commandLine("make", "TARGET=arm64", "BUILDDIR=build-arm64", "lib")
-    cSrcInputs.execute(this)
-    outputs.file("src/c/build-arm64/libkdbc.a")
-    outputs.file("src/c/build-arm64/libkdbc.so")
-}
-
-val cleanNativeKdbc = tasks.register<Exec>("cleanNativeKdbc") {
-    workingDir = file("src/c")
-    commandLine("make", "clean")
-}
-
-tasks.named("clean") {
-    dependsOn(cleanNativeKdbc)
-}
+val buildNativeKdbc      = registerNativeKdbcBuild("buildNativeKdbc",      "native", "host")
+val buildNativeKdbcMingw = registerNativeKdbcBuild("buildNativeKdbcMingw", "mingw",  "mingw")
+val buildNativeKdbcArm64 = registerNativeKdbcBuild("buildNativeKdbcArm64", "arm64",  "linux-arm64")
 
 kotlin {
     applyDefaultHierarchyTemplate()
@@ -84,18 +72,16 @@ kotlin {
         }
     }
 
-    val linuxX64LibDir = if (isMac) "src/c/build-linux" else "src/c"
-
     if (isMac) {
-        macosArm64        { kdbcCinterop("src/c") }
-        macosX64          { kdbcCinterop("src/c") }
-        iosSimulatorArm64 { kdbcCinterop("src/c/build-ios-sim") }
-        iosArm64          { kdbcCinterop("src/c/build-ios") }
-        iosX64            { kdbcCinterop("src/c/build-ios-sim") }
+        macosArm64        { kdbcCinterop(nativeBuildDir("macos-arm64").absolutePath) }
+        macosX64          { kdbcCinterop(nativeBuildDir("macos-x64").absolutePath) }
+        iosSimulatorArm64 { kdbcCinterop(nativeBuildDir("ios-sim").absolutePath) }
+        iosArm64          { kdbcCinterop(nativeBuildDir("ios").absolutePath) }
+        iosX64            { kdbcCinterop(nativeBuildDir("ios-sim-x64").absolutePath) }
     } else {
-        linuxX64    { kdbcCinterop(linuxX64LibDir) }
-        linuxArm64  { kdbcCinterop("src/c/build-arm64") }
-        mingwX64    { kdbcCinterop("src/c/build-mingw") }
+        linuxX64    { kdbcCinterop(nativeBuildDir("host").absolutePath) }
+        linuxArm64  { kdbcCinterop(nativeBuildDir("linux-arm64").absolutePath) }
+        mingwX64    { kdbcCinterop(nativeBuildDir("mingw").absolutePath) }
     }
 
     // Target Java 8 bytecode for the JVM artifact (matches stormify's Java 8 floor).
@@ -172,27 +158,26 @@ tasks.matching { it.name.startsWith("cinteropKdbcLinuxArm64") }.configureEach {
     dependsOn(buildNativeKdbcArm64)
 }
 
-// Apple targets — build libkdbc.a for each SDK on macOS
+// Apple targets — each target gets its own architecture-specific libkdbc.a.
+// Sharing a single host-built archive would bake the host arch into every klib.
 if (System.getProperty("os.name").startsWith("Mac")) {
-    // macOS targets use the default native build (same host)
-    tasks.matching { it.name.startsWith("cinteropKdbcMacosArm64") || it.name.startsWith("cinteropKdbcMacosX64") }.configureEach {
-        dependsOn(buildNativeKdbc)
-    }
+    val buildNativeKdbcMacosArm64  = registerNativeKdbcBuild("buildNativeKdbcMacosArm64",  "macos-arm64", "macos-arm64")
+    val buildNativeKdbcMacosX64    = registerNativeKdbcBuild("buildNativeKdbcMacosX64",    "macos-x64",   "macos-x64")
+    val buildNativeKdbcIosSim      = registerNativeKdbcBuild("buildNativeKdbcIosSim",      "ios-sim",     "ios-sim")
+    val buildNativeKdbcIosSimX64   = registerNativeKdbcBuild("buildNativeKdbcIosSimX64",   "ios-sim-x64", "ios-sim-x64")
+    val buildNativeKdbcIos         = registerNativeKdbcBuild("buildNativeKdbcIos",         "ios",         "ios")
 
-    val buildNativeKdbcIosSim = tasks.register<Exec>("buildNativeKdbcIosSim") {
-        workingDir = file("src/c")
-        commandLine("make", "TARGET=ios-sim", "BUILDDIR=build-ios-sim", "build-ios-sim/libkdbc.a")
-        cSrcInputs.execute(this)
-        outputs.file("src/c/build-ios-sim/libkdbc.a")
+    tasks.matching { it.name.startsWith("cinteropKdbcMacosArm64") }.configureEach {
+        dependsOn(buildNativeKdbcMacosArm64)
     }
-    val buildNativeKdbcIos = tasks.register<Exec>("buildNativeKdbcIos") {
-        workingDir = file("src/c")
-        commandLine("make", "TARGET=ios", "BUILDDIR=build-ios", "build-ios/libkdbc.a")
-        cSrcInputs.execute(this)
-        outputs.file("src/c/build-ios/libkdbc.a")
+    tasks.matching { it.name.startsWith("cinteropKdbcMacosX64") }.configureEach {
+        dependsOn(buildNativeKdbcMacosX64)
     }
-    tasks.matching { it.name.startsWith("cinteropKdbcIosSimulatorArm64") || it.name.startsWith("cinteropKdbcIosX64") }.configureEach {
+    tasks.matching { it.name.startsWith("cinteropKdbcIosSimulatorArm64") }.configureEach {
         dependsOn(buildNativeKdbcIosSim)
+    }
+    tasks.matching { it.name.startsWith("cinteropKdbcIosX64") }.configureEach {
+        dependsOn(buildNativeKdbcIosSimX64)
     }
     tasks.matching { it.name.startsWith("cinteropKdbcIosArm64") }.configureEach {
         dependsOn(buildNativeKdbcIos)
