@@ -85,7 +85,7 @@ Every non-key property that needs lazy loading uses `by db(defaultValue)`.
 An `AutoTable` instance exists in one of three states, and `populate()` behaves accordingly.
 A `Stormify` instance is considered "available" when it is either directly attached to the
 entity (by a prior Stormify operation) **or** when a [default
-instance](Database_Configuration.md#default-instance) has been registered via `Stormify.asDefault()`.
+instance](index.md#default-instance) has been registered via `Stormify.asDefault()`.
 
 | State | `Stormify` available? | User touched any `db` field? | Behavior on read |
 |-------|----------------------|-------------------------------|------------------|

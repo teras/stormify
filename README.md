@@ -15,6 +15,14 @@ Stormify is a flexible ORM library for Kotlin Multiplatform that simplifies data
 
 Designed for developers seeking a simple yet powerful ORM, Stormify excels in projects that favor convention over configuration, allowing for minimal setup and clean, straightforward code.
 
+<p align="center">
+  <a href="https://stormify.org"><img src="https://img.shields.io/badge/Website-stormify.org-4a82c2?style=for-the-badge&logoColor=white" alt="Website"></a>
+  &nbsp;
+  <a href="https://stormify.org/docs/2.1.0/"><img src="https://img.shields.io/badge/Docs-Read%20the%20docs-2563eb?style=for-the-badge&logoColor=white" alt="Docs"></a>
+  &nbsp;
+  <a href="https://stormify.org/docs/2.1.0/api-stormify/"><img src="https://img.shields.io/badge/API-Reference-555?style=for-the-badge&logoColor=white" alt="API"></a>
+</p>
+
 ## Features
 
 - **Kotlin Multiplatform**: JVM (Java & Kotlin), Android, Linux (x64 & ARM64), Windows (x64), macOS, and iOS — same API across all platforms.
@@ -33,13 +41,6 @@ Designed for developers seeking a simple yet powerful ORM, Stormify excels in pr
 - **Paginated Views**: `PagedList<T>` for UI grids (ZK/Compose/Swing) and `PagedQuery<T>` for stateless REST endpoints — filters, sorting, FK traversal, aggregations, facet counts, and streaming iteration over very large result sets.
 - **Stored Procedures**: Call stored procedures with input, output, and bidirectional parameters.
 - **Support for Composite Keys**: Handle tables with composite primary keys effortlessly.
-
-<p align="center">
-  <a href="https://stormify.org/"><img src="https://img.shields.io/badge/Homepage-stormify.org-1e88e5?style=flat-square&logo=firefox&logoColor=white" alt="Homepage"></a>
-  <a href="https://stormify.org/docs/2.1.0/"><img src="https://img.shields.io/badge/Docs-Guide-43a047?style=flat-square&logo=readthedocs&logoColor=white" alt="Docs"></a>
-  <a href="https://stormify.org/docs/2.1.0/api-stormify/"><img src="https://img.shields.io/badge/API-Reference-fb8c00?style=flat-square&logo=kotlin&logoColor=white" alt="API"></a>
-  <a href="https://github.com/teras/stormify-examples/tree/2.1.0"><img src="https://img.shields.io/badge/Examples-Samples-8e24aa?style=flat-square&logo=github&logoColor=white" alt="Examples"></a>
-</p>
 
 ## Requirements
 
@@ -223,6 +224,21 @@ git submodule update --init --recursive
 ```
 
 Each subfolder is a self-contained project with its own `README.md` explaining how to build and run it. See the [Examples overview](docs/src/Examples.md) for a short description of each.
+
+## How Stormify stacks up
+
+A quick side-by-side against common Kotlin and Java ORMs. See the [full comparison](https://stormify.org/docs/2.1.0/Comparison/) for reflection behaviour, compile-time metadata, narrative context, and when to pick each.
+
+|  | Stormify | Exposed | Ktorm | Komapper | SQLDelight | Hibernate |
+|---|---|---|---|---|---|---|
+| Multiplatform · JVM + Android + native + iOS | ✓ | JVM + Android | JVM | JVM | ✓ | JVM |
+| Native DB drivers · no JDBC required | ✓ | — | — | — | SQLite only | — |
+| Facet-aware paged queries, built-in | ✓ | — | — | — | — | — |
+| Any class as entity | ✓ | — | — | — | — | — |
+| Accepts JPA annotations | ✓ | — | — | — | — | ✓ |
+| Suspend / coroutines API | ✓ | ✓ | — | ✓ | ✓ | — |
+| Lazy reference delegates | ✓ | DAO only | eager only | — | — | ✓ |
+| Stored procedures (in/out/inout) | ✓ | manual | manual | — | — | ✓ |
 
 ## Documentation
 

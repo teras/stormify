@@ -10,6 +10,7 @@ group = "onl.ycode"
 version = "2.1.0"
 
 plugins {
+    base   // provides a root-level `clean` task so docs.gradle.kts can hook into it
     (kotlin("multiplatform") version "2.2.20").apply(false)
     (kotlin("jvm") version "2.2.20").apply(false)
     (id("com.android.library") version "8.7.3").apply(false)

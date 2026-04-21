@@ -1,0 +1,43 @@
+/*
+ * Sticky header for Markdown tables.
+ *
+ * Material wraps tables in `.md-typeset__scrollwrap` with `overflow-x: auto`,
+ * which promotes the wrapper to a "scroll containing block" — that kills
+ * `position: sticky` on nested <th> elements (they stick within the wrapper
+ * instead of the viewport). Disable the wrapper's overflow so sticky
+ * escapes to the page scroll.
+ */
+
+/*
+ * Desktop: let sticky thead escape the Material scrollwrap so it pins to the
+ * viewport instead of getting trapped inside the wrapper's overflow box.
+ */
+.md-typeset__scrollwrap,
+.md-typeset__table,
+.md-typeset table:not([class]) {
+  overflow: visible;
+}
+
+.md-typeset table:not([class]) thead th {
+  position: sticky;
+  top: var(--md-header-height, 2.4rem);
+  background: var(--md-default-bg-color);
+  z-index: 2;
+  box-shadow: inset 0 -1px var(--md-default-fg-color--lightest);
+  white-space: nowrap;
+}
+
+/*
+ * Narrow viewports: bring back the scrollwrap's horizontal scroll so the page
+ * itself doesn't overflow horizontally. Sticky header sacrifices itself here
+ * — a contained horizontal scroll on a narrow screen beats a whole-page
+ * horizontal scroll.
+ */
+@media (max-width: 960px) {
+  .md-typeset__scrollwrap {
+    overflow-x: auto;
+  }
+  .md-typeset table:not([class]) thead th {
+    position: static;
+  }
+}

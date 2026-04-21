@@ -29,6 +29,17 @@
 //   gradle syncReadmeUrls        # rewrites README.md links to /docs/<ver>/
 //   git commit -am "release <ver>" && git push
 
+// Docs outputs live under docs/build/ (not under the root project build/), so
+// the default `clean` task never touches them. Hook an explicit cleanup in.
+val cleanDocs = tasks.register<Delete>("cleanDocs") {
+    group = "documentation"
+    description = "Delete docs/build/ and docs/build-landing/ (hooks into `clean`)"
+    delete(file("docs/build"), file("docs/build-landing"))
+}
+tasks.named("clean") {
+    dependsOn(cleanDocs)
+}
+
 tasks.register("createDocs") {
     group = "documentation"
     description = "Generate documentation site locally (Dokka + Doxygen + MkDocs) into docs/build/"

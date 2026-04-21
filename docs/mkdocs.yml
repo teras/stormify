@@ -45,14 +45,14 @@ theme:
 
 extra_css:
   - stylesheets/code-highlight.css
+  - stylesheets/tables.css
 
 extra_javascript:
   - js/tab-fallback.js
 
 nav:
-  - Welcome: README.md
   - Getting Started:
-    - Database Configuration: Database_Configuration.md
+    - Database Configuration: index.md
     - Entity Mapping: Entity_Mapping.md
     - Annotations: Annotations.md
   - Entities:
@@ -66,6 +66,7 @@ nav:
     - PagedList: PagedList.md
     - PagedQuery: PagedQuery.md
   - Examples: Examples.md
+  - Comparison: Comparison.md
   - KDBC:
     - Overview: KDBC_Overview.md
     - C Guide: KDBC_C_Guide.md

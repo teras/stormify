@@ -25,7 +25,7 @@ behind the scenes.
 ## Quick Start
 
 Construction takes only the entity type. The [Stormify] instance is resolved from
-[the default instance](Database_Configuration.md#default-instance) on first access, so
+[the default instance](index.md#default-instance) on first access, so
 the same class works identically from Kotlin and Java. If you are juggling multiple
 `Stormify` instances in the same process, use `stormify.attach(...)` at construction
 time to bind the list to a specific one.
