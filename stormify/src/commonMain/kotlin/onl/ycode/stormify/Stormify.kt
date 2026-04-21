@@ -25,7 +25,7 @@ private class FixedParams(val query: String, val params: List<Any?>)
  * @param dataSource the data source for all database operations
  * @param registrars optional entity registrars to register at construction time
  */
-open class Stormify(val dataSource: DataSource, vararg registrars: EntityRegistrar) {
+class Stormify(val dataSource: DataSource, vararg registrars: EntityRegistrar) {
 
     init {
         for (r in registrars) r.register()

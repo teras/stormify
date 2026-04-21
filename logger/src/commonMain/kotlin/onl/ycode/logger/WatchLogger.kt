@@ -26,12 +26,12 @@ class WatchLogger
          * @param message   the log message
          * @param throwable the exception to log, if any
          */
-        fun watch(level: String, message: String, throwable: Throwable?)
+        fun watch(level: LogLevel, message: String, throwable: Throwable?)
     }
 
     override fun log(level: LogLevel, message: String, throwable: Throwable?, vararg args: Any?) {
         if (level < this.level) return
         logger.log(level, message, throwable, *args)
-        watcher.watch(level.name, format(message, *args), throwable)
+        watcher.watch(level, format(message, *args), throwable)
     }
 }

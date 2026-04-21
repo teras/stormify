@@ -62,7 +62,7 @@ private val KOTLIN_BUILTINS = mapOf(
     "kotlin.ByteArray" to "ByteArray", "kotlin.CharArray" to "CharArray",
 )
 
-class EntityProperty(declaration: KSPropertyDeclaration, entity: KSClassDeclaration) {
+internal class EntityProperty(declaration: KSPropertyDeclaration, entity: KSClassDeclaration) {
     val name = declaration.simpleName.getShortName()
     /** Raw class reference used with `castTo(Xxx::class, ...)` — no generic parameters. */
     val type: String
