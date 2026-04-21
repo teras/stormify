@@ -2,6 +2,7 @@ package onl.ycode.stormify
 
 import onl.ycode.kdbc.DataSource
 import onl.ycode.kdbc.JdbcDataSource
+import onl.ycode.kdbc.SQLException
 import onl.ycode.stormify.biglist.ReferencePath
 import java.util.function.Consumer
 import java.util.function.Function
@@ -28,6 +29,7 @@ class StormifyJ(dataSource: DataSource, vararg registrars: EntityRegistrar) {
     val sqlDialect get() = stormify.sqlDialect
 
     /** Executes a SELECT and returns the rows as a list of [baseClass] instances. */
+    @Throws(SQLException::class)
     fun <T : Any> read(baseClass: Class<T>, query: String, vararg params: Any?) =
         stormify.read(null, baseClass.kotlin, query, *params)
 
@@ -36,6 +38,7 @@ class StormifyJ(dataSource: DataSource, vararg registrars: EntityRegistrar) {
      * (e.g. `COUNT(*) OVER () AS __total`) via the supplied consumers — those columns are not mapped
      * onto the entity. Column names are matched case-insensitively.
      */
+    @Throws(SQLException::class)
     fun <T : Any> read(
         baseClass: Class<T>,
         query: String,
@@ -47,10 +50,12 @@ class StormifyJ(dataSource: DataSource, vararg registrars: EntityRegistrar) {
     )
 
     /** Executes a SELECT and returns the first row as a [baseClass] instance, or `null` if empty. */
+    @Throws(SQLException::class)
     fun <T : Any> readOne(baseClass: Class<T>, query: String, vararg params: Any?) =
         stormify.readOne(null, baseClass.kotlin, query, *params)
 
     /** Executes a SELECT and streams each row to [consumer] — avoids materializing the full result. */
+    @Throws(SQLException::class)
     fun <T : Any> readCursor(baseClass: Class<T>, query: String, consumer: Consumer<T>, vararg params: Any?) =
         stormify.readCursor(null, baseClass.kotlin, query, *params, consumer = { consumer.accept(it) })
 
@@ -59,6 +64,7 @@ class StormifyJ(dataSource: DataSource, vararg registrars: EntityRegistrar) {
      * consumers instead of mapping them onto the entity. See the list-returning [read] overload
      * for the capture semantics.
      */
+    @Throws(SQLException::class)
     fun <T : Any> readCursor(
         baseClass: Class<T>,
         query: String,
@@ -72,27 +78,35 @@ class StormifyJ(dataSource: DataSource, vararg registrars: EntityRegistrar) {
     )
 
     /** Executes an INSERT / UPDATE / DELETE and returns the affected row count. */
+    @Throws(SQLException::class)
     fun executeUpdate(query: String, vararg params: Any?) = stormify.executeUpdate(null, query, *params)
 
     /** Populates [entity] from the database by its primary key. Used internally by [AutoTable]. */
+    @Throws(SQLException::class)
     fun <T : Any> populate(entity: T) = stormify.populate(null, entity)
 
     /** Inserts [item] into its mapped table and returns the (possibly key-populated) entity. */
+    @Throws(SQLException::class)
     fun <T : Any> create(item: T) = stormify.create(null, item)
 
     /** Batch INSERT of [items] in a single round trip. */
+    @Throws(SQLException::class)
     fun <T : Any> create(items: Collection<T>) = stormify.create(null, items)
 
     /** UPDATE's the row corresponding to [updatedItem] using its primary key. */
+    @Throws(SQLException::class)
     fun <T : Any> update(updatedItem: T) = stormify.update(null, updatedItem)
 
     /** Batch UPDATE of [items]. */
+    @Throws(SQLException::class)
     fun <T : Any> update(items: Collection<T>) = stormify.update(null, items)
 
     /** DELETE's the row corresponding to [deletedItem] using its primary key. */
+    @Throws(SQLException::class)
     fun delete(deletedItem: Any) = stormify.delete(null, deletedItem)
 
     /** Batch DELETE of [items]. */
+    @Throws(SQLException::class)
     fun <T : Any> delete(items: Collection<T>) = stormify.delete(null, items)
 
     /**
@@ -101,6 +115,7 @@ class StormifyJ(dataSource: DataSource, vararg registrars: EntityRegistrar) {
      * pointing at the same parent type.
      */
     @JvmOverloads
+    @Throws(SQLException::class)
     fun <M : Any, T : Any> getDetails(parent: M, detailsClass: Class<T>, propertyName: String? = null) =
         stormify.getDetails(null, parent, detailsClass.kotlin, propertyName)
 
@@ -110,27 +125,32 @@ class StormifyJ(dataSource: DataSource, vararg registrars: EntityRegistrar) {
      * The compiler guarantees the referenced property exists on the child type, so
      * typos and renames surface at build time rather than on first query.
      */
+    @Throws(SQLException::class)
     fun <M : Any, T : Any> getDetails(parent: M, detailsClass: Class<T>, referenceField: ReferencePath) =
         stormify.getDetails(null, parent, detailsClass.kotlin, referenceField.path.trimEnd('.'))
 
     /** Convenience over [read] for `SELECT * FROM <table> <whereClause>`. */
     @JvmOverloads
+    @Throws(SQLException::class)
     fun <T : Any> findAll(baseClass: Class<T>, whereClause: String = "", vararg arguments: Any?) =
         stormify.findAll(null, baseClass.kotlin, whereClause, *arguments)
 
     /** Looks up a single row of [baseClass] by its primary key [id]. Returns `null` if not found. */
+    @Throws(SQLException::class)
     fun <T : Any> findById(baseClass: Class<T>, id: Any) = stormify.findById(null, baseClass.kotlin, id)
 
     /**
      * Invokes the stored procedure [name] with [args]. Output and bidirectional parameters
      * should be passed as [Sp.Out] / [Sp.InOut] instances; all other values are auto-wrapped as IN.
      */
+    @Throws(SQLException::class)
     fun procedure(name: String, vararg args: Any?) = stormify.procedure(name, *args)
 
     /**
      * Runs [block] inside a database transaction. On return the transaction commits;
      * on any exception it rolls back.
      */
+    @Throws(SQLException::class)
     fun transaction(block: Consumer<TransactionContextJ>) =
         TransactionContextJ(TransactionContext(stormify)).start(block)
 
@@ -138,10 +158,12 @@ class StormifyJ(dataSource: DataSource, vararg registrars: EntityRegistrar) {
      * Runs [block] inside a database transaction and returns its result. On return the
      * transaction commits; on any exception it rolls back.
      */
+    @Throws(SQLException::class)
     fun <R> transaction(block: Function<TransactionContextJ, R>): R =
         TransactionContextJ(TransactionContext(stormify)).start(block)
 
     /** Returns the [TableInfo] metadata for [baseClass], building it on first access. */
+    @Throws(SQLException::class)
     fun getTableInfo(baseClass: Class<*>) = stormify.resolveTableInfo(baseClass.kotlin)
 
     /** Current [NamingPolicy]. See [Stormify.namingPolicy]. */

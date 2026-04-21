@@ -1,6 +1,7 @@
 package onl.ycode.stormify
 
 import onl.ycode.kdbc.Connection
+import onl.ycode.kdbc.SQLException
 import onl.ycode.kdbc.Savepoint
 import onl.ycode.stormify.biglist.ReferencePath
 import kotlin.reflect.KClass
@@ -123,46 +124,59 @@ class TransactionContext internal constructor(
     }
 
     /** Executes an SQL UPDATE/INSERT/DELETE and returns the number of affected rows. */
+    @Throws(SQLException::class)
     fun executeUpdate(query: String, vararg params: Any?) = stormify.executeUpdate(conn, query, *params)
 
     /** Executes a SELECT query and returns all results as a list. */
+    @Throws(SQLException::class)
     inline fun <reified T : Any> read(query: String, vararg params: Any?) =
         stormify.read(conn, T::class, query, *params)
 
     /** Executes a SELECT query and returns exactly one result, or null if none found. */
+    @Throws(SQLException::class)
     inline fun <reified T : Any> readOne(query: String, vararg params: Any?): T? =
         stormify.readOne(conn, T::class, query, *params)
 
     /** Executes a SELECT query and processes results row-by-row via [consumer]. Returns the row count. */
+    @Throws(SQLException::class)
     inline fun <reified T : Any> readCursor(query: String, vararg params: Any?, noinline consumer: (T) -> Unit) =
         stormify.readCursor(conn, T::class, query, *params, consumer = consumer)
 
     /** Refreshes an entity with fresh data from the database based on its primary key. */
+    @Throws(SQLException::class)
     fun <T : Any> populate(entity: T): T = stormify.populate(conn, entity)
 
     /** Inserts a new entity into the database and returns it with generated values populated. */
+    @Throws(SQLException::class)
     fun <T : Any> create(item: T): T = stormify.create(conn, item)
 
     /** Inserts multiple entities in a batch. */
+    @Throws(SQLException::class)
     fun <T : Any> create(items: Collection<T>): List<T> = stormify.create(conn, items)
 
     /** Updates an existing entity in the database based on its primary key. */
+    @Throws(SQLException::class)
     fun <T : Any> update(updatedItem: T): T = stormify.update(conn, updatedItem)
 
     /** Updates multiple entities in a batch. */
+    @Throws(SQLException::class)
     fun <T : Any> update(items: Collection<T>): List<T> = stormify.update(conn, items)
 
     /** Deletes an entity from the database based on its primary key. */
+    @Throws(SQLException::class)
     fun <T : Any> delete(deletedItem: T) = stormify.delete(conn, deletedItem)
 
     /** Deletes multiple entities from the database. */
+    @Throws(SQLException::class)
     fun <T : Any> delete(items: Collection<T>) = stormify.delete(conn, items)
 
     /** Retrieves all detail (child) entities of type [D] related to a [parent] through a foreign key. */
+    @Throws(SQLException::class)
     inline fun <reified D : Any> getDetails(parent: Any, propertyName: String? = null): List<D> =
         stormify.getDetails(conn, parent, D::class, propertyName)
 
     /** Retrieves all detail (child) entities of [detailsClass] related to a [parent] through a foreign key. */
+    @Throws(SQLException::class)
     fun <M : Any, D : Any> getDetails(parent: M, detailsClass: KClass<D>, propertyName: String? = null): List<D> =
         stormify.getDetails(conn, parent, detailsClass, propertyName)
 
@@ -170,27 +184,34 @@ class TransactionContext internal constructor(
      * Type-safe variant of [getDetails] that accepts an annotation-processor-generated
      * reference path (e.g. `Paths.AuditEntry_.createdBy`) instead of a string.
      */
+    @Throws(SQLException::class)
     inline fun <reified D : Any> getDetails(parent: Any, referenceField: ReferencePath): List<D> =
         stormify.getDetails(conn, parent, D::class, referenceField.path.trimEnd('.'))
 
     /** Finds all entities of type [T], optionally filtered by a [whereClause]. */
+    @Throws(SQLException::class)
     inline fun <reified T : Any> findAll(whereClause: String = "", vararg arguments: Any?): List<T> =
         stormify.findAll(conn, T::class, whereClause, *arguments)
 
     /** Finds all entities of [kclass], optionally filtered by a [whereClause]. */
+    @Throws(SQLException::class)
     fun <T : Any> findAll(kclass: KClass<T>, whereClause: String = "", vararg arguments: Any?): List<T> =
         stormify.findAll(conn, kclass, whereClause, *arguments)
 
     /** Finds a single entity of type [T] by its primary key [id], or null if not found. */
+    @Throws(SQLException::class)
     inline fun <reified T : Any> findById(id: Any) = stormify.findById(conn, T::class, id)
 
     /** Finds a single entity of [kclass] by its primary key [id], or null if not found. */
+    @Throws(SQLException::class)
     fun <T : Any> findById(kclass: KClass<T>, id: Any) = stormify.findById(conn, kclass, id)
 
     /** Calls a stored procedure by [name]. OUT/INOUT parameters use [Sp.Out]/[Sp.InOut]. */
+    @Throws(SQLException::class)
     fun procedure(name: String, vararg args: Any?) = stormify.procedure(conn, name, *args)
 
     /** Executes a nested transaction using a database savepoint, returning [block]'s result. */
+    @Throws(SQLException::class)
     fun <R> transaction(block: () -> R): R {
         var savepoint: Savepoint? = null
         try {

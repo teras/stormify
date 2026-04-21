@@ -295,6 +295,7 @@ open class Stormify(val dataSource: DataSource, vararg registrars: EntityRegistr
     // --- Read operations ---
 
     /** Executes an SQL UPDATE/INSERT/DELETE and returns the number of affected rows. */
+    @Throws(SQLException::class)
     fun executeUpdate(query: String, vararg params: Any?) =
         executeUpdate(null, query, *params)
 
@@ -311,6 +312,7 @@ open class Stormify(val dataSource: DataSource, vararg registrars: EntityRegistr
      * a single roundtrip without breaking entity mapping. Ignored for `Map` and scalar result
      * types since those expose every column to the caller directly.
      */
+    @Throws(SQLException::class)
     inline fun <reified T : Any> readCursor(
         query: String,
         vararg params: Any?,
@@ -361,6 +363,7 @@ open class Stormify(val dataSource: DataSource, vararg registrars: EntityRegistr
      *
      * @param customFields optional per-column interceptors. See [readCursor] for semantics.
      */
+    @Throws(SQLException::class)
     inline fun <reified T : Any> read(
         query: String,
         vararg params: Any?,
@@ -381,6 +384,7 @@ open class Stormify(val dataSource: DataSource, vararg registrars: EntityRegistr
         }
 
     /** Executes a SELECT query and returns exactly one result, or null if none found. */
+    @Throws(SQLException::class)
     inline fun <reified T : Any> readOne(query: String, vararg params: Any?): T? =
         readOne(null, T::class, query, *params)
 
@@ -407,6 +411,7 @@ open class Stormify(val dataSource: DataSource, vararg registrars: EntityRegistr
     // --- Populate ---
 
     /** Refreshes an entity with fresh data from the database based on its primary key. */
+    @Throws(SQLException::class)
     fun <T : Any> populate(entity: T): T =
         populate(null, entity)
 
@@ -546,9 +551,11 @@ open class Stormify(val dataSource: DataSource, vararg registrars: EntityRegistr
     // --- Create ---
 
     /** Inserts a new entity into the database and returns it with generated values populated. */
+    @Throws(SQLException::class)
     fun <T : Any> create(item: T): T = create(null, listOf(item))[0]
 
     /** Inserts multiple entities in a batch and returns them. Generated keys are only populated for single-item batches. */
+    @Throws(SQLException::class)
     fun <T : Any> create(items: Collection<T>): List<T> = create(null, items)
 
     internal fun <T : Any> create(conn: Connection?, item: T) = create(conn, listOf(item))[0]
@@ -628,9 +635,11 @@ open class Stormify(val dataSource: DataSource, vararg registrars: EntityRegistr
     // --- Update ---
 
     /** Updates an existing entity in the database based on its primary key. */
+    @Throws(SQLException::class)
     fun <T : Any> update(updatedItem: T): T = update(null, listOf(updatedItem))[0]
 
     /** Updates multiple entities in a batch based on their primary keys. */
+    @Throws(SQLException::class)
     fun <T : Any> update(items: Collection<T>): List<T> = update(null, items)
 
     internal fun <T : Any> update(conn: Connection?, updatedItem: T): T = update(conn, listOf(updatedItem))[0]
@@ -652,9 +661,11 @@ open class Stormify(val dataSource: DataSource, vararg registrars: EntityRegistr
     // --- Delete ---
 
     /** Deletes an entity from the database based on its primary key. */
+    @Throws(SQLException::class)
     fun <T : Any> delete(deletedItem: T) = delete(null, listOf(deletedItem))
 
     /** Deletes multiple entities from the database based on their primary keys. */
+    @Throws(SQLException::class)
     fun <T : Any> delete(items: Collection<T>) = delete(null, items)
 
     internal fun <T : Any> delete(conn: Connection?, deletedItem: T) = delete(conn, listOf(deletedItem))
@@ -692,6 +703,7 @@ open class Stormify(val dataSource: DataSource, vararg registrars: EntityRegistr
      * disambiguate. The value must be a single field identifier — a dotted traversal
      * path (e.g. `"user.address"`) is rejected with an error.
      */
+    @Throws(SQLException::class)
     inline fun <reified D : Any> getDetails(parent: Any, propertyName: String? = null): List<D> =
         getDetails(null, parent, D::class, propertyName)
 
@@ -701,6 +713,7 @@ open class Stormify(val dataSource: DataSource, vararg registrars: EntityRegistr
      * compiler guarantees the referenced property exists on the child type, so typos
      * and renames surface at build time rather than on first query.
      */
+    @Throws(SQLException::class)
     inline fun <reified D : Any> getDetails(parent: Any, referenceField: ReferencePath): List<D> =
         getDetails(null, parent, D::class, referenceField.path.trimEnd('.'))
 
@@ -749,6 +762,7 @@ open class Stormify(val dataSource: DataSource, vararg registrars: EntityRegistr
     // --- Find operations ---
 
     /** Finds all entities, optionally filtered by a WHERE clause. */
+    @Throws(SQLException::class)
     inline fun <reified T : Any> findAll(whereClause: String = "", vararg arguments: Any?): List<T> =
         findAll(null, T::class, whereClause, *arguments)
 
@@ -766,6 +780,7 @@ open class Stormify(val dataSource: DataSource, vararg registrars: EntityRegistr
     )
 
     /** Finds a single entity by its primary key value (single PK only). */
+    @Throws(SQLException::class)
     inline fun <reified T : Any> findById(id: Any) =
         findById(null, T::class, id)
 
@@ -780,6 +795,7 @@ open class Stormify(val dataSource: DataSource, vararg registrars: EntityRegistr
      * Executes [block] within a database transaction with automatic commit/rollback,
      * returning the block's result.
      */
+    @Throws(SQLException::class)
     fun <R> transaction(block: TransactionContext.() -> R): R = TransactionContext(this).start(block)
 
     // --- Stored Procedures ---
@@ -796,6 +812,7 @@ open class Stormify(val dataSource: DataSource, vararg registrars: EntityRegistr
      * After the call returns, OUT and INOUT refs carry the typed `value`
      * produced by the procedure.
      */
+    @Throws(SQLException::class)
     fun procedure(name: String, vararg args: Any?) = procedure(null, name, *args)
 
     internal fun procedure(conn: Connection?, name: String, vararg args: Any?) {
@@ -843,6 +860,7 @@ open class Stormify(val dataSource: DataSource, vararg registrars: EntityRegistr
     // --- Public introspection ---
 
     /** Returns the [TableInfo] metadata for the given entity class, resolving and caching it if necessary. */
+    @Throws(SQLException::class)
     fun <T : Any> getTableInfo(kclass: KClass<T>): TableInfo<T> = resolveTableInfo(kclass)
 
     @Suppress("FunctionName")
