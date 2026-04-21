@@ -41,6 +41,12 @@ Designed for developers seeking a simple yet powerful ORM, Stormify excels in pr
   <a href="https://github.com/teras/stormify-examples/tree/2.1.0"><img src="https://img.shields.io/badge/Examples-Samples-8e24aa?style=flat-square&logo=github&logoColor=white" alt="Examples"></a>
 </p>
 
+## Requirements
+
+- **JVM**: Java 11 or later (Stormify is built with a Java 11 toolchain).
+- **Android**: minimum API 21 (Android 5.0).
+- **Native**: glibc 2.31+ on Linux, macOS 11+, iOS 14+, Windows 10+.
+
 ## Installation
 
 ### Maven
@@ -77,7 +83,8 @@ implementation("onl.ycode:stormify-mingwx64:2.1.0")        // Windows x64
 implementation("onl.ycode:stormify-macosarm64:2.1.0")      // macOS (Apple Silicon)
 implementation("onl.ycode:stormify-macosx64:2.1.0")        // macOS (Intel)
 implementation("onl.ycode:stormify-iosarm64:2.1.0")        // iOS (device)
-implementation("onl.ycode:stormify-iossimulatorarm64:2.1.0") // iOS (simulator)
+implementation("onl.ycode:stormify-iossimulatorarm64:2.1.0") // iOS simulator (Apple Silicon)
+implementation("onl.ycode:stormify-iosx64:2.1.0")          // iOS simulator (Intel Mac)
 ksp("onl.ycode:annproc:2.1.0")                             // required (no reflection on native)
 ```
 

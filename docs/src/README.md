@@ -27,6 +27,12 @@ Designed for developers seeking a simple yet powerful ORM, Stormify excels in pr
 - **Stored Procedures**: Call stored procedures with input, output, and bidirectional parameters.
 - **Support for Composite Keys**: Handle tables with composite primary keys effortlessly.
 
+## Requirements
+
+- **JVM**: Java 11 or later (Stormify is built with a Java 11 toolchain).
+- **Android**: minimum API 21 (Android 5.0).
+- **Native**: glibc 2.31+ on Linux, macOS 11+, iOS 14+, Windows 10+.
+
 ## Installation
 
 === "Gradle (Kotlin)"
@@ -53,7 +59,8 @@ Designed for developers seeking a simple yet powerful ORM, Stormify excels in pr
     implementation("onl.ycode:stormify-macosarm64:2.1.0")      // macOS (Apple Silicon)
     implementation("onl.ycode:stormify-macosx64:2.1.0")        // macOS (Intel)
     implementation("onl.ycode:stormify-iosarm64:2.1.0")        // iOS (device)
-    implementation("onl.ycode:stormify-iossimulatorarm64:2.1.0") // iOS (simulator)
+    implementation("onl.ycode:stormify-iossimulatorarm64:2.1.0") // iOS simulator (Apple Silicon)
+    implementation("onl.ycode:stormify-iosx64:2.1.0")          // iOS simulator (Intel Mac)
     ksp("onl.ycode:annproc:2.1.0")                             // required (no reflection on native)
     ```
 
@@ -279,8 +286,13 @@ The `examples/` directory contains self-contained demo applications:
 | **java** | Java POJOs with JPA + Stormify annotations | `mvn compile exec:java` |
 | **kotlin-jvm** | Kotlin JVM with `by db()` delegates | `gradle run` |
 | **kotlin-linux** | Native Linux binary (no JVM) | `gradle runDebugExecutableLinuxX64` |
+| **kotlin-windows** | Native Windows binary (mingwX64) | `gradle runDebugExecutableMingwX64` |
+| **kotlin-macos** | Native macOS binary (arm64 + x64) | `gradle runDebugExecutableMacosArm64` |
 | **kotlin-multiplatform** | Shared code running on JVM and native | `gradle jvmRun` |
+| **kotlin-rest** | Ktor-based REST API with paged queries | `gradle run` |
 | **android** | Compose app with ViewModel, CRUD, lazy refs, enums | `gradle :app:installDebug` |
+| **ios** | iOS app with Stormify on SQLite | open in Xcode |
+| **frontend-react** | React frontend consuming the kotlin-rest API | `npm run dev` |
 
 Each example demonstrates CRUD operations, enum properties with custom values, entity references with lazy loading, transactions with rollback, and raw SQL queries using an in-memory SQLite database.
 
