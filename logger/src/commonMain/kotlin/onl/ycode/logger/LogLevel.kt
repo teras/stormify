@@ -7,7 +7,7 @@ package onl.ycode.logger
 enum class LogLevel {
     /** Fine-grained diagnostic information, typically for development. */
     DEBUG,
-    /** General operational messages confirming normal behavionair. */
+    /** General operational messages confirming normal behavior. */
     INFO,
     /** Potentially harmful conditions that deserve attention. */
     WARN,

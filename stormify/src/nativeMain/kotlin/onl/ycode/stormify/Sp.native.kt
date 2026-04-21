@@ -2,7 +2,6 @@
 // (C) Panayotis Katsaloulis
 package onl.ycode.stormify
 
-import kotlin.jvm.JvmStatic
 import kotlin.reflect.KClass
 
 actual sealed class Sp actual constructor() {
@@ -43,21 +42,8 @@ actual sealed class Sp actual constructor() {
     }
 
     actual companion object {
-        @JvmStatic
         actual fun inParam(value: Any?): In = In(value)
-
-        @JvmStatic
         actual fun <T : Any> outParam(type: KClass<T>): Out<T> = Out(type)
-
-        @JvmStatic
         actual fun <T : Any> inOutParam(type: KClass<T>, value: T): InOut<T> = InOut(type, value)
-
-        /** `Class<T>` overload for Java callers; equivalent to `outParam(type.kotlin)`. */
-        @JvmStatic
-        fun <T : Any> outParam(type: Class<T>): Out<T> = Out(type.kotlin)
-
-        /** `Class<T>` overload for Java callers; equivalent to `inOutParam(type.kotlin, value)`. */
-        @JvmStatic
-        fun <T : Any> inOutParam(type: Class<T>, value: T): InOut<T> = InOut(type.kotlin, value)
     }
 }

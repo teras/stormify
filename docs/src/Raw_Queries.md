@@ -106,8 +106,8 @@ Stormify supports calling stored procedures with IN, OUT, and INOUT parameters:
     === "Java"
 
         ```java
-        Sp.Out<Integer> count = SpKt.outParam(Integer.class);
-        Sp.Out<String> msg = SpKt.outParam(String.class);
+        Sp.Out<Integer> count = Sp.outParam(Integer.class);
+        Sp.Out<String> msg = Sp.outParam(String.class);
         stormify.procedure("tally", 42, count, msg);
         System.out.println("count=" + count.getValue() + ", msg=" + msg.getValue());
         ```
@@ -126,5 +126,5 @@ Parameter types:
 | Type | Kotlin | Java |
 |------|--------|------|
 | Input | `spIn(value)` or raw value | `Sp.In(value)` or raw value |
-| Output | `spOut<T>()` | `SpKt.outParam(Type.class)` |
-| Bidirectional | `spInOut(value)` | `SpKt.inOutParam(Type.class, value)` |
+| Output | `spOut<T>()` | `Sp.outParam(Type.class)` |
+| Bidirectional | `spInOut(value)` | `Sp.inOutParam(Type.class, value)` |

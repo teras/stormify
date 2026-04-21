@@ -222,8 +222,8 @@ The stored procedure API is redesigned for type safety.
 === "V2 (Java)"
 
     ```java
-    Sp.Out<Integer> count = SpKt.outParam(Integer.class);
-    Sp.Out<String> msg = SpKt.outParam(String.class);
+    Sp.Out<Integer> count = Sp.outParam(Integer.class);
+    Sp.Out<String> msg = Sp.outParam(String.class);
     stormify.procedure("tally", 42, count, msg);
     Integer result = count.getValue();
     ```

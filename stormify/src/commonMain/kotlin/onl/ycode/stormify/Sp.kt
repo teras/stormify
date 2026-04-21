@@ -1,13 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // (C) Panayotis Katsaloulis
-@file:JvmName("SpKt")
-@file:JvmMultifileClass
-
 package onl.ycode.stormify
 
-import kotlin.jvm.JvmMultifileClass
-import kotlin.jvm.JvmName
-import kotlin.jvm.JvmStatic
 import kotlin.reflect.KClass
 
 /**
@@ -29,7 +23,7 @@ import kotlin.reflect.KClass
  * println("${count.value}, ${msg.value}")  // Int?, String? — fully typed
  * ```
  *
- * From Java, use the companion factories that accept `Class<T>`:
+ * From Java, the companion factories accept a raw `Class<T>` on JVM and Android:
  *
  * ```java
  * Sp.Out<Integer> count = Sp.outParam(Integer.class);
@@ -45,41 +39,28 @@ import kotlin.reflect.KClass
  * stormify.procedure("greet", "hello", 42, outRef)  // two IN + one OUT
  * ```
  */
-sealed class Sp {
+expect sealed class Sp() {
     /** IN parameter. The value is sent to the procedure as-is. */
-    class In(
+    class In(value: Any?) : Sp {
         /** The value to send to the procedure. */
         val value: Any?
-    ) : Sp() {
-        /** Debug representation: `IN:<value>`. */
-        override fun toString() = "IN:$value"
     }
 
     /**
      * OUT parameter. After `procedure(...)` returns, [value] holds the typed
      * value produced by the procedure, or `null` if it was not populated.
      */
-    class Out<T : Any>(
+    class Out<T : Any>(type: KClass<T>) : Sp {
         /** The declared Kotlin type of the returned value. */
         val type: KClass<T>
-    ) : Sp() {
-        private var _value: T? = null
-
-        @Suppress("UNCHECKED_CAST")
-        internal fun assign(v: Any?) {
-            _value = v as T?
-        }
 
         /** The returned value, or `null` if the procedure did not set it. */
-        val value: T? get() = _value
+        val value: T?
 
         /** Non-null accessor; throws if the procedure did not populate this OUT. */
         val required: T
-            get() = _value
-                ?: error("Sp.Out<${type.simpleName}> was not populated by the procedure")
 
-        /** Debug representation: `OUT<Type>:<value>`. */
-        override fun toString() = "OUT<${type.simpleName}>:${_value}"
+        internal fun assign(v: Any?)
     }
 
     /**
@@ -87,29 +68,20 @@ sealed class Sp {
      * call returns, [value] holds whatever the procedure left there (which may
      * differ from [input]).
      */
-    class InOut<T : Any>(
+    class InOut<T : Any>(type: KClass<T>, input: T) : Sp {
         /** The declared Kotlin type of the parameter. */
-        val type: KClass<T>,
+        val type: KClass<T>
+
         /** The initial value sent to the procedure. Retained for reference after execute. */
         val input: T
-    ) : Sp() {
-        private var _value: T? = input
-
-        @Suppress("UNCHECKED_CAST")
-        internal fun assign(v: Any?) {
-            _value = v as T?
-        }
 
         /** The current value — initially [input], updated after execute. */
-        val value: T? get() = _value
+        val value: T?
 
         /** Non-null accessor; throws if the procedure cleared the value to NULL. */
         val required: T
-            get() = _value
-                ?: error("Sp.InOut<${type.simpleName}> was cleared to NULL by the procedure")
 
-        /** Debug representation: `INOUT<Type>:<value>`. */
-        override fun toString() = "INOUT<${type.simpleName}>:${_value}"
+        internal fun assign(v: Any?)
     }
 
     /** Factory entry points for stored-procedure parameters. */
@@ -119,11 +91,21 @@ sealed class Sp {
          * entry point for Java callers — in Kotlin this is usually unnecessary
          * because raw values passed to `procedure(...)` are auto-wrapped.
          */
-        @JvmStatic
-        fun inParam(value: Any?): In = In(value)
+        fun inParam(value: Any?): In
 
-        // JVM-friendly `Class<T>` factories for OUT / INOUT live in jvmBasedMain
-        // (`Sp.jvmBased.kt`) — `Class<T>` is not available in commonMain.
+        /**
+         * Factory for an OUT parameter, equivalent to `Sp.Out(type)`. Kotlin
+         * callers typically prefer the reified [spOut] helper. On JVM and
+         * Android a `java.lang.Class<T>` overload is also available.
+         */
+        fun <T : Any> outParam(type: KClass<T>): Out<T>
+
+        /**
+         * Factory for an INOUT parameter, equivalent to `Sp.InOut(type, value)`.
+         * Kotlin callers typically prefer the reified [spInOut] helper. On JVM
+         * and Android a `java.lang.Class<T>` overload is also available.
+         */
+        fun <T : Any> inOutParam(type: KClass<T>, value: T): InOut<T>
     }
 }
 
