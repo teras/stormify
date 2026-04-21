@@ -4,6 +4,7 @@
 
 package onl.ycode.stormify.biglist
 
+import onl.ycode.kdbc.SQLException
 import onl.ycode.stormify.Stormify
 import onl.ycode.stormify.StormifyAware
 import kotlin.jvm.JvmOverloads
@@ -64,7 +65,7 @@ abstract class AbstractPagedQuery<T : Any> internal constructor(
 
     private val stormify: Stormify
         get() = _stormify ?: Stormify.defaultInstance
-            ?: error(
+            ?: throw SQLException(
                 "No Stormify instance attached to this PagedQuery and no default instance " +
                         "is configured. Call stormify.attach(query) or Stormify.asDefault() first."
             )

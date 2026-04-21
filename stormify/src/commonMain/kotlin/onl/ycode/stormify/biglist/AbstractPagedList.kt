@@ -4,6 +4,7 @@
 
 package onl.ycode.stormify.biglist
 
+import onl.ycode.kdbc.SQLException
 import onl.ycode.stormify.NativeBigInteger
 import onl.ycode.stormify.Stormify
 import onl.ycode.stormify.StormifyAware
@@ -71,7 +72,7 @@ abstract class AbstractPagedList<T : Any> internal constructor(
     /** Resolves the Stormify instance — explicitly attached, default, or error. */
     private val stormify: Stormify
         get() = _stormify ?: Stormify.defaultInstance
-            ?: error(
+            ?: throw SQLException(
                 "No Stormify instance attached to this PagedList and no default instance " +
                         "is configured. Call stormify.attach(list) or Stormify.asDefault() first."
             )

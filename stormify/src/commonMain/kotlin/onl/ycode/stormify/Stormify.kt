@@ -818,7 +818,7 @@ open class Stormify(val dataSource: DataSource, vararg registrars: EntityRegistr
                             cs.registerOutParameter(i + 1, p.type)
                             cs.setObject(i + 1, p.input)
                         }
-                        else -> error("Unexpected Sp subtype: ${p::class}")
+                        else -> throw SQLException("Unexpected Sp subtype: ${p::class}")
                     }
                 }
                 cs.execute()
@@ -829,7 +829,7 @@ open class Stormify(val dataSource: DataSource, vararg registrars: EntityRegistr
                             p.assign(castTo(p.type, cs.getObject(i + 1, p.type), this))
                         is Sp.InOut<*> ->
                             p.assign(castTo(p.type, cs.getObject(i + 1, p.type), this))
-                        else -> error("Unexpected Sp subtype: ${p::class}")
+                        else -> throw SQLException("Unexpected Sp subtype: ${p::class}")
                     }
                 }
             }

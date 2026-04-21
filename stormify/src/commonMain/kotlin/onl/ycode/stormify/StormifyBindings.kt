@@ -12,7 +12,8 @@ import kotlin.reflect.KProperty
 
 /** Returns the [default Stormify instance][Stormify.defaultInstance], or throws if none has been set. */
 fun stormify(): Stormify =
-    Stormify.defaultInstance ?: error("No default Stormify instance. Call stormify.asDefault() first.")
+    Stormify.defaultInstance
+        ?: throw SQLException("No default Stormify instance. Call stormify.asDefault() first.")
 
 // --- String extensions ---
 

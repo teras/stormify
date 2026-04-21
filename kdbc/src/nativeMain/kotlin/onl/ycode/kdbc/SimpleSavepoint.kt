@@ -1,14 +1,10 @@
 package onl.ycode.kdbc
 
 /**
- * Simple Savepoint implementation used by all KDBC drivers.
- *
- * This class is used by Oracle, MariaDB, PostgreSQL, and SQLite drivers
- * to represent database savepoints for nested transaction support.
- *
+ * Savepoint implementation returned by the native `Connection.setSavepoint`.
  * The savepoint name is validated on construction to prevent SQL injection.
  */
-class SimpleSavepoint(override val savepointName: String) : Savepoint {
+internal class SimpleSavepoint(override val savepointName: String) : Savepoint {
     init {
         if (savepointName.isEmpty()) {
             throw SQLException("Savepoint name cannot be empty")

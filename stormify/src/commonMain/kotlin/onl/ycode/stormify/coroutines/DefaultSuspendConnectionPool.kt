@@ -200,8 +200,6 @@ internal class DefaultSuspendConnectionPool(
                 candidate = null  // successful hand-off
                 return entry
             }
-            @Suppress("UNREACHABLE_CODE")
-            error("unreachable — while(true) above returns or throws")
         } catch (e: Throwable) {
             // Orphaned candidate cleanup — a non-null candidate here means we popped
             // from idle but did not successfully hand it to the caller.

@@ -2,6 +2,7 @@
 // (C) Panayotis Katsaloulis
 package onl.ycode.stormify
 
+import onl.ycode.kdbc.SQLException
 import kotlin.jvm.JvmStatic
 import kotlin.reflect.KClass
 
@@ -21,7 +22,7 @@ actual sealed class Sp actual constructor() {
         actual val value: T? get() = _value
         actual val required: T
             get() = _value
-                ?: error("Sp.Out<${type.simpleName}> was not populated by the procedure")
+                ?: throw SQLException("Sp.Out<${type.simpleName}> was not populated by the procedure")
 
         override fun toString() = "OUT<${type.simpleName}>:${_value}"
     }
@@ -37,7 +38,7 @@ actual sealed class Sp actual constructor() {
         actual val value: T? get() = _value
         actual val required: T
             get() = _value
-                ?: error("Sp.InOut<${type.simpleName}> was cleared to NULL by the procedure")
+                ?: throw SQLException("Sp.InOut<${type.simpleName}> was cleared to NULL by the procedure")
 
         override fun toString() = "INOUT<${type.simpleName}>:${_value}"
     }
