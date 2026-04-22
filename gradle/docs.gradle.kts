@@ -29,6 +29,22 @@
 //   gradle syncReadmeUrls        # rewrites README.md links to /docs/<ver>/
 //   git commit -am "release <ver>" && git push
 
+// Deployment target for publishDocs / releaseDocs. Read from local.properties
+// (gitignored) so the SSH host/port/remote root stay out of version control.
+data class DocsDeploy(val sshHost: String, val sshPort: String, val remoteRoot: String)
+fun readDocsDeploy(): DocsDeploy {
+    val props = java.util.Properties()
+    val f = rootProject.file("local.properties")
+    if (f.exists()) f.inputStream().use { props.load(it) }
+    fun need(key: String, example: String): String = props.getProperty(key)
+        ?: throw GradleException("Missing '$key' in local.properties (e.g. $key=$example)")
+    return DocsDeploy(
+        sshHost = need("docs.ssh.host", "user@example.com"),
+        sshPort = need("docs.ssh.port", "22"),
+        remoteRoot = need("docs.remote.root", "~/web/example.com")
+    )
+}
+
 // Docs outputs live under docs/build/ (not under the root project build/), so
 // the default `clean` task never touches them. Hook an explicit cleanup in.
 val cleanDocs = tasks.register<Delete>("cleanDocs") {
@@ -96,6 +112,7 @@ tasks.register("publishDocs") {
         val ver = project.version.toString().removeSuffix("-SNAPSHOT")
         if (ver.isBlank() || ver == "unspecified")
             throw GradleException("project.version is not set")
+        val deploy = readDocsDeploy()
         // Rewrite built HTML/sitemap so in-page links point to /docs/<ver>/ (versioned)
         // and GitHub links point to the devel branch.
         val rewrite = """
@@ -112,7 +129,7 @@ tasks.register("publishDocs") {
         // and are left alone.
         val cleanup = """
             set -euo pipefail
-            cd ~/web/stormify.org/docs 2>/dev/null || exit 0
+            cd ${deploy.remoteRoot}/docs 2>/dev/null || exit 0
             for d in */; do
                 d="${'$'}{d%/}"
                 if [ -f "${'$'}d/.devel-marker" ] && [ "${'$'}d" != "$ver" ]; then
@@ -121,7 +138,7 @@ tasks.register("publishDocs") {
                 fi
             done
         """.trimIndent()
-        val cleanupRc = ProcessBuilder("ssh", "-p", "1971", "teras@yot.is", "bash -s")
+        val cleanupRc = ProcessBuilder("ssh", "-p", deploy.sshPort, deploy.sshHost, "bash -s")
             .redirectInput(ProcessBuilder.Redirect.PIPE)
             .redirectOutput(ProcessBuilder.Redirect.INHERIT)
             .redirectError(ProcessBuilder.Redirect.INHERIT)
@@ -132,14 +149,14 @@ tasks.register("publishDocs") {
         if (cleanupRc != 0) throw GradleException("Preview cleanup failed (exit $cleanupRc)")
         // Rsync new preview
         val exitCode = ProcessBuilder(
-            "rsync", "-ravz", "-e", "ssh -p 1971", "--delete",
-            "docs/build/docs/", "teras@yot.is:~/web/stormify.org/docs/$ver/"
+            "rsync", "-ravz", "-e", "ssh -p ${deploy.sshPort}", "--delete",
+            "docs/build/docs/", "${deploy.sshHost}:${deploy.remoteRoot}/docs/$ver/"
         ).inheritIO().start().waitFor()
         if (exitCode != 0)
             throw GradleException("rsync failed with exit code $exitCode — preview docs not uploaded")
         // Tag as preview
-        val markRc = ProcessBuilder("ssh", "-p", "1971", "teras@yot.is",
-            "touch ~/web/stormify.org/docs/$ver/.devel-marker").inheritIO().start().waitFor()
+        val markRc = ProcessBuilder("ssh", "-p", deploy.sshPort, deploy.sshHost,
+            "touch ${deploy.remoteRoot}/docs/$ver/.devel-marker").inheritIO().start().waitFor()
         if (markRc != 0) throw GradleException("Failed to tag preview with .devel-marker (exit $markRc)")
         println("✓ Preview deployed: https://stormify.org/docs/$ver/")
     }
@@ -153,10 +170,11 @@ tasks.register("releaseDocs") {
         val ver = project.version.toString().removeSuffix("-SNAPSHOT")
         if (ver.isBlank() || ver == "unspecified")
             throw GradleException("project.version is not set")
+        val deploy = readDocsDeploy()
         // 1. Server-side: validate preview exists and strip the marker
         val remote = """
             set -euo pipefail
-            cd ~/web/stormify.org/docs
+            cd ${deploy.remoteRoot}/docs
             if [ ! -d "$ver" ]; then
                 echo "ERROR: /docs/$ver/ not found on server — publish it first" >&2; exit 1
             fi
@@ -166,7 +184,7 @@ tasks.register("releaseDocs") {
             rm -f "$ver/.devel-marker"
             echo "✓ Released /docs/$ver/ (marker removed)"
         """.trimIndent()
-        val remoteRc = ProcessBuilder("ssh", "-p", "1971", "teras@yot.is", "bash -s")
+        val remoteRc = ProcessBuilder("ssh", "-p", deploy.sshPort, deploy.sshHost, "bash -s")
             .redirectInput(ProcessBuilder.Redirect.PIPE)
             .redirectOutput(ProcessBuilder.Redirect.INHERIT)
             .redirectError(ProcessBuilder.Redirect.INHERIT)
@@ -188,9 +206,9 @@ tasks.register("releaseDocs") {
             }
         // 3. Rsync landing to web root (exclude /docs so version folders are untouched)
         val exitCode = ProcessBuilder(
-            "rsync", "-ravz", "-e", "ssh -p 1971",
+            "rsync", "-ravz", "-e", "ssh -p ${deploy.sshPort}",
             "--exclude=/docs",
-            "${landingDir.absolutePath}/", "teras@yot.is:~/web/stormify.org/"
+            "${landingDir.absolutePath}/", "${deploy.sshHost}:${deploy.remoteRoot}/"
         ).inheritIO().start().waitFor()
         if (exitCode != 0)
             throw GradleException("Landing rsync failed with exit code $exitCode")

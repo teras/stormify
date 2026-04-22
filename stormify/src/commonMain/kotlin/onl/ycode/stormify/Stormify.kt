@@ -4,6 +4,7 @@
 
 package onl.ycode.stormify
 
+import kotlin.concurrent.Volatile
 import kotlinx.atomicfu.locks.synchronized
 import onl.ycode.kdbc.*
 import onl.ycode.logger.LogManager
@@ -100,6 +101,7 @@ class Stormify(val dataSource: DataSource, vararg registrars: EntityRegistrar) {
      * Default is [NamingPolicy.LOWER_CASE_WITH_UNDERSCORES] (snake_case).
      * Changing this only affects entities resolved after the change.
      */
+    @Volatile
     var namingPolicy: (String) -> String = NamingPolicy.LOWER_CASE_WITH_UNDERSCORES
     // Exclude common Java/JPA base-class fields that should never be mapped to database columns
     private val blacklist = mutableSetOf("serialVersionUID", "idFieldValue", "transientId")
@@ -138,6 +140,7 @@ class Stormify(val dataSource: DataSource, vararg registrars: EntityRegistrar) {
         }
 
     // --- SQL Dialect ---
+    @Volatile
     private var _sqlDialect: SqlDialect? = null
 
     /**
@@ -164,9 +167,11 @@ class Stormify(val dataSource: DataSource, vararg registrars: EntityRegistrar) {
      * Policy for `ResultSet` columns that have no matching field on the target
      * entity. Default is [UnmatchedColumnPolicy.IGNORE].
      */
+    @Volatile
     var unmatchedColumnPolicy: UnmatchedColumnPolicy = UnmatchedColumnPolicy.IGNORE
 
     /** The logger used by this Stormify instance. Defaults to a logger named "Stormify". */
+    @Volatile
     var logger = LogManager.getLogger("Stormify")
 
     /**
@@ -174,6 +179,7 @@ class Stormify(val dataSource: DataSource, vararg registrars: EntityRegistrar) {
      * represent OR, NOT, NULL, phrase delimiters, grouping, and wildcards.
      * Default is Google-like syntax: `OR`, `-`, `NULL`, `"`, `()`, `*`.
      */
+    @Volatile
     var filterSyntax: FilterSyntax = FilterSyntax()
 
     /**
@@ -181,6 +187,7 @@ class Stormify(val dataSource: DataSource, vararg registrars: EntityRegistrar) {
      * per-list parsers in the resolution chain. Use for locale-aware number/date
      * parsing across all facets.
      */
+    @Volatile
     var inputParser: InputParser? = null
 
     // --- Internal connection management ---

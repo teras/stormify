@@ -102,6 +102,4 @@ We are committed to creating a welcoming and inclusive environment for all contr
 - **Be Constructive**: Provide constructive feedback and be open to feedback on your contributions.
 - **Be Inclusive**: Ensure that your contributions are accessible and considerate of different perspectives.
 
-For more details, please refer to the project's [Code of Conduct](https://github.com/teras/stormify/blob/main/CODE_OF_CONDUCT.md).
-
 By following these guidelines, you help maintain a positive and productive environment for everyone involved in the project. Thank you for contributing to Stormify!
