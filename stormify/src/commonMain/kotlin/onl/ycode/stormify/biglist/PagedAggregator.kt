@@ -7,7 +7,7 @@ package onl.ycode.stormify.biglist
 import kotlin.jvm.JvmOverloads
 
 /**
- * Entry point for the aggregation DSL on a [PagedList].
+ * Entry point for the aggregation DSL on a [PagedList][AbstractPagedList].
  *
  * Each builder method registers one aggregate and returns a [SingleAggregator]
  * — a view that can either be executed immediately for a single scalar value

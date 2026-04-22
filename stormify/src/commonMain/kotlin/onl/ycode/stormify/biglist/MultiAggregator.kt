@@ -8,13 +8,13 @@ import kotlin.jvm.JvmOverloads
 
 /**
  * A multi-value aggregator built from a chain of aggregation requests over a
- * [PagedList]. Each chain method adds another expression to the generated
+ * [PagedList][AbstractPagedList]. Each chain method adds another expression to the generated
  * `SELECT` list. [execute] returns a `Map<String, Any?>` keyed by the alias
  * of each added aggregation.
  *
  * Obtained by chaining additional methods onto a [SingleAggregator] —
  * conceptually the "two or more aggregations" view. Acquire via
- * [PagedList.getAggregator] and then chain `.sum(…)`, `.avg(…)`, …
+ * [PagedList.getAggregator][AbstractPagedList.getAggregator] and then chain `.sum(…)`, `.avg(…)`, …
  * Aggregations respect the parent list's constraints and per-column filters.
  *
  * ```kotlin

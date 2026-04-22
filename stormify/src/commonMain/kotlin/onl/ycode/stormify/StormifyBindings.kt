@@ -10,8 +10,8 @@ import kotlin.properties.ReadWriteProperty
 import kotlin.reflect.KClass
 import kotlin.reflect.KProperty
 
-/** Returns the [default Stormify instance][Stormify.defaultInstance], or throws if none has been set. */
-fun stormify(): Stormify =
+@PublishedApi
+internal fun stormify(): Stormify =
     Stormify.defaultInstance
         ?: throw SQLException("No default Stormify instance. Call stormify.asDefault() first.")
 

@@ -6,7 +6,7 @@ import kotlin.jvm.JvmOverloads
 import kotlin.jvm.JvmStatic
 
 /**
- * Per-request specification passed to [PagedQuery.execute] and friends.
+ * Per-request specification passed to [PagedQuery.execute][AbstractPagedQuery.execute] and friends.
  * Describes the filters, sorts, case-sensitivity flags and pagination the
  * caller wants for this single query. Keys in the map fields are facet
  * aliases (see [Facet.alias]); any alias not present in the map contributes
@@ -21,11 +21,11 @@ import kotlin.jvm.JvmStatic
  * Two constructors are provided:
  *
  * - **Paginated** — `PageSpec(page, pageSize, filters?, sorts?, cs?)`. Use
- *   for [PagedQuery.execute] / [PagedQuery.filterValues] where page
+ *   for [PagedQuery.execute][AbstractPagedQuery.execute] / [PagedQuery.filterValues][AbstractPagedQuery.filterValues] where page
  *   and pageSize control which slice is returned.
  * - **Non-paginated** — `PageSpec(filters?, sorts?, cs?)`. Equivalent to
  *   `PageSpec(0, 15, ...)`. Use for
- *   [PagedQuery.forEachStreaming] / [PagedQuery.getAggregator]
+ *   [PagedQuery.forEachStreaming][AbstractPagedQuery.forEachStreaming] / [PagedQuery.getAggregator][AbstractPagedQuery.getAggregator]
  *   where pagination is ignored.
  *
  * Both constructors have `@JvmOverloads` so Java callers can omit trailing
@@ -54,8 +54,8 @@ data class PageSpec @JvmOverloads constructor(
     /**
      * Non-paginated spec constructor. Delegates to the paginated form with
      * `page = 0`, `pageSize = 15`. The pagination defaults are **ignored**
-     * by use cases that do not paginate ([PagedQuery.forEachStreaming],
-     * [PagedQuery.getAggregator]); for paginated callers that accept
+     * by use cases that do not paginate ([PagedQuery.forEachStreaming][AbstractPagedQuery.forEachStreaming],
+     * [PagedQuery.getAggregator][AbstractPagedQuery.getAggregator]); for paginated callers that accept
      * defaults, they represent "first page, 15 rows".
      */
     @JvmOverloads
@@ -138,7 +138,7 @@ enum class SortDir {
 }
 
 /**
- * Result of a [PagedQuery.execute] call. Contains the rows for the
+ * Result of a [PagedQuery.execute][AbstractPagedQuery.execute] call. Contains the rows for the
  * requested page, the total matching row count, and pagination metadata —
  * everything a typical REST response needs without a second round-trip.
  */

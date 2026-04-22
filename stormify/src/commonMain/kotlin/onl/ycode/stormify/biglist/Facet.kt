@@ -7,8 +7,8 @@ package onl.ycode.stormify.biglist
 import kotlin.jvm.JvmField
 
 /**
- * A facet is a named, user-facing filter/sort slot exposed by a [PagedList]
- * or [PagedQuery]. It is the only point of interaction between the outside
+ * A facet is a named, user-facing filter/sort slot exposed by a [PagedList][AbstractPagedList]
+ * or [PagedQuery][AbstractPagedQuery]. It is the only point of interaction between the outside
  * world and the underlying query — the facet's [alias] is the opaque public
  * identifier, and SQL paths / expressions behind it are kept internal.
  *
@@ -16,8 +16,8 @@ import kotlin.jvm.JvmField
  * filtering) or a raw SQL expression. Filtering between different facets uses
  * AND logic; filtering between multiple fields on the same facet uses OR.
  *
- * Facets are defined at setup time via [PagedList.addFacet] /
- * [PagedList.addSqlFacet] (or their [PagedQuery] equivalents).
+ * Facets are defined at setup time via [PagedList.addFacet][AbstractPagedList.addFacet] /
+ * [PagedList.addSqlFacet][AbstractPagedList.addSqlFacet] (or their [PagedQuery][AbstractPagedQuery] equivalents).
  * After setup, UI consumers toggle [filter] / [sort] per facet; REST
  * consumers pass the same information through `PageSpec` by alias.
  */
@@ -38,14 +38,14 @@ class Facet internal constructor(
      *
      * Set to a non-null value to override the default and translate the
      * filter string into an arbitrary SQL fragment. Works on both
-     * field-backed facets ([PagedList.addFacet]) and SQL-backed facets
-     * ([PagedList.addSqlFacet]).
+     * field-backed facets ([PagedList.addFacet][AbstractPagedList.addFacet]) and SQL-backed facets
+     * ([PagedList.addSqlFacet][AbstractPagedList.addSqlFacet]).
      *
      * The number of `?` placeholders in the returned fragment must exactly
      * match the number of arguments pushed via the [SqlArgsCollector];
      * otherwise the next query build throws.
      *
-     * Setting this on a facet belonging to a stateless `PagedQuery` is
+     * Setting this on a facet belonging to a stateless [PagedQuery][AbstractPagedQuery] is
      * forbidden — configuration is supposed to happen at setup time only.
      */
     var converter: Converter? = initialConverter
@@ -57,8 +57,8 @@ class Facet internal constructor(
 
     /**
      * Opaque, stable identifier for this facet — the only identity exposed
-     * to the outside world. Used as the key in [PagedList.saveState] /
-     * [PagedList.restoreState] output and (in the stateless REST façade)
+     * to the outside world. Used as the key in [PagedList.saveState][AbstractPagedList.saveState] /
+     * [PagedList.restoreState][AbstractPagedList.restoreState] output and (in the stateless REST façade)
      * as the key in filter / sort maps on the wire.
      *
      * Defaults to the facet's index-at-creation as a string (`"0"`, `"1"`, …).
@@ -251,7 +251,7 @@ class Facet internal constructor(
     }
 
     /**
-     * Opaque key used by [PagedList.saveState] / [PagedList.restoreState]
+     * Opaque key used by [PagedList.saveState][AbstractPagedList.saveState] / [PagedList.restoreState][AbstractPagedList.restoreState]
      * — simply the facet's [alias]. Never derived from fields or SQL
      * expressions, so persisted state never leaks schema or query internals.
      */
@@ -293,7 +293,7 @@ data class FieldPath(
 
 /**
  * Transforms user filter input before it reaches the database — e.g. locale-aware
- * number/date parsing. Resolution chain: [Facet.inputParser] → [PagedList.inputParser]
+ * number/date parsing. Resolution chain: [Facet.inputParser] → [PagedList.inputParser][AbstractPagedList.inputParser]
  * → [onl.ycode.stormify.Stormify.inputParser] → identity.
  */
 typealias InputParser = (String, Facet.Type) -> String

@@ -35,6 +35,7 @@ abstract class LogFramework protected constructor(
     /** Creates a [Logger] with the given [name], or null if this backend cannot serve it. */
     abstract fun getLogger(name: String?): Logger?
 
+    /** Built-in [LogFramework] backends and the registry for custom ones. */
     companion object {
         /** SLF4J backend — used when `org.slf4j:slf4j-api` is on the classpath. */
         @JvmField

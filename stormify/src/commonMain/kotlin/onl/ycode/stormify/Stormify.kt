@@ -11,6 +11,7 @@ import onl.ycode.logger.LogManager
 import onl.ycode.stormify.SqlDialect.GeneratedKeyRetrieval
 import onl.ycode.stormify.Stormify.Companion.defaultInstance
 import onl.ycode.stormify.TypeUtils.castTo
+import onl.ycode.stormify.biglist.AbstractPagedList
 import onl.ycode.stormify.biglist.FilterSyntax
 import onl.ycode.stormify.biglist.InputParser
 import onl.ycode.stormify.biglist.ReferencePath
@@ -56,7 +57,7 @@ class Stormify(val dataSource: DataSource, vararg registrars: EntityRegistrar) {
         private val _defaultInstance = kotlinx.atomicfu.atomic<Stormify?>(null)
 
         /**
-         * The default Stormify instance, used by [AutoTable], `PagedList`, and the
+         * The default Stormify instance, used by [AutoTable], [PagedList][AbstractPagedList], and the
          * Kotlin entity extensions when no instance is explicitly attached. Set this
          * once at startup via [asDefault]; callers can then omit the receiver.
          */
@@ -301,7 +302,7 @@ class Stormify(val dataSource: DataSource, vararg registrars: EntityRegistrar) {
      * operations without receiving it as an explicit parameter.
      *
      * Works for any [StormifyAware] — [StormifyEntity] subclasses (entities, [AutoTable])
-     * and `PagedList` instances. Returns [target] for fluent chaining.
+     * and [PagedList][AbstractPagedList] instances. Returns [target] for fluent chaining.
      *
      * ```kotlin
      * // Manual stub — user knows the ID, lets Stormify lazy-load the rest

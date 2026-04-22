@@ -213,6 +213,21 @@ tasks.register("releaseDocs") {
             fi
             rm -f "$ver/.devel-marker"
             echo "✓ Released /docs/$ver/ (marker removed)"
+            cat > index.html <<'HTML'
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="refresh" content="0; url=/docs/$ver/">
+<link rel="canonical" href="https://stormify.org/docs/$ver/">
+<title>Stormify Documentation</title>
+</head>
+<body>
+<p>Redirecting to <a href="/docs/$ver/">/docs/$ver/</a>…</p>
+</body>
+</html>
+HTML
+            echo "✓ /docs/index.html redirects to /docs/$ver/"
         """.trimIndent()
         val remoteRc = ProcessBuilder("ssh", "-p", deploy.sshPort, deploy.sshHost, "bash -s")
             .redirectInput(ProcessBuilder.Redirect.PIPE)

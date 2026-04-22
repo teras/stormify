@@ -10,7 +10,7 @@ import kotlin.reflect.KClass
  *
  * Holds the mutable list of [AggregateEntry]s, generates default aliases,
  * builds the final aggregate SQL and executes it against the parent
- * [PagedList]. Both the JVM and Native `SingleAggregator` actuals
+ * [PagedList][AbstractPagedList]. Both the JVM and Native `SingleAggregator` actuals
  * delegate to a single instance of this class, so the aggregation logic
  * lives here once.
  */
