@@ -17,17 +17,19 @@
 //                  Released folders have no marker and are never touched.
 // releaseDocs    — strip .devel-marker from /docs/<projectVersion>/ (makes it immutable)
 //                  and update the landing page at stormify.org/ to point to it.
-// syncReadmeUrls — rewrite README.md URLs to reference /docs/<projectVersion>/ and
-//                  stormify-examples/tree/<projectVersion>. Idempotent.
 //
 // ─── Workflow ───────────────────────────────────────────────────────────────
 // Publish a preview:
 //   gradle publishDocs           # build + deploy /docs/<ver>/ (replaces previous preview)
 //
-// Release:
-//   gradle releaseDocs           # strips marker + updates landing → /docs/<ver>/
-//   gradle syncReadmeUrls        # rewrites README.md links to /docs/<ver>/
-//   git commit -am "release <ver>" && git push
+// Release (tag-triggered CI publishes to Maven Central):
+//   scripts/bump-version.sh <ver>
+//   # Add CHANGELOG entry [<ver>] + footnote link manually
+//   # Review + commit submodule examples/ if it has changes
+//   git commit -am "release <ver>" && git tag v<ver> && git push --follow-tags
+//   # CI picks up the tag, runs `gradle publish` → Maven Central, wait for Central sync
+//   gradle publishDocs           # preview at /docs/<ver>/ (optional smoke test)
+//   gradle releaseDocs           # strips marker + updates landing
 
 // Deployment target for publishDocs / releaseDocs. Read from local.properties
 // (gitignored) so the SSH host/port/remote root stay out of version control.
@@ -49,8 +51,16 @@ fun readDocsDeploy(): DocsDeploy {
 // the default `clean` task never touches them. Hook an explicit cleanup in.
 val cleanDocs = tasks.register<Delete>("cleanDocs") {
     group = "documentation"
-    description = "Delete docs/build/ and docs/build-landing/ (hooks into `clean`)"
-    delete(file("docs/build"), file("docs/build-landing"))
+    description = "Delete docs/build/, docs/build-landing/, and any leftover API staging dirs (hooks into `clean`)"
+    delete(
+        file("docs/build"),
+        file("docs/build-landing"),
+        // Staging dirs used by createDocs for MkDocs pickup; normally cleaned up in
+        // a finally block, but deleted here too in case a previous build crashed.
+        file("docs/src/api-stormify"),
+        file("docs/src/api-kdbc-kotlin"),
+        file("docs/src/kdbc-c")
+    )
 }
 tasks.named("clean") {
     dependsOn(cleanDocs)
@@ -68,38 +78,58 @@ tasks.register("createDocs") {
         val ver = project.version.toString().removeSuffix("-SNAPSHOT")
         if (ver.isBlank() || ver == "unspecified")
             throw GradleException("project.version is not set")
-        // 1. Doxygen: KDBC C API reference
-        ProcessBuilder("doxygen", "Doxyfile")
-            .directory(file("kdbc/src/c"))
-            .inheritIO().start().waitFor()
-        // 2. MkDocs: main documentation site (site_name picked up from env)
-        val mkdocs = ProcessBuilder("mkdocs", "build")
-            .directory(file("docs"))
-            .inheritIO()
-        mkdocs.environment()["STORMIFY_VERSION_NAME"] = "Stormify $ver"
-        mkdocs.start().waitFor()
-        // 3. Doxygen again (mkdocs clean wipes the output dir)
-        ProcessBuilder("doxygen", "Doxyfile")
-            .directory(file("kdbc/src/c"))
-            .inheritIO().start().waitFor()
-        // 4. Dokka: copy API docs
-        file("stormify/build/dokka/html").copyRecursively(file("docs/build/docs/api-stormify"), overwrite = true)
-        file("kdbc/build/dokka/html").copyRecursively(file("docs/build/docs/api-kdbc-kotlin"), overwrite = true)
-        // 5. Inject back-link bar into API reference pages
-        val inject = file("docs/inject-backlink.sh").absolutePath
-        ProcessBuilder("sh", inject, "docs/build/docs/api-stormify").inheritIO().start().waitFor()
-        ProcessBuilder("sh", inject, "docs/build/docs/api-kdbc-kotlin").inheritIO().start().waitFor()
-        ProcessBuilder("sh", inject, "docs/build/docs/kdbc-c").inheritIO().start().waitFor()
-        // 6. Copy static assets with {{DOCS_VERSION}} substituted to current version
-        //    (so local preview under docs/build/ works end-to-end)
-        file("docs/static").copyRecursively(file("docs/build"), overwrite = true)
-        file("docs/build").walkTopDown()
-            .filter { it.isFile && (it.extension == "html" || it.extension == "htm") }
-            .forEach { f ->
-                val content = f.readText()
-                if (content.contains("{{DOCS_VERSION}}"))
-                    f.writeText(content.replace("{{DOCS_VERSION}}", ver))
-            }
+
+        // Staging dirs under docs/src so MkDocs picks up API reference trees
+        // as regular site assets (no post-build patching of docs/build/docs/).
+        // Gitignored; regenerated on every createDocs run.
+        val apiStormifyStage = file("docs/src/api-stormify")
+        val apiKdbcKotlinStage = file("docs/src/api-kdbc-kotlin")
+        val kdbcCStage = file("docs/src/kdbc-c")
+        listOf(apiStormifyStage, apiKdbcKotlinStage, kdbcCStage).forEach { it.deleteRecursively() }
+        try {
+            // 1. Doxygen (KDBC C API): override OUTPUT_DIRECTORY via stdin so Doxyfile
+            //    stays untouched. Writes to docs/src/kdbc-c/html/.
+            val doxygen = ProcessBuilder("sh", "-c",
+                "{ cat Doxyfile; echo; echo 'OUTPUT_DIRECTORY=../../../docs/src/kdbc-c'; } | doxygen -")
+                .directory(file("kdbc/src/c"))
+                .inheritIO()
+            val doxygenRc = doxygen.start().waitFor()
+            if (doxygenRc != 0) throw GradleException("Doxygen failed (exit $doxygenRc)")
+
+            // 2. Dokka: stage API HTML under docs/src/ for MkDocs to pick up.
+            file("stormify/build/dokka/html").copyRecursively(apiStormifyStage, overwrite = true)
+            file("kdbc/build/dokka/html").copyRecursively(apiKdbcKotlinStage, overwrite = true)
+
+            // 3. MkDocs: main documentation site (site_name picked up from env).
+            //    With staged API trees under docs/src/, MkDocs ships them in docs/build/docs/.
+            val mkdocs = ProcessBuilder("mkdocs", "build")
+                .directory(file("docs"))
+                .inheritIO()
+            mkdocs.environment()["STORMIFY_VERSION_NAME"] = "Stormify $ver"
+            val mkdocsRc = mkdocs.start().waitFor()
+            if (mkdocsRc != 0) throw GradleException("MkDocs build failed (exit $mkdocsRc)")
+
+            // 4. Inject back-link bar into API reference pages in the built site.
+            val inject = file("docs/inject-backlink.sh").absolutePath
+            ProcessBuilder("sh", inject, "docs/build/docs/api-stormify").inheritIO().start().waitFor()
+            ProcessBuilder("sh", inject, "docs/build/docs/api-kdbc-kotlin").inheritIO().start().waitFor()
+            ProcessBuilder("sh", inject, "docs/build/docs/kdbc-c").inheritIO().start().waitFor()
+
+            // 5. Copy static assets with {{DOCS_VERSION}} substituted to current version
+            //    (so local preview under docs/build/ works end-to-end)
+            file("docs/static").copyRecursively(file("docs/build"), overwrite = true)
+            file("docs/build").walkTopDown()
+                .filter { it.isFile && (it.extension == "html" || it.extension == "htm") }
+                .forEach { f ->
+                    val content = f.readText()
+                    if (content.contains("{{DOCS_VERSION}}"))
+                        f.writeText(content.replace("{{DOCS_VERSION}}", ver))
+                }
+        } finally {
+            // Remove the staged API trees so docs/src/ stays clean for the next run
+            // and for ordinary `mkdocs serve` sessions that don't need API docs.
+            listOf(apiStormifyStage, apiKdbcKotlinStage, kdbcCStage).forEach { it.deleteRecursively() }
+        }
     }
 }
 
@@ -216,29 +246,3 @@ tasks.register("releaseDocs") {
     }
 }
 
-tasks.register("syncReadmeUrls") {
-    group = "documentation"
-    description = "Rewrite README.md URLs to point to /docs/<projectVersion>/ and stormify-examples/tree/<projectVersion>. Idempotent."
-    outputs.upToDateWhen { false }
-    doLast {
-        val ver = project.version.toString().removeSuffix("-SNAPSHOT")
-        if (ver.isBlank() || ver == "unspecified")
-            throw GradleException("project.version is not set")
-        val readme = file("README.md")
-        val original = readme.readText()
-        // Step 1 — normalize: strip any previous version-specific rewrites back to canonical form
-        val normalized = original
-            .replace(Regex("""https://stormify\.org/docs/[0-9][^/"]*/"""), "https://stormify.org/docs/")
-            .replace(Regex("""https://github\.com/teras/stormify-examples/tree/[^"\)]+"""), "https://github.com/teras/stormify-examples")
-        // Step 2 — apply current-version rewrites
-        val out = normalized
-            .replace("https://stormify.org/docs/", "https://stormify.org/docs/$ver/")
-            .replace(Regex("""https://github\.com/teras/stormify-examples(?=["\)])"""), "https://github.com/teras/stormify-examples/tree/$ver")
-        if (out != original) {
-            readme.writeText(out)
-            println("✓ README.md synced to version $ver")
-        } else {
-            println("README.md already in sync (version $ver)")
-        }
-    }
-}

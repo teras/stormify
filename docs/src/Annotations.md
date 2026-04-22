@@ -158,45 +158,11 @@ On **JVM**, `annproc` is optional but offers faster startup since metadata is pr
 
 ### Setup
 
-Add the KSP plugin and `annproc` dependency:
+The KSP plugin + `annproc` dependency setup and the `GeneratedEntities` wiring
+live in [Installation › Entity Metadata](Installation.md#entity-metadata-annproc-and-generatedentities).
+Configure it there once; the rest of this page assumes the processor is active.
 
-=== "Gradle (Kotlin)"
-
-    ```kotlin
-    plugins {
-        id("com.google.devtools.ksp") version "2.2.20-2.0.2"
-    }
-
-    dependencies {
-        ksp("onl.ycode:annproc:2.1.0")
-    }
-    ```
-
-=== "Gradle (Java)"
-
-    ```groovy
-    plugins {
-        id 'com.google.devtools.ksp' version '2.2.20-2.0.2'
-    }
-
-    dependencies {
-        ksp 'onl.ycode:annproc:2.1.0'
-    }
-    ```
-
-KSP requires the Kotlin compiler, so pure Java/Maven projects without a Kotlin compilation
-step cannot use `annproc` — they rely on `kotlin-reflect` instead.
-
-The processor generates an `EntityRegistrar` object in the
-`onl.ycode.stormify.generated` package. Pass it to the `Stormify` constructor:
-
-```kotlin
-import onl.ycode.stormify.generated.GeneratedEntities
-
-val stormify = Stormify(dataSource, GeneratedEntities)
-```
-
-**Customizing the generated package and class names**
+### Customizing the generated package and class names
 
 The generated package and the two class names (`GeneratedEntities`, `Paths`) are
 overridable via KSP options. Set them in `build.gradle.kts`:
@@ -215,37 +181,6 @@ module's KSP output to land in a distinct namespace.
 
 ### Excluding kotlin-reflect
 
-When using `annproc` on JVM, `kotlin-reflect` is no longer needed at runtime. You can
-exclude it to reduce the dependency footprint:
-
-=== "Gradle (Kotlin)"
-
-    ```kotlin
-    implementation("onl.ycode:stormify-jvm:2.1.0") {
-        exclude(group = "org.jetbrains.kotlin", module = "kotlin-reflect")
-    }
-    ```
-
-=== "Gradle (Java)"
-
-    ```groovy
-    implementation('onl.ycode:stormify-jvm:2.1.0') {
-        exclude group: 'org.jetbrains.kotlin', module: 'kotlin-reflect'
-    }
-    ```
-
-=== "Maven"
-
-    ```xml
-    <dependency>
-        <groupId>onl.ycode</groupId>
-        <artifactId>stormify-jvm</artifactId>
-        <version>2.1.0</version>
-        <exclusions>
-            <exclusion>
-                <groupId>org.jetbrains.kotlin</groupId>
-                <artifactId>kotlin-reflect</artifactId>
-            </exclusion>
-        </exclusions>
-    </dependency>
-    ```
+When using `annproc` on JVM, `kotlin-reflect` is no longer needed at runtime.
+See [Installation › Excluding `kotlin-reflect`](Installation.md#excluding-kotlin-reflect-jvm)
+for the exclusion snippets (Gradle Kotlin, Gradle Groovy, Maven).

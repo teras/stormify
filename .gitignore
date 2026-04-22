@@ -70,3 +70,8 @@ testing/.logs/
 ### Docs build outputs ###
 docs/build/
 docs/build-landing/
+
+### Docs staging dirs (Dokka/Doxygen output copied in by createDocs) ###
+docs/src/api-stormify/
+docs/src/api-kdbc-kotlin/
+docs/src/kdbc-c/

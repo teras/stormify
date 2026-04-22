@@ -10,7 +10,7 @@ They are also wired into the main Stormify repository as a git submodule under `
 Standalone clone:
 
 ```bash
-git clone -b 2.1.0 https://github.com/teras/stormify-examples.git
+git clone -b 2.1.1 https://github.com/teras/stormify-examples.git
 cd stormify-examples
 ```
 
@@ -23,13 +23,13 @@ git submodule update --init --recursive
 cd examples
 ```
 
-Every example targets Stormify `2.1.0` and uses SQLite as the default database (no server required). Each subfolder is a self-contained Gradle/Maven project with its own `README.md` detailing entities, setup, and any platform-specific notes.
+Every example targets Stormify `2.1.1` and uses SQLite as the default database (no server required). Each subfolder is a self-contained Gradle/Maven project with its own `README.md` detailing entities, setup, and any platform-specific notes.
 
 ## Available examples
 
 ### kotlin-jvm
 
-Minimal Kotlin JVM application using SQLite over JDBC. Demonstrates CRUD, transactions, and lazy-loaded references via `AutoTable` with `by db()` delegates.
+Minimal Kotlin JVM application using SQLite over JDBC. Demonstrates CRUD, transactions, and lazy-loaded references via `AutoTable` with `by db()` and `by lazyDetails()` delegates.
 
 Run:
 
@@ -101,7 +101,7 @@ gradle runDebugExecutableMingwX64
 
 ### kotlin-multiplatform
 
-The most comprehensive example: the **same business logic** in `commonMain` runs on JVM, Linux (`linuxX64`, `linuxArm64`), Windows (`mingwX64`), and macOS (`macosArm64`, `macosX64`). Only the DataSource creation is platform-specific — JVM uses SQLite via JDBC, native targets use `KdbcDataSource`. Both entities extend `AutoTable` with `by db()` delegates.
+The most comprehensive example: the **same business logic** in `commonMain` runs on JVM, Linux (`linuxX64`, `linuxArm64`), Windows (`mingwX64`), and macOS (`macosArm64`, `macosX64`). Only the DataSource creation is platform-specific — JVM uses SQLite via JDBC, native targets use `KdbcDataSource`. Both entities extend `AutoTable` with `by db()` and `by lazyDetails()` delegates.
 
 Run on any available target:
 

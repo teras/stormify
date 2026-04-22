@@ -1,8 +1,30 @@
 # Changelog
 
-All notable changes to Stormify are documented here. The format follows
-[Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project
-adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+Stormify release history.
+
+## [2.1.1] — 2026-04-22
+
+### Added
+- KSP options for the generated code's package and class names
+  (default: `onl.ycode.stormify.generated`).
+- `@Throws(SQLException::class)` annotations on public `Stormify` and
+  `TransactionContext` methods for clean Java interop.
+- `register` hook on `LogFramework` so consumers can plug in custom
+  logging backends.
+
+### Changed
+- `LogFramework` converted from a sealed enum into an open abstract
+  class; `LogLevel` extracted into its own file.
+- `Stormify` class is now `final`; tightened visibility across
+  `annproc` and `logger` modules.
+- Unified stored-procedure factories under the `Sp` companion with
+  `Class<T>` overloads on JVM/Android.
+- Stormify main sources now throw `SQLException` directly instead of
+  `error()` / `IllegalStateException`.
+
+### Removed
+- `gradle syncReadmeUrls` task — superseded by `bump-version.sh`
+  handling README URL rewrites directly.
 
 ## [2.1.0] — 2026-04-21
 
@@ -115,6 +137,7 @@ Initial public release on Maven Central.
 - JPA annotation compatibility (`@Id`, `@Table`, `@Column`, …).
 - JVM / JDBC-only, reflection-based entity discovery.
 
+[2.1.1]: https://github.com/teras/stormify/compare/v2.1.0...v2.1.1
 [2.1.0]: https://github.com/teras/stormify/compare/v2.0.0...v2.1.0
 [2.0.0]: https://github.com/teras/stormify/compare/v1.3.0...v2.0.0
 [1.3.0]: https://github.com/teras/stormify/compare/V1.0...v1.3.0

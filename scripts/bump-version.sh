@@ -5,14 +5,17 @@
 #
 # Updates (idempotent):
 #   - build.gradle.kts           (source of truth: version = "X.Y.Z")
-#   - README.md                  (install snippets + examples clone + badge version tree/)
+#   - README.md                  (install snippets, examples clone, tree/ refs, stormify.org/docs/ URLs)
 #   - docs/src/*.md              (install snippets + examples clone + prose)
 #   - examples/ submodule files  (Maven pom + Gradle build files)     [if initialized]
 #
 # Does NOT touch:
-#   - stormify.org/docs/ URLs in README.md — those are driven by branch via syncReadmeUrls
 #   - built artifacts (docs/build/)
 #   - CLAUDE.md internal references
+#   - CHANGELOG.md (add new entry by hand)
+#
+# Every URL in README points to the branch's version. Use release branches
+# (e.g. release/<ver>) to freeze a stable snapshot for consumers.
 #
 # After running, review the diff, commit, and (inside examples/) commit there too.
 
@@ -62,8 +65,7 @@ replace_clone() {
     sed -i -E "s|(git clone -b )$OLD_E( https://github\\.com/teras/stormify-examples\\.git)|\1$NEW\2|g" "$1"
 }
 
-# 4. stormify-examples/tree/<old> (only outside URL-rewriting managed by syncReadmeUrls — but
-#    safe to re-apply in source; syncReadmeUrls will normalize again based on branch)
+# 4. stormify-examples/tree/<old>
 replace_tree_ref() {
     sed -i -E "s|(github\\.com/teras/stormify-examples/tree/)$OLD_E|\1$NEW|g" "$1"
 }
@@ -73,15 +75,16 @@ replace_prose() {
     sed -i -E "s|(targets Stormify \`)$OLD_E(\`)|\1$NEW\2|g" "$1"
 }
 
-# Apply to docs + README
-CORE_DOCS=(
-    README.md
-    docs/src/README.md
-    docs/src/Annotations.md
-    docs/src/Migration_V1_to_V2.md
-    docs/src/PagedList.md
-    docs/src/Examples.md
-)
+# 6. stormify.org/docs/<old>/ URLs (badges, links — now bumped here, branch manages visibility)
+replace_docs_url() {
+    sed -i -E "s|(https://stormify\\.org/docs/)$OLD_E/|\1$NEW/|g" "$1"
+}
+
+# Apply to README + every docs/src/*.md (auto-discovered so new pages are never missed)
+CORE_DOCS=(README.md)
+while IFS= read -r -d '' f; do
+    CORE_DOCS+=("$f")
+done < <(find docs/src -maxdepth 1 -type f -name "*.md" -print0 | sort -z)
 
 for f in "${CORE_DOCS[@]}"; do
     if [[ -f "$f" ]]; then
@@ -89,6 +92,7 @@ for f in "${CORE_DOCS[@]}"; do
         replace_clone "$f"
         replace_tree_ref "$f"
         replace_prose "$f"
+        replace_docs_url "$f"
     fi
 done
 
@@ -118,8 +122,25 @@ else
 fi
 
 echo
+echo "Scanning for leftover references to $OLD…"
+LEFTOVERS="$(grep -rn --fixed-strings "$OLD" \
+    --include='*.gradle.kts' --include='*.gradle' --include='pom.xml' \
+    --include='*.md' \
+    --exclude-dir=build --exclude-dir=.gradle --exclude-dir=.git \
+    --exclude-dir=node_modules \
+    . 2>/dev/null || true)"
+
+if [[ -n "$LEFTOVERS" ]]; then
+    echo
+    echo "WARNING: Found remaining references to $OLD:"
+    echo "$LEFTOVERS"
+    echo
+    echo "These files may use a format the script does not know about."
+    echo "Review manually before committing."
+else
+    echo "OK — no leftover references."
+fi
+
+echo
 echo "Done. Review with:  git diff"
 echo "Then commit core repo and (cd examples && git commit ...) for the submodule."
-echo
-echo "Remember to run afterwards:"
-echo "  gradle syncReadmeUrls    # sync README URL subpaths to the new version / current branch"

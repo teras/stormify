@@ -52,7 +52,9 @@ extra_javascript:
 
 nav:
   - Getting Started:
-    - Database Configuration: index.md
+    - Overview: index.md
+    - Installation: Installation.md
+    - Database Configuration: Configuration.md
     - Entity Mapping: Entity_Mapping.md
     - Annotations: Annotations.md
   - Entities:
@@ -71,7 +73,7 @@ nav:
     - Overview: KDBC_Overview.md
     - C Guide: KDBC_C_Guide.md
     - Kotlin Guide: KDBC_Kotlin_Guide.md
-  - V1 to V2: Migration_V1_to_V2.md
+  - Migrating from v1 to v2: Migration_V1_to_V2.md
   - Contributing: Contributing.md
   - API Reference:
     - Stormify API: api-stormify/index.html
