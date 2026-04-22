@@ -22,6 +22,25 @@ private class FixedParams(val query: String, val params: List<Any?>)
 /**
  * The main ORM controller. Entry point for all database operations.
  *
+ * ## Configuration lifecycle
+ *
+ * A `Stormify` instance is designed to be **configured once, then shared** across
+ * threads. The intended usage is:
+ *
+ * 1. Construct the instance (optionally passing registrars).
+ * 2. Apply configuration — assign to [namingPolicy], [unmatchedColumnPolicy],
+ *    [logger], [filterSyntax], [inputParser]; call [addBlacklistField],
+ *    [registerPrimaryKeyResolver], etc.
+ * 3. Publish the instance to whoever needs it (DI container, `asDefault()`,
+ *    dependency parameter, …) and start issuing queries.
+ *
+ * After step 3, treat all configuration as frozen. Mutating configuration
+ * while other threads are executing queries is not supported — behaviour is
+ * undefined and any entity metadata already cached will not reflect the
+ * change. The query path itself (CRUD, `read`, `findAll`, stored procedures,
+ * transactions) is safe to call concurrently from many threads on a
+ * fully-configured instance.
+ *
  * @param dataSource the data source for all database operations
  * @param registrars optional entity registrars to register at construction time
  */
@@ -76,8 +95,6 @@ class Stormify(val dataSource: DataSource, vararg registrars: EntityRegistrar) {
 
     // --- Policies ---
 
-    private val configLock = kotlinx.atomicfu.locks.SynchronizedObject()
-
     /**
      * The naming policy used to convert Kotlin property names to database column names.
      * Default is [NamingPolicy.LOWER_CASE_WITH_UNDERSCORES] (snake_case).
@@ -89,26 +106,30 @@ class Stormify(val dataSource: DataSource, vararg registrars: EntityRegistrar) {
     private val pkResolvers = mutableMapOf<Int, (String, String) -> Boolean>()
 
     /** Excludes a field name from all entity mappings (e.g. inherited fields that have no database column). */
-    fun addBlacklistField(name: String) = synchronized(configLock) { blacklist.add(name) }
+    fun addBlacklistField(name: String) { blacklist.add(name) }
 
     /** Removes a previously blacklisted field name, allowing it to be mapped again. */
-    fun removeBlacklistField(name: String) = synchronized(configLock) { blacklist.remove(name) }
+    fun removeBlacklistField(name: String) { blacklist.remove(name) }
 
     /**
      * Registers a primary key resolver used when no `@Id` or `@DbField(primaryKey=true)` annotation is present.
      * The [resolver] receives the table name and field name and returns `true` if the field is a primary key.
      * Lower [priority] values are evaluated first.
      */
-    fun registerPrimaryKeyResolver(priority: Int, resolver: (String, String) -> Boolean) =
-        synchronized(configLock) { pkResolvers[priority] = resolver }
+    fun registerPrimaryKeyResolver(priority: Int, resolver: (String, String) -> Boolean) {
+        pkResolvers[priority] = resolver
+    }
 
     // --- Resolve pipeline ---
+    // The cache is lazily populated on the query hot path, so its getOrPut must be
+    // atomic even though configuration above is documented as startup-only.
 
+    private val cacheLock = kotlinx.atomicfu.locks.SynchronizedObject()
     private val tableInfoCache = mutableMapOf<KClass<*>, TableInfo<*>>()
 
     @Suppress("UNCHECKED_CAST")
     internal fun <T : Any> resolveTableInfo(type: KClass<out T>): TableInfo<T> =
-        synchronized(configLock) {
+        synchronized(cacheLock) {
             tableInfoCache.getOrPut(type) {
                 val meta = EntityMeta.find(type) ?: tryReflection(type)
                 ?: throw SQLException("Unknown entity: ${type.simpleName}")
@@ -117,7 +138,6 @@ class Stormify(val dataSource: DataSource, vararg registrars: EntityRegistrar) {
         }
 
     // --- SQL Dialect ---
-
     private var _sqlDialect: SqlDialect? = null
 
     /**
@@ -134,7 +154,7 @@ class Stormify(val dataSource: DataSource, vararg registrars: EntityRegistrar) {
                 }
             return _sqlDialect!!
         }
-        set(value) = synchronized(configLock) {
+        set(value) {
             _sqlDialect = value
         }
 
