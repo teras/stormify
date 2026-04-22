@@ -145,10 +145,11 @@ can be excluded:
 ## Native Runtime Libraries
 
 On native targets (Linux x64, Linux ARM64, Windows x64, macOS Apple Silicon, macOS
-Intel), Stormify loads database client libraries dynamically at runtime. Only install
-the libraries for the databases you actually use. If a library is missing, Stormify
-reports "driver not available" for that database — other drivers continue to work
-normally.
+Intel), Stormify loads database client libraries dynamically at runtime, and only
+when a database is actually used. Install the libraries for the databases you
+need. If the client library for a database you use is missing, Stormify reports
+"driver not available" for that database — other drivers continue to work, and
+databases you never touch are never probed.
 
 **iOS** is SQLite-only and uses the platform's built-in `libsqlite3` — nothing to
 install. The rest of this section does not apply to iOS.

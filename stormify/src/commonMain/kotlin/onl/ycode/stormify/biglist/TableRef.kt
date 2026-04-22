@@ -9,8 +9,8 @@ package onl.ycode.stormify.biglist
  * `addSqlFacet`, or in `setConstraints`) can reference the right table
  * regardless of how the engine numbers its joined aliases.
  *
- * Obtain a `TableRef` via [PagedList.addTableRef] or
- * [PagedQuery.addTableRef]. The library guarantees that the
+ * Obtain a `TableRef` via [PagedList.addTableRef][AbstractPagedList.addTableRef] or
+ * [PagedQuery.addTableRef][AbstractPagedQuery.addTableRef]. The library guarantees that the
  * corresponding JOIN is active in every SQL build for which [isActive] is
  * `true`, without the caller having to reference the table elsewhere.
  *
@@ -34,7 +34,7 @@ package onl.ycode.stormify.biglist
  * By default, every registered `TableRef` keeps its JOIN active on every
  * SQL build. Toggle [isActive] to `false` to disable the ref without
  * removing it — useful when a ref is referenced by a raw facet that is
- * conditionally present. Note that in a stateless [PagedQuery],
+ * conditionally present. Note that in a stateless [PagedQuery][AbstractPagedQuery],
  * toggling [isActive] after publishing the query to concurrent callers
  * is undefined behavior; set the flag during setup only.
  */

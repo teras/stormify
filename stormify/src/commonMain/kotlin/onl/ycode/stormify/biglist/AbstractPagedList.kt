@@ -14,26 +14,26 @@ import kotlin.math.min
 import kotlin.reflect.KClass
 
 /**
- * Abstract base class for `PagedList` — a UI-model façade over the shared
+ * Abstract base class for [PagedList][AbstractPagedList] — a UI-model façade over the shared
  * [PagedQueryCore] engine. Users do not instantiate this directly; use the
- * platform-specific `PagedList` subclass instead (it provides language-idiomatic
+ * platform-specific [PagedList][AbstractPagedList] subclass instead (it provides language-idiomatic
  * constructors for Kotlin and Java).
  *
- * A `PagedList` implements [kotlin.collections.AbstractList], so it behaves as a
+ * A [PagedList][AbstractPagedList] implements [kotlin.collections.AbstractList], so it behaves as a
  * normal `List<T>` while loading pages on demand from the database. Filtering and
  * sorting are defined through [Facet] objects set up at configuration time. The
  * list caches the current page and the total size, and supports a "selected"
  * entity that always appears first.
  *
- * ## When to use `PagedList`
+ * ## When to use [PagedList][AbstractPagedList]
  *
- * `PagedList` is intended for **UI consumers** — desktop/embedded grids (ZK,
+ * [PagedList][AbstractPagedList] is intended for **UI consumers** — desktop/embedded grids (ZK,
  * Compose, Swing, JavaFX) where a single long-lived list instance drives a view.
  * It is not appropriate for stateless server-side request handling: its per-column
  * filter/sort state is mutable and shared, and its cached page / size / selected
  * entity have no meaning across independent REST requests.
  *
- * For REST/stateless server use, use `PagedQuery` — configure once at startup,
+ * For REST/stateless server use, use [PagedQuery][AbstractPagedQuery] — configure once at startup,
  * call `execute(spec)` per request.
  *
  * The [Stormify] instance is not passed at construction. It is resolved lazily on
@@ -350,8 +350,7 @@ abstract class AbstractPagedList<T : Any> internal constructor(
      *
      * Rows are forwarded to [action] in chunks matching the default sibling-
      * batch size, so a foreign-key touch resolves a whole chunk of siblings in
-     * one query instead of one per row. See the
-     * [PagedList docs](https://ycode.onl/stormify/PagedList/#streaming-with-foreachstreaming).
+     * one query instead of one per row.
      */
     fun forEachStreaming(action: (T) -> Unit) {
         core.forEachStreaming(state = null, selectedId = selectedID, action = action)

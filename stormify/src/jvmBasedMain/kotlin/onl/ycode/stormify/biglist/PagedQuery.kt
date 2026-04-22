@@ -15,8 +15,6 @@ import kotlin.reflect.KClass
  * Construction does not require a [Stormify] instance — attach one via
  * [Stormify.attach] after construction, or register a [Stormify.defaultInstance]
  * and the query will pick it up on first use.
- *
- * See the members below for the full API.
  */
 open class PagedQuery<T : Any> : AbstractPagedQuery<T> {
     /** Construct for the given Kotlin class. */

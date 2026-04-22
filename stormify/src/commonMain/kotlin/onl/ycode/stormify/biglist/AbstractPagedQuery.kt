@@ -12,26 +12,26 @@ import kotlin.jvm.Transient
 import kotlin.reflect.KClass
 
 /**
- * Abstract base class for `PagedQuery` — a stateless, thread-safe query
+ * Abstract base class for [PagedQuery][AbstractPagedQuery] — a stateless, thread-safe query
  * executor designed for server-side use (REST, RPC, gRPC, any stateless
  * request/response context). Users do not instantiate this directly; use the
- * platform-specific `PagedQuery` subclass instead.
+ * platform-specific [PagedQuery][AbstractPagedQuery] subclass instead.
  *
- * A `PagedQuery` holds only column definitions and fixed constraints. It
+ * A [PagedQuery][AbstractPagedQuery] holds only column definitions and fixed constraints. It
  * does **not** hold per-request mutable state (no filter/sort on [Facet],
  * no cached page, no selected entity, no [kotlin.collections.AbstractList]
  * surface). All dynamic state flows per request through [execute] via a
  * [PageSpec]; the result of each call is a fresh [Page].
  *
- * Configure a `PagedQuery` once (typically at application startup, per
+ * Configure a [PagedQuery][AbstractPagedQuery] once (typically at application startup, per
  * endpoint / grid) and share the instance across arbitrarily many
  * concurrent [execute] calls.
  *
- * ## When to use `PagedQuery` vs `PagedList`
- * - Use `PagedQuery` when the caller is stateless (REST handler, RPC method,
+ * ## When to use [PagedQuery][AbstractPagedQuery] vs [PagedList][AbstractPagedList]
+ * - Use [PagedQuery][AbstractPagedQuery] when the caller is stateless (REST handler, RPC method,
  *   background job that processes spec'd queries). Facet aliases are the
  *   only identifiers that cross the boundary — no schema, no SQL, no paths.
- * - Use `PagedList` when you're driving a stateful UI grid that keeps
+ * - Use [PagedList][AbstractPagedList] when you're driving a stateful UI grid that keeps
  *   selection, lazy page cache, and per-column filter mutation across user
  *   interactions.
  *
@@ -194,11 +194,11 @@ abstract class AbstractPagedQuery<T : Any> internal constructor(
     /**
      * Executes a single page query against the configured columns and the
      * caller-supplied [spec]. Thread-safe — multiple concurrent calls on the
-     * same `PagedQuery` instance serialize only the (cheap) SQL-plan stage
+     * same [PagedQuery][AbstractPagedQuery] instance serialize only the (cheap) SQL-plan stage
      * and run the database roundtrip in parallel.
      *
      * Aliases in [spec] that do not correspond to any configured column are
-     * silently ignored, mirroring [PagedList.restoreState] semantics.
+     * silently ignored, mirroring [PagedList.restoreState][AbstractPagedList.restoreState] semantics.
      * Filters on columns whose [Facet.isFilterable] is `false`, or sorts on
      * columns whose [Facet.isSortable] is `false`, throw — the server
      * contract is explicit.
@@ -246,7 +246,7 @@ abstract class AbstractPagedQuery<T : Any> internal constructor(
     /**
      * Streams every row matching the filters/sorts/constraints in [spec]
      * through [action] via a database cursor. Uses the same chunked
-     * sibling-batching as [PagedList.forEachStreaming]: FK touches
+     * sibling-batching as [PagedList.forEachStreaming][AbstractPagedList.forEachStreaming]: FK touches
      * inside [action] resolve in batches of
      * [onl.ycode.stormify.SiblingGroup.DEFAULT_BATCH_SIZE], not one-per-row.
      *

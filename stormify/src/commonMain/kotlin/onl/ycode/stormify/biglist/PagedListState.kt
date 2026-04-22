@@ -3,12 +3,12 @@
 package onl.ycode.stormify.biglist
 
 /**
- * Serializable snapshot of a [PagedList]'s user-controllable state —
+ * Serializable snapshot of a [PagedList][AbstractPagedList]'s user-controllable state —
  * the per-column filters, sorts, case-sensitivity flags, the page size and
  * the distinct flag.
  *
- * Obtained via [PagedList.saveState] and re-applied via
- * [PagedList.restoreState]. Use to persist a grid / picker screen's state
+ * Obtained via [PagedList.saveState][AbstractPagedList.saveState] and re-applied via
+ * [PagedList.restoreState][AbstractPagedList.restoreState]. Use to persist a grid / picker screen's state
  * across navigation.
  *
  * All fields are plain data (primitives, strings, maps of primitives) so the

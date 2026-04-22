@@ -42,6 +42,24 @@ When you read a list of entities whose reference fields point to `AutoTable` sub
 those references are created with only their primary key set. When you access any non-key
 field, the full entity is loaded from the database on demand.
 
+### How It Works in Kotlin
+
+In Kotlin, the `by db(defaultValue)` property delegate turns any field into a
+lazy-loaded one. Until the row is first read, the delegate serves the default
+value you pass in; on first access, Stormify loads the row from the database
+and returns the real value from then on.
+
+```kotlin
+class User : AutoTable() {
+    @DbField(primaryKey = true)
+    var id: Int? = null
+    var name: String by db("")       // Auto-populated on first access
+    var email: String by db("")      // Auto-populated on first access
+}
+```
+
+Every non-key property that needs lazy loading uses `by db(defaultValue)`.
+
 ### How It Works in Java
 
 Subclasses must call `populate()` in every getter/setter of non-primary-key fields:
@@ -65,35 +83,23 @@ public class User extends AutoTable {
 }
 ```
 
-### How It Works in Kotlin
-
-In Kotlin, the `db` property delegate eliminates the need to call `populate()` manually:
-
-```kotlin
-class User : AutoTable() {
-    @DbField(primaryKey = true)
-    var id: Int? = null
-    var name: String by db("")       // Auto-populated on first access
-    var email: String by db("")      // Auto-populated on first access
-}
-```
-
-Every non-key property that needs lazy loading uses `by db(defaultValue)`.
-
 ### Fresh Construction vs. Lazy Stubs
 
-An `AutoTable` instance exists in one of three states, and `populate()` behaves accordingly.
-A `Stormify` instance is considered "available" when it is either directly attached to the
-entity (by a prior Stormify operation) **or** when a [default
-instance](Configuration.md#default-instance) has been registered via `Stormify.asDefault()`.
+If you get your entities from Stormify — by querying, creating, or loading
+them — lazy loading is invisible. This section is for when you manually build
+a lightweight reference from just an ID. Whether a field
+access then hits the database depends on two things: whether a `Stormify`
+instance is attached to the object (directly, or via a
+[default instance](Configuration.md#default-instance)), and whether you have
+written anything into the object yourself.
 
-| State | `Stormify` available? | User touched any `db` field? | Behavior on read |
-|-------|----------------------|-------------------------------|------------------|
-| **Fresh construct (detached)** — `User().apply { id=1; name="Alice" }` with no default instance | No | Yes (e.g., `name="Alice"`) | Returns in-memory value; no DB access |
-| **Manual stub / lazy reference** — `User().apply { id=1 }` where only the ID is set | Yes (via default instance) | No | First access triggers a `SELECT` to load the row |
-| **FK reference stub** — came from a foreign-key read; Stormify auto-attaches | Yes (directly) | No | First access triggers a `SELECT` to load the row |
+| State | `Stormify` will be attached? | User touched any `db` field? | Behavior on read |
+|-------|------------------------------|-------------------------------|------------------|
+| **Fresh construct** — `User().apply { id=1; name="Alice" }` | — | Yes (e.g., `name="Alice"`) | Returns in-memory value; no DB access |
+| **Manual stub, with a default Stormify** — `User().apply { id=1 }` | Yes | No | First access triggers a `SELECT` to load the row |
+| **Manual stub, no default Stormify** — `User().apply { id=1 }` | — | No | **Throws** `SQLException` — no way to load, and the library refuses to hand back silent defaults |
+| **FK reference stub** — came from a foreign-key read; Stormify auto-attaches | Yes | No | First access triggers a `SELECT` to load the row |
 | **Populated** — came from `findById`/`findAll`/`create`, or has been lazy-loaded already | Yes | — | Returns in-memory value; no further DB access |
-| **Only-ID, no Stormify anywhere** — `User().apply { id=1 }` with no default instance | No | No | **Throws** `SQLException` — no way to load, and the library refuses to hand back silent defaults |
 
 Stormify distinguishes these states automatically. You don't need to mark anything — the
 combination of "is a Stormify reachable?" and "has the user written any delegated field?"

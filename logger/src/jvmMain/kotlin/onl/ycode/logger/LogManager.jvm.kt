@@ -42,7 +42,7 @@ actual object LogManager {
     /**
      * Create a new Logger instance for the given name.
      *
-     * @param kclass The name for which the Logger should be created.
+     * @param name The name for which the Logger should be created.
      * @return A new Logger instance.
      */
     @JvmStatic

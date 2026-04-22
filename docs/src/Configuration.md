@@ -264,7 +264,7 @@ Tuning connection pool settings such as the maximum pool size, idle connections,
 - **Adjust Pool Sizes**: Balance pool sizes to match your application's workload and database capacity.
 - **Monitor Connection Usage**: Use monitoring tools to keep an eye on connection usage and database performance.
 
-## Application Server Deployment (JVM only)
+## Application Server Deployment (Jakarta EE / Java EE only)
 
 `StormifyLifecycle` is a **JVM-only** cleanup facade. When Stormify is used inside a Jakarta EE / Java EE webapp (Payara, WildFly, Tomcat, GlassFish, Jetty), **where** you place `stormify-jvm.jar` on the classpath determines whether you need any shutdown cleanup.
 

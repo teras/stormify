@@ -8,6 +8,7 @@ import kotlin.reflect.KClass
 
 actual sealed class Sp actual constructor() {
     actual class In actual constructor(actual val value: Any?) : Sp() {
+        /** Debug representation `IN:<value>`. */
         override fun toString() = "IN:$value"
     }
 
@@ -24,6 +25,7 @@ actual sealed class Sp actual constructor() {
             get() = _value
                 ?: throw SQLException("Sp.Out<${type.simpleName}> was not populated by the procedure")
 
+        /** Debug representation `OUT<Type>:<value>`. */
         override fun toString() = "OUT<${type.simpleName}>:${_value}"
     }
 
@@ -40,6 +42,7 @@ actual sealed class Sp actual constructor() {
             get() = _value
                 ?: throw SQLException("Sp.InOut<${type.simpleName}> was cleared to NULL by the procedure")
 
+        /** Debug representation `INOUT<Type>:<value>`. */
         override fun toString() = "INOUT<${type.simpleName}>:${_value}"
     }
 

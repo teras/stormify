@@ -158,9 +158,9 @@ On **JVM**, `annproc` is optional but offers faster startup since metadata is pr
 
 ### Setup
 
-The KSP plugin + `annproc` dependency setup and the `GeneratedEntities` wiring
-live in [Installation › Entity Metadata](Installation.md#entity-metadata-annproc-and-generatedentities).
-Configure it there once; the rest of this page assumes the processor is active.
+The KSP plugin, the `annproc` dependency, and the `GeneratedEntities` wiring are
+covered in [Installation › Entity Metadata](Installation.md#entity-metadata-annproc-and-generatedentities).
+Configure them there once; the rest of this page assumes the processor is active.
 
 ### Customizing the generated package and class names
 
