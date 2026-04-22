@@ -1,10 +1,10 @@
 package test
 
-import db.stormify.Paths.TestC_
-import db.stormify.Paths.CamelEntity_
-import db.stormify.Paths.AutoChildEntity_
-import db.stormify.Paths.TreeNode_
-import db.stormify.Paths.Person_
+import onl.ycode.stormify.generated.Paths.TestC_
+import onl.ycode.stormify.generated.Paths.CamelEntity_
+import onl.ycode.stormify.generated.Paths.AutoChildEntity_
+import onl.ycode.stormify.generated.Paths.TreeNode_
+import onl.ycode.stormify.generated.Paths.Person_
 import onl.ycode.stormify.Stormify
 import onl.ycode.stormify.biglist.Facet
 import onl.ycode.stormify.biglist.PagedList

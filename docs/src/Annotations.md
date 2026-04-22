@@ -187,13 +187,31 @@ Add the KSP plugin and `annproc` dependency:
 KSP requires the Kotlin compiler, so pure Java/Maven projects without a Kotlin compilation
 step cannot use `annproc` — they rely on `kotlin-reflect` instead.
 
-The processor generates an `EntityRegistrar` object. Pass it to the `Stormify` constructor:
+The processor generates an `EntityRegistrar` object in the
+`onl.ycode.stormify.generated` package. Pass it to the `Stormify` constructor:
 
 ```kotlin
-import db.stormify.GeneratedEntities
+import onl.ycode.stormify.generated.GeneratedEntities
 
 val stormify = Stormify(dataSource, GeneratedEntities)
 ```
+
+**Customizing the generated package and class names**
+
+The generated package and the two class names (`GeneratedEntities`, `Paths`) are
+overridable via KSP options. Set them in `build.gradle.kts`:
+
+```kotlin
+ksp {
+    arg("stormify.generatedPackage", "com.mycompany.db")
+    arg("stormify.registrarClass", "Entities")
+    arg("stormify.pathsClass", "Q")
+}
+```
+
+Defaults: `onl.ycode.stormify.generated.GeneratedEntities` and
+`onl.ycode.stormify.generated.Paths`. Useful when a multi-module project needs each
+module's KSP output to land in a distinct namespace.
 
 ### Excluding kotlin-reflect
 

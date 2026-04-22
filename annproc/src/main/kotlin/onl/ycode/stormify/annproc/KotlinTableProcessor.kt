@@ -29,6 +29,16 @@ class KotlinTableProcessor(private val env: SymbolProcessorEnvironment) : Symbol
     private val jvmTarget: Boolean = env.platforms.any { it is JvmPlatformInfo }
     private val jvmFieldPrefix: String = if (jvmTarget) "@JvmField " else ""
 
+    // Generated code lands in `onl.ycode.stormify.generated.{GeneratedEntities,Paths}` by
+    // default. Each option below is overridable via `ksp { arg("stormify.<key>", "...") }`
+    // so multi-module projects can avoid classname collisions.
+    private val generatedPackage: String =
+        env.options["stormify.generatedPackage"] ?: "onl.ycode.stormify.generated"
+    private val registrarClass: String =
+        env.options["stormify.registrarClass"] ?: "GeneratedEntities"
+    private val pathsClass: String =
+        env.options["stormify.pathsClass"] ?: "Paths"
+
     override fun process(resolver: Resolver): List<KSAnnotated> {
         // Classes explicitly marked as entities.
         val explicit = resolver.getSymbolsWithAnnotation(DB_TABLE).filterIsInstance<KSClassDeclaration>().toSet() +
@@ -64,8 +74,8 @@ class KotlinTableProcessor(private val env: SymbolProcessorEnvironment) : Symbol
             props.filter { it.isEnum }.forEach { enumTypes.add(it.type) }
         }
 
-        env.codeGenerator.createNewFile(Dependencies(false), "db.stormify", "Registrar").bufferedWriter().use { w ->
-            w.write("package db.stormify\n\n")
+        env.codeGenerator.createNewFile(Dependencies(false), generatedPackage, registrarClass).bufferedWriter().use { w ->
+            w.write("package $generatedPackage\n\n")
             w.write("import kotlinx.atomicfu.atomic\n")
             w.write("import onl.ycode.stormify.DbValue\n")
             w.write("import onl.ycode.stormify.EntityMeta\n")
@@ -77,7 +87,7 @@ class KotlinTableProcessor(private val env: SymbolProcessorEnvironment) : Symbol
             entities.forEach { w.write("import ${it.qualifiedName?.asString()}\n") }
             enumTypes.forEach { w.write("import $it\n") }
 
-            w.write("\nobject GeneratedEntities : EntityRegistrar {\n")
+            w.write("\nobject $registrarClass : EntityRegistrar {\n")
             w.write("    private val initialized = atomic(false)\n\n")
             w.write("    override fun register() {\n")
             w.write("        if (!initialized.compareAndSet(false, true)) return\n\n")
@@ -110,9 +120,9 @@ class KotlinTableProcessor(private val env: SymbolProcessorEnvironment) : Symbol
         val entityQNames = entities.mapNotNull { it.qualifiedName?.asString() }.toSet()
         val entityProps = entities.associate { it.simpleName.asString() to EntityProperty.find(it) }
 
-        env.codeGenerator.createNewFile(Dependencies(true), "db.stormify", "Paths").bufferedWriter().use { w ->
+        env.codeGenerator.createNewFile(Dependencies(true), generatedPackage, pathsClass).bufferedWriter().use { w ->
             w.write("@file:Suppress(\"unused\")\n")
-            w.write("package db.stormify\n\n")
+            w.write("package $generatedPackage\n\n")
             if (jvmTarget) {
                 w.write("import kotlin.jvm.JvmField\n")
                 w.write("import kotlin.jvm.JvmName\n")
@@ -128,7 +138,7 @@ class KotlinTableProcessor(private val env: SymbolProcessorEnvironment) : Symbol
             }
 
             // Root objects inside Paths
-            w.write("object Paths {\n")
+            w.write("object $pathsClass {\n")
             for (entity in entities) {
                 val className = entity.simpleName.asString()
                 w.write("    ${jvmFieldPrefix}val ${className}_ = ${className}Ref(\"\")\n")

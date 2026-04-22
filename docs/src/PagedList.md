@@ -35,7 +35,7 @@ time to bind the list to a specific one.
     ```kotlin
     import onl.ycode.stormify.biglist.Facet
     import onl.ycode.stormify.biglist.PagedList
-    import db.stormify.Company_   // KSP-generated typed paths
+    import onl.ycode.stormify.generated.Company_   // KSP-generated typed paths
 
     val list = PagedList<Company>()
     // val list = stormify.attach(PagedList<Company>())    // when not using a default instance
@@ -59,7 +59,7 @@ time to bind the list to a specific one.
     ```java
     import onl.ycode.stormify.biglist.Facet;
     import onl.ycode.stormify.biglist.PagedList;
-    import db.stormify.Company_;   // KSP-generated typed paths
+    import onl.ycode.stormify.generated.Company_;   // KSP-generated typed paths
 
     PagedList<Company> list = new PagedList<>(Company.class);
     // PagedList<Company> list = stormify.attach(new PagedList<>(Company.class));  // when not using a default instance
@@ -107,8 +107,10 @@ your build (once; the same processor also generates entity metadata):
     }
     ```
 
-For each entity class `Foo` the processor emits a `Foo_` object under the `db.stormify`
-package, with fields for each scalar property and nested objects for FK references. See
+For each entity class `Foo` the processor emits a `Foo_` object under the
+`onl.ycode.stormify.generated` package, with fields for each scalar property and nested
+objects for FK references. The package name is overridable via the
+`stormify.generatedPackage` KSP option. See
 [Annotations](Annotations.md#annotation-processor-annproc) for the full setup.
 On Native/Android/iOS, `annproc` is **required** anyway (for entity metadata) — you get
 typed paths for free.

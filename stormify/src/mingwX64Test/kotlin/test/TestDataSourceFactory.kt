@@ -2,7 +2,7 @@
 // (C) Panayotis Katsaloulis
 package test
 
-import db.stormify.GeneratedEntities
+import onl.ycode.stormify.generated.GeneratedEntities
 import kotlinx.cinterop.ExperimentalForeignApi
 import kotlinx.cinterop.toKString
 import onl.ycode.kdbc.KdbcDataSource

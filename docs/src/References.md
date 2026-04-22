@@ -238,7 +238,7 @@ overload doesn't exist and the call fails to resolve.
 === "Java"
 
     ```java
-    import db.stormify.Paths;
+    import onl.ycode.stormify.generated.Paths;
 
     public class Order extends AutoTable {
         @DbField(primaryKey = true)
