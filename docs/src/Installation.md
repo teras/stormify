@@ -123,7 +123,7 @@ for details and advanced usage.
 
 ### Excluding `kotlin-reflect` (JVM)
 
-When using `annproc` on JVM, `kotlin-reflect` is no longer needed at runtime and
+When using `annproc` on JVM, `kotlin-reflect` is not needed at runtime and
 can be excluded:
 
 === "Gradle (Kotlin)"

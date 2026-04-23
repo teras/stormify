@@ -89,10 +89,10 @@ Stormify supports three styles for Create / Read / Update / Delete on entities. 
 
 ## Transaction Participation
 
-All three styles transparently join an enclosing `transaction { }` block — the
-active transaction's connection is tracked per-thread (and across coroutine
-dispatcher hops on JVM/Android), so every call on the same `Stormify` instance
-inside the block shares one connection and rolls back together on exception.
+All three styles transparently join an enclosing `transaction { }` block — every
+call on the same `Stormify` instance inside the block shares one connection and
+rolls back together on exception. See [Transactions](Transactions.md) for
+details.
 
 ```kotlin
 stormify.transaction {

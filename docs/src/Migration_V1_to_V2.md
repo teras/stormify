@@ -108,7 +108,7 @@ to your services. This makes testing and multi-database setups straightforward.
 
 ## Transactions
 
-The transaction API moves from the static-singleton pattern to a plain lambda on a concrete instance. Every call inside the block runs on the transaction's connection via the ambient-tx registry, and nested `transaction { }` calls become savepoints automatically.
+The transaction API moves from the static-singleton pattern to a plain lambda on a concrete instance. Every call inside the block automatically participates in the transaction, and nested `transaction { }` calls become savepoints.
 
 === "V1"
 
@@ -323,92 +323,10 @@ The following V1 APIs no longer exist in V2:
 1. **Update dependencies**: `onl.ycode.stormify:db` → `onl.ycode:stormify-jvm`
 2. **Replace singleton**: `StormifyManager.stormify()` → `Stormify(dataSource)` constructor
 3. **Hold the instance**: pass `Stormify` to services instead of calling static methods
-4. **Update transactions**: `stormify().transaction(() -> …)` → `stormify.transaction { … }` (see 2.1 → 2.2 note below for the receiver-vs-plain change)
+4. **Update transactions**: `stormify().transaction(() -> …)` → `stormify.transaction { … }`
 5. **Remove Class parameters**: `read(User.class, sql)` → `read<User>(sql)`
 6. **Update exception handling**: `QueryException` → `SQLException`
 7. **Update stored procedures**: `storedProcedure()` → `procedure()`, `SPParam` → `Sp` API
 8. **Add KSP** if targeting native platforms
 9. **Optional**: adopt coroutine API for async workloads
 
-## Upgrading from 2.1 to 2.2
-
-Version 2.2 flattens the transaction API. The lambda-with-receiver of 2.1 is gone — the block is a plain `() -> R` and every operation participates in the enclosing transaction through an ambient-tx registry instead of a receiver parameter.
-
-### Transaction body
-
-=== "2.1"
-
-    ```kotlin
-    stormify.transaction {
-        val u = create(User(email = "a@b.c"))   // receiver-scoped create
-        create(Profile(userId = u.id))
-    }
-    ```
-
-=== "2.2"
-
-    ```kotlin
-    stormify.transaction {
-        val u = stormify.create(User(email = "a@b.c"))   // plain lambda
-        stormify.create(Profile(userId = u.id))
-    }
-
-    // or — after calling stormify.asDefault() once — via top-level extensions:
-    transaction {
-        val u = User(email = "a@b.c").create()
-        Profile(userId = u.id).create()
-    }
-    ```
-
-### Nested transactions
-
-No syntactic change on the outside, but the inner call is now qualified:
-
-```kotlin
-// 2.2
-stormify.transaction {
-    stormify.create(a)
-    stormify.transaction { stormify.create(b) }   // savepoint, detected via ambient
-}
-```
-
-### Java
-
-The `TransactionContextJ` wrapper is gone. `StormifyJ.transaction` now takes a plain `Runnable` / `Supplier<R>`:
-
-=== "2.1 (Java)"
-
-    ```java
-    stormify.transaction(tx -> {
-        tx.create(user);
-        tx.create(profile);
-    });
-    ```
-
-=== "2.2 (Java)"
-
-    ```java
-    stormify.transaction(() -> {
-        stormify.create(user);
-        stormify.create(profile);
-    });
-    ```
-
-A new `StormifyJHelpers` companion offers static imports so you can drop the prefix entirely (requires a one-time `new StormifyJ(ds).asDefault()` at startup):
-
-```java
-import static onl.ycode.stormify.StormifyJHelpers.*;
-
-transaction(() -> {
-    create(user);
-    create(profile);
-});
-```
-
-### CRUDTable is no longer deprecated
-
-`CRUDTable.create()/update()/delete()` now route through the ambient transaction too, so implementing the interface is again a recommended Java-friendly pattern. Any 2.1 code using it continues to work; the `@Deprecated` warning is removed.
-
-### Extension `read`/`create` on entities and SQL strings
-
-The `TransactionContext` member-scope extensions that 2.1.2-SNAPSHOT briefly introduced (`user.create()` inside `transaction { }` routed via a receiver shadow) are gone. The same top-level extensions from `StormifyBindings.kt` work everywhere — inside or outside a transaction — via ambient routing.

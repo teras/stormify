@@ -15,9 +15,8 @@ Both share the same CRUD operations and nested-transaction semantics.
 Transactions are plain lambdas — the block is the unit of work, commit happens on
 normal return, rollback on any thrown exception. Every CRUD or query call issued
 through the same `Stormify` instance inside the block (including top-level
-extensions and [`CRUDTable`](CRUD.md)-implementing entities) automatically shares
-the transaction's connection via an ambient registry — you do not thread a
-context parameter through your code.
+extensions and [`CRUDTable`](CRUD.md)-implementing entities) automatically joins
+the transaction. The same call works identically inside or outside a transaction.
 
 ### Basic Transaction Example
 
@@ -45,10 +44,10 @@ context parameter through your code.
 
 === "Default instance"
 
-    With a default Stormify instance registered via `stormify.asDefault()`,
+    With a [default instance](Configuration.md#default-instance) registered,
     call the top-level `transaction { }` and the top-level extensions
     (`user.create()`, `"SELECT …".read<T>()`, `findById<T>(id)`, …) without any
-    prefix. Every call still routes through the active transaction's connection.
+    prefix. Every call still participates in the active transaction.
 
     === "Kotlin"
 
@@ -64,15 +63,10 @@ context parameter through your code.
     === "Java"
 
         ```java
-        // Register once at startup:
-        new StormifyJ(dataSource).asDefault();
-
-        // Then, anywhere:
-        import static onl.ycode.stormify.StormifyJHelpers.*;
-
-        transaction(() -> {
-            User user = create(new User("test@example.com"));
-            create(new Profile(user.getId(), "Test User"));
+        StormifyJ stormify = StormifyJ.getDefault();
+        stormify.transaction(() -> {
+            User user = stormify.create(new User("test@example.com"));
+            stormify.create(new Profile(user.getId(), "Test User"));
         });
         ```
 
@@ -102,7 +96,7 @@ In Java the value-returning overload takes a `Supplier<R>`; the `Runnable` overl
 
 ## Nested Transactions
 
-Nested calls to `transaction` on the same `Stormify` instance become savepoints automatically — the runtime consults the ambient registry and opens a savepoint when it detects an outer transaction is already active on the current thread.
+Nested calls to `transaction` on the same `Stormify` instance become savepoints automatically — a failure inside the inner block rolls back only its work, not the outer transaction.
 
 === "Kotlin"
 
@@ -183,7 +177,7 @@ stormify.transaction(() -> {
 });
 ```
 
-All helpers naturally participate in whichever enclosing transaction is active, because every Stormify operation consults the ambient registry.
+All helpers naturally participate in whichever enclosing transaction is active — every Stormify operation picks up the current transaction automatically.
 
 ## Coroutines (Suspend API)
 
@@ -243,8 +237,7 @@ async.transaction {
 All operations inside the block run on the IO dispatcher. The transaction commits
 on success and rolls back on any exception. Convenience calls on the underlying
 `Stormify` instance transparently join the transaction even after a dispatcher
-hop (`delay`, `withContext`, etc.) on JVM / Android — the runtime re-publishes
-the ambient binding on whichever thread resumes the coroutine.
+hop (`delay`, `withContext`, etc.) on JVM / Android.
 
 ### Nested Suspend Transactions
 

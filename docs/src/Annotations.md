@@ -181,6 +181,6 @@ module's KSP output to land in a distinct namespace.
 
 ### Excluding kotlin-reflect
 
-When using `annproc` on JVM, `kotlin-reflect` is no longer needed at runtime.
+When using `annproc` on JVM, `kotlin-reflect` is not needed at runtime.
 See [Installation › Excluding `kotlin-reflect`](Installation.md#excluding-kotlin-reflect-jvm)
 for the exclusion snippets (Gradle Kotlin, Gradle Groovy, Maven).

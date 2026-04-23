@@ -36,7 +36,7 @@ The direct methods take a query string and bind parameters positionally:
 === "Extension"
 
     ```kotlin
-    // With a default Stormify instance registered via stormify.asDefault(),
+    // Requires a default instance via stormify.asDefault().
     // SQL strings gain read / readOne / readCursor / executeUpdate extensions.
     val users = "SELECT * FROM users WHERE age > ?".read<User>(25)
     val one = "SELECT * FROM users WHERE id = ?".readOne<User>(1)
