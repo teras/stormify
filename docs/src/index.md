@@ -57,7 +57,7 @@ A complete, five-minute walkthrough from zero to your first query.
 === "Gradle (JVM)"
 
     ```kotlin
-    implementation("onl.ycode:stormify-jvm:2.1.1")
+    implementation("onl.ycode:stormify-jvm:2.1.2-SNAPSHOT")
     ```
 
 === "Maven (JVM)"
@@ -66,7 +66,7 @@ A complete, five-minute walkthrough from zero to your first query.
     <dependency>
         <groupId>onl.ycode</groupId>
         <artifactId>stormify-jvm</artifactId>
-        <version>2.1.1</version>
+        <version>2.1.2-SNAPSHOT</version>
     </dependency>
     ```
 

@@ -9,10 +9,10 @@
 #   - docs/src/*.md              (install snippets + examples clone + prose)
 #   - examples/ submodule files  (Maven pom + Gradle build files)     [if initialized]
 #
-# Does NOT touch:
+# Does NOT touch (and intentionally excluded from the leftover scan):
 #   - built artifacts (docs/build/)
-#   - CLAUDE.md internal references
-#   - CHANGELOG.md (add new entry by hand)
+#   - .claude/ (internal agent instructions — no version literals expected)
+#   - CHANGELOG.md (historical release entries; add new one by hand)
 #
 # Every URL in README points to the branch's version. Use release branches
 # (e.g. release/<ver>) to freeze a stable snapshot for consumers.
@@ -117,17 +117,31 @@ if [[ -d examples/.git || -f examples/.git ]]; then
         -exec sed -i -E "s|(onl\\.ycode:[a-zA-Z0-9-]+):$OLD_E|\\1:$NEW|g" {} +
     find examples -type f -name "pom.xml" ! -path "*/build/*" \
         -exec sed -i -E "s|(<stormify\\.version>)$OLD_E(</stormify\\.version>)|\\1$NEW\\2|g" {} +
+    # README / prose inside examples — same replacements as the core docs
+    # (`git clone -b <ver>` tags, `tree/<ver>` links, `targets Stormify <ver>`).
+    while IFS= read -r -d '' f; do
+        replace_deps      "$f"
+        replace_clone     "$f"
+        replace_tree_ref  "$f"
+        replace_prose     "$f"
+        replace_docs_url  "$f"
+    done < <(find examples -type f -name "*.md" \
+        ! -path "*/build/*" ! -path "*/.gradle/*" ! -path "*/node_modules/*" -print0)
 else
     echo "Note: examples/ submodule is not initialized — skipped."
 fi
 
 echo
 echo "Scanning for leftover references to $OLD…"
+# Intentional exclusions (files that legitimately reference older versions):
+#   - CHANGELOG.md        → historical release entries, never rewritten.
+#   - .claude/            → internal agent instructions; no version literals.
 LEFTOVERS="$(grep -rn --fixed-strings "$OLD" \
     --include='*.gradle.kts' --include='*.gradle' --include='pom.xml' \
     --include='*.md' \
+    --exclude='CHANGELOG.md' \
     --exclude-dir=build --exclude-dir=.gradle --exclude-dir=.git \
-    --exclude-dir=node_modules \
+    --exclude-dir=node_modules --exclude-dir=.claude \
     . 2>/dev/null || true)"
 
 if [[ -n "$LEFTOVERS" ]]; then

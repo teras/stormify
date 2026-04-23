@@ -42,7 +42,7 @@ JVM-only V1. This guide covers all breaking changes and how to update your code.
     <dependency>
         <groupId>onl.ycode</groupId>
         <artifactId>stormify-jvm</artifactId>
-        <version>2.1.1</version>
+        <version>2.1.2-SNAPSHOT</version>
     </dependency>
     ```
 
@@ -58,7 +58,7 @@ JVM-only V1. This guide covers all breaking changes and how to update your code.
 === "V2"
 
     ```kotlin
-    implementation("onl.ycode:stormify-jvm:2.1.1")
+    implementation("onl.ycode:stormify-jvm:2.1.2-SNAPSHOT")
     ```
 
 The separate `db` and `kotlin` modules are merged into a single `stormify` artifact.

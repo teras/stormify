@@ -18,9 +18,9 @@ Designed for developers seeking a simple yet powerful ORM, Stormify excels in pr
 <p align="center">
   <a href="https://stormify.org"><img src="https://img.shields.io/badge/Website-stormify.org-4a82c2?style=for-the-badge&logoColor=white" alt="Website"></a>
   &nbsp;
-  <a href="https://stormify.org/docs/2.1.1/"><img src="https://img.shields.io/badge/Docs-Read%20the%20docs-2563eb?style=for-the-badge&logoColor=white" alt="Docs"></a>
+  <a href="https://stormify.org/docs/2.1.2-SNAPSHOT/"><img src="https://img.shields.io/badge/Docs-Read%20the%20docs-2563eb?style=for-the-badge&logoColor=white" alt="Docs"></a>
   &nbsp;
-  <a href="https://stormify.org/docs/2.1.1/api-stormify/"><img src="https://img.shields.io/badge/API-Reference-555?style=for-the-badge&logoColor=white" alt="API"></a>
+  <a href="https://stormify.org/docs/2.1.2-SNAPSHOT/api-stormify/"><img src="https://img.shields.io/badge/API-Reference-555?style=for-the-badge&logoColor=white" alt="API"></a>
 </p>
 
 ## Features
@@ -56,37 +56,37 @@ Designed for developers seeking a simple yet powerful ORM, Stormify excels in pr
 <dependency>
     <groupId>onl.ycode</groupId>
     <artifactId>stormify-jvm</artifactId>
-    <version>2.1.1</version>
+    <version>2.1.2-SNAPSHOT</version>
 </dependency>
 ```
 
 ### Gradle (JVM)
 
 ```kotlin
-implementation("onl.ycode:stormify-jvm:2.1.1")
-ksp("onl.ycode:annproc:2.1.1")              // optional on JVM
+implementation("onl.ycode:stormify-jvm:2.1.2-SNAPSHOT")
+ksp("onl.ycode:annproc:2.1.2-SNAPSHOT")              // optional on JVM
 ```
 
 ### Gradle (Android)
 
 ```kotlin
-implementation("onl.ycode:stormify-android:2.1.1")
-ksp("onl.ycode:annproc:2.1.1")              // required on Android
+implementation("onl.ycode:stormify-android:2.1.2-SNAPSHOT")
+ksp("onl.ycode:annproc:2.1.2-SNAPSHOT")              // required on Android
 ```
 
 ### Gradle (Native)
 
 ```kotlin
 // Pick the artifact for your target platform:
-implementation("onl.ycode:stormify-linuxx64:2.1.1")        // Linux x64
-implementation("onl.ycode:stormify-linuxarm64:2.1.1")      // Linux ARM64
-implementation("onl.ycode:stormify-mingwx64:2.1.1")        // Windows x64
-implementation("onl.ycode:stormify-macosarm64:2.1.1")      // macOS (Apple Silicon)
-implementation("onl.ycode:stormify-macosx64:2.1.1")        // macOS (Intel)
-implementation("onl.ycode:stormify-iosarm64:2.1.1")        // iOS (device)
-implementation("onl.ycode:stormify-iossimulatorarm64:2.1.1") // iOS simulator (Apple Silicon)
-implementation("onl.ycode:stormify-iosx64:2.1.1")          // iOS simulator (Intel Mac)
-ksp("onl.ycode:annproc:2.1.1")                             // required (no reflection on native)
+implementation("onl.ycode:stormify-linuxx64:2.1.2-SNAPSHOT")        // Linux x64
+implementation("onl.ycode:stormify-linuxarm64:2.1.2-SNAPSHOT")      // Linux ARM64
+implementation("onl.ycode:stormify-mingwx64:2.1.2-SNAPSHOT")        // Windows x64
+implementation("onl.ycode:stormify-macosarm64:2.1.2-SNAPSHOT")      // macOS (Apple Silicon)
+implementation("onl.ycode:stormify-macosx64:2.1.2-SNAPSHOT")        // macOS (Intel)
+implementation("onl.ycode:stormify-iosarm64:2.1.2-SNAPSHOT")        // iOS (device)
+implementation("onl.ycode:stormify-iossimulatorarm64:2.1.2-SNAPSHOT") // iOS simulator (Apple Silicon)
+implementation("onl.ycode:stormify-iosx64:2.1.2-SNAPSHOT")          // iOS simulator (Intel Mac)
+ksp("onl.ycode:annproc:2.1.2-SNAPSHOT")                             // required (no reflection on native)
 ```
 
 Supported native databases: **PostgreSQL, MariaDB/MySQL, Oracle, MSSQL, SQLite**. On iOS, only SQLite is available.
@@ -209,12 +209,12 @@ val user = stormify.findById<User>(1)
 
 ## Examples
 
-Runnable example projects live in a separate repository: [stormify-examples](https://github.com/teras/stormify-examples/tree/2.1.1). They cover JVM (Kotlin & Java), Android, iOS, Kotlin/Native (Linux, Windows, macOS), and Kotlin Multiplatform.
+Runnable example projects live in a separate repository: [stormify-examples](https://github.com/teras/stormify-examples/tree/2.1.2-SNAPSHOT). They cover JVM (Kotlin & Java), Android, iOS, Kotlin/Native (Linux, Windows, macOS), and Kotlin Multiplatform.
 
 Clone them standalone:
 
 ```bash
-git clone -b 2.1.1 https://github.com/teras/stormify-examples.git
+git clone -b 2.1.2-SNAPSHOT https://github.com/teras/stormify-examples.git
 ```
 
 Or pull them directly inside this repo as a submodule:
@@ -227,7 +227,7 @@ Each subfolder is a self-contained project with its own `README.md` explaining h
 
 ## How Stormify stacks up
 
-A quick side-by-side against common Kotlin and Java ORMs. See the [full comparison](https://stormify.org/docs/2.1.1/Comparison/) for reflection behaviour, compile-time metadata, narrative context, and when to pick each.
+A quick side-by-side against common Kotlin and Java ORMs. See the [full comparison](https://stormify.org/docs/2.1.2-SNAPSHOT/Comparison/) for reflection behaviour, compile-time metadata, narrative context, and when to pick each.
 
 |  | Stormify | Exposed | Ktorm | Komapper | SQLDelight | Hibernate |
 |---|---|---|---|---|---|---|
@@ -242,7 +242,7 @@ A quick side-by-side against common Kotlin and Java ORMs. See the [full comparis
 
 ## Documentation
 
-Full documentation is available at [stormify.org/docs](https://stormify.org/docs/2.1.1/).
+Full documentation is available at [stormify.org/docs](https://stormify.org/docs/2.1.2-SNAPSHOT/).
 
 ## Contributing
 

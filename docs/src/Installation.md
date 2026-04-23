@@ -17,15 +17,15 @@ All artifacts are published to Maven Central under the `onl.ycode` group.
 === "Gradle (JVM)"
 
     ```kotlin
-    implementation("onl.ycode:stormify-jvm:2.1.1")
-    ksp("onl.ycode:annproc:2.1.1")              // optional on JVM
+    implementation("onl.ycode:stormify-jvm:2.1.2-SNAPSHOT")
+    ksp("onl.ycode:annproc:2.1.2-SNAPSHOT")              // optional on JVM
     ```
 
 === "Gradle (Android)"
 
     ```kotlin
-    implementation("onl.ycode:stormify-android:2.1.1")
-    ksp("onl.ycode:annproc:2.1.1")              // required on Android
+    implementation("onl.ycode:stormify-android:2.1.2-SNAPSHOT")
+    ksp("onl.ycode:annproc:2.1.2-SNAPSHOT")              // required on Android
     ```
 
 === "Gradle (Native)"
@@ -33,16 +33,16 @@ All artifacts are published to Maven Central under the `onl.ycode` group.
     Pick the artifact matching your target platform:
 
     ```kotlin
-    implementation("onl.ycode:stormify-linuxx64:2.1.1")          // Linux x64
-    implementation("onl.ycode:stormify-linuxarm64:2.1.1")        // Linux ARM64
-    implementation("onl.ycode:stormify-mingwx64:2.1.1")          // Windows x64
-    implementation("onl.ycode:stormify-macosarm64:2.1.1")        // macOS (Apple Silicon)
-    implementation("onl.ycode:stormify-macosx64:2.1.1")          // macOS (Intel)
-    implementation("onl.ycode:stormify-iosarm64:2.1.1")          // iOS (device)
-    implementation("onl.ycode:stormify-iossimulatorarm64:2.1.1") // iOS simulator (Apple Silicon)
-    implementation("onl.ycode:stormify-iosx64:2.1.1")            // iOS simulator (Intel Mac)
+    implementation("onl.ycode:stormify-linuxx64:2.1.2-SNAPSHOT")          // Linux x64
+    implementation("onl.ycode:stormify-linuxarm64:2.1.2-SNAPSHOT")        // Linux ARM64
+    implementation("onl.ycode:stormify-mingwx64:2.1.2-SNAPSHOT")          // Windows x64
+    implementation("onl.ycode:stormify-macosarm64:2.1.2-SNAPSHOT")        // macOS (Apple Silicon)
+    implementation("onl.ycode:stormify-macosx64:2.1.2-SNAPSHOT")          // macOS (Intel)
+    implementation("onl.ycode:stormify-iosarm64:2.1.2-SNAPSHOT")          // iOS (device)
+    implementation("onl.ycode:stormify-iossimulatorarm64:2.1.2-SNAPSHOT") // iOS simulator (Apple Silicon)
+    implementation("onl.ycode:stormify-iosx64:2.1.2-SNAPSHOT")            // iOS simulator (Intel Mac)
 
-    ksp("onl.ycode:annproc:2.1.1")                               // required (no reflection on native)
+    ksp("onl.ycode:annproc:2.1.2-SNAPSHOT")                               // required (no reflection on native)
     ```
 
 === "Maven"
@@ -51,7 +51,7 @@ All artifacts are published to Maven Central under the `onl.ycode` group.
     <dependency>
         <groupId>onl.ycode</groupId>
         <artifactId>stormify-jvm</artifactId>
-        <version>2.1.1</version>
+        <version>2.1.2-SNAPSHOT</version>
     </dependency>
     ```
 
@@ -86,7 +86,7 @@ Add the KSP plugin and the `annproc` dependency:
     }
 
     dependencies {
-        ksp("onl.ycode:annproc:2.1.1")
+        ksp("onl.ycode:annproc:2.1.2-SNAPSHOT")
     }
     ```
 
@@ -98,7 +98,7 @@ Add the KSP plugin and the `annproc` dependency:
     }
 
     dependencies {
-        ksp 'onl.ycode:annproc:2.1.1'
+        ksp 'onl.ycode:annproc:2.1.2-SNAPSHOT'
     }
     ```
 
@@ -129,7 +129,7 @@ can be excluded:
 === "Gradle (Kotlin)"
 
     ```kotlin
-    implementation("onl.ycode:stormify-jvm:2.1.1") {
+    implementation("onl.ycode:stormify-jvm:2.1.2-SNAPSHOT") {
         exclude(group = "org.jetbrains.kotlin", module = "kotlin-reflect")
     }
     ```
@@ -137,7 +137,7 @@ can be excluded:
 === "Gradle (Groovy)"
 
     ```groovy
-    implementation('onl.ycode:stormify-jvm:2.1.1') {
+    implementation('onl.ycode:stormify-jvm:2.1.2-SNAPSHOT') {
         exclude group: 'org.jetbrains.kotlin', module: 'kotlin-reflect'
     }
     ```

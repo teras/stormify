@@ -10,7 +10,7 @@ They are also wired into the main Stormify repository as a git submodule under `
 Clone the examples repository and step into the folder you are interested in:
 
 ```bash
-git clone -b 2.1.1 https://github.com/teras/stormify-examples.git
+git clone -b 2.1.2-SNAPSHOT https://github.com/teras/stormify-examples.git
 cd stormify-examples/<example-folder>
 ```
 
@@ -23,7 +23,7 @@ git submodule update --init --recursive
 cd examples
 ```
 
-Every example targets Stormify `2.1.1` and uses SQLite as the default database (no server required), with the exception of the REST/frontend combo which can point at any configured backend. Each subfolder is a self-contained Gradle/Maven/npm project with its own `README.md` detailing entities, setup, and any platform-specific notes.
+Every example targets Stormify `2.1.2-SNAPSHOT` and uses SQLite as the default database (no server required), with the exception of the REST/frontend combo which can point at any configured backend. Each subfolder is a self-contained Gradle/Maven/npm project with its own `README.md` detailing entities, setup, and any platform-specific notes.
 
 ## Available examples
 
