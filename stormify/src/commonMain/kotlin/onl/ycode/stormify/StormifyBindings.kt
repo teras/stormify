@@ -69,8 +69,13 @@ inline fun <reified D : Any> Any.details(referenceField: ReferencePath): List<D>
 
 // --- Transactions ---
 
-/** Executes a block within a database transaction with automatic commit/rollback. */
-fun <R> transaction(block: TransactionContext.() -> R): R = stormify().transaction(block)
+/**
+ * Executes [block] as a transaction on the default [Stormify] instance.
+ * Inside the block, any convenience call (top-level extensions, [CRUDTable],
+ * lazy-loaders, `PagedList`, …) runs on the transaction's connection.
+ * Nested calls become savepoints automatically — see [Stormify.transaction].
+ */
+fun <R> transaction(block: () -> R): R = stormify().transaction(block)
 
 // --- Stored procedures ---
 

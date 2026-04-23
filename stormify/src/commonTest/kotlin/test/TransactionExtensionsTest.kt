@@ -1,18 +1,35 @@
 package test
 
-import onl.ycode.stormify.SqlDialect
 import onl.ycode.stormify.Stormify
+import onl.ycode.stormify.create
+import onl.ycode.stormify.delete
+import onl.ycode.stormify.findById
+import onl.ycode.stormify.read
+import onl.ycode.stormify.readOne
+import onl.ycode.stormify.executeUpdate
+import onl.ycode.stormify.transaction
+import onl.ycode.stormify.update
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 
+/**
+ * Covers the ambient-tx behaviour: convenience APIs (top-level extensions,
+ * default-instance calls, CRUDTable…) must transparently join an enclosing
+ * `transaction { }` block and share its connection.
+ */
 open class TransactionExtensionsTest {
-    private fun withDb(name: String, test: (Stormify) -> Unit) = TestHelper.withDb(name, test)
+    private fun withDb(name: String, test: (Stormify) -> Unit) = TestHelper.withDb(name) { s ->
+        // Top-level extensions (create, findById, readOne, transaction, …) go
+        // through `Stormify.defaultInstance`; register this instance for the
+        // duration of the test and restore afterwards.
+        s.asDefault { test(s) }
+    }
 
     @Test
-    fun testReceiverStyleInsideTransaction() = withDb("TX-EXT") { s ->
+    fun topLevelExtensionsInsideTransactionShareConnection() = withDb("TX-EXT") { s ->
         TestDDL.dropTable("test")
         s.executeUpdate(TestDDL.createTable("test",
             "${TestDDL.intPrimaryKey("id")}, name ${TestDDL.textType()}"))
@@ -20,8 +37,7 @@ open class TransactionExtensionsTest {
         s.transaction {
             TestC(10, "A").create()
             TestC(11, "B").create()
-            val count = "SELECT COUNT(*) FROM test".readOne<Int>()
-            assertEquals(2, count)
+            assertEquals(2, "SELECT COUNT(*) FROM test".readOne<Int>())
             val rows = "SELECT * FROM test ORDER BY id".read<TestC>()
             assertEquals(2, rows.size)
             val first = rows[0]
@@ -34,41 +50,60 @@ open class TransactionExtensionsTest {
     }
 
     @Test
-    fun testExtensionIsInvisibleFromSecondConnection() = withDb("TX-EXT-ISOLATION") { s ->
-        // Lock-based concurrency DBs (no MVCC at default isolation) make the
-        // second connection wait for the writer's X-lock. Since the writer is
-        // this same thread still inside the transaction block, waiting on the
-        // reader to return, we self-deadlock. MVCC dialects (PostgreSQL,
-        // MySQL/InnoDB, Oracle) serve the pre-tx snapshot without blocking,
-        // so the check runs there. The rollback test (below) covers the same
-        // invariant uniformly on every dialect, so skipping is safe here.
-        if (s.sqlDialect == SqlDialect.SQLITE ||
-            s.sqlDialect == SqlDialect.SQL_SERVER_NEW ||
-            s.sqlDialect == SqlDialect.SQL_SERVER_OLD)
-            skipTest(SkipReason.DIALECT_QUIRK,
-                "lock-based concurrency at default isolation blocks a concurrent reader on a second connection")
-
+    fun defaultInstanceCallJoinsActiveTransaction() = withDb("TX-EXT-AMBIENT") { s ->
+        // Proves that a call going through the default instance (no receiver,
+        // no stormify prefix) from inside an open transaction transparently
+        // reuses the tx's connection. We insert, then read back via the
+        // top-level `findById`, and assert we SEE the uncommitted row —
+        // only possible if the read borrowed the tx connection. The rollback
+        // check confirms the whole flow is one atomic tx.
         TestDDL.dropTable("test")
         s.executeUpdate(TestDDL.createTable("test",
             "${TestDDL.intPrimaryKey("id")}, name ${TestDDL.textType()}"))
 
-        var fromOutside: TestC? = null
-        s.transaction {
-            TestC(30, "pre-commit").create()
-            // Same Stormify instance, but this call runs outside the current tx
-            // so it goes through the default (auto-commit) path and thus a
-            // different connection from the data source. If our extension really
-            // ran on the transaction's connection, the row must not be visible
-            // here — it has not been committed yet.
-            fromOutside = s.findById<TestC>(30)
+        var sawInsideTx: TestC? = null
+        assertFailsWith<RuntimeException> {
+            s.transaction {
+                TestC(30, "pre-commit").create()
+                sawInsideTx = findById<TestC>(30)
+                throw RuntimeException("abort")
+            }
         }
-        assertNull(fromOutside, "row must be invisible to an independent connection while tx is open")
-        // After commit it becomes visible.
-        assertNotNull(s.findById<TestC>(30))
+        assertNotNull(sawInsideTx, "default-instance call must join the active transaction and see its writes")
+        assertEquals("pre-commit", sawInsideTx?.name)
+        assertNull(findById<TestC>(30))
     }
 
     @Test
-    fun testExtensionsRollbackWithTransaction() = withDb("TX-EXT-ROLLBACK") { s ->
+    fun defaultInstanceCallJoinsNestedSavepoint() = withDb("TX-EXT-NESTED") { s ->
+        // Outer tx + nested savepoint. Default-instance reads inside both
+        // layers must see the in-flight tx state. Rolling back the inner
+        // savepoint undoes inner work but preserves outer; outer commit keeps
+        // only outer. Proves the ambient tracks the whole tx stack, not just
+        // the outermost frame.
+        TestDDL.dropTable("test")
+        s.executeUpdate(TestDDL.createTable("test",
+            "${TestDDL.intPrimaryKey("id")}, name ${TestDDL.textType()}"))
+
+        s.transaction {
+            TestC(100, "outer").create()
+            assertNotNull(findById<TestC>(100))
+            try {
+                transaction {
+                    TestC(101, "inner").create()
+                    assertNotNull(findById<TestC>(101))
+                    throw RuntimeException("inner-abort")
+                }
+            } catch (_: RuntimeException) {}
+            assertNull(findById<TestC>(101))
+            assertNotNull(findById<TestC>(100))
+        }
+        assertNotNull(findById<TestC>(100))
+        assertNull(findById<TestC>(101))
+    }
+
+    @Test
+    fun topLevelExtensionsRollbackWithTransaction() = withDb("TX-EXT-ROLLBACK") { s ->
         TestDDL.dropTable("test")
         s.executeUpdate(TestDDL.createTable("test",
             "${TestDDL.intPrimaryKey("id")}, name ${TestDDL.textType()}"))
@@ -80,7 +115,6 @@ open class TransactionExtensionsTest {
                 throw RuntimeException("boom")
             }
         }
-        // Since the extension used the tx connection, the insert must have rolled back.
-        assertNull(s.findById<TestC>(20))
+        assertNull(findById<TestC>(20))
     }
 }

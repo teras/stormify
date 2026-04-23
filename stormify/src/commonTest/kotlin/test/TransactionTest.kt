@@ -16,7 +16,7 @@ open class TransactionTest {
         // Rollback
         try {
             s.transaction {
-                for (id in 3..5) executeUpdate("INSERT INTO tx_test (id, name) VALUES (?, ?)", id, "Test$id")
+                for (id in 3..5) s.executeUpdate("INSERT INTO tx_test (id, name) VALUES (?, ?)", id, "Test$id")
                 throw Exception("Request Rollback")
             }
         } catch (_: Exception) {}
@@ -24,29 +24,29 @@ open class TransactionTest {
 
         // Commit
         s.transaction {
-            for (id in 3..5) executeUpdate("INSERT INTO tx_test (id, name) VALUES (?, ?)", id, "Test$id")
+            for (id in 3..5) s.executeUpdate("INSERT INTO tx_test (id, name) VALUES (?, ?)", id, "Test$id")
         }
         assertEquals("[Test2, Test3, Test4, Test5]", s.read<String>("SELECT name FROM tx_test ORDER BY id").toString())
 
         // Cleanup
-        s.transaction { for (id in 3..5) executeUpdate("DELETE FROM tx_test WHERE id = ?", id) }
+        s.transaction { for (id in 3..5) s.executeUpdate("DELETE FROM tx_test WHERE id = ?", id) }
 
         // Nested with rollback
         s.transaction {
-            for (id in 3..4) executeUpdate("INSERT INTO tx_test (id, name) VALUES (?, ?)", id, "Test$id")
+            for (id in 3..4) s.executeUpdate("INSERT INTO tx_test (id, name) VALUES (?, ?)", id, "Test$id")
             try {
-                transaction {
-                    for (id in 5..6) executeUpdate("INSERT INTO tx_test (id, name) VALUES (?, ?)", id, "Test$id")
+                s.transaction {
+                    for (id in 5..6) s.executeUpdate("INSERT INTO tx_test (id, name) VALUES (?, ?)", id, "Test$id")
                     throw Exception("Request Rollback")
                 }
             } catch (_: Exception) {}
-            assertEquals("[Test2, Test3, Test4]", read<String>("SELECT name FROM tx_test ORDER BY id").toString())
+            assertEquals("[Test2, Test3, Test4]", s.read<String>("SELECT name FROM tx_test ORDER BY id").toString())
 
-            transaction {
-                for (id in 5..6) executeUpdate("INSERT INTO tx_test (id, name) VALUES (?, ?)", id, "Test$id")
-                transaction {
-                    for (id in 3..6) executeUpdate("DELETE FROM tx_test WHERE id = ?", id)
-                    assertEquals("[Test2]", read<String>("SELECT name FROM tx_test ORDER BY id").toString())
+            s.transaction {
+                for (id in 5..6) s.executeUpdate("INSERT INTO tx_test (id, name) VALUES (?, ?)", id, "Test$id")
+                s.transaction {
+                    for (id in 3..6) s.executeUpdate("DELETE FROM tx_test WHERE id = ?", id)
+                    assertEquals("[Test2]", s.read<String>("SELECT name FROM tx_test ORDER BY id").toString())
                 }
             }
         }
@@ -63,15 +63,15 @@ open class TransactionTest {
 
         // Top-level transaction returns a value
         val names: List<String> = s.transaction {
-            read<String>("SELECT name FROM tx_ret ORDER BY id")
+            s.read<String>("SELECT name FROM tx_ret ORDER BY id")
         }
         assertEquals(listOf("Alice", "Bob"), names)
 
         // Nested transaction returns a value
         val count: Int = s.transaction {
-            transaction {
-                executeUpdate("INSERT INTO tx_ret (id, name) VALUES (?, ?)", 3, "Carol")
-                readOne<Int>("SELECT COUNT(*) FROM tx_ret") ?: -1
+            s.transaction {
+                s.executeUpdate("INSERT INTO tx_ret (id, name) VALUES (?, ?)", 3, "Carol")
+                s.readOne<Int>("SELECT COUNT(*) FROM tx_ret") ?: -1
             }
         }
         assertEquals(3, count)
@@ -79,7 +79,7 @@ open class TransactionTest {
         // Rollback still propagates, even with a return type
         try {
             s.transaction<Int> {
-                executeUpdate("INSERT INTO tx_ret (id, name) VALUES (?, ?)", 99, "Ghost")
+                s.executeUpdate("INSERT INTO tx_ret (id, name) VALUES (?, ?)", 99, "Ghost")
                 throw RuntimeException("boom")
             }
             fail("expected exception")

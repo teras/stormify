@@ -9,8 +9,8 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.withContext
 import onl.ycode.kdbc.Connection
 import onl.ycode.stormify.Stormify
-import onl.ycode.stormify.TransactionContext
 import onl.ycode.stormify.nextSavepointName
+import onl.ycode.stormify.throwQuery
 import kotlin.coroutines.coroutineContext
 
 /**
@@ -96,12 +96,15 @@ public class SuspendStormify internal constructor(
     /**
      * Execute [block] inside a transaction. Commits on success, rolls back on any throwable.
      *
-     * If called from inside another `transaction { }` on the same Stormify instance
-     * (detected via the current [ConnectionElement]), reuses that connection via a
-     * savepoint rather than acquiring a new one.
+     * If called from inside another `transaction { }` on the same [SuspendStormify]
+     * (detected via the current [ConnectionElement] in the coroutine context),
+     * reuses that connection via a savepoint rather than acquiring a new one.
+     * While the block runs, convenience operations on the underlying [Stormify]
+     * (CRUD, top-level extensions, lazy-loaders, `PagedList`, etc.) transparently
+     * route through this transaction's connection via [ActiveTxRegistry].
      */
     @OptIn(InternalCoroutinesApi::class)
-    public suspend fun <R> transaction(block: suspend TransactionContext.() -> R): R {
+    public suspend fun <R> transaction(block: suspend () -> R): R {
         val existing = coroutineContext[ConnectionElement]
         if (existing != null) {
             require(existing.stormify === stormify) {
@@ -114,7 +117,7 @@ public class SuspendStormify internal constructor(
     }
 
     @OptIn(InternalCoroutinesApi::class, ExperimentalAtomicApi::class)
-    private suspend fun <R> topLevelTransaction(block: suspend TransactionContext.() -> R): R =
+    private suspend fun <R> topLevelTransaction(block: suspend () -> R): R =
         pool.use { conn ->
             withTxDispatcher(ConnectionElement(conn, stormify)) {
                 // Wire coroutine cancellation → DB cancel. `onCancelling = true` (from
@@ -141,33 +144,42 @@ public class SuspendStormify internal constructor(
                     }
                 }
 
-                try {
-                    conn.setAutoCommit(false)
-                    val tx = TransactionContext(stormify, conn, ownsConnection = false)
-                    val result = tx.block()
-                    conn.commit()
-                    result
-                } catch (e: Throwable) {
-                    if (cancelled.load() == 0) runCatching { conn.rollback() }
-                    // If cancelled, the driver decides what (if anything) is safe to
-                    // run post-cancel — defaults to a no-op and relies on pool eviction.
-                    else runCatching { conn.cleanupAfterCancel() }
-                    throw e
-                } finally {
-                    if (cancelled.load() == 0) runCatching { conn.setAutoCommit(true) }
-                    cancelHandle.dispose()
+                // Ambient propagation: on JVM/Android the [ConnectionElement] is
+                // also a ThreadContextElement, so the runtime keeps the registry
+                // in sync on every dispatcher hop automatically — [withSuspendAmbient]
+                // is a no-op there. On Native the actual manually brackets the
+                // body with a push/pop pair to cover the single-thread case.
+                withSuspendAmbient(stormify, conn) {
+                    try {
+                        conn.setAutoCommit(false)
+                        val result = block()
+                        conn.commit()
+                        result
+                    } catch (e: Throwable) {
+                        if (cancelled.load() == 0) runCatching { conn.rollback() }
+                        // If cancelled, the driver decides what (if anything) is safe to
+                        // run post-cancel — defaults to a no-op and relies on pool eviction.
+                        else runCatching { conn.cleanupAfterCancel() }
+                        throw e
+                    } finally {
+                        if (cancelled.load() == 0) runCatching { conn.setAutoCommit(true) }
+                        cancelHandle.dispose()
+                    }
                 }
             }
         }
 
     private suspend fun <R> nestedTransaction(
         conn: Connection,
-        block: suspend TransactionContext.() -> R,
+        block: suspend () -> R,
     ): R {
-        val savepoint = conn.setSavepoint(nextSavepointName())
+        val savepoint = try {
+            conn.setSavepoint(nextSavepointName())
+        } catch (e: Throwable) {
+            e.throwQuery("Unable to open savepoint for nested transaction")
+        }
         return try {
-            val tx = TransactionContext(stormify, conn, ownsConnection = false)
-            val result = tx.block()
+            val result = block()
             if (stormify.sqlDialect.supportsReleaseSavepoint) {
                 runCatching { conn.releaseSavepoint(savepoint) }
             }

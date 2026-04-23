@@ -177,15 +177,15 @@ class NativeServerEncodingTest {
                 // transaction pins a single connection for the whole block,
                 // which is exactly what we need here.
                 s.transaction {
-                    executeUpdate("PRAGMA encoding = \"$encoding\"")
-                    executeUpdate("CREATE TABLE enc_probe (id INT PRIMARY KEY, value TEXT)")
+                    s.executeUpdate("PRAGMA encoding = \"$encoding\"")
+                    s.executeUpdate("CREATE TABLE enc_probe (id INT PRIMARY KEY, value TEXT)")
                     // After CREATE TABLE the encoding is committed to the
                     // file header; subsequent PRAGMA encoding reads return
                     // the committed value regardless of which connection
                     // asks, so this check is a reliable sanity gate.
-                    val reported = readOne<String>("PRAGMA encoding")
+                    val reported = s.readOne<String>("PRAGMA encoding")
                     assertEquals(encoding, reported, "PRAGMA did not stick for $encoding")
-                    executeUpdate("INSERT INTO enc_probe (id, value) VALUES (?, ?)", 1, allBuckets)
+                    s.executeUpdate("INSERT INTO enc_probe (id, value) VALUES (?, ?)", 1, allBuckets)
                 }
 
                 val back = s.readOne<String>("SELECT value FROM enc_probe WHERE id = ?", 1)

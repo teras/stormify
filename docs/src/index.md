@@ -57,7 +57,7 @@ A complete, five-minute walkthrough from zero to your first query.
 === "Gradle (JVM)"
 
     ```kotlin
-    implementation("onl.ycode:stormify-jvm:2.1.2-SNAPSHOT")
+    implementation("onl.ycode:stormify-jvm:2.2.0-SNAPSHOT")
     ```
 
 === "Maven (JVM)"
@@ -66,7 +66,7 @@ A complete, five-minute walkthrough from zero to your first query.
     <dependency>
         <groupId>onl.ycode</groupId>
         <artifactId>stormify-jvm</artifactId>
-        <version>2.1.2-SNAPSHOT</version>
+        <version>2.2.0-SNAPSHOT</version>
     </dependency>
     ```
 
@@ -149,42 +149,42 @@ speaks JDBC. Native, Android, and iOS setups are covered in
     ```kotlin
     stormify.transaction {
         // Create
-        val alice = create(User(id = 1, name = "Alice", email = "alice@example.com"))
+        val alice = stormify.create(User(id = 1, name = "Alice", email = "alice@example.com"))
 
         // Read
-        val all = read<User>("SELECT * FROM user")
-        val one = findById<User>(1)
+        val all = stormify.read<User>("SELECT * FROM user")
+        val one = stormify.findById<User>(1)
 
         // Update
         alice.email = "alice@new.example.com"
-        update(alice)
+        stormify.update(alice)
 
         // Delete
-        delete(alice)
+        stormify.delete(alice)
     }
     ```
 
 === "Java"
 
     ```java
-    stormify.transaction(tx -> {
+    stormify.transaction(() -> {
         // Create
         User alice = new User();
         alice.setId(1);
         alice.setName("Alice");
         alice.setEmail("alice@example.com");
-        tx.create(alice);
+        stormify.create(alice);
 
         // Read
-        List<User> all = tx.read(User.class, "SELECT * FROM user");
-        User one = tx.findById(User.class, 1);
+        List<User> all = stormify.read(User.class, "SELECT * FROM user");
+        User one = stormify.findById(User.class, 1);
 
         // Update
         alice.setEmail("alice@new.example.com");
-        tx.update(alice);
+        stormify.update(alice);
 
         // Delete
-        tx.delete(alice);
+        stormify.delete(alice);
     });
     ```
 

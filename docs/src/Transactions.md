@@ -1,10 +1,10 @@
 # Transactions
 
-Stormify provides support for managing database transactions, allowing you to group multiple operations into a single transaction. This ensures data consistency and integrity, especially when dealing with complex operations that must all succeed or fail together.
+Stormify groups multiple operations into a single transaction — either all commit together, or all roll back if anything fails. Nested transactions use database savepoints.
 
-Two transaction APIs are available:
+Two flavours:
 
-- **Blocking** — `stormify.transaction { ... }` (this page, top half). The default.
+- **Blocking** — `stormify.transaction { ... }` (top half of this page). The default.
 - **Suspend** — `async.transaction { ... }` for Kotlin coroutines, with a built-in
   connection pool ([see below](#coroutines-suspend-api)).
 
@@ -12,7 +12,12 @@ Both share the same CRUD operations and nested-transaction semantics.
 
 ## Managing Transactions
 
-Use the `transaction` method to group operations. All included operations are committed if they succeed, or rolled back if any operation fails. Stormify also supports nested transactions through savepoints.
+Transactions are plain lambdas — the block is the unit of work, commit happens on
+normal return, rollback on any thrown exception. Every CRUD or query call issued
+through the same `Stormify` instance inside the block (including top-level
+extensions and [`CRUDTable`](CRUD.md)-implementing entities) automatically shares
+the transaction's connection via an ambient registry — you do not thread a
+context parameter through your code.
 
 ### Basic Transaction Example
 
@@ -22,32 +27,54 @@ Use the `transaction` method to group operations. All included operations are co
 
         ```kotlin
         stormify.transaction {
-            val user = create(User(email = "test@example.com"))
-            create(Profile(userId = user.id, name = "Test User"))
-            update(account)
+            val user = stormify.create(User(email = "test@example.com"))
+            stormify.create(Profile(userId = user.id, name = "Test User"))
+            stormify.update(account)
         }
         ```
 
     === "Java"
 
         ```java
-        stormify.transaction(tx -> {
-            User user = tx.create(new User("test@example.com"));
-            tx.create(new Profile(user.getId(), "Test User"));
-            tx.update(account);
+        stormify.transaction(() -> {
+            User user = stormify.create(new User("test@example.com"));
+            stormify.create(new Profile(user.getId(), "Test User"));
+            stormify.update(account);
         });
         ```
 
-=== "Extension"
+=== "Default instance"
 
-    ```kotlin
-    // With a default Stormify instance registered via stormify.asDefault(),
-    // you can call transaction { ... } directly without the stormify receiver.
-    transaction {
-        val user = create(User(email = "test@example.com"))
-        create(Profile(userId = user.id))
-    }
-    ```
+    With a default Stormify instance registered via `stormify.asDefault()`,
+    call the top-level `transaction { }` and the top-level extensions
+    (`user.create()`, `"SELECT …".read<T>()`, `findById<T>(id)`, …) without any
+    prefix. Every call still routes through the active transaction's connection.
+
+    === "Kotlin"
+
+        ```kotlin
+        stormify.asDefault()
+
+        transaction {
+            val user = User(email = "test@example.com").create()
+            Profile(userId = user.id).create()
+        }
+        ```
+
+    === "Java"
+
+        ```java
+        // Register once at startup:
+        new StormifyJ(dataSource).asDefault();
+
+        // Then, anywhere:
+        import static onl.ycode.stormify.StormifyJHelpers.*;
+
+        transaction(() -> {
+            User user = create(new User("test@example.com"));
+            create(new Profile(user.getId(), "Test User"));
+        });
+        ```
 
 ### Returning a Value
 
@@ -57,7 +84,7 @@ The `transaction` block returns whatever its body returns, so you can lift a com
 
     ```kotlin
     val userId: Int = stormify.transaction {
-        val user = create(User(email = "test@example.com"))
+        val user = stormify.create(User(email = "test@example.com"))
         user.id
     }
     ```
@@ -65,118 +92,98 @@ The `transaction` block returns whatever its body returns, so you can lift a com
 === "Java"
 
     ```java
-    Integer userId = stormify.transaction(tx -> {
-        User user = tx.create(new User("test@example.com"));
+    Integer userId = stormify.transaction(() -> {
+        User user = stormify.create(new User("test@example.com"));
         return user.getId();
     });
     ```
 
-In Java the value-returning overload takes a `Function<TransactionContextJ, R>`; the existing `Consumer` overload (no return value) remains available for fire-and-forget transactions.
+In Java the value-returning overload takes a `Supplier<R>`; the `Runnable` overload (no return value) is available for fire-and-forget transactions.
 
 ## Nested Transactions
 
-Nested transactions use database savepoints. If an inner transaction fails, only operations within that savepoint are rolled back.
+Nested calls to `transaction` on the same `Stormify` instance become savepoints automatically — the runtime consults the ambient registry and opens a savepoint when it detects an outer transaction is already active on the current thread.
 
 === "Kotlin"
 
     ```kotlin
     stormify.transaction {
-        create(record1)
+        stormify.create(record1)
 
-        transaction {  // Creates a savepoint
-            create(record2)
+        stormify.transaction {          // Becomes a savepoint
+            stormify.create(record2)
             // If this fails, only record2 is rolled back
         }
 
-        create(record3)  // This still executes
+        stormify.create(record3)        // Still executes
     }
     ```
 
 === "Java"
 
     ```java
-    stormify.transaction(tx -> {
-        tx.create(record1);
+    stormify.transaction(() -> {
+        stormify.create(record1);
 
-        tx.transaction(() -> {  // Creates a savepoint
-            tx.create(record2);
+        stormify.transaction(() -> {    // Becomes a savepoint
+            stormify.create(record2);
             // If this fails, only record2 is rolled back
         });
 
-        tx.create(record3);  // This still executes
+        stormify.create(record3);       // Still executes
     });
     ```
 
 ## Extracting Transaction Logic
 
-For complex business logic, you can extract operations into reusable functions:
+For complex business logic, extract operations into reusable helpers.
 
-### Pattern 1: Extension Functions (Kotlin)
-
-Extension functions on `TransactionContext` provide the cleanest syntax:
+### Kotlin — plain functions
 
 ```kotlin
-fun TransactionContext.registerUser(email: String, name: String) {
-    val user = create(User(email = email))
-    create(Profile(userId = user.id, name = name))
-    create(AuditLog(action = "User registered", userId = user.id))
+fun registerUser(stormify: Stormify, email: String, name: String) {
+    val user = stormify.create(User(email = email))
+    stormify.create(Profile(userId = user.id, name = name))
+    stormify.create(AuditLog(action = "User registered", userId = user.id))
 }
 
-fun TransactionContext.transferFunds(from: Account, to: Account, amount: Double) {
+fun transferFunds(stormify: Stormify, from: Account, to: Account, amount: Double) {
     require(from.balance >= amount) { "Insufficient funds" }
-    update(from.copy(balance = from.balance - amount))
-    update(to.copy(balance = to.balance + amount))
-    create(Transaction(fromId = from.id, toId = to.id, amount = amount))
+    stormify.update(from.copy(balance = from.balance - amount))
+    stormify.update(to.copy(balance = to.balance + amount))
+    stormify.create(Transaction(fromId = from.id, toId = to.id, amount = amount))
 }
 
 // Usage
 stormify.transaction {
-    registerUser("alice@example.com", "Alice")
-    transferFunds(accountA, accountB, 100.0)
+    registerUser(stormify, "alice@example.com", "Alice")
+    transferFunds(stormify, accountA, accountB, 100.0)
 }
 ```
 
-### Pattern 2: Service Layer Classes
+If you've called `stormify.asDefault()`, the helpers can just use the top-level extensions (`user.create()` etc.) and skip the `stormify` parameter entirely.
 
-For more structured applications, encapsulate transaction logic in service classes:
+### Java — service classes
 
-=== "Kotlin"
+```java
+class UserService {
+    private final StormifyJ stormify;
 
-    ```kotlin
-    class UserService(private val tx: TransactionContext) {
-        fun registerUser(email: String, name: String) {
-            val user = tx.create(User(email = email))
-            tx.create(Profile(userId = user.id, name = name))
-        }
+    UserService(StormifyJ stormify) { this.stormify = stormify; }
+
+    void registerUser(String email, String name) {
+        User user = stormify.create(new User(email));
+        stormify.create(new Profile(user.getId(), name));
     }
+}
 
-    stormify.transaction {
-        val userService = UserService(this)
-        userService.registerUser("alice@example.com", "Alice")
-    }
-    ```
+stormify.transaction(() -> {
+    UserService userService = new UserService(stormify);
+    userService.registerUser("alice@example.com", "Alice");
+});
+```
 
-=== "Java"
-
-    ```java
-    class UserService {
-        private final TransactionContextJ tx;
-
-        UserService(TransactionContextJ tx) { this.tx = tx; }
-
-        void registerUser(String email, String name) {
-            User user = tx.create(new User(email));
-            tx.create(new Profile(user.getId(), name));
-        }
-    }
-
-    stormify.transaction(tx -> {
-        UserService userService = new UserService(tx);
-        userService.registerUser("alice@example.com", "Alice");
-    });
-    ```
-
-Both patterns ensure that all operations share the same database connection and participate in the same transaction.
+All helpers naturally participate in whichever enclosing transaction is active, because every Stormify operation consults the ambient registry.
 
 ## Coroutines (Suspend API)
 
@@ -228,13 +235,16 @@ is purely additive. You can use both APIs side-by-side.
 
 ```kotlin
 async.transaction {
-    val user = create(User(email = "test@example.com"))
-    create(Profile(userId = user.id, name = "Test User"))
+    val user = stormify.create(User(email = "test@example.com"))
+    stormify.create(Profile(userId = user.id, name = "Test User"))
 }
 ```
 
-All operations inside the block are suspend functions that run on the IO dispatcher.
-The transaction commits on success and rolls back on any exception.
+All operations inside the block run on the IO dispatcher. The transaction commits
+on success and rolls back on any exception. Convenience calls on the underlying
+`Stormify` instance transparently join the transaction even after a dispatcher
+hop (`delay`, `withContext`, etc.) on JVM / Android — the runtime re-publishes
+the ambient binding on whichever thread resumes the coroutine.
 
 ### Nested Suspend Transactions
 
@@ -243,10 +253,10 @@ outer connection via a savepoint:
 
 ```kotlin
 async.transaction {
-    create(record1)
-    transaction {
+    stormify.create(record1)
+    async.transaction {
         // Uses savepoint — rollback only affects this inner block
-        create(record2)
+        stormify.create(record2)
     }
 }
 ```

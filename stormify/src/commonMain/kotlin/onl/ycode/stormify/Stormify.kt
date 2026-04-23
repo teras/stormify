@@ -201,8 +201,15 @@ class Stormify(val dataSource: DataSource, vararg registrars: EntityRegistrar) {
     // --- Internal connection management ---
 
     private inner class ConnectionMaker(connection: Connection?) : AutoCloseable {
-        val connection by lazy { connection ?: dataSource.getConnection() }
-        val shouldClose = connection == null
+        // Explicit > ambient > fresh. When the caller passed null we first
+        // check for an active transaction opened by *this* Stormify instance
+        // on the current thread (populated by `Stormify.transaction { }` or
+        // `SuspendStormify.transaction { }`). Borrowed connections (explicit
+        // or ambient) must not be closed here — they are owned by the
+        // surrounding transaction scope.
+        private val ambient = if (connection == null) ActiveTxRegistry.currentFor(this@Stormify) else null
+        val connection by lazy { connection ?: ambient ?: dataSource.getConnection() }
+        val shouldClose = connection == null && ambient == null
         override fun close() {
             try {
                 if (shouldClose) connection.close()
@@ -827,11 +834,69 @@ class Stormify(val dataSource: DataSource, vararg registrars: EntityRegistrar) {
     // --- Transaction ---
 
     /**
-     * Executes [block] within a database transaction with automatic commit/rollback,
-     * returning the block's result.
+     * Executes [block] within a database transaction with automatic commit on success
+     * and rollback on any thrown exception, returning the block's result.
+     *
+     * **Nesting.** If this call is made from inside another `transaction { }` on the
+     * same [Stormify] instance and the same thread (detected via [ActiveTxRegistry]),
+     * the inner call reuses the outer connection and bounds its work with a database
+     * savepoint — so a failure inside the nested block rolls back only its work, not
+     * the outer transaction. There is no syntactic distinction: the same call is a
+     * top-level tx when there is no ambient one, and a savepoint otherwise.
+     *
+     * **Ambient connection.** While the block runs, all convenience operations on
+     * this instance (including [create]/[read]/[update]/[delete]/[findById]/…,
+     * top-level extensions, lazy-loading delegates, `PagedList`, etc.) transparently
+     * route through this transaction's connection — you do not need to thread a
+     * context parameter through your code.
      */
     @Throws(SQLException::class)
-    fun <R> transaction(block: TransactionContext.() -> R): R = TransactionContext(this).start(block)
+    fun <R> transaction(block: () -> R): R {
+        val ambient = ActiveTxRegistry.currentFor(this)
+        return if (ambient != null) runNestedSavepoint(ambient, block)
+        else runTopLevelTransaction(block)
+    }
+
+    private fun <R> runTopLevelTransaction(block: () -> R): R {
+        val conn = tryQuery("Unable to get connection") { dataSource.getConnection() }
+        return conn.use { runTransactionBody(conn, block) }
+    }
+
+    private fun <R> runTransactionBody(conn: Connection, block: () -> R): R {
+        ActiveTxRegistry.push(this, conn)
+        try {
+            conn.setAutoCommit(false)
+            val result = block()
+            conn.commit()
+            return result
+        } catch (e: Throwable) {
+            // The connection may already be broken (the reason we landed here);
+            // swallow rollback / autocommit failures so the original exception
+            // propagates unchanged.
+            runCatching { conn.rollback() }
+            e.throwQuery("Unable to execute transaction")
+        } finally {
+            runCatching { conn.setAutoCommit(true) }
+            ActiveTxRegistry.pop(this, conn)
+        }
+    }
+
+    private fun <R> runNestedSavepoint(conn: Connection, block: () -> R): R {
+        val savepoint = try {
+            conn.setSavepoint(nextSavepointName())
+        } catch (e: Throwable) {
+            e.throwQuery("Unable to open savepoint for nested transaction")
+        }
+        return try {
+            val result = block()
+            if (sqlDialect.supportsReleaseSavepoint)
+                runCatching { conn.releaseSavepoint(savepoint) }
+            result
+        } catch (e: Throwable) {
+            runCatching { conn.rollback(savepoint) }
+            e.throwQuery("Unable to execute nested transaction")
+        }
+    }
 
     // --- Stored Procedures ---
 
@@ -851,17 +916,18 @@ class Stormify(val dataSource: DataSource, vararg registrars: EntityRegistrar) {
     fun procedure(name: String, vararg args: Any?) = procedure(null, name, *args)
 
     internal fun procedure(conn: Connection?, name: String, vararg args: Any?) {
-        val shouldClose = conn == null
-        val connection = conn ?: dataSource.getConnection()
         val params: Array<Sp> = Array(args.size) { i ->
             val a = args[i]
             if (a is Sp) a else Sp.In(a)
         }
-        try {
+        // Use ConnectionMaker so the call joins an ambient transaction when the
+        // caller did not pass an explicit connection, matching the behaviour of
+        // every other CRUD / query entry point.
+        ConnectionMaker(conn).useWithException("Unable to execute stored procedure $name") { maker ->
             val placeholders: String = nCopies("?", ", ", params.size)
             val statement = "CALL $name($placeholders)"
-            _dbLog(statement, params)
-            connection.prepareCall(statement).use { cs ->
+            _dbLog(statement, *params)
+            maker.connection.prepareCall(statement).use { cs ->
                 for (i in params.indices) {
                     when (val p = params[i]) {
                         is Sp.In -> cs.setObject(i + 1, p.value)
@@ -885,10 +951,6 @@ class Stormify(val dataSource: DataSource, vararg registrars: EntityRegistrar) {
                     }
                 }
             }
-        } catch (e: Throwable) {
-            e.throwQuery("Unable to execute stored procedure $name")
-        } finally {
-            if (shouldClose) connection.close()
         }
     }
 

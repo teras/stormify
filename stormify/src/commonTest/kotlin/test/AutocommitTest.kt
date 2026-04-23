@@ -35,7 +35,7 @@ open class AutocommitTest {
 
         // Successful transaction
         s.transaction {
-            executeUpdate("INSERT INTO ac_test (id, name) VALUES (?, ?)", 1, "txn")
+            s.executeUpdate("INSERT INTO ac_test (id, name) VALUES (?, ?)", 1, "txn")
         }
 
         // Direct INSERT after transaction — autocommit must be restored
@@ -55,7 +55,7 @@ open class AutocommitTest {
         // Failed transaction — rollback
         try {
             s.transaction {
-                executeUpdate("INSERT INTO ac_test (id, name) VALUES (?, ?)", 1, "should-vanish")
+                s.executeUpdate("INSERT INTO ac_test (id, name) VALUES (?, ?)", 1, "should-vanish")
                 throw RuntimeException("force rollback")
             }
         } catch (_: Exception) {}
@@ -76,12 +76,12 @@ open class AutocommitTest {
 
         // First transaction — commit
         s.transaction {
-            executeUpdate("INSERT INTO ac_test (id, name) VALUES (?, ?)", 1, "first")
+            s.executeUpdate("INSERT INTO ac_test (id, name) VALUES (?, ?)", 1, "first")
         }
 
         // Second transaction — commit
         s.transaction {
-            executeUpdate("INSERT INTO ac_test (id, name) VALUES (?, ?)", 2, "second")
+            s.executeUpdate("INSERT INTO ac_test (id, name) VALUES (?, ?)", 2, "second")
         }
 
         val names = s.read<String>("SELECT name FROM ac_test ORDER BY id")
@@ -99,14 +99,14 @@ open class AutocommitTest {
         // First transaction — rollback
         try {
             s.transaction {
-                executeUpdate("INSERT INTO ac_test (id, name) VALUES (?, ?)", 1, "doomed")
+                s.executeUpdate("INSERT INTO ac_test (id, name) VALUES (?, ?)", 1, "doomed")
                 throw RuntimeException("boom")
             }
         } catch (_: Exception) {}
 
         // Second transaction — must succeed
         s.transaction {
-            executeUpdate("INSERT INTO ac_test (id, name) VALUES (?, ?)", 2, "recovered")
+            s.executeUpdate("INSERT INTO ac_test (id, name) VALUES (?, ?)", 2, "recovered")
         }
 
         val names = s.read<String>("SELECT name FROM ac_test ORDER BY id")
@@ -123,14 +123,14 @@ open class AutocommitTest {
 
         // Outer transaction with inner savepoint failure
         s.transaction {
-            executeUpdate("INSERT INTO ac_test (id, name) VALUES (?, ?)", 1, "outer")
+            s.executeUpdate("INSERT INTO ac_test (id, name) VALUES (?, ?)", 1, "outer")
             try {
-                transaction {
-                    executeUpdate("INSERT INTO ac_test (id, name) VALUES (?, ?)", 2, "inner-fail")
+                s.transaction {
+                    s.executeUpdate("INSERT INTO ac_test (id, name) VALUES (?, ?)", 2, "inner-fail")
                     throw RuntimeException("inner boom")
                 }
             } catch (_: Exception) {}
-            executeUpdate("INSERT INTO ac_test (id, name) VALUES (?, ?)", 3, "after-inner")
+            s.executeUpdate("INSERT INTO ac_test (id, name) VALUES (?, ?)", 3, "after-inner")
         }
 
         // Direct operation after nested rollback — autocommit must work

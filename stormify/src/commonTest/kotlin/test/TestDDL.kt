@@ -314,9 +314,9 @@ object TestDDL {
                 // MySQL/MariaDB have no `DROP TABLE ... CASCADE` syntax; bypass FK checks
                 // for the duration of a single transaction so SET and DROP share a connection.
                 stormify.transaction {
-                    executeUpdate("SET FOREIGN_KEY_CHECKS = 0")
-                    executeUpdate("DROP TABLE IF EXISTS $name")
-                    executeUpdate("SET FOREIGN_KEY_CHECKS = 1")
+                    stormify.executeUpdate("SET FOREIGN_KEY_CHECKS = 0")
+                    stormify.executeUpdate("DROP TABLE IF EXISTS $name")
+                    stormify.executeUpdate("SET FOREIGN_KEY_CHECKS = 1")
                 }
             }
             isMssql -> {

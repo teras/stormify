@@ -86,8 +86,8 @@ open class SuspendTransactionTest {
         if (!::runner.isInitialized) return@runTest
 
         runner.transaction {
-            executeUpdate("INSERT INTO $dbNameForTest (id, name) VALUES (?, ?)", 1, "alpha")
-            executeUpdate("INSERT INTO $dbNameForTest (id, name) VALUES (?, ?)", 2, "beta")
+            stormify.executeUpdate("INSERT INTO $dbNameForTest (id, name) VALUES (?, ?)", 1, "alpha")
+            stormify.executeUpdate("INSERT INTO $dbNameForTest (id, name) VALUES (?, ?)", 2, "beta")
         }
 
         val rows = stormify.read<String>("SELECT name FROM $dbNameForTest ORDER BY id")
@@ -102,7 +102,7 @@ open class SuspendTransactionTest {
 
         try {
             runner.transaction {
-                executeUpdate("INSERT INTO $dbNameForTest (id, name) VALUES (?, ?)", 11, "should-roll-back")
+                stormify.executeUpdate("INSERT INTO $dbNameForTest (id, name) VALUES (?, ?)", 11, "should-roll-back")
                 throw RuntimeException("boom")
             }
             fail("Expected exception was not thrown")
@@ -120,12 +120,12 @@ open class SuspendTransactionTest {
         if (!::runner.isInitialized) return@runTest
 
         runner.transaction {
-            executeUpdate("INSERT INTO $dbNameForTest (id, name) VALUES (?, ?)", 20, "outer")
+            stormify.executeUpdate("INSERT INTO $dbNameForTest (id, name) VALUES (?, ?)", 20, "outer")
 
             // Inner failure rolls back to savepoint, outer still commits its own row.
             try {
                 runner.transaction {
-                    executeUpdate("INSERT INTO $dbNameForTest (id, name) VALUES (?, ?)", 21, "inner-fail")
+                    stormify.executeUpdate("INSERT INTO $dbNameForTest (id, name) VALUES (?, ?)", 21, "inner-fail")
                     throw RuntimeException("inner-boom")
                 }
             } catch (_: RuntimeException) {
@@ -133,7 +133,7 @@ open class SuspendTransactionTest {
             }
 
             // Continue in outer transaction — savepoint rollback must not have aborted us.
-            executeUpdate("INSERT INTO $dbNameForTest (id, name) VALUES (?, ?)", 22, "after-inner")
+            stormify.executeUpdate("INSERT INTO $dbNameForTest (id, name) VALUES (?, ?)", 22, "after-inner")
         }
 
         val names = stormify.read<String>("SELECT name FROM $dbNameForTest WHERE id IN (20, 21, 22) ORDER BY id")
@@ -155,7 +155,7 @@ open class SuspendTransactionTest {
             (0 until 4).map {
                 async {
                     runner.transaction {
-                        readOne<String>("SELECT name FROM $dbNameForTest WHERE id = ?", 200)
+                        stormify.readOne<String>("SELECT name FROM $dbNameForTest WHERE id = ?", 200)
                     }
                 }
             }.awaitAll()
@@ -178,7 +178,7 @@ open class SuspendTransactionTest {
 
         val job = launch(Dispatchers.Default) {
             runner.transaction {
-                executeUpdate("INSERT INTO $dbNameForTest (id, name) VALUES (?, ?)", 301, "should-rollback")
+                stormify.executeUpdate("INSERT INTO $dbNameForTest (id, name) VALUES (?, ?)", 301, "should-rollback")
                 // Give the test body a real suspension point to observe cancellation on.
                 // We are intentionally NOT testing sqlite3_interrupt here (timing-sensitive)
                 // — the value tested is the coroutine cancellation unwinding the suspend
@@ -205,7 +205,7 @@ open class SuspendTransactionTest {
         // The pool must still be usable — cancellation should have released the connection
         // cleanly so a fresh transaction can acquire from it.
         runner.transaction {
-            executeUpdate("INSERT INTO $dbNameForTest (id, name) VALUES (?, ?)", 302, "after-cancel")
+            stormify.executeUpdate("INSERT INTO $dbNameForTest (id, name) VALUES (?, ?)", 302, "after-cancel")
         }
         val recovered = stormify.readOne<String>("SELECT name FROM $dbNameForTest WHERE id = 302")
         assertEquals("after-cancel", recovered)

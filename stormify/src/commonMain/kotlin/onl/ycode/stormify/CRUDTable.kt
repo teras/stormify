@@ -4,26 +4,30 @@ package onl.ycode.stormify
 
 /**
  * Mixin interface that adds [create], [update], and [delete] convenience methods
- * directly on an entity class, delegating to the default [Stormify] instance.
+ * directly on an entity class, delegating to the entity's attached [Stormify]
+ * instance (if any) or the library-wide default.
  *
- * These methods always resolve the **default Stormify instance** (the one
- * registered via `asDefault()`) and therefore always run in auto-commit mode —
- * they **do not** participate in a surrounding `transaction { }` block even when
- * invoked from inside one. If you call `entity.create()` inside a transaction,
- * the insert is committed immediately on a separate connection and will not be
- * rolled back with the enclosing transaction.
+ * Each call routes through the ambient-transaction registry, so when invoked
+ * from inside a `stormify.transaction { }` block the work runs on the
+ * transaction's connection and participates in its commit/rollback. Outside
+ * a transaction each call runs in auto-commit on a fresh pool connection.
  *
- * Prefer the receiver-style extensions available on `TransactionContext` (Kotlin)
- * or the explicit method-style API on `TransactionContextJ` (Java), both of
- * which correctly route the work through the active transaction's connection.
+ * ```kotlin
+ * class User(var id: Int = 0, var name: String = "") : CRUDTable
+ *
+ * stormify.asDefault()
+ * stormify.transaction {
+ *     User(name = "Alice").create()      // uses tx connection
+ *     User(1, "Bob").update()            // same tx
+ * }
+ *
+ * User(2, "Carol").create()              // auto-commit on a pool connection
+ * ```
+ *
+ * Especially useful from Java, where Kotlin extension functions are not
+ * available — implementing this interface exposes the CRUD methods as
+ * plain instance methods that the Java compiler recognises.
  */
-@Deprecated(
-    message = "CRUDTable routes every call through the default Stormify instance in " +
-            "auto-commit mode, silently bypassing any surrounding transaction. Use the " +
-            "receiver-style extensions on TransactionContext (Kotlin) or explicit " +
-            "TransactionContextJ methods (Java) instead.",
-    level = DeprecationLevel.WARNING,
-)
 interface CRUDTable {
     /** Inserts this entity into the database. */
     fun create() { ((this as? StormifyEntity)?._stormify ?: stormify()).create(this) }

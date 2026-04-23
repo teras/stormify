@@ -4,7 +4,6 @@ package onl.ycode.stormify.coroutines
 
 import onl.ycode.kdbc.Connection
 import onl.ycode.stormify.Stormify
-import kotlin.coroutines.AbstractCoroutineContextElement
 import kotlin.coroutines.CoroutineContext
 
 /**
@@ -12,26 +11,40 @@ import kotlin.coroutines.CoroutineContext
  * [SuspendStormify] transaction, carrying the connection and its owning Stormify
  * instance.
  *
- * This enables two features:
+ * Two responsibilities:
  *
- *  - **Nested transaction detection**: when `stormify.suspending(pool).transaction { }`
- *    is called from inside another such block on the same coroutine lineage, the inner
- *    call sees the existing element and opens a savepoint on the same connection instead
- *    of acquiring a new one from the pool. The outer transaction's commit/rollback still
- *    governs the overall atomicity.
+ *  1. **Nested-transaction detection**. When `suspending.transaction { }` is called
+ *     from inside another such block on the same coroutine lineage, the inner call
+ *     finds this element and opens a savepoint on the same connection instead of
+ *     acquiring a new one. A mismatched [stormify] instance is caught with a clear
+ *     error.
  *
- *  - **Guardrail against cross-stormify nesting**: if a user (accidentally) tries to nest
- *    a transaction from a *different* Stormify instance inside the current one, the
- *    mismatch is detected via [stormify] identity comparison and thrown.
+ *  2. **Ambient propagation across dispatcher hops** (JVM / Android). Sync
+ *     convenience calls (`stormify.create(x)`, top-level extensions, CRUDTable,
+ *     lazy delegates, `PagedList`, …) rely on the thread-local
+ *     [onl.ycode.stormify.ActiveTxRegistry] to locate the active transaction.
+ *     A coroutine that suspends on thread A and resumes on thread B would lose that
+ *     thread-local — the JVM/Android actual implements `ThreadContextElement` so
+ *     the coroutine runtime re-pushes the registry entry on every dispatcher hop,
+ *     keeping every blocking call inside the block consistent.
  *
- * Propagation semantics follow standard `CoroutineContext.Element` rules: child
- * coroutines started with `launch { }` or `async { }` inside a transaction block will
- * inherit this element by default. That inheritance is a double-edged sword — see the
- * launch-in-transaction notes on [SuspendStormify.transaction].
+ *     On Kotlin/Native the coroutine runtime's `ThreadContextElement` is not
+ *     multiplatform as of 1.10.x; the native actual is a plain marker element.
+ *     In practice Native coroutines rarely migrate threads inside a single
+ *     `transaction { }` block, but a sync call after `withContext(Dispatchers.Default)`
+ *     may not observe the ambient on non-JVM targets. Prefer to do DB work
+ *     through the same coroutine scope without switching dispatchers, or call
+ *     through the surrounding `SuspendStormify` API.
+ *
+ * Propagation follows standard `CoroutineContext.Element` rules — child coroutines
+ * started with `launch { }` or `async { }` inside the block inherit this element.
+ * Drivers forbid parallel use of a single connection, so do not issue concurrent
+ * DB work from those children. See [SuspendStormify.transaction] for the pattern.
  */
-internal class ConnectionElement(
-    internal val conn: Connection,
-    internal val stormify: Stormify,
-) : AbstractCoroutineContextElement(Key) {
+internal expect class ConnectionElement(conn: Connection, stormify: Stormify) : CoroutineContext.Element {
+    internal val conn: Connection
+    internal val stormify: Stormify
+    override val key: CoroutineContext.Key<*>
+
     companion object Key : CoroutineContext.Key<ConnectionElement>
 }

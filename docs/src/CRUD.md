@@ -1,15 +1,13 @@
 # CRUD Operations
 
-Stormify supports three styles for performing basic Create / Read / Update / Delete
-operations on entities. Pick whichever matches your language and taste — they all
-dispatch to the same underlying implementation.
+Stormify supports three styles for Create / Read / Update / Delete on entities. Pick whichever matches your language and taste — they all dispatch to the same underlying implementation and all honour an enclosing `transaction { }` block automatically.
 
 ## The Three Styles
 
 === "Direct"
 
     Pass entities to the `Stormify` (Kotlin) or `StormifyJ` (Java) instance directly.
-    This is the standard form and works everywhere without any extra setup.
+    The standard form — works everywhere without any setup.
 
     === "Kotlin"
 
@@ -29,13 +27,56 @@ dispatch to the same underlying implementation.
         stormify.delete(user);
         ```
 
-=== "Extension"
+=== "CRUDTable (Java-friendly)"
+
+    Implement the `CRUDTable` marker interface on an entity to expose
+    `create()`, `update()`, `delete()` as **instance methods** on the entity
+    itself. This is the idiomatic choice from Java where Kotlin extension
+    functions are not available.
+
+    === "Java"
+
+        ```java
+        public class User implements CRUDTable {
+            @DbField(primaryKey = true) private int id;
+            private String name;
+            // Getters, setters...
+        }
+
+        // Register a default instance once at startup:
+        new StormifyJ(dataSource).asDefault();
+
+        User u = new User();
+        u.setName("Alice");
+        u.create();      // INSERT
+        u.setName("Bob");
+        u.update();      // UPDATE
+        u.delete();      // DELETE
+        ```
+
+    === "Kotlin"
+
+        ```kotlin
+        class User(var id: Int = 0, var name: String = "") : CRUDTable
+
+        stormify.asDefault()
+
+        val u = User(name = "Alice")
+        u.create()
+        u.name = "Bob"
+        u.update()
+        u.delete()
+        ```
+
+=== "Extension (Kotlin)"
 
     In Kotlin, **any** entity can call `create()`, `update()`, `delete()`, and
     `refresh()` directly — no interface needed. The query helpers (`findById`,
     `findAll`, `details`) are also available at top level.
 
     ```kotlin
+    stormify.asDefault()
+
     val user = User(name = "Alice").create()       // INSERT, returns the created entity
     user.name = "Bob"
     user.update()                                   // UPDATE
@@ -46,16 +87,20 @@ dispatch to the same underlying implementation.
     val lines = order.details<OrderItem>()          // Parent-child query
     ```
 
-    Inside a `transaction { }` block these receiver-style calls are redirected to
-    the transaction's connection automatically, so the work participates in the
-    active transaction:
+## Transaction Participation
 
-    ```kotlin
-    stormify.transaction {
-        User(name = "Alice").create()              // uses the tx connection
-        "SELECT * FROM users".read<User>()         // same connection
-    }
-    ```
+All three styles transparently join an enclosing `transaction { }` block — the
+active transaction's connection is tracked per-thread (and across coroutine
+dispatcher hops on JVM/Android), so every call on the same `Stormify` instance
+inside the block shares one connection and rolls back together on exception.
+
+```kotlin
+stormify.transaction {
+    stormify.create(User(name = "Alice"))          // Direct style
+    User(name = "Bob").create()                    // Extension style
+    someEntity.update()                            // CRUDTable style
+}
+```
 
 ## Batch CRUD Operations
 

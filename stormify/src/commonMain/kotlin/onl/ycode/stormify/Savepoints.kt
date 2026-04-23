@@ -5,8 +5,8 @@ package onl.ycode.stormify
 import kotlinx.atomicfu.atomic
 
 /**
- * Shared savepoint name generator used by both the blocking [TransactionContext.transaction]
- * nested path and the suspend `SuspendStormify.transaction` nested path.
+ * Shared savepoint name generator used by both the blocking `Stormify.transaction` nested
+ * path and the suspend `SuspendStormify.transaction` nested path.
  *
  * A single process-wide counter ensures that no two savepoints created anywhere in the
  * same JVM/Native process share a name, even if a blocking and a suspend transaction race

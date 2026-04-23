@@ -5,7 +5,6 @@ import onl.ycode.kdbc.JdbcDataSource
 import onl.ycode.kdbc.SQLException
 import onl.ycode.stormify.biglist.ReferencePath
 import java.util.function.Consumer
-import java.util.function.Function
 
 /**
  * Entry point for Stormify from Java code. Provides CRUD operations, raw SQL queries,
@@ -157,20 +156,22 @@ class StormifyJ(dataSource: DataSource, vararg registrars: EntityRegistrar) {
     fun procedure(name: String, vararg args: Any?) = stormify.procedure(name, *args)
 
     /**
-     * Runs [block] inside a database transaction. On return the transaction commits;
-     * on any exception it rolls back.
+     * Runs [block] inside a database transaction. Commits on return, rolls back on
+     * any thrown exception. Inside the block, all CRUD/query calls on this wrapper
+     * (e.g. `stormify.create(user)`) transparently run on the transaction's
+     * connection via the ambient transaction registry. Nested calls to this method
+     * become savepoints automatically.
      */
     @Throws(SQLException::class)
-    fun transaction(block: Consumer<TransactionContextJ>) =
-        TransactionContextJ(TransactionContext(stormify)).start(block)
+    fun transaction(block: Runnable) =
+        stormify.transaction { block.run() }
 
     /**
-     * Runs [block] inside a database transaction and returns its result. On return the
-     * transaction commits; on any exception it rolls back.
+     * Returning variant of [transaction] — see that method for lifecycle semantics.
      */
     @Throws(SQLException::class)
-    fun <R> transaction(block: Function<TransactionContextJ, R>): R =
-        TransactionContextJ(TransactionContext(stormify)).start(block)
+    fun <R> transaction(block: java.util.function.Supplier<R>): R =
+        stormify.transaction { block.get() }
 
     /** Returns the [TableInfo] metadata for [baseClass], building it on first access. */
     @Throws(SQLException::class)
@@ -267,6 +268,7 @@ class StormifyJ(dataSource: DataSource, vararg registrars: EntityRegistrar) {
          * callers typically access it via the [getDefault] static accessor below rather
          * than this field directly.
          */
+        @Volatile
         private var defaultWrapper: StormifyJ? = null
 
         /**
