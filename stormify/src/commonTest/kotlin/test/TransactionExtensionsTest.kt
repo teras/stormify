@@ -1,5 +1,6 @@
 package test
 
+import onl.ycode.stormify.SqlDialect
 import onl.ycode.stormify.Stormify
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -34,6 +35,19 @@ open class TransactionExtensionsTest {
 
     @Test
     fun testExtensionIsInvisibleFromSecondConnection() = withDb("TX-EXT-ISOLATION") { s ->
+        // Lock-based concurrency DBs (no MVCC at default isolation) make the
+        // second connection wait for the writer's X-lock. Since the writer is
+        // this same thread still inside the transaction block, waiting on the
+        // reader to return, we self-deadlock. MVCC dialects (PostgreSQL,
+        // MySQL/InnoDB, Oracle) serve the pre-tx snapshot without blocking,
+        // so the check runs there. The rollback test (below) covers the same
+        // invariant uniformly on every dialect, so skipping is safe here.
+        if (s.sqlDialect == SqlDialect.SQLITE ||
+            s.sqlDialect == SqlDialect.SQL_SERVER_NEW ||
+            s.sqlDialect == SqlDialect.SQL_SERVER_OLD)
+            skipTest(SkipReason.DIALECT_QUIRK,
+                "lock-based concurrency at default isolation blocks a concurrent reader on a second connection")
+
         TestDDL.dropTable("test")
         s.executeUpdate(TestDDL.createTable("test",
             "${TestDDL.intPrimaryKey("id")}, name ${TestDDL.textType()}"))
