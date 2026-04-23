@@ -48,6 +48,13 @@ private class FixedParams(val query: String, val params: List<Any?>)
  */
 class Stormify(val dataSource: DataSource, vararg registrars: EntityRegistrar) {
 
+    /**
+     * Single-argument convenience constructor. Exists primarily so Spring XML
+     * `<constructor-arg ref="dataSource"/>` (and similar DI containers that
+     * resolve constructors by arity) can pick an unambiguous one-arg match.
+     */
+    constructor(dataSource: DataSource) : this(dataSource, *emptyArray())
+
     init {
         for (r in registrars) r.register()
     }

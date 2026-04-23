@@ -23,6 +23,16 @@ class StormifyJ(dataSource: DataSource, vararg registrars: EntityRegistrar) {
     /** Convenience constructor that accepts any [javax.sql.DataSource] (HikariCP, plain JDBC driver, etc.). */
     constructor(jdbcDataSource: javax.sql.DataSource, vararg registrars: EntityRegistrar) : this(JdbcDataSource(jdbcDataSource), *registrars)
 
+    /**
+     * Single-argument convenience constructor. Exists primarily so Spring XML
+     * `<constructor-arg ref="dataSource"/>` (and similar DI containers that
+     * resolve constructors by arity) can pick an unambiguous one-arg match.
+     */
+    constructor(dataSource: DataSource) : this(dataSource, *emptyArray())
+
+    /** Single-argument [javax.sql.DataSource] overload — see the primary one-arg constructor for the rationale. */
+    constructor(jdbcDataSource: javax.sql.DataSource) : this(JdbcDataSource(jdbcDataSource), *emptyArray())
+
     private val stormify = Stormify(dataSource, *registrars)
 
     /** The auto-detected SQL dialect for this data source. See [Stormify.sqlDialect]. */
