@@ -4,6 +4,7 @@ import onl.ycode.kdbc.Connection
 import onl.ycode.kdbc.SQLException
 import onl.ycode.kdbc.Savepoint
 import onl.ycode.stormify.biglist.ReferencePath
+import kotlin.jvm.JvmName
 import kotlin.reflect.KClass
 
 /**
@@ -209,6 +210,65 @@ class TransactionContext internal constructor(
     /** Calls a stored procedure by [name]. OUT/INOUT parameters use [Sp.Out]/[Sp.InOut]. */
     @Throws(SQLException::class)
     fun procedure(name: String, vararg args: Any?) = stormify.procedure(conn, name, *args)
+
+    // --- Receiver-style extensions (shadow the top-level ones in StormifyBindings.kt
+    // when called inside a `transaction { }` block, so they run on this transaction's
+    // connection instead of the default Stormify instance). ---
+
+    /** Inserts this entity into the database using this transaction's connection. */
+    @Throws(SQLException::class)
+    @JvmName("createTx")
+    fun <T : Any> T.create(): T = stormify.create(conn, this)
+
+    /** Updates this entity in the database using this transaction's connection. */
+    @Throws(SQLException::class)
+    @JvmName("updateTx")
+    fun <T : Any> T.update(): T = stormify.update(conn, this)
+
+    /** Deletes this entity from the database using this transaction's connection. */
+    @Throws(SQLException::class)
+    @JvmName("deleteTx")
+    fun <T : Any> T.delete() = stormify.delete(conn, this)
+
+    /** Executes this SQL as an UPDATE/INSERT/DELETE on this transaction's connection. */
+    @Throws(SQLException::class)
+    @JvmName("executeUpdateTx")
+    fun String.executeUpdate(vararg args: Any?) = stormify.executeUpdate(conn, this, *args)
+
+    /** Executes this SQL as a SELECT on this transaction's connection and returns all results. */
+    @Throws(SQLException::class)
+    @JvmName("readTx")
+    inline fun <reified T : Any> String.read(vararg args: Any?): List<T> =
+        stormify.read(conn, T::class, this, *args)
+
+    /** Executes this SQL as a SELECT on this transaction's connection and returns a single result, or null. */
+    @Throws(SQLException::class)
+    @JvmName("readOneTx")
+    inline fun <reified T : Any> String.readOne(vararg args: Any?): T? =
+        stormify.readOne(conn, T::class, this, *args)
+
+    /** Executes this SQL as a SELECT on this transaction's connection and processes rows via [consumer]. */
+    @Throws(SQLException::class)
+    @JvmName("readCursorTx")
+    inline fun <reified T : Any> String.readCursor(vararg args: Any?, noinline consumer: (T) -> Unit): Int =
+        stormify.readCursor(conn, T::class, this, *args, consumer = consumer)
+
+    /** Calls the stored procedure named by this string on this transaction's connection. */
+    @Throws(SQLException::class)
+    @JvmName("procedureTx")
+    fun String.procedure(vararg args: Any?) = stormify.procedure(conn, this, *args)
+
+    /** Returns all detail (child) entities of type [D] related to this parent through a foreign key. */
+    @Throws(SQLException::class)
+    @JvmName("detailsTx")
+    inline fun <reified D : Any> Any.details(propertyName: String? = null): List<D> =
+        stormify.getDetails(conn, this, D::class, propertyName)
+
+    /** Type-safe variant of [details] that accepts a generated [ReferencePath]. */
+    @Throws(SQLException::class)
+    @JvmName("detailsByPathTx")
+    inline fun <reified D : Any> Any.details(referenceField: ReferencePath): List<D> =
+        stormify.getDetails(conn, this, D::class, referenceField.path.trimEnd('.'))
 
     /** Executes a nested transaction using a database savepoint, returning [block]'s result. */
     @Throws(SQLException::class)

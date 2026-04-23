@@ -84,6 +84,17 @@ dispatch to the same underlying implementation.
     val lines = order.details<OrderItem>()          // Parent-child query
     ```
 
+    Inside a `transaction { }` block these receiver-style calls are redirected to
+    the transaction's connection automatically, so the work participates in the
+    active transaction:
+
+    ```kotlin
+    stormify.transaction {
+        User(name = "Alice").create()              // uses the tx connection
+        "SELECT * FROM users".read<User>()         // same connection
+    }
+    ```
+
 ## Batch CRUD Operations
 
 Pass a collection to `create`, `update`, or `delete` to operate on many entities at once:
