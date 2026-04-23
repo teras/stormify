@@ -108,16 +108,15 @@ to your services. This makes testing and multi-database setups straightforward.
 
 ## Transactions
 
-The transaction API moves from ThreadLocal-based context to a lambda-with-receiver pattern.
+The transaction API moves from a plain lambda (without a receiver, where every call still had to go through the static `stormify()` accessor) to a lambda-with-receiver pattern. Operations are called directly on the receiver, the transaction auto-commits on success, and any thrown exception triggers a rollback.
 
 === "V1"
 
     ```java
-    try (TransactionContext ctx = TransactionContext.begin()) {
+    stormify().transaction(() -> {
         stormify().create(user);
         stormify().create(profile);
-        ctx.commit();
-    }
+    });
     ```
 
 === "V2"
