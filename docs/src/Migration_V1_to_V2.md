@@ -315,8 +315,6 @@ The following V1 APIs no longer exist in V2:
 
 - **`onInit()` callbacks** — not needed; use constructor-based initialization instead.
 - **`closeDataSource()`** / **`close()`** — Stormify no longer owns the DataSource. Close it directly.
-- **`CRUDTable.populate()`** and **`CRUDTable.tableName()`** — removed. Use
-  `stormify.populate(entity)` or `AutoTable.populate()` instead.
 - **`User::class.db`** (Kotlin table name extension) — removed. Use
   `stormify.getTableInfo(User::class).tableName` instead.
 - **`storedProcedure()`** — renamed to `procedure()`.

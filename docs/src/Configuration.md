@@ -116,8 +116,8 @@ Stormify connects to your database through a data source. On JVM, it accepts any
 
 ### Default Instance
 
-Several Stormify APIs — the **CRUDTable** and **Extension** styles for CRUD
-operations, [AutoTable lazy stubs](References.md#fresh-construction-vs-lazy-stubs),
+Several Stormify APIs — the **Extension** style for CRUD operations,
+[AutoTable lazy stubs](References.md#fresh-construction-vs-lazy-stubs),
 and [`PagedList`](PagedList.md#quick-start) — operate without receiving an explicit
 `Stormify` reference on every call. They look up a **default instance** that you
 register once during application startup:

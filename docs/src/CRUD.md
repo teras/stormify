@@ -29,44 +29,6 @@ dispatch to the same underlying implementation.
         stormify.delete(user);
         ```
 
-=== "CRUDTable"
-
-    Implement the `CRUDTable` marker interface on an entity to gain `create()`,
-    `update()`, and `delete()` methods on the entity itself. This is especially useful
-    from Java, where extension functions are not available.
-
-    === "Java"
-
-        ```java
-        public class User implements CRUDTable {
-            @DbField(primaryKey = true)
-            private int id;
-            private String name;
-            // Getters and setters
-        }
-
-        User user = new User();
-        user.setName("Alice");
-        user.create();       // INSERT
-        user.update();       // UPDATE
-        user.delete();       // DELETE
-        ```
-
-    === "Kotlin"
-
-        ```kotlin
-        class User : CRUDTable {
-            @DbField(primaryKey = true)
-            var id: Int = 0
-            var name: String = ""
-        }
-
-        val user = User().apply { name = "Alice" }
-        user.create()
-        user.update()
-        user.delete()
-        ```
-
 === "Extension"
 
     In Kotlin, **any** entity can call `create()`, `update()`, `delete()`, and
