@@ -10,7 +10,7 @@ They are also wired into the main Stormify repository as a git submodule under `
 Clone the examples repository and step into the folder you are interested in:
 
 ```bash
-git clone -b 2.2.0-SNAPSHOT https://github.com/teras/stormify-examples.git
+git clone -b 2.5.0 https://github.com/teras/stormify-examples.git
 cd stormify-examples/<example-folder>
 ```
 
@@ -23,7 +23,7 @@ git submodule update --init --recursive
 cd examples
 ```
 
-Every example targets Stormify `2.2.0-SNAPSHOT` and uses SQLite as the default database (no server required), with the exception of the REST/frontend combo which can point at any configured backend. Each subfolder is a self-contained Gradle/Maven/npm project with its own `README.md` detailing entities, setup, and any platform-specific notes.
+Every example targets Stormify `2.5.0` and uses SQLite as the default database (no server required), with the exception of the REST/frontend combo which can point at any configured backend. Each subfolder is a self-contained Gradle/Maven/npm project with its own `README.md` detailing entities, setup, and any platform-specific notes.
 
 ## Available examples
 
@@ -38,15 +38,73 @@ cd kotlin-jvm
 gradle run
 ```
 
-### [java](https://github.com/teras/stormify-examples/tree/main/java)
+### [kotlin-linux](https://github.com/teras/stormify-examples/tree/main/kotlin-linux)
 
-The same CRUD/transactions scenario as `kotlin-jvm`, written in plain Java and built with Maven. Its distinctive feature is **mix-and-match annotations**: one entity uses standard JPA (`@Id`, `@GeneratedValue`) while another uses Stormify's own (`@DbTable`, `@DbField`) — both interoperate in the same project. Lazy references are resolved via explicit `populate()` calls (instead of Kotlin's delegate syntax), which makes the underlying mechanism more visible.
+A standalone Kotlin/Native Linux binary (`linuxX64`) — no JVM needed at runtime — using Stormify's native SQLite driver via KDBC. Entity metadata is generated at compile time by the KSP annotation processor. The sample intentionally uses both an `AutoTable` entity (with `by db()` auto-population) and a plain-class entity (requiring explicit `populate()`), so you can see both styles side by side.
 
 Run:
 
 ```bash
-cd java
+cd kotlin-linux
+gradle runDebugExecutableLinuxX64
+```
+
+### [kotlin-windows](https://github.com/teras/stormify-examples/tree/main/kotlin-windows)
+
+Same shape again, this time a standalone Kotlin/Native Windows binary (`mingwX64`) using the native SQLite driver via KDBC. No JVM required at runtime. Builds on Linux with a MinGW toolchain; can be run natively on Windows or under Wine.
+
+Run (on Windows, or under Wine):
+
+```bash
+cd kotlin-windows
+gradle runDebugExecutableMingwX64
+```
+
+### [kotlin-macos](https://github.com/teras/stormify-examples/tree/main/kotlin-macos)
+
+Same shape as `kotlin-linux`, but a standalone Kotlin/Native macOS binary for both `macosArm64` (Apple Silicon) and `macosX64` (Intel), sharing code through the `macosMain` intermediate source set. Uses native SQLite via KDBC. Build requires macOS.
+
+Run:
+
+```bash
+cd kotlin-macos
+gradle runDebugExecutableMacosArm64   # or MacosX64
+```
+
+### [kotlin-multiplatform](https://github.com/teras/stormify-examples/tree/main/kotlin-multiplatform)
+
+The most comprehensive example: the **same business logic** in `commonMain` runs on JVM, Linux (`linuxX64`, `linuxArm64`), Windows (`mingwX64`), and macOS (`macosArm64`, `macosX64`). Only the DataSource creation is platform-specific — JVM uses SQLite via JDBC, native targets use `KdbcDataSource`. Both entities extend `AutoTable` with `by db()` and `by lazyDetails()` delegates. The one to study once you want to share persistence code across every target Stormify supports.
+
+Run on any available target:
+
+```bash
+cd kotlin-multiplatform
+gradle run                                # JVM
+gradle runDebugExecutableLinuxX64         # Linux x64
+gradle runDebugExecutableMacosArm64       # macOS Apple Silicon
+gradle runDebugExecutableMingwX64         # Windows
+```
+
+### [java-pom](https://github.com/teras/stormify-examples/tree/main/java-pom)
+
+The same CRUD/transactions scenario as `kotlin-jvm`, written in plain Java and built with Maven. Its distinctive feature is **mix-and-match annotations**: one entity uses standard JPA (`@Id`, `@GeneratedValue`) while another uses Stormify's own (`@DbTable`, `@DbField`) — both interoperate in the same project. Entity metadata is discovered via reflection at runtime.
+
+Run:
+
+```bash
+cd java-pom
 mvn compile exec:java
+```
+
+### [java-gradle](https://github.com/teras/stormify-examples/tree/main/java-gradle)
+
+Same Java scenario as [`java-pom`](https://github.com/teras/stormify-examples/tree/main/java-pom) but built with Gradle and the Stormify plugin. The plugin runs the annotation processor at compile time and emits the `Tables` object, so Java code can use **type-safe paths** (`Tables.Task_.user.name`) — refactor-safe references that stop compiling if the underlying property is renamed or removed.
+
+Run:
+
+```bash
+cd java-gradle
+gradle run
 ```
 
 ### [android](https://github.com/teras/stormify-examples/tree/main/android)
@@ -65,53 +123,6 @@ gradle :app:installDebug
 A SwiftUI app backed by a Kotlin Multiplatform shared module. The Kotlin side owns entities and demo logic; Swift calls into the generated framework. Uses platform SQLite via `KdbcDataSource` with Kotlin/Native cinterop, and KSP for entity metadata (required on native). A practical template if you want to share persistence logic with an existing Kotlin codebase while keeping a native SwiftUI frontend. Requires macOS and Xcode.
 
 Run: open `ios/iosApp/iosApp.xcodeproj` in Xcode and launch on a simulator or device.
-
-### [kotlin-linux](https://github.com/teras/stormify-examples/tree/main/kotlin-linux)
-
-A standalone Kotlin/Native Linux binary (`linuxX64`) — no JVM needed at runtime — using Stormify's native SQLite driver via KDBC. Entity metadata is generated at compile time by the KSP annotation processor. The sample intentionally uses both an `AutoTable` entity (with `by db()` auto-population) and a plain-class entity (requiring explicit `populate()`), so you can see both styles side by side.
-
-Run:
-
-```bash
-cd kotlin-linux
-gradle runDebugExecutableLinuxX64
-```
-
-### [kotlin-macos](https://github.com/teras/stormify-examples/tree/main/kotlin-macos)
-
-Same shape as `kotlin-linux`, but a standalone Kotlin/Native macOS binary for both `macosArm64` (Apple Silicon) and `macosX64` (Intel), sharing code through the `macosMain` intermediate source set. Uses native SQLite via KDBC. Build requires macOS.
-
-Run:
-
-```bash
-cd kotlin-macos
-gradle runDebugExecutableMacosArm64   # or MacosX64
-```
-
-### [kotlin-windows](https://github.com/teras/stormify-examples/tree/main/kotlin-windows)
-
-Same shape again, this time a standalone Kotlin/Native Windows binary (`mingwX64`) using the native SQLite driver via KDBC. No JVM required at runtime. Builds on Linux with a MinGW toolchain; can be run natively on Windows or under Wine.
-
-Run (on Windows, or under Wine):
-
-```bash
-cd kotlin-windows
-gradle runDebugExecutableMingwX64
-```
-
-### [kotlin-multiplatform](https://github.com/teras/stormify-examples/tree/main/kotlin-multiplatform)
-
-The most comprehensive example: the **same business logic** in `commonMain` runs on JVM, Linux (`linuxX64`, `linuxArm64`), Windows (`mingwX64`), and macOS (`macosArm64`, `macosX64`). Only the DataSource creation is platform-specific — JVM uses SQLite via JDBC, native targets use `KdbcDataSource`. Both entities extend `AutoTable` with `by db()` and `by lazyDetails()` delegates. The one to study once you want to share persistence code across every target Stormify supports.
-
-Run on any available target:
-
-```bash
-cd kotlin-multiplatform
-gradle run                                # JVM
-gradle runDebugExecutableLinuxX64         # Linux x64
-gradle runDebugExecutableMacosArm64       # macOS Apple Silicon
-gradle runDebugExecutableMingwX64         # Windows
-```
 
 ### [kotlin-rest](https://github.com/teras/stormify-examples/tree/main/kotlin-rest)
 

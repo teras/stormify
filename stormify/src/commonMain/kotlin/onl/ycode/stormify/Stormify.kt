@@ -56,7 +56,7 @@ class Stormify(val dataSource: DataSource, vararg registrars: EntityRegistrar) {
     constructor(dataSource: DataSource) : this(dataSource, *emptyArray())
 
     init {
-        for (r in registrars) r.register()
+        for (r in registrars) EntityMeta.invokeRegistrar(r)
     }
 
     /** Holds the library-wide [defaultInstance] used when no instance is explicitly attached. */
@@ -757,7 +757,7 @@ class Stormify(val dataSource: DataSource, vararg registrars: EntityRegistrar) {
      */
     @Throws(SQLException::class)
     inline fun <reified D : Any> getDetails(parent: Any, referenceField: ReferencePath): List<D> =
-        getDetails(null, parent, D::class, referenceField.path.trimEnd('.'))
+        getDetails(null, parent, D::class, referenceField.toString().trimEnd('.'))
 
     @PublishedApi
     @Suppress("UNCHECKED_CAST")

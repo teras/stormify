@@ -24,7 +24,7 @@ toolchain supports.
   MS SQL Server, and SQLite on Linux, Windows, and macOS without JVM or JDBC in
   the loop.
 - **Android & iOS**: full ORM on Android's built-in SQLite and iOS `libsqlite3`,
-  with compile-time metadata via the `annproc` KSP processor.
+  with compile-time metadata generated automatically by the Gradle plugin.
 - **CRUD operations**: create, read, update, delete — with batch variants for
   bulk workloads.
 - **Annotation-free classes**: plain Kotlin data classes work out of the box;
@@ -54,24 +54,27 @@ A complete, five-minute walkthrough from zero to your first query.
 
 ### 1. Add the dependency
 
-=== "Gradle (JVM)"
+=== "Gradle"
 
     ```kotlin
-    implementation("onl.ycode:stormify-jvm:2.2.0-SNAPSHOT")
+    plugins {
+        id("onl.ycode.stormify") version "2.5.0"
+    }
     ```
 
-=== "Maven (JVM)"
+    Covers JVM, Android, and Kotlin Multiplatform (all native targets).
+
+=== "Maven (pure Java)"
 
     ```xml
     <dependency>
         <groupId>onl.ycode</groupId>
         <artifactId>stormify-jvm</artifactId>
-        <version>2.2.0-SNAPSHOT</version>
+        <version>2.5.0</version>
     </dependency>
     ```
 
-For Android, native targets, or the `annproc` KSP processor, see
-[Installation](Installation.md).
+See [Installation](Installation.md) for configuration options and native runtime libraries.
 
 ### 2. Define an entity
 
@@ -83,7 +86,7 @@ Given a table `CREATE TABLE user (id INT PRIMARY KEY, name VARCHAR(255), email V
     import onl.ycode.stormify.DbField
     import onl.ycode.stormify.DbTable
 
-    @DbTable         // Optional on JVM; required on Native/Android/iOS
+    @DbTable  // Optional in JVM
     data class User(
         @DbField(primaryKey = true)
         var id: Int = 0,
@@ -98,7 +101,7 @@ Given a table `CREATE TABLE user (id INT PRIMARY KEY, name VARCHAR(255), email V
     import onl.ycode.stormify.DbField;
     import onl.ycode.stormify.DbTable;
 
-    @DbTable  // Optional on JVM
+    @DbTable  // Optional in JVM
     public class User {
         @DbField(primaryKey = true)
         private int id;
@@ -121,9 +124,10 @@ schema doesn't match.
     import com.zaxxer.hikari.HikariConfig
     import com.zaxxer.hikari.HikariDataSource
     import onl.ycode.stormify.Stormify
+    import onl.ycode.stormify.generated.GeneratedEntities
 
     val dataSource = HikariDataSource(HikariConfig("databaseConfig.properties"))
-    val stormify = Stormify(dataSource)
+    val stormify = Stormify(dataSource, GeneratedEntities)
     ```
 
 === "Java"

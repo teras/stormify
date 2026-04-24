@@ -1,10 +1,10 @@
 package test
 
-import onl.ycode.stormify.generated.Paths.TestC_
-import onl.ycode.stormify.generated.Paths.CamelEntity_
-import onl.ycode.stormify.generated.Paths.AutoChildEntity_
-import onl.ycode.stormify.generated.Paths.TreeNode_
-import onl.ycode.stormify.generated.Paths.Person_
+import onl.ycode.stormify.generated.Tables.TestC_
+import onl.ycode.stormify.generated.Tables.CamelEntity_
+import onl.ycode.stormify.generated.Tables.AutoChildEntity_
+import onl.ycode.stormify.generated.Tables.TreeNode_
+import onl.ycode.stormify.generated.Tables.Person_
 import onl.ycode.stormify.Stormify
 import onl.ycode.stormify.biglist.Facet
 import onl.ycode.stormify.biglist.PagedList
@@ -90,24 +90,24 @@ class PagedListPathTest {
     @Test
     fun testPathEquivalence() {
         // Verify that type-safe paths produce the same string as dot notation
-        assertEquals("name", TestC_.name.toPath())
-        assertEquals("firstName", CamelEntity_.firstName.toPath())
-        assertEquals("parent.data", AutoChildEntity_.parent.data.toPath())
+        assertEquals("name", TestC_.name.toString())
+        assertEquals("firstName", CamelEntity_.firstName.toString())
+        assertEquals("parent.data", AutoChildEntity_.parent.data.toString())
     }
 
     @Test
     fun testSelfReferentialPath() {
         // TreeNode.parent is self-referential — lazy refs allow infinite depth
-        assertEquals("parent.name", TreeNode_.parent.name.toPath())
-        assertEquals("parent.parent.name", TreeNode_.parent.parent.name.toPath())
-        assertEquals("parent.parent.parent.name", TreeNode_.parent.parent.parent.name.toPath())
+        assertEquals("parent.name", TreeNode_.parent.name.toString())
+        assertEquals("parent.parent.name", TreeNode_.parent.parent.name.toString())
+        assertEquals("parent.parent.parent.name", TreeNode_.parent.parent.parent.name.toString())
     }
 
     @Test
     fun testDeepFkChain() {
         // Person → City → Country — linear chain, no limit
-        assertEquals("city.name", Person_.city.name.toPath())
-        assertEquals("city.country.name", Person_.city.country.name.toPath())
+        assertEquals("city.name", Person_.city.name.toString())
+        assertEquals("city.country.name", Person_.city.country.name.toString())
     }
 
     @Test

@@ -207,7 +207,7 @@ internal class PagedQueryCore<T : Any>(
 
     /** Creates a [TableRef] from a KSP-generated typed [ReferencePath]. */
     internal fun addTableRef(path: ReferencePath): TableRef =
-        addTableRef(path.path.trimEnd('.'))
+        addTableRef(path.toString().trimEnd('.'))
 
     private fun resolveAliasForNewFacet(explicit: String?): String {
         if (explicit != null) {

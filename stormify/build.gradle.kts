@@ -4,8 +4,8 @@ import com.vanniktech.maven.publish.KotlinMultiplatform
 plugins {
     kotlin("multiplatform")
     id("com.android.library")
-    id("org.jetbrains.kotlinx.atomicfu") version "0.30.0-beta"
-    id("com.google.devtools.ksp") version "2.2.20-2.0.2"
+    id("org.jetbrains.kotlinx.atomicfu") version "0.32.1"
+    id("com.google.devtools.ksp") version "2.2.21-2.0.5"
     id("org.jetbrains.dokka")
     id("com.vanniktech.maven.publish")
 }
@@ -106,6 +106,11 @@ kotlin {
 
         val androidMain by getting {
             dependsOn(jvmBasedMain)
+            // atomicfu Gradle plugin transforms the JVM jar but not the AAR;
+            // Android consumers need the runtime jar on classpath.
+            dependencies {
+                api("org.jetbrains.kotlinx:atomicfu:0.32.1")
+            }
         }
 
         // Common JVM-based test source set for both Desktop JVM and Android

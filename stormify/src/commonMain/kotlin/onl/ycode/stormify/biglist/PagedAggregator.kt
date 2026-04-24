@@ -49,7 +49,7 @@ class PagedAggregator internal constructor(
 
     /** Starts a `SUM(path)` aggregation using a type-safe [ScalarPath]. */
     @JvmOverloads
-    fun sum(path: ScalarPath, alias: String? = null): SingleAggregator = sum(path.toPath(), alias)
+    fun sum(path: ScalarPath, alias: String? = null): SingleAggregator = sum(path.toString(), alias)
 
     /** Starts an `AVG(path)` aggregation. */
     @JvmOverloads
@@ -60,7 +60,7 @@ class PagedAggregator internal constructor(
 
     /** Starts an `AVG(path)` aggregation using a type-safe [ScalarPath]. */
     @JvmOverloads
-    fun avg(path: ScalarPath, alias: String? = null): SingleAggregator = avg(path.toPath(), alias)
+    fun avg(path: ScalarPath, alias: String? = null): SingleAggregator = avg(path.toString(), alias)
 
     /** Starts a `MIN(path)` aggregation. */
     @JvmOverloads
@@ -71,7 +71,7 @@ class PagedAggregator internal constructor(
 
     /** Starts a `MIN(path)` aggregation using a type-safe [ScalarPath]. */
     @JvmOverloads
-    fun min(path: ScalarPath, alias: String? = null): SingleAggregator = min(path.toPath(), alias)
+    fun min(path: ScalarPath, alias: String? = null): SingleAggregator = min(path.toString(), alias)
 
     /** Starts a `MAX(path)` aggregation. */
     @JvmOverloads
@@ -82,7 +82,7 @@ class PagedAggregator internal constructor(
 
     /** Starts a `MAX(path)` aggregation using a type-safe [ScalarPath]. */
     @JvmOverloads
-    fun max(path: ScalarPath, alias: String? = null): SingleAggregator = max(path.toPath(), alias)
+    fun max(path: ScalarPath, alias: String? = null): SingleAggregator = max(path.toString(), alias)
 
     /** Starts a `COUNT(path)` aggregation. Pass `"*"` for `COUNT(*)`. */
     @JvmOverloads
@@ -93,7 +93,7 @@ class PagedAggregator internal constructor(
 
     /** Starts a `COUNT(path)` aggregation using a type-safe [ScalarPath]. */
     @JvmOverloads
-    fun count(path: ScalarPath, alias: String? = null): SingleAggregator = count(path.toPath(), alias)
+    fun count(path: ScalarPath, alias: String? = null): SingleAggregator = count(path.toString(), alias)
 
     /** Starts a `COUNT(DISTINCT path)` aggregation. */
     @JvmOverloads
@@ -105,7 +105,7 @@ class PagedAggregator internal constructor(
     /** Starts a `COUNT(DISTINCT path)` aggregation using a type-safe [ScalarPath]. */
     @JvmOverloads
     fun countDistinct(path: ScalarPath, alias: String? = null): SingleAggregator =
-        countDistinct(path.toPath(), alias)
+        countDistinct(path.toString(), alias)
 
     /**
      * Starts an aggregation from an arbitrary SQL [expression]. The expression

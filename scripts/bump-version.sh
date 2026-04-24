@@ -80,6 +80,11 @@ replace_docs_url() {
     sed -i -E "s|(https://stormify\\.org/docs/)$OLD_E/|\1$NEW/|g" "$1"
 }
 
+# 7. Gradle plugin id: id("onl.ycode.stormify") version "<old>"
+replace_plugin_id() {
+    sed -i -E "s|(id\\(\"onl\\.ycode\\.stormify\"\\) version \")$OLD_E(\")|\\1$NEW\\2|g" "$1"
+}
+
 # Apply to README + every docs/src/*.md (auto-discovered so new pages are never missed)
 CORE_DOCS=(README.md)
 while IFS= read -r -d '' f; do
@@ -93,10 +98,11 @@ for f in "${CORE_DOCS[@]}"; do
         replace_tree_ref "$f"
         replace_prose "$f"
         replace_docs_url "$f"
+        replace_plugin_id "$f"
     fi
 done
 
-# 6. Submodule examples/ — only if initialized
+# 8. Submodule examples/ — only if initialized
 #
 # Examples use property-based versions so they build both standalone (picking
 # up this default) and inside this repo (overridden via -PstormifyVersion /
@@ -115,6 +121,9 @@ if [[ -d examples/.git || -f examples/.git ]]; then
     find examples -type f \( -name "*.gradle.kts" -o -name "pom.xml" \) \
         ! -path "*/build/*" ! -path "*/.gradle/*" \
         -exec sed -i -E "s|(onl\\.ycode:[a-zA-Z0-9-]+):$OLD_E|\\1:$NEW|g" {} +
+    find examples -type f -name "*.gradle.kts" \
+        ! -path "*/build/*" ! -path "*/.gradle/*" \
+        -exec sed -i -E "s|(id\\(\"onl\\.ycode\\.stormify\"\\) version \")$OLD_E(\")|\\1$NEW\\2|g" {} +
     find examples -type f -name "pom.xml" ! -path "*/build/*" \
         -exec sed -i -E "s|(<stormify\\.version>)$OLD_E(</stormify\\.version>)|\\1$NEW\\2|g" {} +
     # README / prose inside examples — same replacements as the core docs
@@ -125,6 +134,7 @@ if [[ -d examples/.git || -f examples/.git ]]; then
         replace_tree_ref  "$f"
         replace_prose     "$f"
         replace_docs_url  "$f"
+        replace_plugin_id "$f"
     done < <(find examples -type f -name "*.md" \
         ! -path "*/build/*" ! -path "*/.gradle/*" ! -path "*/node_modules/*" -print0)
 else

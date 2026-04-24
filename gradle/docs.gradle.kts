@@ -116,7 +116,6 @@ tasks.register("createDocs") {
             ProcessBuilder("sh", inject, "docs/build/docs/kdbc-c").inheritIO().start().waitFor()
 
             // 5. Copy static assets with {{DOCS_VERSION}} substituted to current version
-            //    (so local preview under docs/build/ works end-to-end)
             file("docs/static").copyRecursively(file("docs/build"), overwrite = true)
             file("docs/build").walkTopDown()
                 .filter { it.isFile && (it.extension == "html" || it.extension == "htm") }

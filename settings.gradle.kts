@@ -19,5 +19,6 @@ include(":stormify")
 include(":logger")
 include(":annproc")
 include(":kdbc")
+include(":stormify-gradle-plugin")
 
 project(":kdbc").projectDir = file("kdbc")

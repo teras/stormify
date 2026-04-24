@@ -7,7 +7,7 @@
 <p align="center">
   <a href="https://central.sonatype.com/artifact/onl.ycode/stormify-jvm"><img src="https://img.shields.io/maven-central/v/onl.ycode/stormify-jvm?style=flat-square&logo=apachemaven&logoColor=white&label=Maven%20Central&color=c71a36" alt="Maven Central"></a>
   <a href="https://github.com/teras/stormify/blob/main/LICENSE.md"><img src="https://img.shields.io/badge/License-Apache%202.0-blue?style=flat-square" alt="License"></a>
-  <img src="https://img.shields.io/badge/Kotlin-2.2.20-7f52ff?style=flat-square&logo=kotlin&logoColor=white" alt="Kotlin">
+  <img src="https://img.shields.io/badge/Kotlin-2.2.21-7f52ff?style=flat-square&logo=kotlin&logoColor=white" alt="Kotlin">
   <img src="https://img.shields.io/badge/Platforms-JVM%20%7C%20Native%20%7C%20Android%20%7C%20iOS-4c8cbf?style=flat-square" alt="Platforms">
 </p>
 
@@ -18,9 +18,9 @@ Designed for developers seeking a simple yet powerful ORM, Stormify excels in pr
 <p align="center">
   <a href="https://stormify.org"><img src="https://img.shields.io/badge/Website-stormify.org-4a82c2?style=for-the-badge&logoColor=white" alt="Website"></a>
   &nbsp;
-  <a href="https://stormify.org/docs/2.2.0-SNAPSHOT/"><img src="https://img.shields.io/badge/Docs-Read%20the%20docs-2563eb?style=for-the-badge&logoColor=white" alt="Docs"></a>
+  <a href="https://stormify.org/docs/2.5.0/"><img src="https://img.shields.io/badge/Docs-Read%20the%20docs-2563eb?style=for-the-badge&logoColor=white" alt="Docs"></a>
   &nbsp;
-  <a href="https://stormify.org/docs/2.2.0-SNAPSHOT/api-stormify/"><img src="https://img.shields.io/badge/API-Reference-555?style=for-the-badge&logoColor=white" alt="API"></a>
+  <a href="https://stormify.org/docs/2.5.0/api-stormify/"><img src="https://img.shields.io/badge/API-Reference-555?style=for-the-badge&logoColor=white" alt="API"></a>
 </p>
 
 ## Features
@@ -50,56 +50,27 @@ Designed for developers seeking a simple yet powerful ORM, Stormify excels in pr
 
 ## Installation
 
-### Maven
+**Gradle (all targets — JVM, Android, Kotlin Multiplatform):**
+
+```kotlin
+plugins {
+    id("onl.ycode.stormify") version "2.5.0"
+}
+```
+
+**Maven (pure Java):**
 
 ```xml
 <dependency>
     <groupId>onl.ycode</groupId>
     <artifactId>stormify-jvm</artifactId>
-    <version>2.2.0-SNAPSHOT</version>
+    <version>2.5.0</version>
 </dependency>
-```
-
-### Gradle (JVM)
-
-```kotlin
-implementation("onl.ycode:stormify-jvm:2.2.0-SNAPSHOT")
-ksp("onl.ycode:annproc:2.2.0-SNAPSHOT")              // optional on JVM
-```
-
-### Gradle (Android)
-
-```kotlin
-implementation("onl.ycode:stormify-android:2.2.0-SNAPSHOT")
-ksp("onl.ycode:annproc:2.2.0-SNAPSHOT")              // required on Android
-```
-
-### Gradle (Native)
-
-```kotlin
-// Pick the artifact for your target platform:
-implementation("onl.ycode:stormify-linuxx64:2.2.0-SNAPSHOT")        // Linux x64
-implementation("onl.ycode:stormify-linuxarm64:2.2.0-SNAPSHOT")      // Linux ARM64
-implementation("onl.ycode:stormify-mingwx64:2.2.0-SNAPSHOT")        // Windows x64
-implementation("onl.ycode:stormify-macosarm64:2.2.0-SNAPSHOT")      // macOS (Apple Silicon)
-implementation("onl.ycode:stormify-macosx64:2.2.0-SNAPSHOT")        // macOS (Intel)
-implementation("onl.ycode:stormify-iosarm64:2.2.0-SNAPSHOT")        // iOS (device)
-implementation("onl.ycode:stormify-iossimulatorarm64:2.2.0-SNAPSHOT") // iOS simulator (Apple Silicon)
-implementation("onl.ycode:stormify-iosx64:2.2.0-SNAPSHOT")          // iOS simulator (Intel Mac)
-ksp("onl.ycode:annproc:2.2.0-SNAPSHOT")                             // required (no reflection on native)
 ```
 
 Supported native databases: **PostgreSQL, MariaDB/MySQL, Oracle, MSSQL, SQLite**. On iOS, only SQLite is available.
 
-**Entity metadata**: On JVM, entity metadata is discovered at runtime via `kotlin-reflect`
-(included as a transitive dependency). On Native/Android/iOS, use the `annproc` annotation
-processor (via KSP) to generate it at compile time. On JVM, `annproc` is optional but
-improves startup time and allows excluding `kotlin-reflect`. When using `annproc`, pass
-the generated registrar to the constructor:
-
-```kotlin
-val stormify = Stormify(dataSource, GeneratedEntities)
-```
+See [Installation](docs/src/Installation.md) for configuration options and native runtime libraries.
 
 > **Upgrading from V1?** See the [V1 to V2 migration guide](docs/src/Migration_V1_to_V2.md).
 
@@ -209,12 +180,12 @@ val user = stormify.findById<User>(1)
 
 ## Examples
 
-Runnable example projects live in a separate repository: [stormify-examples](https://github.com/teras/stormify-examples/tree/2.2.0-SNAPSHOT). They cover JVM (Kotlin & Java), Android, iOS, Kotlin/Native (Linux, Windows, macOS), and Kotlin Multiplatform.
+Runnable example projects live in a separate repository: [stormify-examples](https://github.com/teras/stormify-examples/tree/2.5.0). They cover JVM (Kotlin & Java — both [Maven](https://github.com/teras/stormify-examples/tree/2.5.0/java-pom) and [Gradle with type-safe paths](https://github.com/teras/stormify-examples/tree/2.5.0/java-gradle)), Android, iOS, Kotlin/Native (Linux, Windows, macOS), and Kotlin Multiplatform.
 
 Clone them standalone:
 
 ```bash
-git clone -b 2.2.0-SNAPSHOT https://github.com/teras/stormify-examples.git
+git clone -b 2.5.0 https://github.com/teras/stormify-examples.git
 ```
 
 Or pull them directly inside this repo as a submodule:
@@ -227,7 +198,7 @@ Each subfolder is a self-contained project with its own `README.md` explaining h
 
 ## How Stormify stacks up
 
-A quick side-by-side against common Kotlin and Java ORMs. See the [full comparison](https://stormify.org/docs/2.2.0-SNAPSHOT/Comparison/) for reflection behaviour, compile-time metadata, narrative context, and when to pick each.
+A quick side-by-side against common Kotlin and Java ORMs. See the [full comparison](https://stormify.org/docs/2.5.0/Comparison/) for reflection behaviour, compile-time metadata, narrative context, and when to pick each.
 
 |  | Stormify | Exposed | Ktorm | Komapper | SQLDelight | Hibernate |
 |---|---|---|---|---|---|---|
@@ -242,7 +213,7 @@ A quick side-by-side against common Kotlin and Java ORMs. See the [full comparis
 
 ## Documentation
 
-Full documentation is available at [stormify.org/docs](https://stormify.org/docs/2.2.0-SNAPSHOT/).
+Full documentation is available at [stormify.org/docs](https://stormify.org/docs/2.5.0/).
 
 ## Contributing
 

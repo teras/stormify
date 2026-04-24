@@ -8,107 +8,21 @@
 - **Windows native**: Windows 10 or later (mingwX64 build).
 - **macOS native**: macOS 11+ on Apple Silicon or Intel.
 - **iOS native**: iOS 14+ (device, simulator Intel, simulator Apple Silicon).
-- **Kotlin**: 2.2.20 for consumers that compile against Stormify APIs.
+- **Kotlin**: 2.2.21 for consumers that compile against Stormify APIs.
 
-## Artifacts
+## Setup (Gradle)
 
-All artifacts are published to Maven Central under the `onl.ycode` group.
+Apply the Stormify Gradle plugin. It detects your Kotlin variant (JVM, Android,
+or Multiplatform) and wires everything automatically — KSP, the annotation
+processor, the runtime dependency, and the generated sources.
 
-=== "Gradle (JVM)"
+```kotlin
+plugins {
+    id("onl.ycode.stormify") version "2.5.0"
+}
+```
 
-    ```kotlin
-    implementation("onl.ycode:stormify-jvm:2.2.0-SNAPSHOT")
-    ksp("onl.ycode:annproc:2.2.0-SNAPSHOT")              // optional on JVM
-    ```
-
-=== "Gradle (Android)"
-
-    ```kotlin
-    implementation("onl.ycode:stormify-android:2.2.0-SNAPSHOT")
-    ksp("onl.ycode:annproc:2.2.0-SNAPSHOT")              // required on Android
-    ```
-
-=== "Gradle (Native)"
-
-    Pick the artifact matching your target platform:
-
-    ```kotlin
-    implementation("onl.ycode:stormify-linuxx64:2.2.0-SNAPSHOT")          // Linux x64
-    implementation("onl.ycode:stormify-linuxarm64:2.2.0-SNAPSHOT")        // Linux ARM64
-    implementation("onl.ycode:stormify-mingwx64:2.2.0-SNAPSHOT")          // Windows x64
-    implementation("onl.ycode:stormify-macosarm64:2.2.0-SNAPSHOT")        // macOS (Apple Silicon)
-    implementation("onl.ycode:stormify-macosx64:2.2.0-SNAPSHOT")          // macOS (Intel)
-    implementation("onl.ycode:stormify-iosarm64:2.2.0-SNAPSHOT")          // iOS (device)
-    implementation("onl.ycode:stormify-iossimulatorarm64:2.2.0-SNAPSHOT") // iOS simulator (Apple Silicon)
-    implementation("onl.ycode:stormify-iosx64:2.2.0-SNAPSHOT")            // iOS simulator (Intel Mac)
-
-    ksp("onl.ycode:annproc:2.2.0-SNAPSHOT")                               // required (no reflection on native)
-    ```
-
-=== "Maven"
-
-    ```xml
-    <dependency>
-        <groupId>onl.ycode</groupId>
-        <artifactId>stormify-jvm</artifactId>
-        <version>2.2.0-SNAPSHOT</version>
-    </dependency>
-    ```
-
-Supported native databases: **PostgreSQL, MariaDB/MySQL, Oracle, MSSQL, SQLite**.
-On iOS, only SQLite is available (App Store restrictions).
-
-## Entity Metadata: `annproc` and `GeneratedEntities`
-
-!!! tip "On JVM? You can skip the rest of this page."
-
-    `stormify-jvm` ships with `kotlin-reflect`, which discovers entity metadata
-    at runtime — no annotations required on your classes. Everything below is
-    only relevant on Native/Android/iOS, or on JVM when you want faster startup
-    and a leaner classpath (see
-    [Excluding `kotlin-reflect` (JVM)](#excluding-kotlin-reflect-jvm)).
-
-Stormify needs entity metadata (field names, types, primary keys) to perform
-ORM operations. On Native/Android/iOS there is no runtime reflection, so the
-metadata has to be generated at compile time by the `annproc` KSP processor —
-it scans `@DbTable` and JPA `@Entity` annotations and emits the registrar
-object that Stormify picks up at startup.
-
-### KSP Setup
-
-Add the KSP plugin and the `annproc` dependency:
-
-=== "Gradle (Kotlin)"
-
-    ```kotlin
-    plugins {
-        id("com.google.devtools.ksp") version "2.2.20-2.0.2"
-    }
-
-    dependencies {
-        ksp("onl.ycode:annproc:2.2.0-SNAPSHOT")
-    }
-    ```
-
-=== "Gradle (Groovy)"
-
-    ```groovy
-    plugins {
-        id 'com.google.devtools.ksp' version '2.2.20-2.0.2'
-    }
-
-    dependencies {
-        ksp 'onl.ycode:annproc:2.2.0-SNAPSHOT'
-    }
-    ```
-
-KSP requires the Kotlin compiler, so pure Java/Maven projects without a Kotlin
-compilation step cannot use `annproc` — they rely on `kotlin-reflect` instead.
-
-### Wiring the generated registrar
-
-The processor emits an `EntityRegistrar` object in the
-`onl.ycode.stormify.generated` package. Pass it to the `Stormify` constructor:
+That's the whole setup. Pass the generated registrar to the constructor:
 
 ```kotlin
 import onl.ycode.stormify.generated.GeneratedEntities
@@ -116,33 +30,46 @@ import onl.ycode.stormify.generated.GeneratedEntities
 val stormify = Stormify(dataSource, GeneratedEntities)
 ```
 
-The generated package and class names (`GeneratedEntities`, `Paths`) are
-overridable via KSP options — see
-[Annotations › Annotation Processor](Annotations.md#annotation-processor-annproc)
-for details and advanced usage.
+### Configuration
 
-### Excluding `kotlin-reflect` (JVM)
+All settings are optional.
 
-When using `annproc` on JVM, `kotlin-reflect` is not needed at runtime and
-can be excluded:
+```kotlin
+stormify {
+    generatedPackage.set("com.mycompany.db")   // default: onl.ycode.stormify.generated
+    registrarClass.set("MyEntities")           // default: GeneratedEntities
+    pathsClass.set("Q")                        // default: Tables
+    generateRegistrar.set(false)               // default: true
+}
+```
 
-=== "Gradle (Kotlin)"
+Set `generateRegistrar.set(false)` on a JVM-only project that prefers
+reflection-based discovery via `kotlin-reflect`; in that mode construct
+Stormify with no registrar:
 
-    ```kotlin
-    implementation("onl.ycode:stormify-jvm:2.2.0-SNAPSHOT") {
-        exclude(group = "org.jetbrains.kotlin", module = "kotlin-reflect")
-    }
-    ```
+```kotlin
+val stormify = Stormify(dataSource)
+```
 
-=== "Gradle (Groovy)"
+## Setup (Maven — pure Java)
 
-    ```groovy
-    implementation('onl.ycode:stormify-jvm:2.2.0-SNAPSHOT') {
-        exclude group: 'org.jetbrains.kotlin', module: 'kotlin-reflect'
-    }
-    ```
+```xml
+<dependency>
+    <groupId>onl.ycode</groupId>
+    <artifactId>stormify-jvm</artifactId>
+    <version>2.5.0</version>
+</dependency>
+```
 
-## Native Runtime Libraries
+Maven projects rely on `kotlin-reflect` for runtime entity discovery. Native,
+Android, and iOS targets require the Gradle plugin above.
+
+## Supported native databases
+
+**PostgreSQL, MariaDB/MySQL, Oracle, MSSQL, SQLite.** On iOS, only SQLite is
+available (App Store restrictions).
+
+## Native runtime libraries
 
 On native targets (Linux x64, Linux ARM64, Windows x64, macOS Apple Silicon, macOS
 Intel), Stormify loads database client libraries dynamically at runtime, and only
@@ -323,4 +250,3 @@ Oracle support requires two components:
     # Unzip somewhere (e.g. /opt/oracle/instantclient_*) and add that directory to
     # DYLD_LIBRARY_PATH at runtime.
     ```
-

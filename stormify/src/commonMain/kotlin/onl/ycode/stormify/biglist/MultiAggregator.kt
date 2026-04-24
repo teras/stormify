@@ -39,7 +39,7 @@ class MultiAggregator internal constructor(
 
     /** Adds `SUM(path)` using a type-safe [ScalarPath] with an optional [alias]. */
     @JvmOverloads
-    fun sum(path: ScalarPath, alias: String? = null): MultiAggregator = sum(path.toPath(), alias)
+    fun sum(path: ScalarPath, alias: String? = null): MultiAggregator = sum(path.toString(), alias)
 
     /** Adds `AVG(path)` with an optional [alias]. */
     @JvmOverloads
@@ -50,7 +50,7 @@ class MultiAggregator internal constructor(
 
     /** Adds `AVG(path)` using a type-safe [ScalarPath] with an optional [alias]. */
     @JvmOverloads
-    fun avg(path: ScalarPath, alias: String? = null): MultiAggregator = avg(path.toPath(), alias)
+    fun avg(path: ScalarPath, alias: String? = null): MultiAggregator = avg(path.toString(), alias)
 
     /** Adds `MIN(path)` with an optional [alias]. */
     @JvmOverloads
@@ -61,7 +61,7 @@ class MultiAggregator internal constructor(
 
     /** Adds `MIN(path)` using a type-safe [ScalarPath] with an optional [alias]. */
     @JvmOverloads
-    fun min(path: ScalarPath, alias: String? = null): MultiAggregator = min(path.toPath(), alias)
+    fun min(path: ScalarPath, alias: String? = null): MultiAggregator = min(path.toString(), alias)
 
     /** Adds `MAX(path)` with an optional [alias]. */
     @JvmOverloads
@@ -72,7 +72,7 @@ class MultiAggregator internal constructor(
 
     /** Adds `MAX(path)` using a type-safe [ScalarPath] with an optional [alias]. */
     @JvmOverloads
-    fun max(path: ScalarPath, alias: String? = null): MultiAggregator = max(path.toPath(), alias)
+    fun max(path: ScalarPath, alias: String? = null): MultiAggregator = max(path.toString(), alias)
 
     /** Adds `COUNT(path)` with an optional [alias]. Pass `"*"` for `COUNT(*)`. */
     @JvmOverloads
@@ -83,7 +83,7 @@ class MultiAggregator internal constructor(
 
     /** Adds `COUNT(path)` using a type-safe [ScalarPath] with an optional [alias]. */
     @JvmOverloads
-    fun count(path: ScalarPath, alias: String? = null): MultiAggregator = count(path.toPath(), alias)
+    fun count(path: ScalarPath, alias: String? = null): MultiAggregator = count(path.toString(), alias)
 
     /** Adds `COUNT(DISTINCT path)` with an optional [alias]. */
     @JvmOverloads
@@ -95,7 +95,7 @@ class MultiAggregator internal constructor(
     /** Adds `COUNT(DISTINCT path)` using a type-safe [ScalarPath] with an optional [alias]. */
     @JvmOverloads
     fun countDistinct(path: ScalarPath, alias: String? = null): MultiAggregator =
-        countDistinct(path.toPath(), alias)
+        countDistinct(path.toString(), alias)
 
     /**
      * Adds an arbitrary SQL [expression] as a standalone aggregation column.

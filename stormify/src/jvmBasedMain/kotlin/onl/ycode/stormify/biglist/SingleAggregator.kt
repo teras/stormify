@@ -19,35 +19,35 @@ actual class SingleAggregator internal actual constructor(
         return MultiAggregator(core)
     }
 
-    actual fun sum(path: ScalarPath, alias: String?): MultiAggregator = sum(path.toPath(), alias)
+    actual fun sum(path: ScalarPath, alias: String?): MultiAggregator = sum(path.toString(), alias)
 
     actual fun avg(path: String, alias: String?): MultiAggregator {
         core.add("avg", path, alias)
         return MultiAggregator(core)
     }
 
-    actual fun avg(path: ScalarPath, alias: String?): MultiAggregator = avg(path.toPath(), alias)
+    actual fun avg(path: ScalarPath, alias: String?): MultiAggregator = avg(path.toString(), alias)
 
     actual fun min(path: String, alias: String?): MultiAggregator {
         core.add("min", path, alias)
         return MultiAggregator(core)
     }
 
-    actual fun min(path: ScalarPath, alias: String?): MultiAggregator = min(path.toPath(), alias)
+    actual fun min(path: ScalarPath, alias: String?): MultiAggregator = min(path.toString(), alias)
 
     actual fun max(path: String, alias: String?): MultiAggregator {
         core.add("max", path, alias)
         return MultiAggregator(core)
     }
 
-    actual fun max(path: ScalarPath, alias: String?): MultiAggregator = max(path.toPath(), alias)
+    actual fun max(path: ScalarPath, alias: String?): MultiAggregator = max(path.toString(), alias)
 
     actual fun count(path: String, alias: String?): MultiAggregator {
         core.add("count", path, alias)
         return MultiAggregator(core)
     }
 
-    actual fun count(path: ScalarPath, alias: String?): MultiAggregator = count(path.toPath(), alias)
+    actual fun count(path: ScalarPath, alias: String?): MultiAggregator = count(path.toString(), alias)
 
     actual fun countDistinct(path: String, alias: String?): MultiAggregator {
         core.add("countDistinct", path, alias)
@@ -55,7 +55,7 @@ actual class SingleAggregator internal actual constructor(
     }
 
     actual fun countDistinct(path: ScalarPath, alias: String?): MultiAggregator =
-        countDistinct(path.toPath(), alias)
+        countDistinct(path.toString(), alias)
 
     actual fun raw(expression: String, alias: String?): MultiAggregator {
         core.add("raw", expression, alias)

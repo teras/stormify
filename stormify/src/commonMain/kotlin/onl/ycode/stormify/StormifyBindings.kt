@@ -183,7 +183,7 @@ inline fun <reified T : Any> lazyDetails(propertyName: String = ""): ReadWritePr
  * ```
  */
 inline fun <reified T : Any> lazyDetails(referenceField: ReferencePath): ReadWriteProperty<Any?, List<T>> =
-    LazyDetailsProperty(T::class, referenceField.path.trimEnd('.'))
+    LazyDetailsProperty(T::class, referenceField.toString().trimEnd('.'))
 
 @PublishedApi
 internal class LazyDetailsProperty<T : Any>(

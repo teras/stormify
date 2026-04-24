@@ -70,6 +70,7 @@ class EntityMeta<T : Any>(
     /** Global registry of compile-time entity metadata, populated by [EntityRegistrar] callbacks. */
     companion object {
         private val registry = mutableMapOf<KClass<*>, EntityMeta<*>>()
+        private val invokedRegistrars = mutableSetOf<EntityRegistrar>()
 
         /** Registers entity metadata so it can be looked up later by [find]. */
         fun register(meta: EntityMeta<*>) {
@@ -81,8 +82,21 @@ class EntityMeta<T : Any>(
         fun <T : Any> find(type: KClass<T>): EntityMeta<T>? =
             registry[type] as? EntityMeta<T>
 
+        /**
+         * Invokes [r].[register][EntityRegistrar.register] exactly once per registrar identity.
+         * Called by [Stormify]'s constructor so that multiple `Stormify(ds, registrar)` instances
+         * in the same process skip the redundant (idempotent) map writes. After
+         * `StormifyLifecycle.clear()` the seen-set is reset, so the next construction re-populates.
+         */
+        internal fun invokeRegistrar(r: EntityRegistrar) {
+            if (invokedRegistrars.add(r)) r.register()
+        }
+
         /** Classloader-leak cleanup hook — on JVM, invoked by `StormifyLifecycle.clear()`. */
-        internal fun clearRegistry() = registry.clear()
+        internal fun clearRegistry() {
+            registry.clear()
+            invokedRegistrars.clear()
+        }
     }
 }
 

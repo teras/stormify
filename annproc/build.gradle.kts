@@ -3,7 +3,7 @@ import com.vanniktech.maven.publish.KotlinJvm
 
 plugins {
     kotlin("jvm")
-    id("com.google.devtools.ksp") version "2.2.20-2.0.2" // Use the latest KSP version
+    id("com.google.devtools.ksp") version "2.2.21-2.0.5" // Use the latest KSP version
     id("com.vanniktech.maven.publish")
 }
 
@@ -15,7 +15,7 @@ java.sourceCompatibility = JavaVersion.VERSION_1_8
 java.targetCompatibility = JavaVersion.VERSION_1_8
 
 dependencies {
-    implementation("com.google.devtools.ksp:symbol-processing-api:2.2.20-2.0.2")
+    implementation("com.google.devtools.ksp:symbol-processing-api:2.2.21-2.0.5")
 }
 
 kotlin {

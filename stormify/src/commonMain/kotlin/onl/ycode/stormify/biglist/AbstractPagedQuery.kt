@@ -137,15 +137,15 @@ abstract class AbstractPagedQuery<T : Any> internal constructor(
 
     /** Adds a column using type-safe KSP-generated path objects. */
     fun addFacet(alias: String, vararg paths: ScalarPath): Facet =
-        core.addFacet(paths.map { FieldPath(it.toPath()) }, null, null, alias)
+        core.addFacet(paths.map { FieldPath(it.toString()) }, null, null, alias)
 
     /** Explicit-type typed-path variant. */
     fun addFacet(alias: String, type: Facet.Type, vararg paths: ScalarPath): Facet =
-        core.addFacet(paths.map { FieldPath(it.toPath()) }, type, null, alias)
+        core.addFacet(paths.map { FieldPath(it.toString()) }, type, null, alias)
 
     /** Enum-column typed-path variant. */
     fun addFacet(alias: String, enumValues: Map<String, Any>, vararg paths: ScalarPath): Facet =
-        core.addFacet(paths.map { FieldPath(it.toPath()) }, Facet.Type.ENUM, enumValues, alias)
+        core.addFacet(paths.map { FieldPath(it.toString()) }, Facet.Type.ENUM, enumValues, alias)
 
     /**
      * Adds a raw/custom column backed by an arbitrary SQL expression (e.g.

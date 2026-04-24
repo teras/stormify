@@ -42,7 +42,7 @@ JVM-only V1. This guide covers all breaking changes and how to update your code.
     <dependency>
         <groupId>onl.ycode</groupId>
         <artifactId>stormify-jvm</artifactId>
-        <version>2.2.0-SNAPSHOT</version>
+        <version>2.5.0</version>
     </dependency>
     ```
 
@@ -58,11 +58,14 @@ JVM-only V1. This guide covers all breaking changes and how to update your code.
 === "V2"
 
     ```kotlin
-    implementation("onl.ycode:stormify-jvm:2.2.0-SNAPSHOT")
+    plugins {
+        id("onl.ycode.stormify") version "2.5.0"
+    }
     ```
 
-The separate `db` and `kotlin` modules are merged into a single `stormify` artifact.
-The group ID changed from `onl.ycode.stormify` to `onl.ycode`.
+The separate `db` and `kotlin` modules are merged into a single artifact delivered
+by the Stormify Gradle plugin. The group ID changed from `onl.ycode.stormify` to
+`onl.ycode`. See [Installation](Installation.md) for configuration options.
 
 ## Initialization
 
@@ -287,12 +290,13 @@ The naming policies and annotations (`@DbTable`, `@DbField`, `@Id`, `@Table`, `@
 
 ## Entity Registration
 
-On JVM, reflection-based entity discovery works the same as V1 (no changes needed) —
-`kotlin-reflect` is now included as a transitive dependency.
+On JVM via Maven, reflection-based entity discovery works the same as V1 (no changes
+needed) — `kotlin-reflect` is now included as a transitive dependency.
 
-If you plan to target **native platforms** or want faster JVM startup, V2 offers the
-`annproc` annotation processor (via KSP) to generate entity metadata at compile time.
-See [Annotation Processor](Annotations.md#annotation-processor-annproc) for setup details.
+On Gradle (all targets including JVM, Android, and Kotlin Multiplatform), the Stormify
+Gradle plugin generates entity metadata at compile time. Pass the generated registrar
+to the constructor: `Stormify(dataSource, GeneratedEntities)`. See
+[Installation](Installation.md) for details.
 
 ## DataSource Wrapping (JVM)
 
@@ -320,7 +324,7 @@ The following V1 APIs no longer exist in V2:
 
 ## Quick Migration Checklist
 
-1. **Update dependencies**: `onl.ycode.stormify:db` → `onl.ycode:stormify-jvm`
+1. **Update dependencies**: `onl.ycode.stormify:db` → `id("onl.ycode.stormify") version "2.5.0"` (Gradle) or `onl.ycode:stormify-jvm` (Maven)
 2. **Replace singleton**: `StormifyManager.stormify()` → `Stormify(dataSource)` constructor
 3. **Hold the instance**: pass `Stormify` to services instead of calling static methods
 4. **Update transactions**: `stormify().transaction(() -> …)` → `stormify.transaction { … }`

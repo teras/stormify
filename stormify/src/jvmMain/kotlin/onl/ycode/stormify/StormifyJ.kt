@@ -136,7 +136,7 @@ class StormifyJ(dataSource: DataSource, vararg registrars: EntityRegistrar) {
      */
     @Throws(SQLException::class)
     fun <M : Any, T : Any> getDetails(parent: M, detailsClass: Class<T>, referenceField: ReferencePath) =
-        stormify.getDetails(null, parent, detailsClass.kotlin, referenceField.path.trimEnd('.'))
+        stormify.getDetails(null, parent, detailsClass.kotlin, referenceField.toString().trimEnd('.'))
 
     /** Convenience over [read] for `SELECT * FROM <table> <whereClause>`. */
     @JvmOverloads

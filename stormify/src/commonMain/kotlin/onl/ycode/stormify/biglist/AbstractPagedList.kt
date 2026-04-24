@@ -201,15 +201,15 @@ abstract class AbstractPagedList<T : Any> internal constructor(
      * Adds a column using type-safe KSP-generated path objects.
      */
     fun addFacet(vararg paths: ScalarPath): Facet =
-        registerFacet(core.addFacet(paths.map { FieldPath(it.toPath()) }, null, null, null))
+        registerFacet(core.addFacet(paths.map { FieldPath(it.toString()) }, null, null, null))
 
     /** Explicit-type variant of [addFacet] using typed paths. */
     fun addFacet(type: Facet.Type, vararg paths: ScalarPath): Facet =
-        registerFacet(core.addFacet(paths.map { FieldPath(it.toPath()) }, type, null, null))
+        registerFacet(core.addFacet(paths.map { FieldPath(it.toString()) }, type, null, null))
 
     /** Enum-column variant using typed paths — same rules as the `Map` + `String` overload. */
     fun addFacet(enumValues: Map<String, Any>, vararg paths: ScalarPath): Facet =
-        registerFacet(core.addFacet(paths.map { FieldPath(it.toPath()) }, Facet.Type.ENUM, enumValues, null))
+        registerFacet(core.addFacet(paths.map { FieldPath(it.toString()) }, Facet.Type.ENUM, enumValues, null))
 
     /**
      * Adds a raw/custom column backed by an arbitrary SQL expression.

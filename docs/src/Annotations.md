@@ -6,10 +6,10 @@ Stormify supports both its own annotations (`@DbTable`, `@DbField`) and standard
 
 The `@DbTable` annotation marks a Kotlin class as a Stormify entity. It serves two roles:
 
-1. **Signals the class to the [annotation processor](#annotation-processor-annproc)** so it emits the metadata registrar and type-safe [PagedList](PagedList.md) paths (`Foo_.name`). This is required on Native/Android/iOS (no runtime reflection) and on any target that uses typed paths.
+1. **Marks the class for compile-time metadata generation** so type-safe [PagedList](PagedList.md) paths (`Tables.Foo_.name`) and the entity registrar are emitted.
 2. **Overrides the table name** when the database table doesn't match the class name under the current naming policy.
 
-When the table name already matches the policy (e.g. class `User` ↔ table `user`), use `@DbTable` without arguments as a pure marker. Provide `name = "..."` only when the database table name differs.
+When the table name already matches the policy (e.g. class `User` ↔ table `user`), use `@DbTable` without arguments as a pure marker. Provide `name = "..."` only when the database table name differs. On JVM with reflection-based discovery the annotation is optional — the class is still picked up, but type-safe paths are not generated without it.
 
 ### Attributes
 
@@ -143,44 +143,14 @@ Stormify provides support for several standard annotations from the `javax.persi
 
 These annotations help bridge the gap between your classes and the database schema. By leveraging standard JPA annotations, Stormify ensures compatibility with existing JPA setups while providing additional flexibility.
 
-## Annotation Processor (annproc)
+## Generated Metadata
 
-Stormify needs entity metadata (field names, types, primary keys) to perform ORM operations.
-There are two ways to provide this metadata:
+Stormify needs entity metadata (field names, types, primary keys) to perform ORM
+operations. The Gradle plugin ([Installation](Installation.md#setup-gradle)) handles
+this automatically: it runs the `annproc` KSP processor at compile time to scan
+`@DbTable` and JPA `@Entity` annotations and emit a `GeneratedEntities` registrar
+plus a `Tables` object with type-safe paths. Pass the registrar to `Stormify(dataSource, GeneratedEntities)`.
 
-- **Reflection** (JVM only): `kotlin-reflect` discovers metadata at runtime. This is the
-  default — `kotlin-reflect` is included as a transitive dependency of `stormify-jvm`.
-- **Annotation Processor**: The `annproc` KSP processor generates metadata at compile time
-  by scanning `@DbTable` and JPA `@Entity` annotations.
-
-On **Native/Android/iOS**, reflection is not available — `annproc` is required.
-On **JVM**, `annproc` is optional but offers faster startup since metadata is pre-computed.
-
-### Setup
-
-The KSP plugin, the `annproc` dependency, and the `GeneratedEntities` wiring are
-covered in [Installation › Entity Metadata](Installation.md#entity-metadata-annproc-and-generatedentities).
-Configure them there once; the rest of this page assumes the processor is active.
-
-### Customizing the generated package and class names
-
-The generated package and the two class names (`GeneratedEntities`, `Paths`) are
-overridable via KSP options. Set them in `build.gradle.kts`:
-
-```kotlin
-ksp {
-    arg("stormify.generatedPackage", "com.mycompany.db")
-    arg("stormify.registrarClass", "Entities")
-    arg("stormify.pathsClass", "Q")
-}
-```
-
-Defaults: `onl.ycode.stormify.generated.GeneratedEntities` and
-`onl.ycode.stormify.generated.Paths`. Useful when a multi-module project needs each
-module's KSP output to land in a distinct namespace.
-
-### Excluding kotlin-reflect
-
-When using `annproc` on JVM, `kotlin-reflect` is not needed at runtime.
-See [Installation › Excluding `kotlin-reflect`](Installation.md#excluding-kotlin-reflect-jvm)
-for the exclusion snippets (Gradle Kotlin, Gradle Groovy, Maven).
+On JVM-only projects using Maven or with `generateRegistrar.set(false)` in Gradle,
+`kotlin-reflect` discovers the same metadata at runtime — no annotations required
+beyond `@DbField(primaryKey = true)` for primary keys (or a primary key resolver).
