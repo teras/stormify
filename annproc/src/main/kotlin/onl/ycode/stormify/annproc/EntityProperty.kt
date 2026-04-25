@@ -162,11 +162,17 @@ internal class EntityProperty(declaration: KSPropertyDeclaration, entity: KSClas
         val typeDecl = resolved.declaration
         isEnum = typeDecl is KSClassDeclaration && typeDecl.classKind == ClassKind.ENUM_CLASS
         enumAsString = _enumAsString && isEnum
-        isReference = !isEnum && typeDecl is KSClassDeclaration && (
+        isReference = !isEnum && typeDecl is KSClassDeclaration &&
+                typeDecl.classKind == ClassKind.CLASS && (
                 typeDecl.annotations.any { ann ->
                     ann.annotationType.resolve().declaration.qualifiedName?.asString() in setOf(DB_TABLE, ENTITY)
                 } || typeDecl.superTypes.any { sup ->
                     sup.resolve().declaration.qualifiedName?.asString() == AUTO_TABLE
+                } || typeDecl.getAllProperties().any { prop ->
+                    prop.annotations.any { ann ->
+                        ann.annotationType.resolve().declaration.qualifiedName?.asString() in
+                            setOf(ID, DB_FIELD, COLUMN, JOIN_COLUMN)
+                    }
                 })
 
         // Collection- and map-typed properties (e.g. `var children by lazyDetails<AutoChildEntity>()`,

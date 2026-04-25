@@ -11,19 +11,21 @@ import org.gradle.api.Project
  * The `onl.ycode.stormify` Gradle plugin.
  *
  * Applying this plugin auto-wires the Stormify annotation processor (`annproc`)
- * via KSP so that consumers do not have to declare per-target KSP dependencies,
+ * via KSP so consumers do not have to declare per-target KSP dependencies,
  * `srcDir` overrides or `dependsOn` task wiring themselves.
  *
  * Behaviour by Kotlin plugin variant:
- * - `kotlin("multiplatform")`: a single canonical target is selected (`jvm` if
- *   present, otherwise the first native target, otherwise the first target).
- *   KSP is wired only on that target; its generated source folder is added to
- *   `commonMain`, and every other target's compile task `dependsOn` the
- *   canonical KSP task. This makes generated symbols (`GeneratedEntities`,
- *   `Tables`) visible from `commonMain` without `expect`/`actual` shims.
- * - `kotlin("jvm")` (plain): `ksp("onl.ycode:annproc:<ver>")` on `main`.
- * - `com.android.library` / `com.android.application`: `ksp("onl.ycode:annproc:<ver>")`
- *   on `main`.
+ * - `kotlin("multiplatform")`: KSP runs on every leaf target. A
+ *   [StormifyGenerateSources] task is registered for every production source
+ *   set; [Planner] decides per source set whether to emit a plain
+ *   `object Tables`, an `expect`, an `actual`, or nothing — collapsing
+ *   single-tier projects to a plain object and promoting shared `actual`s up
+ *   to a common intermediate when possible.
+ * - `kotlin("jvm")` (plain): `ksp("onl.ycode:annproc:<ver>")` on `main`,
+ *   plain `object Tables` emission.
+ * - `com.android.library` / `com.android.application`: same as plain JVM
+ *   for the non-KMP case (the multiplatform path takes over when both are
+ *   present).
  *
  * If none of those plugins is found, the build fails with an explanatory
  * message — Stormify cannot be wired without a Kotlin plugin.
@@ -33,35 +35,32 @@ class StormifyPlugin : Plugin<Project> {
     override fun apply(project: Project) {
         val extension = project.extensions.create("stormify", StormifyExtension::class.java)
 
-        // Apply KSP unconditionally. The plugin ships its own KSP gradle plugin
-        // version so users do not need to declare it themselves.
+        // Plugin ships its own KSP version so users don't declare it themselves.
         project.pluginManager.apply("com.google.devtools.ksp")
 
         val pluginVersion = resolvePluginVersion()
 
-        // Eagerly hook into each Kotlin variant. Why eager and not afterEvaluate:
-        // KSP snapshots its `kspKotlinProcessorClasspath` (or per-target equivalents)
-        // early enough that adding deps inside afterEvaluate misses the snapshot,
-        // leaving the processor classpath empty and the kspKotlin task SKIPPED.
-        project.pluginManager.withPlugin("org.jetbrains.kotlin.jvm") {
-            wireJvm(project, extension, pluginVersion)
-        }
-        project.pluginManager.withPlugin("com.android.library") {
-            wireAndroid(project, extension, pluginVersion)
-        }
-        project.pluginManager.withPlugin("com.android.application") {
-            wireAndroid(project, extension, pluginVersion)
-        }
+        // Eager (not afterEvaluate): KSP snapshots its processor classpath very
+        // early, and afterEvaluate misses that snapshot — kspKotlin tasks would
+        // SKIP with an empty classpath. Multiplatform wins when present; the
+        // JVM/Android wirings cover plain single-target projects only.
         project.pluginManager.withPlugin("org.jetbrains.kotlin.multiplatform") {
             wireKmp(project, extension, pluginVersion)
         }
-
-        // Late-bound checks and KSP option forwarding. Both can wait for afterEvaluate
-        // since they do not affect dep resolution.
-        project.afterEvaluate {
-            requireKotlinPluginApplied(project)
+        project.pluginManager.withPlugin("org.jetbrains.kotlin.jvm") {
+            if (!project.isKmp()) wireJvm(project, extension, pluginVersion)
         }
+        project.pluginManager.withPlugin("com.android.library") {
+            if (!project.isKmp()) wireAndroid(project, extension, pluginVersion)
+        }
+        project.pluginManager.withPlugin("com.android.application") {
+            if (!project.isKmp()) wireAndroid(project, extension, pluginVersion)
+        }
+
+        project.afterEvaluate { requireKotlinPluginApplied(project) }
     }
+
+    private fun Project.isKmp() = plugins.hasPlugin("org.jetbrains.kotlin.multiplatform")
 
     private fun requireKotlinPluginApplied(project: Project) {
         val variant = when {
@@ -99,9 +98,9 @@ class StormifyPlugin : Plugin<Project> {
         internal const val DEFAULT_GENERATED_PACKAGE = "onl.ycode.stormify.generated"
         internal const val DEFAULT_REGISTRAR_CLASS = "GeneratedEntities"
         internal const val DEFAULT_PATHS_CLASS = "Tables"
-        internal const val ANNPROC_GROUP = "onl.ycode"
+        internal const val SHIM_VAL = "stormifyEntities"
+        internal const val GROUP = "onl.ycode"
         internal const val ANNPROC_ARTIFACT = "annproc"
-        internal const val STORMIFY_GROUP = "onl.ycode"
         internal const val STORMIFY_ARTIFACT = "stormify"
     }
 }

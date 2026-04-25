@@ -3,6 +3,7 @@
 
 package onl.ycode.stormify.gradle
 
+import org.gradle.api.GradleException
 import org.gradle.api.Project
 
 /**
@@ -40,18 +41,22 @@ internal fun wireStandalone(
 ) {
     project.dependencies.add(
         "ksp",
-        "${StormifyPlugin.ANNPROC_GROUP}:${StormifyPlugin.ANNPROC_ARTIFACT}:$pluginVersion"
+        "${StormifyPlugin.GROUP}:${StormifyPlugin.ANNPROC_ARTIFACT}:$pluginVersion"
     )
     project.dependencies.add(
         "implementation",
-        "${StormifyPlugin.STORMIFY_GROUP}:${StormifyPlugin.STORMIFY_ARTIFACT}$artifactSuffix:$pluginVersion"
+        "${StormifyPlugin.GROUP}:${StormifyPlugin.STORMIFY_ARTIFACT}$artifactSuffix:$pluginVersion"
     )
 
     val metaDir = project.layout.buildDirectory
         .dir("intermediates/stormify-meta/main").get().asFile
 
+    // Declare metaDir as a KSP task output so Gradle re-runs KSP after `clean`
+    // wipes the dir — annproc writes JSONs there via plain Java I/O, which
+    // Gradle's up-to-date check would otherwise miss.
     project.tasks.matching { it.name in kspTaskNames }.configureEach { task ->
         setKspProcessorOption(task, "stormify.metaOutputDir", metaDir.absolutePath)
+        task.outputs.dir(metaDir)
     }
 
     project.afterEvaluate {
@@ -64,13 +69,16 @@ internal fun wireStandalone(
         val gen = project.tasks.register("stormifyGenerate", StormifyGenerateSources::class.java) { t ->
             t.metadataDirs.from(metaDir)
             t.outputDir.set(outDir)
-            t.targetKind.set(TargetKind.STANDALONE_JVM)
             t.sourceSetName.set("main")
             t.generatedPackage.set(pkg)
             t.pathsClass.set(pathsCls)
             t.registrarClass.set(registrarCls)
-            t.shimVal.set("stormifyEntities")
+            t.shimVal.set(StormifyPlugin.SHIM_VAL)
             t.generateRegistrar.set(genRegistrar)
+            t.kmpProject.set(false)
+            t.sourceSetParents.set(emptyMap<String, List<String>>())
+            t.leafSourceSets.set(emptySet<String>())
+            t.jvmFlavoredSourceSets.set(setOf("main"))
             t.dependsOn(project.tasks.matching { it.name in kspTaskNames })
         }
 
@@ -79,29 +87,37 @@ internal fun wireStandalone(
         // Pre-created at configure time so IntelliJ's first sync sees it.
         val outFile = outDir.get().asFile
         outFile.mkdirs()
-        val ext = project.extensions.findByName(extensionName)
-        if (ext != null) {
-            try {
-                val getSourceSets = ext.javaClass.methods.firstOrNull { it.name == "getSourceSets" }
-                val sourceSets = getSourceSets?.invoke(ext) as?
-                    org.gradle.api.NamedDomainObjectContainer<*>
-                val main = sourceSets?.findByName("main")
-                if (main != null) {
-                    srcDirGetters.forEach { getterName ->
-                        val getter = main.javaClass.methods.firstOrNull { it.name == getterName }
-                        val srcSet = getter?.invoke(main)
-                        val srcDirMethod = srcSet?.javaClass?.methods?.firstOrNull {
-                            it.name == "srcDir" && it.parameterCount == 1
-                        }
-                        srcDirMethod?.invoke(srcSet, outFile)
-                    }
-                }
-            } catch (e: Throwable) {
-                project.logger.error("Stormify: $platformLabel setup failed — generated sources not visible to compile. (${e.message})")
-            }
-        }
+        attachGeneratedSrcDir(project, extensionName, srcDirGetters, outFile, platformLabel)
 
         project.tasks.matching { compileTaskMatcher(it.name) }
             .configureEach { it.dependsOn(gen) }
+    }
+}
+
+/**
+ * Reflectively attaches [outFile] as a `srcDir` to each requested getter on
+ * the `main` source set of [extensionName]. Reflection is required because
+ * the plugin avoids compiling against AGP. Failure is fatal — silently
+ * skipping leaves the generated sources orphaned and the user sees an
+ * "unresolved reference: GeneratedEntities" later, with no link to the cause.
+ */
+private fun attachGeneratedSrcDir(
+    project: Project,
+    extensionName: String,
+    srcDirGetters: List<String>,
+    outFile: java.io.File,
+    platformLabel: String,
+) {
+    val ctx = "$platformLabel '$extensionName'"
+    val ext = project.extensions.findByName(extensionName)
+        ?: throw GradleException("Stormify: $ctx — extension not found on the project.")
+    val sourceSets = ext.callGetterOrThrow("getSourceSets", ctx)
+        as? org.gradle.api.NamedDomainObjectContainer<*>
+        ?: throw GradleException("Stormify: $ctx.sourceSets is not a NamedDomainObjectContainer.")
+    val main = sourceSets.findByName("main")
+        ?: throw GradleException("Stormify: $ctx has no 'main' source set.")
+    srcDirGetters.forEach { getterName ->
+        val srcSet = main.callGetterOrThrow(getterName, "$ctx main")
+        srcSet.callMethodOrThrow("srcDir", paramCount = 1, ctx = "$ctx main.$getterName", outFile)
     }
 }

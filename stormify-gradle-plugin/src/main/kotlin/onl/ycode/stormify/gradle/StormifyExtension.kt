@@ -26,16 +26,13 @@ abstract class StormifyExtension {
 
     /**
      * Package name for the generated `EntityRegistrar` and `Tables` classes.
-     * Forwarded to the annproc processor as the `stormify.generatedPackage`
-     * KSP option.
      *
      * Default: `onl.ycode.stormify.generated`.
      */
     abstract val generatedPackage: Property<String>
 
     /**
-     * Class name for the generated entity registrar. Forwarded to annproc
-     * as the `stormify.registrarClass` KSP option.
+     * Class name for the generated entity registrar.
      *
      * Default: `GeneratedEntities`.
      */
@@ -43,8 +40,7 @@ abstract class StormifyExtension {
 
     /**
      * Class name for the generated table holder object (the namespace under
-     * which `User_`, `Task_`, … entries are exposed). Forwarded to annproc
-     * as the `stormify.pathsClass` KSP option.
+     * which `User_`, `Task_`, … entries are exposed).
      *
      * Default: `Tables`.
      */

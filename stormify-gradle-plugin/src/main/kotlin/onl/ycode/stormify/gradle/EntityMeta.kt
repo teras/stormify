@@ -37,40 +37,41 @@ internal data class PropertyMeta(
     val enumAsString: Boolean,
 )
 
+private fun Map<String, Any?>.str(key: String, default: String = "") = this[key] as? String ?: default
+private fun Map<String, Any?>.bool(key: String, default: Boolean = false) = this[key] as? Boolean ?: default
+private fun Map<String, Any?>.int(key: String) = (this[key] as? Number)?.toInt() ?: 0
+private fun Map<String, Any?>.strList(key: String) =
+    (this[key] as? List<*>)?.mapNotNull { it as? String } ?: emptyList()
+
 @Suppress("UNCHECKED_CAST")
 internal fun parseEntityJson(text: String): EntityMeta {
     val raw = JsonSlurper().parseText(text) as Map<String, Any?>
-    fun str(key: String) = raw[key] as? String ?: ""
-    fun bool(key: String) = raw[key] as? Boolean ?: false
-    fun int(key: String) = (raw[key] as? Number)?.toInt() ?: 0
-    fun strList(key: String) = (raw[key] as? List<Any?>)?.mapNotNull { it as? String } ?: emptyList()
-
     val propsRaw = (raw["properties"] as? List<Map<String, Any?>>) ?: emptyList()
     val props = propsRaw.map { p ->
         PropertyMeta(
-            name = p["name"] as? String ?: "",
-            dbName = p["dbName"] as? String ?: "",
-            type = p["type"] as? String ?: "kotlin.Any",
-            fullType = p["fullType"] as? String ?: "kotlin.Any?",
-            nullable = p["nullable"] as? Boolean ?: false,
-            primary = p["primary"] as? Boolean ?: false,
-            sequence = p["sequence"] as? String ?: "",
-            autoIncrement = p["autoIncrement"] as? Boolean ?: false,
-            insertable = p["insertable"] as? Boolean ?: true,
-            updatable = p["updatable"] as? Boolean ?: true,
-            isReference = p["isReference"] as? Boolean ?: false,
-            isEnum = p["isEnum"] as? Boolean ?: false,
-            enumAsString = p["enumAsString"] as? Boolean ?: false,
+            name = p.str("name"),
+            dbName = p.str("dbName"),
+            type = p.str("type", "kotlin.Any"),
+            fullType = p.str("fullType", "kotlin.Any?"),
+            nullable = p.bool("nullable"),
+            primary = p.bool("primary"),
+            sequence = p.str("sequence"),
+            autoIncrement = p.bool("autoIncrement"),
+            insertable = p.bool("insertable", default = true),
+            updatable = p.bool("updatable", default = true),
+            isReference = p.bool("isReference"),
+            isEnum = p.bool("isEnum"),
+            enumAsString = p.bool("enumAsString"),
         )
     }
     return EntityMeta(
-        qualifiedName = str("qualifiedName"),
-        simpleName = str("simpleName"),
-        tableName = str("tableName"),
-        typeParameterCount = int("typeParameterCount"),
-        sourceSet = str("sourceSet"),
-        sourceFile = str("sourceFile"),
+        qualifiedName = raw.str("qualifiedName"),
+        simpleName = raw.str("simpleName"),
+        tableName = raw.str("tableName"),
+        typeParameterCount = raw.int("typeParameterCount"),
+        sourceSet = raw.str("sourceSet"),
+        sourceFile = raw.str("sourceFile"),
         properties = props,
-        enumTypes = strList("enumTypes"),
+        enumTypes = raw.strList("enumTypes"),
     )
 }

@@ -6,7 +6,9 @@ package onl.ycode.stormify.gradle
 import org.gradle.api.DefaultTask
 import org.gradle.api.file.ConfigurableFileCollection
 import org.gradle.api.file.DirectoryProperty
+import org.gradle.api.provider.MapProperty
 import org.gradle.api.provider.Property
+import org.gradle.api.provider.SetProperty
 import org.gradle.api.tasks.CacheableTask
 import org.gradle.api.tasks.Input
 import org.gradle.api.tasks.InputFiles
@@ -17,22 +19,11 @@ import org.gradle.api.tasks.TaskAction
 import java.io.File
 
 /**
- * Emission shape for [StormifyGenerateSources].
- *
- *  - [COMMON]: `expect` declarations for a KMP `commonMain` source set.
- *  - [JVM] / [NATIVE]: `actual` declarations plus local-only extras for a
- *    KMP target source set. [JVM] additionally emits `@JvmField` /
- *    `@get:JvmName` for Java-friendly access.
- *  - [STANDALONE_JVM] / [STANDALONE_NATIVE]: plain class/object (no
- *    `expect`/`actual`) for plain `kotlin("jvm")`, Android, or single-target
- *    KMP projects. [STANDALONE_JVM] emits `@JvmField` / `@get:JvmName`.
- */
-enum class TargetKind { COMMON, JVM, NATIVE, STANDALONE_JVM, STANDALONE_NATIVE }
-
-/**
- * Reads the JSON metadata files emitted by `annproc` and writes the
- * corresponding Kotlin sources for a single source set. The emission shape
- * is selected by [targetKind] — see [TargetKind] for the available modes.
+ * Reads JSON metadata produced by `annproc` and emits Kotlin sources for one
+ * source set. The shape — plain `object`, `expect`, or `actual` — is derived
+ * by [Planner] from the entity placement across the project's source-set
+ * hierarchy. Plain `kotlin("jvm")` and Android projects bypass the planner
+ * and always emit a flat `object Tables`.
  */
 @CacheableTask
 abstract class StormifyGenerateSources : DefaultTask() {
@@ -43,9 +34,6 @@ abstract class StormifyGenerateSources : DefaultTask() {
 
     @get:OutputDirectory
     abstract val outputDir: DirectoryProperty
-
-    @get:Input
-    abstract val targetKind: Property<TargetKind>
 
     @get:Input
     abstract val sourceSetName: Property<String>
@@ -65,22 +53,107 @@ abstract class StormifyGenerateSources : DefaultTask() {
     @get:Input
     abstract val generateRegistrar: Property<Boolean>
 
+    /** false → standalone (plain JVM/Android) emission, ignores the graph inputs below. */
+    @get:Input
+    abstract val kmpProject: Property<Boolean>
+
+    /** sourceSet → its direct `dependsOn` parents. */
+    @get:Input
+    abstract val sourceSetParents: MapProperty<String, List<String>>
+
+    /** Source sets that correspond to a `KotlinTarget` (the leafs). */
+    @get:Input
+    abstract val leafSourceSets: SetProperty<String>
+
+    /** Source sets whose emission should carry `@JvmField` / `@get:JvmName`. */
+    @get:Input
+    abstract val jvmFlavoredSourceSets: SetProperty<String>
+
     @TaskAction
     fun generate() {
         val outRoot = outputDir.get().asFile
-        project.delete(outRoot)
-        val pkg = generatedPackage.get()
-        val pkgDir = File(outRoot, pkg.replace('.', '/')).apply { mkdirs() }
-
+        // Plain stdlib delete; `project.delete(...)` would capture `project`
+        // and break configuration cache.
+        outRoot.deleteRecursively()
+        val mySs = sourceSetName.get()
+        val ctx = EmissionContext(
+            pkg = generatedPackage.get(),
+            pathsCls = pathsClass.get(),
+            registrarCls = registrarClass.get(),
+            shimName = shimVal.get(),
+            mySs = mySs,
+            jvm = jvmFlavoredSourceSets.get().contains(mySs),
+        )
+        val pkgDir = File(outRoot, ctx.pkg.replace('.', '/')).apply { mkdirs() }
         val entities = collectEntities()
+        val genRegistrar = generateRegistrar.get()
 
-        when (targetKind.get()) {
-            TargetKind.COMMON -> emitCommon(pkgDir, pkg, entities)
-            TargetKind.JVM -> emitTarget(pkgDir, pkg, entities, jvm = true)
-            TargetKind.NATIVE -> emitTarget(pkgDir, pkg, entities, jvm = false)
-            TargetKind.STANDALONE_JVM -> emitStandalone(pkgDir, pkg, entities, jvm = true)
-            TargetKind.STANDALONE_NATIVE -> emitStandalone(pkgDir, pkg, entities, jvm = false)
+        if (!kmpProject.get()) {
+            emitPaths(pkgDir, ctx, entities, kmpActual = false, actualEntities = emptySet())
+            if (genRegistrar) {
+                writeRegistrar(pkgDir, ctx, entities)
+                writeShim(pkgDir, ctx, prefix = "", initializer = ctx.registrarCls)
+            }
+            return
         }
+
+        val planner = Planner(
+            PlannerInputs(
+                entities = entities,
+                parents = sourceSetParents.get(),
+                leafSourceSets = leafSourceSets.get(),
+            )
+        )
+        when (val role = planner.roleOf(mySs)) {
+            null -> Unit
+            is Role.Plain -> emitPaths(pkgDir, ctx, role.visibleEntities, kmpActual = false, actualEntities = emptySet())
+            is Role.Expect -> emitExpect(pkgDir, ctx, role.visibleEntities)
+            is Role.Actual -> emitPaths(pkgDir, ctx, role.visibleEntities, kmpActual = true, actualEntities = role.actualForExpect)
+        }
+
+        if (genRegistrar) emitShimAndRegistrar(pkgDir, ctx, planner)
+    }
+
+    /**
+     * Registrar + shim emission rules for KMP:
+     *  - The registrar (`GeneratedEntities` object) lives at every leaf with
+     *    visible entities. It references platform-specific runtime helpers
+     *    (`TypeUtils.castTo`, `EntityMeta.register`, …) that don't legally
+     *    compile in commonMain metadata, so it never lives there.
+     *  - The shim (`val stormifyEntities`) is the user-facing handle. An
+     *    `expect val` is published in commonMain whenever every leaf has at
+     *    least one visible entity (so a matching `actual val` exists in each
+     *    leaf). When some leaf is empty the expect is omitted — the shim
+     *    becomes leaf-only.
+     */
+    private fun emitShimAndRegistrar(pkgDir: File, ctx: EmissionContext, planner: Planner) {
+        val leafs = leafSourceSets.get()
+        val visibleByLeaf = planner.visibleByLeaf
+        val everyLeafHasEntities = leafs.isNotEmpty() && leafs.all { visibleByLeaf[it]?.isNotEmpty() == true }
+
+        if (ctx.mySs == "commonMain" && everyLeafHasEntities)
+            writeShim(pkgDir, ctx, prefix = "expect ", initializer = null)
+
+        if (ctx.mySs in leafs) {
+            val visibleHere = visibleByLeaf[ctx.mySs] ?: emptyList()
+            if (visibleHere.isEmpty()) return
+            writeRegistrar(pkgDir, ctx, visibleHere)
+            writeShim(
+                pkgDir, ctx,
+                prefix = if (everyLeafHasEntities) "actual " else "",
+                initializer = ctx.registrarCls,
+            )
+        }
+    }
+
+    private fun writeShim(pkgDir: File, ctx: EmissionContext, prefix: String, initializer: String?) {
+        File(pkgDir, "StormifyShim.kt").writeText(buildString {
+            append("package ${ctx.pkg}\n\n")
+            append("import onl.ycode.stormify.EntityRegistrar\n\n")
+            append("${prefix}val ${ctx.shimName}: EntityRegistrar")
+            if (initializer != null) append(" = $initializer")
+            append("\n")
+        })
     }
 
     private fun collectEntities(): List<EntityMeta> {
@@ -88,20 +161,24 @@ abstract class StormifyGenerateSources : DefaultTask() {
         metadataDirs.files.forEach { dir ->
             if (!dir.isDirectory) return@forEach
             dir.listFiles { f -> f.isFile && f.name.endsWith(".json") }?.forEach { f ->
-                val em = parseEntityJson(f.readText())
-                if (em.qualifiedName.isNotEmpty()) byQn.putIfAbsent(em.qualifiedName, em)
+                val em = parseEntityJsonCached(f)
+                if (em.qualifiedName.isNotEmpty()) {
+                    val prev = byQn.putIfAbsent(em.qualifiedName, em)
+                    if (prev != null && prev.sourceSet != em.sourceSet) {
+                        logger.debug("Stormify: duplicate entity ${em.qualifiedName} — kept '${prev.sourceSet}', dropped '${em.sourceSet}'")
+                    }
+                }
             }
         }
         return byQn.values.toList()
     }
 
-    private fun emitCommon(pkgDir: File, pkg: String, all: List<EntityMeta>) {
-        val common = all.filter { it.sourceSet == "commonMain" }
-        val knownQns = common.map { it.qualifiedName }.toSet()
+    private fun emitExpect(pkgDir: File, ctx: EmissionContext, entities: List<EntityMeta>) {
+        val knownQns = entities.map { it.qualifiedName }.toSet()
 
-        common.forEach { e ->
+        entities.forEach { e ->
             File(pkgDir, "${e.simpleName}Ref.kt").writeText(buildString {
-                append("package $pkg\n\n")
+                append("package ${ctx.pkg}\n\n")
                 append("import onl.ycode.stormify.biglist.ReferencePath\n")
                 append("import onl.ycode.stormify.biglist.ScalarPath\n\n")
                 append("expect class ${e.simpleName}Ref(path: String) : ReferencePath {\n")
@@ -119,60 +196,31 @@ abstract class StormifyGenerateSources : DefaultTask() {
             })
         }
 
-        File(pkgDir, "${pathsClass.get()}.kt").writeText(buildString {
+        File(pkgDir, "${ctx.pathsCls}.kt").writeText(buildString {
             append("@file:Suppress(\"unused\")\n")
-            append("package $pkg\n\n")
-            append("expect object ${pathsClass.get()} {\n")
-            common.forEach { e ->
-                append("    val ${e.simpleName}_: ${e.simpleName}Ref\n")
-            }
+            append("package ${ctx.pkg}\n\n")
+            append("expect object ${ctx.pathsCls} {\n")
+            entities.forEach { e -> append("    val ${e.simpleName}_: ${e.simpleName}Ref\n") }
             append("}\n")
         })
-
-        if (generateRegistrar.get()) {
-            File(pkgDir, "StormifyShim.kt").writeText(buildString {
-                append("package $pkg\n\n")
-                append("import onl.ycode.stormify.EntityRegistrar\n\n")
-                append("expect val ${shimVal.get()}: EntityRegistrar\n")
-            })
-        }
     }
 
-    private fun emitTarget(pkgDir: File, pkg: String, all: List<EntityMeta>, jvm: Boolean) {
-        val ssName = sourceSetName.get()
-        val common = all.filter { it.sourceSet == "commonMain" }
-        val local = all.filter { it.sourceSet == ssName && it.sourceSet != "commonMain" }
-        emitConcrete(pkgDir, pkg, visible = common + local, actualFor = common.toSet(), isKmpTarget = true, jvm = jvm)
-    }
-
-    private fun emitStandalone(pkgDir: File, pkg: String, all: List<EntityMeta>, jvm: Boolean) =
-        emitConcrete(pkgDir, pkg, visible = all, actualFor = emptySet(), isKmpTarget = false, jvm = jvm)
-
-    /**
-     * Unified emitter for concrete (non-`expect`) declarations.
-     *
-     * @param actualFor entities with a matching `expect class` in `commonMain`
-     *   — emitted with `actual` on the class header and its members.
-     * @param isKmpTarget when true, the surrounding `Tables` object and shim
-     *   have a matching `expect` counterpart and must carry the `actual`
-     *   modifier even if no entities are common-scoped.
-     */
-    private fun emitConcrete(
+    private fun emitPaths(
         pkgDir: File,
-        pkg: String,
+        ctx: EmissionContext,
         visible: List<EntityMeta>,
-        actualFor: Set<EntityMeta>,
-        isKmpTarget: Boolean,
-        jvm: Boolean,
+        actualEntities: Set<EntityMeta>,
+        kmpActual: Boolean,
     ) {
         val visibleSimpleNames = visible.map { it.simpleName }.toSet()
-        val jvmField = if (jvm) "@JvmField " else ""
+        val jvmField = if (ctx.jvm) "@JvmField " else ""
+        val actualQns = actualEntities.map { it.qualifiedName }.toSet()
 
         visible.forEach { e ->
-            val isActual = e in actualFor
+            val isActual = e.qualifiedName in actualQns
             File(pkgDir, "${e.simpleName}Ref.kt").writeText(buildString {
-                append("package $pkg\n\n")
-                if (jvm) {
+                append("package ${ctx.pkg}\n\n")
+                if (ctx.jvm) {
                     append("import kotlin.jvm.JvmField\n")
                     append("import kotlin.jvm.JvmName\n")
                 }
@@ -186,7 +234,7 @@ abstract class StormifyGenerateSources : DefaultTask() {
                     if (p.isReference) {
                         val refSimple = p.type.substringAfterLast('.')
                         if (refSimple !in visibleSimpleNames) return@forEach
-                        if (jvm) append("    @get:JvmName(\"${p.name}\")\n")
+                        if (ctx.jvm) append("    @get:JvmName(\"${p.name}\")\n")
                         append("    ${actualKw}val ${p.name} get() = ${refSimple}Ref(\"\${toString()}${p.name}.\")\n")
                     } else {
                         append("    $jvmField${actualKw}val ${p.name} = ScalarPath(\"\${toString()}${p.name}\")\n")
@@ -196,34 +244,24 @@ abstract class StormifyGenerateSources : DefaultTask() {
             })
         }
 
-        File(pkgDir, "${pathsClass.get()}.kt").writeText(buildString {
+        File(pkgDir, "${ctx.pathsCls}.kt").writeText(buildString {
             append("@file:Suppress(\"unused\")\n")
-            append("package $pkg\n\n")
-            if (jvm) append("import kotlin.jvm.JvmField\n\n")
-            val objectKw = if (isKmpTarget) "actual object" else "object"
-            append("$objectKw ${pathsClass.get()} {\n")
+            append("package ${ctx.pkg}\n\n")
+            if (ctx.jvm) append("import kotlin.jvm.JvmField\n\n")
+            val objectKw = if (kmpActual) "actual object" else "object"
+            append("$objectKw ${ctx.pathsCls} {\n")
             visible.forEach { e ->
-                val actualKw = if (e in actualFor) "actual " else ""
+                val actualKw = if (e.qualifiedName in actualQns) "actual " else ""
                 append("    $jvmField${actualKw}val ${e.simpleName}_ = ${e.simpleName}Ref(\"\")\n")
             }
             append("}\n")
         })
-
-        if (!generateRegistrar.get()) return
-        writeRegistrar(pkgDir, pkg, visible)
-
-        File(pkgDir, "StormifyShim.kt").writeText(buildString {
-            append("package $pkg\n\n")
-            append("import onl.ycode.stormify.EntityRegistrar\n\n")
-            val actualKw = if (isKmpTarget) "actual " else ""
-            append("${actualKw}val ${shimVal.get()}: EntityRegistrar = ${registrarClass.get()}\n")
-        })
     }
 
-    private fun writeRegistrar(pkgDir: File, pkg: String, visible: List<EntityMeta>) {
-        File(pkgDir, "${registrarClass.get()}.kt").writeText(buildString {
+    private fun writeRegistrar(pkgDir: File, ctx: EmissionContext, visible: List<EntityMeta>) {
+        File(pkgDir, "${ctx.registrarCls}.kt").writeText(buildString {
             append("@file:Suppress(\"unused\", \"UNCHECKED_CAST\")\n")
-            append("package $pkg\n\n")
+            append("package ${ctx.pkg}\n\n")
             append("import onl.ycode.stormify.DbValue\n")
             append("import onl.ycode.stormify.EntityMeta\n")
             append("import onl.ycode.stormify.EntityRegistrar\n")
@@ -233,7 +271,7 @@ abstract class StormifyGenerateSources : DefaultTask() {
             visible.forEach { append("import ${it.qualifiedName}\n") }
             val enumTypes = visible.flatMap { it.enumTypes }.distinct()
             enumTypes.forEach { append("import $it\n") }
-            append("\nobject ${registrarClass.get()} : EntityRegistrar {\n")
+            append("\nobject ${ctx.registrarCls} : EntityRegistrar {\n")
             append("    override fun register() {\n")
             enumTypes.forEach { fqn ->
                 val s = fqn.substringAfterLast('.')
@@ -260,23 +298,72 @@ abstract class StormifyGenerateSources : DefaultTask() {
         sb.append("            $kclass,\n")
         sb.append("            { $fullClass() },\n")
         sb.append("            listOf(\n")
-        e.properties.forEachIndexed { i, p ->
-            val comma = if (i < e.properties.size - 1) "," else ""
-            sb.append("                PropertyMeta(\n")
-            sb.append("                    \"${p.name}\", ${p.type}::class, ${p.isReference},\n")
-            sb.append("                    { it.${p.name} },\n")
+        e.properties.joinTo(sb, separator = ",\n", postfix = "\n") { p ->
             val notNull = if (!p.nullable)
-                " ?: throw IllegalArgumentException(\"${p.name} cannot be null in ${e.simpleName}\")"
+                " ?: throw IllegalArgumentException(\"${p.name.kEsc()} cannot be null in ${e.simpleName.kEsc()}\")"
             else ""
-            sb.append("                    { en, v, s -> en.${p.name} = (castTo(${p.type}::class, v, s) as? ${p.fullType})$notNull },\n")
-            sb.append("                    ${if (p.dbName != p.name) "\"${p.dbName}\"" else "null"},\n")
-            sb.append("                    ${p.primary},\n")
-            sb.append("                    ${if (p.sequence.isNotBlank()) "\"${p.sequence}\"" else "null"},\n")
-            sb.append("                    ${p.autoIncrement}, ${p.insertable}, ${p.updatable}, false, ${p.isEnum}, ${p.enumAsString}\n")
-            sb.append("                )$comma\n")
+            buildString {
+                append("                PropertyMeta(\n")
+                append("                    \"${p.name.kEsc()}\", ${p.type}::class, ${p.isReference},\n")
+                append("                    { it.${p.name} },\n")
+                append("                    { en, v, s -> en.${p.name} = (castTo(${p.type}::class, v, s) as? ${p.fullType})$notNull },\n")
+                append("                    ${if (p.dbName != p.name) "\"${p.dbName.kEsc()}\"" else "null"},\n")
+                append("                    ${p.primary},\n")
+                append("                    ${if (p.sequence.isNotBlank()) "\"${p.sequence.kEsc()}\"" else "null"},\n")
+                append("                    ${p.autoIncrement}, ${p.insertable}, ${p.updatable}, false, ${p.isEnum}, ${p.enumAsString}\n")
+                append("                )")
+            }
         }
         sb.append("            ),\n")
-        sb.append("            ${if (e.tableName.isNotBlank()) "\"${e.tableName}\"" else "null"}\n")
+        sb.append("            ${if (e.tableName.isNotBlank()) "\"${e.tableName.kEsc()}\"" else "null"}\n")
         sb.append("        ))\n\n")
     }
+
+    /** Bundles per-task constants resolved from `Property<T>` getters once. */
+    private data class EmissionContext(
+        val pkg: String,
+        val pathsCls: String,
+        val registrarCls: String,
+        val shimName: String,
+        val mySs: String,
+        val jvm: Boolean,
+    )
+}
+
+/** Escapes characters that would break a Kotlin string-literal interpolation. */
+private fun String.kEsc(): String = buildString(length) {
+    for (c in this@kEsc) when (c) {
+        '\\' -> append("\\\\")
+        '"' -> append("\\\"")
+        '$' -> append("\\$")
+        '\n' -> append("\\n")
+        '\r' -> append("\\r")
+        '\t' -> append("\\t")
+        else -> append(c)
+    }
+}
+
+// JSON parse cache, scoped to the daemon JVM. Multiple StormifyGenerateSources
+// tasks run per build (one per production source set in KMP) and read the
+// same JSON files; caching avoids reparsing N×M times. Keyed by canonical
+// path + lastModified so a rewrite invalidates the entry. Bounded so a
+// long-running daemon across many projects doesn't accumulate stale entries
+// for deleted JSONs.
+private const val PARSE_CACHE_MAX = 4096
+private val parseCache = java.util.Collections.synchronizedMap(
+    object : LinkedHashMap<String, Pair<Long, EntityMeta>>(256, 0.75f, true) {
+        override fun removeEldestEntry(eldest: Map.Entry<String, Pair<Long, EntityMeta>>) =
+            size > PARSE_CACHE_MAX
+    }
+)
+
+private fun parseEntityJsonCached(f: File): EntityMeta {
+    val key = f.absolutePath
+    val ts = f.lastModified()
+    synchronized(parseCache) {
+        parseCache[key]?.let { (cachedTs, em) -> if (cachedTs == ts) return em }
+    }
+    val em = parseEntityJson(f.readText())
+    synchronized(parseCache) { parseCache[key] = ts to em }
+    return em
 }
