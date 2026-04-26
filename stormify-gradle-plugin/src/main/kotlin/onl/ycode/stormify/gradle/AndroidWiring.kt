@@ -18,4 +18,9 @@ internal fun wireAndroid(project: Project, extension: StormifyExtension, pluginV
         // Android non-KMP projects sometimes consume .kt through java srcDirs.
         srcDirGetters = listOf("getKotlin", "getJava"),
         compileTaskMatcher = { it.startsWith("compile") && it.contains("Kotlin") },
+        // Android unit-test variants. Instrumented (`androidTest`) is left
+        // alone — it ships in a separate APK and rarely needs annproc.
+        testKspTaskNames = setOf("kspDebugUnitTestKotlin", "kspReleaseUnitTestKotlin"),
+        testCompileTaskMatcher = { it.startsWith("compile") && it.contains("UnitTestKotlin") },
+        testSourceSetName = "test",
     )

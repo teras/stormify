@@ -81,10 +81,8 @@ kotlin {
         val commonTest by getting {
             dependencies {
                 implementation(kotlin("test"))
-                // Suspend API tests use real coroutines at runtime (unlike main code which
-                // only compile-references them via compileOnly).
-                implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.10.2")
-                implementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.10.2")
+                // ScalarTypesTest references kotlinx.datetime types when verifying type buckets.
+                implementation("org.jetbrains.kotlinx:kotlinx-datetime:0.7.1")
             }
         }
 
@@ -113,53 +111,6 @@ kotlin {
             }
         }
 
-        // Common JVM-based test source set for both Desktop JVM and Android
-        val jvmBasedTest by creating {
-            dependsOn(commonTest)
-            dependsOn(jvmBasedMain)
-            dependencies {
-                implementation(kotlin("reflect"))
-                implementation("org.jetbrains.kotlinx:kotlinx-datetime:0.7.1")
-                implementation("com.ionspin.kotlin:bignum:0.3.9")
-            }
-        }
-
-        val jvmTest by getting {
-            dependsOn(jvmBasedTest)
-            // Default Kotlin hierarchy does NOT wire jvmTest → jvmMain; this makes
-            // any expect/actual whose JVM `actual` lives in jvmMain invisible during
-            // test compile. Explicit dependency fixes it.
-            dependsOn(jvmMain)
-            dependencies {
-                implementation("com.zaxxer:HikariCP:4.0.3")
-                // Load JDBC driver based on target database
-                val testDb = System.getProperty("stormify.test.db") ?: "sqlite"
-                when {
-                    testDb.startsWith("mysql") -> implementation("com.mysql:mysql-connector-j:9.2.0")
-                    testDb.startsWith("mariadb") -> implementation("org.mariadb.jdbc:mariadb-java-client:3.5.3")
-                    testDb.startsWith("postgresql") -> implementation("org.postgresql:postgresql:42.7.5")
-                    testDb == "oracle11" -> implementation("com.oracle.database.jdbc:ojdbc8:19.24.0.0")
-                    testDb.startsWith("oracle") -> implementation("com.oracle.database.jdbc:ojdbc8:21.9.0.0")
-                    testDb.startsWith("mssql") -> implementation("com.microsoft.sqlserver:mssql-jdbc:12.8.1.jre8")
-                    else -> implementation("org.xerial:sqlite-jdbc:3.47.2.0")
-                }
-            }
-        }
-
-        val androidUnitTest by getting {
-            dependsOn(jvmBasedTest)
-            // AGP's default Kotlin source set hierarchy does NOT make androidUnitTest
-            // see androidMain, so any expect/actual whose Android `actual` lives in
-            // androidMain is invisible during unit-test compile. Explicit dependency
-            // fixes it.
-            dependsOn(androidMain)
-            dependencies {
-                implementation("org.robolectric:robolectric:4.14.1")
-                implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.10.2")
-                implementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.10.2")
-            }
-        }
-
         val nativeMain by getting {
             dependencies {
                 api("org.jetbrains.kotlinx:kotlinx-datetime:0.7.1")
@@ -172,52 +123,12 @@ kotlin {
             }
         }
 
-        // Linux-host source sets — see note in kotlin{} about conditional target registration.
-        if (System.getProperty("os.name").startsWith("Linux")) {
-            val linuxX64Main by getting
-
-            val linuxX64Test by getting {
-                dependencies {
-                    implementation(project(":kdbc"))
-                }
-            }
-
-            val mingwX64Test by getting {
-                dependencies {
-                    implementation(project(":kdbc"))
-                }
-            }
-
-            val linuxArm64Test by getting {
-                // Share test sources with linuxX64Test — identical POSIX APIs and paths
-                kotlin.srcDir("src/linuxX64Test/kotlin")
-                dependencies {
-                    implementation(project(":kdbc"))
-                }
-            }
-        }
-
         // Apple targets - build enabled on macOS only
         if (System.getProperty("os.name").startsWith("Mac")) {
             val appleMain by getting {
                 dependencies {
                     implementation(project(":kdbc"))
                 }
-            }
-
-            // Apple test source sets share the same POSIX test sources as linuxX64.
-            // Only non-deprecated targets get test infrastructure.
-            val macosArm64Test by getting {
-                kotlin.srcDir("src/linuxX64Test/kotlin")
-                dependencies { implementation(project(":kdbc")) }
-            }
-            val iosSimulatorArm64Test by getting {
-                kotlin.srcDir("src/linuxX64Test/kotlin")
-                dependencies { implementation(project(":kdbc")) }
-            }
-            val iosArm64Test by getting {
-                kotlin.srcDir("src/linuxX64Test/kotlin")
-                dependencies { implementation(project(":kdbc")) }
             }
         }
     }
@@ -234,7 +145,7 @@ android {
     compileSdk = 34
 
     defaultConfig {
-        minSdk = 21
+        minSdk = 28
     }
 
     compileOptions {
@@ -242,20 +153,6 @@ android {
         targetCompatibility = JavaVersion.VERSION_1_8
     }
 
-    testOptions {
-        unitTests.isIncludeAndroidResources = true
-        unitTests.all {
-            // Robolectric requires Java 11+; the library targets Java 8 via
-            // jvmToolchain(8), so override only the test JVM.
-            it.javaLauncher.set(javaToolchains.launcherFor {
-                languageVersion.set(JavaLanguageVersion.of(17))
-            })
-            // Run only the Robolectric wrappers (test.Android*) — the common
-            // tests are exercised through them; running them directly without
-            // Robolectric would hit Android's stub classes.
-            it.filter { includeTestsMatching("test.Android*") }
-        }
-    }
 }
 
 mavenPublishing {
@@ -282,98 +179,13 @@ tasks.withType<Test> {
     val testDb = System.getProperty("stormify.test.db") ?: "sqlite"
     systemProperty("stormify.test.db", testDb)
     systemProperty("stormify.test.config", System.getProperty("stormify.test.config") ?: "")
-    // Oracle 11g timezone tables may not know the host's timezone region
-    systemProperty("oracle.jdbc.timezoneAsRegion", "false")
 }
 
-// Per-target annproc registration (not kspCommonMainMetadata): the generated Paths
-// emit @JvmField / @get:JvmName which are @OptionalExpectation in kotlin.jvm and
-// cannot be referenced from non-JVM source sets.
-val isMacHost = System.getProperty("os.name").startsWith("Mac")
-val isLinuxHost = System.getProperty("os.name").startsWith("Linux")
-
-dependencies {
-    add("kspJvmTest", project(":annproc"))
-    add("kspAndroidTestDebug", project(":annproc"))
-    if (isLinuxHost) {
-        add("kspLinuxX64Test", project(":annproc"))
-        add("kspMingwX64Test", project(":annproc"))
-        // linuxArm64Test reuses linuxX64 KSP output — no separate KSP run needed
-    }
-    if (isMacHost) {
-        add("kspMacosArm64Test", project(":annproc"))
-        add("kspIosSimulatorArm64Test", project(":annproc"))
-        add("kspIosArm64Test", project(":annproc"))
-    }
+// No Android-specific tests live in this module — the Android conformance suite
+// is in :conformance. AGP still creates testDebugUnitTest / testReleaseUnitTest
+// tasks for the android target; disable them so `gradle :stormify:build` doesn't
+// try to launch an empty test runner.
+tasks.matching { it.name == "testDebugUnitTest" || it.name == "testReleaseUnitTest" }.configureEach {
+    enabled = false
 }
 
-// Make the KSP-generated sources visible to the test source sets.
-kotlin.sourceSets.named("jvmTest") {
-    kotlin.srcDir("build/generated/ksp/jvm/jvmTest/kotlin")
-}
-if (isLinuxHost) {
-    kotlin.sourceSets.named("linuxX64Test") {
-        kotlin.srcDir("build/generated/ksp/linuxX64/linuxX64Test/kotlin")
-    }
-    kotlin.sourceSets.named("mingwX64Test") {
-        kotlin.srcDir("build/generated/ksp/mingwX64/mingwX64Test/kotlin")
-    }
-    // linuxArm64Test reuses linuxX64's KSP output — same entities, same generated code
-    kotlin.sourceSets.named("linuxArm64Test") {
-        kotlin.srcDir("build/generated/ksp/linuxX64/linuxX64Test/kotlin")
-    }
-}
-if (isMacHost) {
-    for (target in listOf("MacosArm64", "IosSimulatorArm64", "IosArm64")) {
-        val lower = target.replaceFirstChar { it.lowercase() }
-        kotlin.sourceSets.named("${lower}Test") {
-            kotlin.srcDir("build/generated/ksp/$lower/${lower}Test/kotlin")
-        }
-        tasks.matching { it.name == "compileTestKotlin$target" }.configureEach {
-            dependsOn("kspTestKotlin$target")
-        }
-    }
-}
-kotlin.sourceSets.named("androidUnitTest") {
-    kotlin.srcDir("build/generated/ksp/android/androidDebugUnitTest/kotlin")
-}
-
-tasks.matching { it.name == "compileTestKotlinJvm" }.configureEach {
-    dependsOn("kspTestKotlinJvm")
-}
-if (isLinuxHost) {
-    tasks.matching { it.name == "compileTestKotlinLinuxX64" }.configureEach {
-        dependsOn("kspTestKotlinLinuxX64")
-    }
-    tasks.matching { it.name == "compileTestKotlinMingwX64" }.configureEach {
-        dependsOn("kspTestKotlinMingwX64")
-    }
-    tasks.matching { it.name == "compileTestKotlinLinuxArm64" }.configureEach {
-        dependsOn("kspTestKotlinLinuxX64")
-    }
-}
-
-// Copy platform-specific runtime libraries (DLLs, .so files) next to test
-// binaries so that dlopen / LoadLibrary finds them when running tests.
-// The source directory is kdbc/src/c/libs/<platform> where <platform> maps
-// to the Kotlin/Native target name (e.g. mingwX64 → mingw, linuxArm64 → arm64).
-// If the directory is empty or missing, the copy is a no-op.
-kotlin.targets.withType<org.jetbrains.kotlin.gradle.plugin.mpp.KotlinNativeTarget>().configureEach {
-    val platformDir = when (name) {
-        "mingwX64" -> "mingw"
-        "linuxArm64" -> "arm64"
-        else -> return@configureEach
-    }
-    val libsDir = project(":kdbc").file("src/c/libs/$platformDir")
-    val targetName = name
-    val copyTask = tasks.register<Copy>("copy${targetName.replaceFirstChar { it.uppercase() }}TestLibs") {
-        from(libsDir)
-        into(layout.buildDirectory.dir("bin/$targetName/debugTest"))
-    }
-    tasks.matching { it.name == "${targetName}Test" || it.name == "linkDebugTest${targetName.replaceFirstChar { it.uppercase() }}" }.configureEach {
-        dependsOn(copyTask)
-    }
-}
-tasks.matching { it.name == "compileDebugUnitTestKotlinAndroid" }.configureEach {
-    dependsOn("kspDebugUnitTestKotlinAndroid")
-}

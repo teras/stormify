@@ -4,7 +4,7 @@
 # require colima/VM overhead).
 #
 # Each database is configured to listen on the SAME ports as testing/docker-compose.yml
-# so the test factory (stormify/src/linuxX64Test/kotlin/test/TestDataSourceFactory.kt)
+# so the test factory (tests/conformance/src/linuxX64Test/kotlin/test/TestDataSourceFactory.kt)
 # does not need macOS-specific URL overrides.
 #
 # Credentials match docker-compose: user "stormify", password "Stormify1!", database "stormify_test".

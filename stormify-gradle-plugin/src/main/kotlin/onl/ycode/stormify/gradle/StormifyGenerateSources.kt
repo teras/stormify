@@ -69,6 +69,14 @@ abstract class StormifyGenerateSources : DefaultTask() {
     @get:Input
     abstract val jvmFlavoredSourceSets: SetProperty<String>
 
+    /**
+     * Source set that hosts the `expect val` shim when every leaf has an
+     * `actual val`. For the production graph this is `commonMain`; for the
+     * parallel test graph wired by the plugin it is `commonTest`.
+     */
+    @get:Input
+    abstract val rootSourceSetName: Property<String>
+
     @TaskAction
     fun generate() {
         val outRoot = outputDir.get().asFile
@@ -131,7 +139,7 @@ abstract class StormifyGenerateSources : DefaultTask() {
         val visibleByLeaf = planner.visibleByLeaf
         val everyLeafHasEntities = leafs.isNotEmpty() && leafs.all { visibleByLeaf[it]?.isNotEmpty() == true }
 
-        if (ctx.mySs == "commonMain" && everyLeafHasEntities)
+        if (ctx.mySs == rootSourceSetName.get() && everyLeafHasEntities)
             writeShim(pkgDir, ctx, prefix = "expect ", initializer = null)
 
         if (ctx.mySs in leafs) {

@@ -16,4 +16,7 @@ internal fun wireJvm(project: Project, extension: StormifyExtension, pluginVersi
         extensionName = "kotlin",
         srcDirGetters = listOf("getKotlin"),
         compileTaskMatcher = { it == "compileKotlin" },
+        testKspTaskNames = setOf("kspTestKotlin"),
+        testCompileTaskMatcher = { it == "compileTestKotlin" },
+        testSourceSetName = "test",
     )

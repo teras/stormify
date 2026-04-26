@@ -47,6 +47,36 @@ abstract class StormifyExtension {
     abstract val pathsClass: Property<String>
 
     /**
+     * Class name for the generated table holder object emitted into test
+     * source sets when entities are declared in `commonTest`/`*Test`. Lives
+     * in the same package as [pathsClass]; the distinct name avoids a
+     * compile-time collision with the production `Tables` on the test
+     * classpath.
+     *
+     * Default: `TablesTest`.
+     */
+    abstract val testPathsClass: Property<String>
+
+    /**
+     * Class name for the generated entity registrar emitted into test
+     * source sets.
+     *
+     * Default: `GeneratedTestEntities`.
+     */
+    abstract val testRegistrarClass: Property<String>
+
+    /**
+     * When `true`, the plugin skips auto-adding the `onl.ycode:stormify` and
+     * `onl.ycode:annproc` runtime/processor dependencies — useful for the
+     * Stormify project itself (dogfooding the plugin) where those modules
+     * live in the same Gradle build and must be referenced via
+     * `project(":stormify")` / `project(":annproc")` instead.
+     *
+     * Default: `false`.
+     */
+    abstract val selfHosted: Property<Boolean>
+
+    /**
      * Whether to emit the generated `EntityRegistrar` (and the matching
      * `stormifyEntities` shim) alongside the type-safe `Tables` object.
      *

@@ -179,7 +179,7 @@ build_linux() {
     [ -x "$LINUX_TEST_BIN" ] && return 0
     echo "Building linuxX64 test binary..."
     cd "$PROJECT_DIR"
-    gradle :stormify:linkDebugTestLinuxX64 --console=plain 2>&1
+    gradle :conformance:linkDebugTestLinuxX64 --console=plain 2>&1
     echo ""
 }
 
@@ -187,7 +187,7 @@ build_arm64() {
     [ -x "$ARM64_TEST_BIN" ] && return 0
     echo "Building linuxArm64 test binary..."
     cd "$PROJECT_DIR"
-    gradle :stormify:linkDebugTestLinuxArm64 --console=plain 2>&1
+    gradle :conformance:linkDebugTestLinuxArm64 --console=plain 2>&1
     echo ""
 }
 
@@ -197,7 +197,7 @@ build_mingw() {
     make -C "$C_SRC_DIR" TARGET=mingw BUILDDIR=build-mingw lib 2>&1
     echo "Building mingwX64 test binary..."
     cd "$PROJECT_DIR"
-    gradle :stormify:linkDebugTestMingwX64 --console=plain 2>&1
+    gradle :conformance:linkDebugTestMingwX64 --console=plain 2>&1
     echo ""
 }
 
@@ -252,12 +252,12 @@ run_jvm_one() {
     cd "$PROJECT_DIR"
 
     if [ -f "$config_path" ]; then
-        gradle :stormify:jvmTest \
+        gradle :conformance:jvmTest \
             -Dstormify.test.config="$config_path" \
             -Dstormify.test.db="$db" \
             --console=plain 2>&1 || rc=$?
     else
-        gradle :stormify:jvmTest --console=plain 2>&1 || rc=$?
+        gradle :conformance:jvmTest --console=plain 2>&1 || rc=$?
     fi
 
     if [ $rc -eq 0 ]; then
@@ -366,7 +366,7 @@ run_android() {
 
     local rc=0
     cd "$PROJECT_DIR"
-    gradle :stormify:testDebugUnitTest --console=plain 2>&1 || rc=$?
+    gradle :conformance:testDebugUnitTest --console=plain 2>&1 || rc=$?
 
     if [ $rc -eq 0 ]; then
         echo "PASSED: android"
@@ -390,7 +390,7 @@ build_mingw() {
 
     echo "Building mingwX64 test binary..."
     cd "$PROJECT_DIR"
-    gradle :stormify:linkDebugTestMingwX64 --console=plain 2>&1
+    gradle :conformance:linkDebugTestMingwX64 --console=plain 2>&1
 }
 
 run_mingw_one() {
@@ -523,10 +523,10 @@ case "$TARGET" in
             mingw)      build_mingw ;;
             jvm)        echo "Compiling JVM test classes..."
                         cd "$PROJECT_DIR"
-                        gradle :stormify:jvmTestClasses --console=plain 2>&1 ;;
+                        gradle :conformance:jvmTestClasses --console=plain 2>&1 ;;
             android)    echo "Compiling Android test classes..."
                         cd "$PROJECT_DIR"
-                        gradle :stormify:compileDebugUnitTestKotlin --console=plain 2>&1 ;;
+                        gradle :conformance:compileDebugUnitTestKotlin --console=plain 2>&1 ;;
             *)          echo "Usage: ./test.sh build native|linux|linux-arm64|mingw|jvm|android"; exit 1 ;;
         esac
         ;;

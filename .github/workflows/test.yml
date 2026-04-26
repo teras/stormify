@@ -197,9 +197,9 @@ jobs:
             :logger:publishLinuxArm64PublicationToLocalStagingRepository \
             :logger:publishMingwX64PublicationToLocalStagingRepository \
             :logger:publishKotlinMultiplatformPublicationToLocalStagingRepository \
-            :stormify:linkDebugTestLinuxX64 \
-            :stormify:linkDebugTestLinuxArm64 \
-            :stormify:linkDebugTestMingwX64 \
+            :conformance:linkDebugTestLinuxX64 \
+            :conformance:linkDebugTestLinuxArm64 \
+            :conformance:linkDebugTestMingwX64 \
             --no-daemon --stacktrace
 
       - uses: actions/upload-artifact@v4
@@ -280,7 +280,7 @@ jobs:
             :logger:publishMacosArm64PublicationToLocalStagingRepository \
             :logger:publishMacosX64PublicationToLocalStagingRepository \
             :logger:publishKotlinMultiplatformPublicationToLocalStagingRepository \
-            :stormify:linkDebugTestMacosArm64 \
+            :conformance:linkDebugTestMacosArm64 \
             :stormify:compileKotlinIosArm64 \
             :stormify:compileKotlinIosX64 \
             :stormify:compileKotlinIosSimulatorArm64 \
@@ -606,7 +606,7 @@ jobs:
       - name: Run JVM tests
         run: |
           CONFIG="$(pwd)/testing/config/${{ matrix.db }}/hikari.properties"
-          gradle :stormify:jvmTest \
+          gradle :conformance:jvmTest \
             -Dstormify.test.db=${{ matrix.db }} \
             ${CONFIG:+-Dstormify.test.config="$CONFIG"} \
             --console=plain --no-daemon

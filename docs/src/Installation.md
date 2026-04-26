@@ -3,7 +3,7 @@
 ## Requirements
 
 - **JVM**: Java 8 or later.
-- **Android**: minimum API 21 (Android 5.0), compile SDK 34.
+- **Android**: minimum API 28 (Android 9.0).
 - **Linux native**: glibc 2.31+ (x86_64 or ARM64).
 - **Windows native**: Windows 10 or later (mingwX64 build).
 - **macOS native**: macOS 11+ on Apple Silicon or Intel.

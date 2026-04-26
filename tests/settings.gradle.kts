@@ -32,4 +32,5 @@ include(
     ":scenario7",
     ":scenario8",
     ":scenario9",
+    ":scenario10",
 )

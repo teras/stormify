@@ -45,7 +45,7 @@ Designed for developers seeking a simple yet powerful ORM, Stormify excels in pr
 ## Requirements
 
 - **JVM**: Java 8 or later.
-- **Android**: minimum API 21 (Android 5.0).
+- **Android**: minimum API 28 (Android 9.0).
 - **Native**: glibc 2.31+ on Linux, macOS 11+, iOS 14+, Windows 10+.
 
 ## Installation

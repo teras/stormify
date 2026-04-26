@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+// (C) Panayotis Katsaloulis
 package test
 
 import org.junit.Ignore
@@ -33,7 +35,7 @@ class AndroidPagedListTest : PagedListTest() {
     // Robolectric uses sqlite4java (bundled SQLite ~3.24) which does not apply
     // numeric affinity to bound TEXT parameters when the other operand is a
     // computed expression like (col * 2). Real Android's system SQLite and every
-    // other supported DB handle this correctly — verified in the probe.
+    // other supported DB handle this correctly.
     @Test @Ignore("sqlite4java: no text→numeric affinity on computed expression RHS")
     override fun testSqlFacetNumericComputed() {}
 
@@ -42,10 +44,6 @@ class AndroidPagedListTest : PagedListTest() {
 }
 @RunWith(RobolectricTestRunner::class) class AndroidProcedureTest : ProcedureTest()
 
-// --- jvmBasedTest classes (shared JVM/Android, need Robolectric on Android) ---
+// jvmBasedTest classes — shared JVM/Android, need Robolectric on Android.
 @RunWith(RobolectricTestRunner::class) class AndroidJavaTemporalConversionTest : JavaTemporalConversionTest()
 @RunWith(RobolectricTestRunner::class) class AndroidReflectionTest : onl.ycode.stormify.test.ReflectionTest()
-// PagedListPathTest: KSP-generated Paths resolve per-target — jvmBasedTest
-// can't see them. The underlying PagedList functionality is fully covered by
-// AndroidPagedListTest (119 tests); the path tests add type-safe column
-// resolution which is platform-independent.

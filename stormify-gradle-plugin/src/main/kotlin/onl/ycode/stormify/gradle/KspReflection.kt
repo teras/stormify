@@ -4,8 +4,23 @@
 package onl.ycode.stormify.gradle
 
 import org.gradle.api.GradleException
+import org.gradle.api.Project
 import org.gradle.api.Task
 import org.gradle.api.provider.MapProperty
+
+/**
+ * Wire the `stormify.metaOutputDir` processor option (and declare [metaDirPath]
+ * as a task output) on every KSP task whose name is in [kspTaskNames].
+ * Declaring the dir as an output lets Gradle re-run KSP after `clean` —
+ * annproc writes JSONs there via plain Java I/O, which the up-to-date check
+ * would otherwise miss.
+ */
+internal fun wireKspMetaDir(project: Project, kspTaskNames: Set<String>, metaDirPath: String) {
+    project.tasks.matching { it.name in kspTaskNames }.configureEach { task ->
+        setKspProcessorOption(task, "stormify.metaOutputDir", metaDirPath)
+        task.outputs.dir(metaDirPath)
+    }
+}
 
 /**
  * Reflectively set a per-task KSP processor option. `kspConfig.processorOptions`

@@ -6,6 +6,12 @@ import kotlinx.datetime.LocalDate
 import onl.ycode.stormify.*
 import onl.ycode.stormify.biglist.HumanReadable
 
+@DbTable(name = "ct_test")
+class CrudTableRow(
+    @DbField(primaryKey = true) var id: Int = 0,
+    var name: String? = null,
+) : CRUDTable
+
 @DbTable(name = "test")
 data class TestC(
     var id: Int = 0,
