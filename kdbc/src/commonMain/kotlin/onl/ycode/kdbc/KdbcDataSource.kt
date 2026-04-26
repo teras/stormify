@@ -20,6 +20,12 @@ package onl.ycode.kdbc
  * Unknown URL parameters (e.g. `ssl=true`, `connectTimeout=10`) that the underlying C
  * driver does not recognize are emitted as warnings via the logger, not silently ignored.
  *
+ * [initSql] is a single SQL statement executed on every freshly opened connection before
+ * it is returned to the caller — equivalent to HikariCP's `connectionInitSql`. Typical
+ * uses: `PRAGMA foreign_keys = ON` for SQLite, session settings (`SET TIME ZONE 'UTC'`)
+ * for PostgreSQL/Oracle. If the statement fails the connection is closed and the
+ * exception propagates.
+ *
  * Example:
  * ```kotlin
  * val ds = KdbcDataSource("jdbc:postgresql://localhost:5432/mydb", "user", "pass")
@@ -29,5 +35,24 @@ package onl.ycode.kdbc
 expect fun KdbcDataSource(
     url: String,
     user: String? = null,
-    password: String? = null
+    password: String? = null,
+    initSql: String? = null
 ): DataSource
+
+/**
+ * Runs [initSql] on this freshly opened connection. If the statement fails the
+ * connection is closed and the exception propagates. No-op when [initSql] is null.
+ *
+ * Used by the platform DataSource wrappers to apply per-connection initialization
+ * (e.g. `PRAGMA foreign_keys = ON`).
+ */
+internal fun Connection.runInitSql(initSql: String?): Connection {
+    if (initSql == null) return this
+    try {
+        initStatement(initSql, false, null).use { it.executeUpdate() }
+    } catch (e: Throwable) {
+        try { close() } catch (_: Throwable) {}
+        throw e
+    }
+    return this
+}

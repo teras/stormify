@@ -28,9 +28,17 @@ import kotlin.reflect.KClass
  * The wrapped database is **not** owned by the data source — calling [Connection.close]
  * does not close the underlying [SQLiteDatabase]. Lifecycle of the database is the
  * caller's responsibility (typically tied to the Android `Application` lifetime).
+ *
+ * [initSql] is a single SQL statement executed on every [getConnection] call before the
+ * connection is returned — equivalent to HikariCP's `connectionInitSql`. Typical use:
+ * `PRAGMA foreign_keys = ON`. Note that Android wraps a single shared [SQLiteDatabase],
+ * so the statement runs once per borrow even though the underlying handle is reused.
  */
-class AndroidDataSource(private val db: SQLiteDatabase) : DataSource {
-    override fun getConnection(): Connection = AndroidConnection(db)
+class AndroidDataSource(
+    private val db: SQLiteDatabase,
+    private val initSql: String? = null
+) : DataSource {
+    override fun getConnection(): Connection = AndroidConnection(db).runInitSql(initSql)
 }
 
 /**

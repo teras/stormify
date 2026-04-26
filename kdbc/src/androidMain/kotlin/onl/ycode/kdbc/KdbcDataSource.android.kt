@@ -11,7 +11,8 @@ package onl.ycode.kdbc
 actual fun KdbcDataSource(
     url: String,
     user: String?,
-    password: String?
+    password: String?,
+    initSql: String?
 ): DataSource {
     throw SQLException(
         "KdbcDataSource(url) is not implemented on Android. " +

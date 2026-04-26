@@ -204,16 +204,23 @@ private class JdbcPgCallableStatement(
 /**
  * JDBC DataSource wrapper that implements KDBC DataSource interface.
  *
+ * [initSql] is a single SQL statement executed on every freshly opened connection before
+ * it is returned to the caller — equivalent to HikariCP's `connectionInitSql`. If the
+ * statement fails the connection is closed and the exception propagates.
+ *
  * Usage:
  * ```kotlin
  * val hikariDS = HikariDataSource(config)
  * val stormify = Stormify(hikariDS)  // Uses convenience function
  * // or
- * val stormify = Stormify(JdbcDataSource(hikariDS))  // Direct wrapper
+ * val stormify = Stormify(JdbcDataSource(hikariDS, initSql = "PRAGMA foreign_keys = ON"))
  * ```
  */
-class JdbcDataSource(private val jdbc: javax.sql.DataSource) : DataSource {
-    override fun getConnection(): Connection = JdbcConnection(jdbc.connection)
+class JdbcDataSource(
+    private val jdbc: javax.sql.DataSource,
+    private val initSql: String? = null
+) : DataSource {
+    override fun getConnection(): Connection = JdbcConnection(jdbc.connection).runInitSql(initSql)
 }
 
 // Wrapper class for Connection

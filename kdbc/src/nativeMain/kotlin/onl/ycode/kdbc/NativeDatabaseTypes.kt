@@ -64,7 +64,8 @@ class NativeKdbcDataSource internal constructor(
     private val kind: KdbcDriverKind,
     private val nativeUrl: String,
     private val user: String?,
-    private val password: String?
+    private val password: String?,
+    private val initSql: String? = null
 ) : DataSource {
 
     init {
@@ -86,7 +87,7 @@ class NativeKdbcDataSource internal constructor(
         if (conn == null) {
             throw SQLException("Failed to connect to $kind ($nativeUrl): ${connError(null, "unknown error")}")
         }
-        return NativeConnection(conn, kind)
+        return NativeConnection(conn, kind).runInitSql(initSql)
     }
 }
 
