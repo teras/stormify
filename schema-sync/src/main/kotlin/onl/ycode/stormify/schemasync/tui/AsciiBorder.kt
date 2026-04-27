@@ -32,6 +32,9 @@ class AsciiBorder(private val title: String) : AbstractBorder() {
             val h = graphics.size.rows
             if (w < 2 || h < 2) return
 
+            val themeDef = component.themeDefinition
+            graphics.applyThemeStyle(themeDef.normal)
+
             graphics.setCharacter(0, 0, '+')
             graphics.setCharacter(w - 1, 0, '+')
             graphics.setCharacter(0, h - 1, '+')
@@ -46,7 +49,9 @@ class AsciiBorder(private val title: String) : AbstractBorder() {
             }
 
             if (title.isNotEmpty() && w >= title.length + 4) {
+                graphics.applyThemeStyle(themeDef.active)
                 graphics.putString(2, 0, " $title ")
+                graphics.applyThemeStyle(themeDef.normal)
             }
 
             val wrapped = component.component ?: return

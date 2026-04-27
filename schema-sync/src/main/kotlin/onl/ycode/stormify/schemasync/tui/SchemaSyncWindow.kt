@@ -44,7 +44,7 @@ fun runSchemaSync(
     title: String = "Stormify Schema Sync",
 ) {
     val gui = MultiWindowTextGUI(screen, DefaultWindowManager(), EmptySpace(TextColor.ANSI.DEFAULT))
-    val themeNames = listOf("default", "businessmachine", "blaster", "bigsnake", "defrost")
+    val themeNames = listOf("default", "businessmachine", "blaster", "bigsnake", "conqueror", "defrost")
     var themeIdx = 0
     fun applyTheme() {
         LanternaThemes.getRegisteredTheme(themeNames[themeIdx])?.let { gui.theme = it }
@@ -164,7 +164,9 @@ fun runSchemaSync(
     filterRow.addComponent(hideSyncedBox)
 
     val headerLabel = Label(formatter.headerRow())
-    val ruleLabel = Label(formatter.headerRule())
+    val ruleLabel = HeaderRule(formatter.crossColumn).apply {
+        layoutData = LinearLayout.createLayoutData(LinearLayout.Alignment.Fill)
+    }
     val listWithHeader = Panel(LinearLayout(Direction.VERTICAL).setSpacing(0))
     listWithHeader.addComponent(headerLabel)
     listWithHeader.addComponent(ruleLabel)
@@ -254,7 +256,11 @@ fun runSchemaSync(
                     hasBeenHandled.set(true)
                 }
                 keyStroke.keyType == KeyType.F2 -> {
-                    themeIdx = (themeIdx + 1) % themeNames.size
+                    themeIdx = if (keyStroke.isShiftDown) {
+                        (themeIdx - 1 + themeNames.size) % themeNames.size
+                    } else {
+                        (themeIdx + 1) % themeNames.size
+                    }
                     applyTheme()
                     refreshStatus()
                     gui.screen.refresh()

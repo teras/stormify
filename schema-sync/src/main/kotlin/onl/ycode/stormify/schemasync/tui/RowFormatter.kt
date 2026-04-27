@@ -12,8 +12,8 @@ class RowFormatter(entries: List<TableEntry>) {
     fun headerRow(): String =
         "     ${"table".fit(tableWidth)} ${Symbols.vbar} ${"entity".fit(entityWidth)} "
 
-    fun headerRule(): String =
-        Symbols.hbar.repeat(5 + tableWidth) + Symbols.cross + Symbols.hbar.repeat(entityWidth + 1)
+    /** Column index where the row separator (`│`) sits. Used by HeaderRule to place its cross. */
+    val crossColumn: Int get() = 1 + 2 + 2 + tableWidth + 1
 
     val leftPaneWidth: Int get() = 1 + 2 + 2 + tableWidth + 3 + entityWidth + 1 + 2 + 2
 }

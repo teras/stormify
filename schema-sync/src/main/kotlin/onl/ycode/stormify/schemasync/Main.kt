@@ -9,8 +9,20 @@ import onl.ycode.stormify.schemasync.fixture.fixtureTables
 import onl.ycode.stormify.schemasync.tui.Symbols
 import onl.ycode.stormify.schemasync.tui.runSchemaSync
 
+private const val USAGE = """Usage: schema-sync [options]
+
+Options:
+  --ascii        Render the TUI using only ASCII characters (no Unicode box drawing).
+  -h, --help     Show this help message and exit.
+"""
+
 fun main(args: Array<String>) {
+    if (args.any { it == "-h" || it == "--help" }) {
+        print(USAGE)
+        return
+    }
     Symbols.ascii = args.contains("--ascii")
+
     val factory = DefaultTerminalFactory()
         .setMouseCaptureMode(MouseCaptureMode.CLICK_RELEASE)
     val terminal = factory.createTerminal()
