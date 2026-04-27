@@ -79,3 +79,4 @@ docs/build-landing/
 docs/src/api-stormify/
 docs/src/api-kdbc-kotlin/
 docs/src/kdbc-c/
+.schema-sync.toml

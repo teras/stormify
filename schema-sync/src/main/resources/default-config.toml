@@ -1,0 +1,193 @@
+# Stormify schema-sync default configuration.
+#
+# This file is bundled inside the schema-sync jar. On first launch the tool
+# copies it to `.schema-sync.toml` in your project root. From that point on
+# you own it — the tool never overwrites your edits.
+#
+# Three sections:
+#   [[slots.<category>]]   Slot definitions (≤ 9 per category).
+#   [[seeds.<category>]]   Seed vocabularies, one entry per slot.
+
+# === Text slots ============================================================
+
+[[slots.text]]
+name = "char"
+length = 1
+
+[[slots.text]]
+name = "short"
+length = 10
+
+[[slots.text]]
+name = "name"
+length = 50
+
+[[slots.text]]
+name = "tweet"
+length = 150
+
+[[slots.text]]
+name = "line"
+length = 200
+
+[[slots.text]]
+name = "page"
+length = 1000
+
+[[slots.text]]
+name = "text"
+# no `length` key → unbounded TEXT/CLOB
+
+# === Integral slots ========================================================
+
+[[slots.integral]]
+name = "flag"
+digits = 1
+
+[[slots.integral]]
+name = "percent"
+digits = 2
+
+[[slots.integral]]
+name = "permille"
+digits = 3
+
+[[slots.integral]]
+name = "int"
+digits = 10
+
+[[slots.integral]]
+name = "long"
+digits = 19
+
+# === Decimal slots =========================================================
+
+[[slots.decimal]]
+name = "small"
+precision = 3
+scale = 2
+
+[[slots.decimal]]
+name = "tenth"
+precision = 5
+scale = 1
+
+[[slots.decimal]]
+name = "money"
+precision = 14
+scale = 2
+
+[[slots.decimal]]
+name = "volume"
+precision = 11
+scale = 3
+
+[[slots.decimal]]
+name = "precise"
+precision = 12
+scale = 4
+
+[[slots.decimal]]
+name = "ppm"
+precision = 10
+scale = 5
+
+[[slots.decimal]]
+name = "geo"
+precision = 9
+scale = 6
+
+[[slots.decimal]]
+name = "nano"
+precision = 15
+scale = 7
+
+[[slots.decimal]]
+name = "rate"
+precision = 19
+scale = 8
+
+# === Seed vocabularies =====================================================
+# These give the classifier a useful cold start. Add your own column names
+# here in the language and convention of your project — anything you add is
+# treated like a confirmed assignment to that slot.
+
+[[seeds.text]]
+slot = "char"
+words = ["marker", "indicator", "letter", "gender", "size_code", "side", "initial", "symbol", "type_code", "rating_letter", "shortcut", "char_code"]
+
+[[seeds.text]]
+slot = "short"
+words = ["code", "sku", "ref", "iso", "kind", "type", "status_code", "currency", "lang", "locale", "country", "tag", "abbrev", "acronym", "prefix", "suffix", "color_code", "department_code", "branch_code", "ticker", "error_code", "country_code", "language_code", "timezone_code", "badge", "hex_color", "airline_code", "airport_code", "bank_code"]
+
+[[seeds.text]]
+slot = "name"
+words = ["name", "title", "label", "first_name", "last_name", "full_name", "company", "username", "display_name", "nickname", "brand", "middle_name", "given_name", "surname", "maiden_name", "alias", "handle", "department", "division", "role", "position_title", "job_title", "organization", "org_name", "vendor", "author", "artist", "publisher", "team_name", "group_name", "account_name", "project_name", "category_name", "tag_name"]
+
+[[seeds.text]]
+slot = "tweet"
+words = ["subject", "headline", "message", "summary", "caption", "tagline", "quote", "bio", "status_message", "alert", "notification_title", "reason", "lead", "hook", "byline", "teaser", "subtitle", "short_description", "intro_line", "alert_text"]
+
+[[seeds.text]]
+slot = "line"
+words = ["address", "street", "address_line", "url", "email", "website", "phone", "location", "filename", "filepath", "slug", "link", "source_url", "image_url", "photo_url", "thumbnail_url", "icon_url", "href", "canonical_url", "domain", "hostname", "subdomain", "directory", "ip_address", "mac_address", "redirect_url", "referrer", "permalink", "video_url", "audio_url", "avatar_url", "callback_url", "webhook_url", "api_url", "endpoint", "user_agent", "secret_token", "auth_token", "share_url", "qr_data"]
+
+[[seeds.text]]
+slot = "page"
+words = ["synopsis", "abstract", "blurb", "intro", "preview", "excerpt", "snippet", "summary_long", "description_short", "lead_paragraph", "teaser_long", "preface", "foreword", "kicker", "opening", "intro_text", "tldr", "executive_summary", "highlight"]
+
+[[seeds.text]]
+slot = "text"
+words = ["description", "notes", "body", "content", "remarks", "comment", "details", "memo", "log", "html", "json", "raw", "article_body", "post_content", "comment_text", "review_text", "feedback", "testimonial", "story", "narrative", "changelog", "release_notes", "readme", "manual", "documentation", "terms", "policy", "stack_trace", "error_trace", "debug_info", "markdown", "xml", "yaml", "csv", "sql", "source_code", "payload", "serialized_data", "transcript", "answer", "question", "report", "response", "request_body", "response_body", "raw_html", "raw_text"]
+
+[[seeds.integral]]
+slot = "flag"
+words = ["flag", "enabled", "active", "deleted", "verified", "is_active", "is_deleted", "is_admin", "is_verified", "is_published", "is_archived", "approved", "rejected", "pending", "locked", "unlocked", "public", "private", "visible", "hidden", "featured", "sticky", "is_default", "primary_flag", "has_children", "has_image", "can_edit", "can_delete", "read", "unread", "muted", "starred", "favorite", "subscribed"]
+
+[[seeds.integral]]
+slot = "percent"
+words = ["percent", "percentage", "completion", "progress", "confidence", "opacity", "alpha", "utilization", "load_factor", "capacity_pct", "usage_pct", "probability", "chance", "share", "portion", "fraction", "grade_pct", "score_pct", "discount_pct", "tax_pct", "approval_rate", "humidity", "battery_level"]
+
+[[seeds.integral]]
+slot = "permille"
+words = ["permille", "thousandth", "per_thousand", "mortality_rate", "birth_rate", "infant_mortality", "ratio_per_thousand"]
+
+[[seeds.integral]]
+slot = "int"
+words = ["count", "quantity", "qty", "items", "year", "month", "day", "version", "revision", "rank", "position", "order", "priority", "level", "depth", "width", "height", "duration_minutes", "num", "number", "total_count", "item_count", "row_count", "record_count", "hits", "views", "clicks", "impressions", "downloads", "uploads", "plays", "likes", "shares", "comments_count", "replies_count", "children_count", "days", "hours", "minutes", "seconds", "port", "duration", "duration_seconds", "duration_ms", "threshold", "limit", "max_value", "min_value", "capacity", "retry_count", "attempts", "sequence", "index", "offset", "page_number", "page_size", "rows_per_page", "ttl", "quota", "line_number", "sort_order", "display_order", "fps", "elo", "score_int", "stock", "inventory_count", "reorder_level"]
+
+[[seeds.integral]]
+slot = "long"
+words = ["id", "user_id", "order_id", "product_id", "parent_id", "timestamp", "millis", "epoch", "size", "bytes", "length", "external_id", "reference_id", "uid", "account_id", "customer_id", "vendor_id", "supplier_id", "tenant_id", "organization_id", "group_id", "session_id", "request_id", "transaction_id", "file_id", "document_id", "attachment_id", "article_id", "post_id", "comment_id", "team_id", "department_id", "division_id", "role_id", "permission_id", "tag_id", "category_id", "label_id", "log_id", "event_id", "audit_id", "notification_id", "message_id", "thread_id", "owner_id", "created_by_id", "updated_by_id", "deleted_by_id", "modified_by_id", "approver_id", "reviewer_id", "assignee_id", "file_size", "total_size", "content_length", "bytes_total", "bytes_processed", "version_long", "serial_number", "epoch_seconds", "epoch_millis", "epoch_nanos", "unix_time", "created_at_millis", "updated_at_millis", "process_id", "thread_id_long", "imei", "barcode_long"]
+
+[[seeds.decimal]]
+slot = "tenth"
+words = ["temperature", "score", "rating", "stars", "grade", "rating_avg", "average_score", "aqi", "ph", "body_temp", "celsius", "fahrenheit", "magnitude", "intensity", "fuel_efficiency", "miles_per_gallon", "kilometers_per_liter", "bmi", "hours_decimal", "growth_pct", "average_rating", "decimal_score", "richter"]
+
+[[seeds.decimal]]
+slot = "money"
+words = ["amount", "total", "cost", "price", "fee", "balance", "payment", "value", "subtotal", "tax", "discount", "charge", "net", "gross", "credit", "debit", "deposit", "refund", "salary", "wage", "income", "revenue", "expense", "profit", "loss", "earnings", "gain", "tip", "gratuity", "shipping", "delivery_fee", "handling_fee", "service_fee", "admin_fee", "processing_fee", "sales_tax", "vat", "gst", "markup", "price_markdown", "margin", "gross_margin", "cogs", "opex", "capex", "assets", "liabilities", "equity", "investment", "principal", "interest_amount", "dividend", "dividends", "commission", "royalty", "rent", "mortgage", "lease", "insurance", "premium", "fine", "penalty", "reward", "bonus", "allowance", "stipend", "pension", "retirement", "debt", "loan_amount", "amount_due", "balance_due", "owed", "paid", "received", "paid_amount", "withdrawal", "transfer_amount", "cash", "retail_price", "wholesale_price", "msrp", "list_price", "unit_price", "line_total", "line_amount", "order_total", "invoice_total", "bill_total", "inventory_value", "donation", "contribution", "savings", "cost_basis", "face_value", "par_value", "book_value", "market_value", "fair_value", "replacement_cost", "depreciation", "tax_amount", "tax_due", "tax_paid", "tip_amount", "shipping_cost", "freight", "duty", "tariff"]
+
+[[seeds.decimal]]
+slot = "volume"
+words = ["weight", "volume", "mass", "kilograms", "grams", "liters", "milliliters", "cubic_meters", "kg", "g", "mg", "ton", "tons", "lb", "oz", "pound", "ounce", "liter", "gallon", "gallons", "cc", "cubic_centimeters", "cubic_inches", "cubic_feet", "barrels", "pints", "quarts", "net_weight", "gross_weight", "tare_weight", "shipping_weight", "length_m", "length_meters", "width_m", "height_m", "meters", "centimeters", "millimeters", "feet", "inches", "distance_km", "distance_miles", "mileage", "odometer", "fuel_consumption", "flow_rate", "dose", "dosage", "concentration", "density", "capacity_volume", "package_weight", "carton_weight", "load_weight", "container_volume", "tank_volume"]
+
+[[seeds.decimal]]
+slot = "precise"
+words = ["rate", "tax_rate", "interest_rate", "discount_rate", "ratio", "factor", "multiplier", "apy", "apr", "growth_rate", "decay_rate", "inflation_rate", "markup_rate", "margin_rate", "return_rate", "roi", "yield", "yield_rate", "gini", "correlation", "efficiency", "performance_ratio", "leverage", "debt_ratio", "liquidity_ratio", "turnover_ratio", "probability_precise", "p_value", "r_squared", "dividend_yield", "savings_rate", "utilization_rate", "default_rate", "error_rate", "failure_rate", "success_rate", "completion_rate_decimal", "bounce_rate", "conversion_pct", "retention_rate", "churn_rate", "participation_rate", "employment_rate", "unemployment_rate", "mortality_rate_decimal", "score_decimal", "rating_decimal", "weight_factor", "tax_factor", "fudge_factor", "alpha_stat", "beta_stat", "delta_pct"]
+
+[[seeds.decimal]]
+slot = "ppm"
+words = ["ppm", "parts_per_million", "concentration_ppm", "trace_amount", "small_ratio", "small_fraction", "micro_share", "tracer", "impurity_level", "molarity", "trace_concentration", "ppm_value", "contamination_level", "salinity_ppm", "co2_ppm"]
+
+[[seeds.decimal]]
+slot = "geo"
+words = ["latitude", "longitude", "lat", "lng", "lon", "coordinate", "altitude", "bearing", "x_coord", "y_coord", "z_coord", "coord", "position_x", "position_y", "position_z", "location_lat", "location_lng", "geo_lat", "geo_lng", "point_x", "point_y", "heading", "azimuth", "elevation", "tilt", "center_lat", "center_lng", "origin_lat", "origin_lng", "destination_lat", "destination_lng", "start_lat", "start_lng", "end_lat", "end_lng", "utm_x", "utm_y", "mercator_x", "mercator_y", "polygon_lat", "polygon_lng", "altitude_m"]
+
+[[seeds.decimal]]
+slot = "nano"
+words = ["nano", "ppb", "parts_per_billion", "high_precision", "scientific_value", "voltage_precise", "current_amp", "frequency_hz", "resistance_ohm", "capacitance", "inductance", "small_measurement", "precise_measurement", "quantum_value", "ultrafine", "trace_ppb", "molecular_concentration"]
+
+[[seeds.decimal]]
+slot = "rate"
+words = ["exchange_rate", "fx_rate", "conversion_rate", "btc_rate", "crypto_price", "crypto_amount", "eth_balance", "btc_balance", "satoshi", "exchange_amount", "asset_price", "bond_yield", "hash_difficulty", "mining_reward", "gas_price", "gas_fee", "network_fee", "transaction_amount_crypto", "wei", "asset_rate", "wholesale_rate", "spot_price", "tick_value", "high_precision_amount"]

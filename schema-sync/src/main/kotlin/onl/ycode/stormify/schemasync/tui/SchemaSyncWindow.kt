@@ -27,6 +27,7 @@ import com.googlecode.lanterna.input.KeyType
 import com.googlecode.lanterna.input.MouseAction
 import com.googlecode.lanterna.input.MouseActionType
 import com.googlecode.lanterna.screen.Screen
+import onl.ycode.stormify.schemasync.config.ConfigState
 import onl.ycode.stormify.schemasync.model.ColumnDiff
 import onl.ycode.stormify.schemasync.model.TableEntry
 import onl.ycode.stormify.schemasync.model.TableStatus
@@ -39,6 +40,7 @@ private const val DOUBLE_CLICK_MS = 400L
 
 fun runSchemaSync(
     screen: Screen,
+    configState: ConfigState,
     tables: List<TableEntry>,
     diffs: Map<String, List<ColumnDiff>>,
     title: String = "Stormify Schema Sync",
@@ -60,7 +62,7 @@ fun runSchemaSync(
     fun refreshStatus() {
         statusLabel.text =
             "${tables.size} tables · ${tables.count { it.status == TableStatus.DIFF }} with diffs · " +
-                "↑↓ PgUp PgDn · Space cycle · / filter · Tab panes · Enter apply · Esc cancel · F2 [${themeNames[themeIdx]}]"
+                "↑↓ Space / Tab Enter Esc · F2 [${themeNames[themeIdx]}] · F3 slots"
     }
     refreshStatus()
     root.addComponent(statusLabel)
@@ -264,6 +266,10 @@ fun runSchemaSync(
                     applyTheme()
                     refreshStatus()
                     gui.screen.refresh()
+                    hasBeenHandled.set(true)
+                }
+                keyStroke.keyType == KeyType.F3 -> {
+                    runSlotsView(gui, configState)
                     hasBeenHandled.set(true)
                 }
                 keyStroke.character == 'q' || keyStroke.character == 'Q' -> {

@@ -4,6 +4,8 @@ import com.googlecode.lanterna.screen.Screen
 import com.googlecode.lanterna.screen.TerminalScreen
 import com.googlecode.lanterna.terminal.DefaultTerminalFactory
 import com.googlecode.lanterna.terminal.MouseCaptureMode
+import onl.ycode.stormify.schemasync.config.ConfigState
+import onl.ycode.stormify.schemasync.config.ConfigStore
 import onl.ycode.stormify.schemasync.fixture.fixtureDiffs
 import onl.ycode.stormify.schemasync.fixture.fixtureTables
 import onl.ycode.stormify.schemasync.tui.Symbols
@@ -23,6 +25,10 @@ fun main(args: Array<String>) {
     }
     Symbols.ascii = args.contains("--ascii")
 
+    val store = ConfigStore.forCurrentDirectory()
+    val configResult = store.load()
+    val state = ConfigState(configResult.config, store)
+
     val factory = DefaultTerminalFactory()
         .setMouseCaptureMode(MouseCaptureMode.CLICK_RELEASE)
     val terminal = factory.createTerminal()
@@ -31,6 +37,7 @@ fun main(args: Array<String>) {
     try {
         runSchemaSync(
             screen = screen,
+            configState = state,
             tables = fixtureTables,
             diffs = fixtureDiffs,
             title = "Stormify Schema Sync — jdbc:postgresql://localhost:5432/myapp",

@@ -1,5 +1,6 @@
 plugins {
     kotlin("jvm") version "2.2.21"
+    kotlin("plugin.serialization") version "2.2.21"
     application
 }
 
@@ -11,6 +12,8 @@ dependencies {
     implementation("com.googlecode.lanterna:lanterna:3.1.2")
     implementation("org.apache.lucene:lucene-core:9.11.1")
     implementation("org.apache.lucene:lucene-analysis-common:9.11.1")
+    implementation("com.akuleshov7:ktoml-core:0.7.0")
+    implementation("com.akuleshov7:ktoml-file:0.7.0")
 }
 
 application {
@@ -23,6 +26,13 @@ kotlin {
 
 tasks.named<JavaExec>("run") {
     standardInput = System.`in`
+}
+
+tasks.register<JavaExec>("classifierDemo") {
+    group = "verification"
+    description = "Runs the classifier smoke test against built-in seeds"
+    classpath = sourceSets.main.get().runtimeClasspath
+    mainClass = "onl.ycode.stormify.schemasync.classifier.ClassifierDemoKt"
 }
 
 tasks.register<Jar>("fatJar") {

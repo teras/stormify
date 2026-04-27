@@ -1,16 +1,20 @@
 package onl.ycode.stormify.schemasync.model
 
+import kotlinx.serialization.Serializable
+
 enum class SlotCategory { TEXT, INTEGRAL, DECIMAL }
 
 const val MAX_SLOTS_PER_CATEGORY = 9
 
+@Serializable
 data class TextSlot(
     val name: String,
-    val length: Int?,
+    val length: Int? = null,
 ) {
     val ddl: String get() = if (length == null) "TEXT" else "VARCHAR($length)"
 }
 
+@Serializable
 data class IntegralSlot(
     val name: String,
     val digits: Int,
@@ -18,6 +22,7 @@ data class IntegralSlot(
     val ddl: String get() = "NUMERIC($digits)"
 }
 
+@Serializable
 data class DecimalSlot(
     val name: String,
     val precision: Int,
@@ -26,6 +31,7 @@ data class DecimalSlot(
     val ddl: String get() = "NUMERIC($precision,$scale)"
 }
 
+@Serializable
 data class SlotProfile(
     val text: List<TextSlot>,
     val integral: List<IntegralSlot>,
@@ -37,30 +43,3 @@ data class SlotProfile(
         require(decimal.size <= MAX_SLOTS_PER_CATEGORY) { "Too many DECIMAL slots (${decimal.size}), max $MAX_SLOTS_PER_CATEGORY" }
     }
 }
-
-fun defaultSlotProfile(): SlotProfile = SlotProfile(
-    text = listOf(
-        TextSlot("char", 1),
-        TextSlot("short", 10),
-        TextSlot("name", 50),
-        TextSlot("tweet", 150),
-        TextSlot("line", 200),
-        TextSlot("page", 1000),
-        TextSlot("text", null),
-    ),
-    integral = listOf(
-        IntegralSlot("flag", 1),
-        IntegralSlot("percent", 2),
-        IntegralSlot("permille", 3),
-        IntegralSlot("int", 10),
-        IntegralSlot("long", 19),
-    ),
-    decimal = listOf(
-        DecimalSlot("tenth", 19, 1),
-        DecimalSlot("money", 19, 2),
-        DecimalSlot("volume", 19, 3),
-        DecimalSlot("precise", 19, 4),
-        DecimalSlot("geo", 19, 6),
-        DecimalSlot("rate", 19, 8),
-    ),
-)
