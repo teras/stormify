@@ -27,33 +27,42 @@ open class TypeMatrixTestJava {
     private val EPOCH_MS = 1_700_000_000_000L
 
     // --- Temporal Java ---
-    @Test fun javaUtilDate() = runTypeMatrix("javaUtilDate", UtilDate(EPOCH_MS))
-    @Test fun javaSqlDate() = runTypeMatrix("javaSqlDate", SqlDate(EPOCH_MS))
-    @Test fun javaSqlTime() = runTypeMatrix("javaSqlTime", SqlTime(EPOCH_MS))
-    @Test fun javaSqlTimestamp() = runTypeMatrix("javaSqlTimestamp", SqlTimestamp(EPOCH_MS))
-    @Test fun javaTimeLocalDate() = runTypeMatrix("javaTimeLocalDate", JtLocalDate.of(2024, 6, 15))
-    @Test fun javaTimeLocalTime() = runTypeMatrix("javaTimeLocalTime", JtLocalTime.of(14, 30, 45))
+    @Test fun javaUtilDate() = runTypeMatrix("javaUtilDate", UtilDate(EPOCH_MS), DATE_TIME_TIMESTAMP)
+    @Test fun javaSqlDate() = runTypeMatrix("javaSqlDate", SqlDate(EPOCH_MS), DATE_AND_TIMESTAMP)
+    @Test fun javaSqlTime() = runTypeMatrix("javaSqlTime", SqlTime(EPOCH_MS), TIME_ONLY)
+    @Test fun javaSqlTimestamp() = runTypeMatrix("javaSqlTimestamp", SqlTimestamp(EPOCH_MS), DATE_TIME_TIMESTAMP)
+    @Test fun javaTimeLocalDate() =
+        runTypeMatrix("javaTimeLocalDate", JtLocalDate.of(2024, 6, 15), DATE_AND_TIMESTAMP)
+    @Test fun javaTimeLocalTime() =
+        runTypeMatrix("javaTimeLocalTime", JtLocalTime.of(14, 30, 45), TIME_ONLY)
     @Test fun javaTimeLocalDateTime() = runTypeMatrix(
         "javaTimeLocalDateTime",
         JtLocalDateTime.of(2024, 6, 15, 14, 30, 45),
+        DATE_TIME_TIMESTAMP,
     )
-    @Test fun javaTimeInstant() = runTypeMatrix("javaTimeInstant", JtInstant.ofEpochSecond(1_700_000_000L))
+    @Test fun javaTimeInstant() =
+        runTypeMatrix("javaTimeInstant", JtInstant.ofEpochSecond(1_700_000_000L), TIMESTAMP_ONLY)
     @Test fun javaTimeOffsetDateTime() = runTypeMatrix(
         "javaTimeOffsetDateTime",
         OffsetDateTime.of(JtLocalDateTime.of(2024, 6, 15, 14, 30, 45), ZoneOffset.UTC),
+        DATE_TIME_TIMESTAMP,
     )
     @Test fun javaTimeZonedDateTime() = runTypeMatrix(
         "javaTimeZonedDateTime",
         ZonedDateTime.of(JtLocalDateTime.of(2024, 6, 15, 14, 30, 45), ZoneOffset.UTC),
+        DATE_TIME_TIMESTAMP,
     )
 
     // --- Numeric large (java.math) ---
-    @Test fun javaMathBigDecimal() = runTypeMatrix("javaMathBigDecimal", JmBigDecimal("123456789.123456"))
-    @Test fun javaMathBigInteger() = runTypeMatrix("javaMathBigInteger", JmBigInteger("123456789012345"))
+    @Test fun javaMathBigDecimal() =
+        runTypeMatrix("javaMathBigDecimal", JmBigDecimal("123"), NUMERIC_LIKE)
+    @Test fun javaMathBigInteger() =
+        runTypeMatrix("javaMathBigInteger", JmBigInteger("12345"), NUMERIC_LIKE)
 
     // --- Other ---
     @Test fun javaUtilUuid() = runTypeMatrix(
         "javaUtilUUID",
         UUID.fromString("12345678-1234-1234-1234-123456789012"),
+        TEXT_ONLY,
     )
 }

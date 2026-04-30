@@ -212,21 +212,21 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: test-bin-linuxX64
-          path: stormify/build/bin/linuxX64/debugTest/
+          path: tests/conformance/build/bin/linuxX64/debugTest/
           if-no-files-found: error
           retention-days: 1
 
       - uses: actions/upload-artifact@v4
         with:
           name: test-bin-linuxArm64
-          path: stormify/build/bin/linuxArm64/debugTest/
+          path: tests/conformance/build/bin/linuxArm64/debugTest/
           if-no-files-found: error
           retention-days: 1
 
       - uses: actions/upload-artifact@v4
         with:
           name: test-bin-mingwX64
-          path: stormify/build/bin/mingwX64/debugTest/
+          path: tests/conformance/build/bin/mingwX64/debugTest/
           if-no-files-found: error
           retention-days: 1
 
@@ -296,7 +296,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: test-bin-macosArm64
-          path: stormify/build/bin/macosArm64/debugTest/
+          path: tests/conformance/build/bin/macosArm64/debugTest/
           if-no-files-found: error
           retention-days: 1
 
@@ -328,6 +328,14 @@ jobs:
         with:
           gradle-version: '9.3.1'
 
+      - name: Install cross-compilers
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends \
+            mingw-w64 gcc-aarch64-linux-gnu libc6-dev-arm64-cross
+
       - name: Start database
         if: matrix.db != 'sqlite'
         run: testing/test.sh up ${{ matrix.db }}
@@ -356,6 +364,14 @@ jobs:
         uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '9.3.1'
+
+      - name: Install cross-compilers
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends \
+            mingw-w64 gcc-aarch64-linux-gnu libc6-dev-arm64-cross
 
       - name: Run Android unit tests
         run: testing/test.sh android
@@ -399,10 +415,10 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: test-bin-linuxX64
-          path: stormify/build/bin/linuxX64/debugTest/
+          path: tests/conformance/build/bin/linuxX64/debugTest/
 
       - name: Make test binary executable
-        run: chmod +x stormify/build/bin/linuxX64/debugTest/test.kexe
+        run: chmod +x tests/conformance/build/bin/linuxX64/debugTest/test.kexe
 
       - name: Start database
         if: matrix.db != 'sqlite'
@@ -411,7 +427,7 @@ jobs:
       - name: Run tests (prebuilt binary)
         env:
           STORMIFY_TEST_DB: ${{ matrix.db }}
-        run: stormify/build/bin/linuxX64/debugTest/test.kexe
+        run: tests/conformance/build/bin/linuxX64/debugTest/test.kexe
 
       - name: Stop database
         if: always() && matrix.db != 'sqlite'
@@ -447,10 +463,10 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: test-bin-linuxArm64
-          path: stormify/build/bin/linuxArm64/debugTest/
+          path: tests/conformance/build/bin/linuxArm64/debugTest/
 
       - name: Make test binary executable
-        run: chmod +x stormify/build/bin/linuxArm64/debugTest/test.kexe
+        run: chmod +x tests/conformance/build/bin/linuxArm64/debugTest/test.kexe
 
       - name: Start database
         if: matrix.db != 'sqlite'
@@ -459,7 +475,7 @@ jobs:
       - name: Run tests (prebuilt binary)
         env:
           STORMIFY_TEST_DB: ${{ matrix.db }}
-        run: stormify/build/bin/linuxArm64/debugTest/test.kexe
+        run: tests/conformance/build/bin/linuxArm64/debugTest/test.kexe
 
       - name: Stop database
         if: always() && matrix.db != 'sqlite'
@@ -496,10 +512,10 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: test-bin-mingwX64
-          path: stormify/build/bin/mingwX64/debugTest/
+          path: tests/conformance/build/bin/mingwX64/debugTest/
 
       - name: Fetch Windows runtime DLLs (upstream sources)
-        run: .github/scripts/fetch-mingw-dlls.sh stormify/build/bin/mingwX64/debugTest
+        run: .github/scripts/fetch-mingw-dlls.sh tests/conformance/build/bin/mingwX64/debugTest
 
       - name: Install VC++ runtime in Wine prefix (Oracle needs VCRUNTIME140)
         if: matrix.db == 'oracle' || matrix.db == 'oracle11'
@@ -518,7 +534,7 @@ jobs:
           WINEDEBUG: -all,err+module,err+loaddll
         # Headless Wine under xvfb — otherwise Wine may try to open a display.
         run: |
-          cd stormify/build/bin/mingwX64/debugTest
+          cd tests/conformance/build/bin/mingwX64/debugTest
           xvfb-run -a wine ./test.exe
 
       - name: Stop database
@@ -551,10 +567,10 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: test-bin-macosArm64
-          path: stormify/build/bin/macosArm64/debugTest/
+          path: tests/conformance/build/bin/macosArm64/debugTest/
 
       - name: Make test binary executable
-        run: chmod +x stormify/build/bin/macosArm64/debugTest/test.kexe
+        run: chmod +x tests/conformance/build/bin/macosArm64/debugTest/test.kexe
 
       - name: Start database (brew services)
         if: matrix.db != 'sqlite'
@@ -563,7 +579,7 @@ jobs:
       - name: Run tests (prebuilt binary)
         env:
           STORMIFY_TEST_DB: ${{ matrix.db }}
-        run: stormify/build/bin/macosArm64/debugTest/test.kexe
+        run: tests/conformance/build/bin/macosArm64/debugTest/test.kexe
 
       - name: Stop database
         if: always() && matrix.db != 'sqlite'
@@ -624,7 +640,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        example: [java, kotlin-jvm, kotlin-linux, kotlin-multiplatform]
+        example: [java-pom, java-gradle, kotlin-jvm, kotlin-linux, kotlin-multiplatform]
     name: test · example · ${{ matrix.example }}
     steps:
       - uses: actions/checkout@v4
@@ -654,6 +670,39 @@ jobs:
 
       - name: Publish to Maven Local
         run: gradle publishToMavenLocal --console=plain
+
+      # Examples reference `id("onl.ycode.stormify") version "..."` and
+      # `implementation("onl.ycode:...")` — neither resolves from
+      # mavenCentral while we're testing unreleased code. Inject a global
+      # init script that adds mavenLocal to plugin and dependency resolution
+      # for the `onl.ycode.*` group only (other artifacts must keep coming
+      # from mavenCentral so their KMP module metadata stays intact).
+      - name: Configure gradle to resolve onl.ycode.* from mavenLocal
+        run: |
+          mkdir -p ~/.gradle/init.d
+          cat > ~/.gradle/init.d/stormify-mavenlocal.init.gradle.kts <<'EOF'
+          settingsEvaluated {
+              pluginManagement {
+                  repositories {
+                      mavenLocal { content { includeGroupByRegex("onl\\.ycode(\\..*)?") } }
+                      gradlePluginPortal()
+                      mavenCentral()
+                      google()
+                  }
+              }
+              val drm = dependencyResolutionManagement
+              val filter: org.gradle.api.artifacts.repositories.MavenArtifactRepository.() -> Unit = {
+                  content { includeGroupByRegex("onl\\.ycode(\\..*)?") }
+              }
+              if (drm.repositories.isNotEmpty()) {
+                  drm.repositories.mavenLocal(filter)
+              } else {
+                  gradle.allprojects {
+                      repositories.mavenLocal(filter)
+                  }
+              }
+          }
+          EOF
 
       - name: Run example
         run: testing/test.sh examples ${{ matrix.example }}

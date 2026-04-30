@@ -11,6 +11,11 @@ services:
       - "13306:3306"
     volumes:
       - ./config/mysql/init.sql:/docker-entrypoint-initdb.d/init.sql
+    # Force mysql_native_password — the libmariadb client (statically linked
+    # into kdbc native) does not negotiate caching_sha2_password reliably
+    # across all Linux glibc/openssl combinations (notably arm64), so the
+    # initial handshake gets dropped before any auth attempt.
+    command: ["--default-authentication-plugin=mysql_native_password"]
     healthcheck:
       test: ["CMD", "mysql", "-ustormify", "-pStormify1!", "-e", "SELECT 1"]
       interval: 5s

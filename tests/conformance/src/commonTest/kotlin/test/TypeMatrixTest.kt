@@ -20,33 +20,44 @@ import kotlin.time.Instant as KtInstant
  */
 open class TypeMatrixTest {
     // --- Primitives & basic Kotlin types ---
-    @Test fun byteValue() = runTypeMatrix("Byte", 42.toByte())
-    @Test fun shortValue() = runTypeMatrix("Short", 1234.toShort())
-    @Test fun intValue() = runTypeMatrix("Int", 12345)
-    @Test fun longValue() = runTypeMatrix("Long", 1234567890L)
-    @Test fun floatValue() = runTypeMatrix("Float", 3.14f)
-    @Test fun doubleValue() = runTypeMatrix("Double", 2.71828)
-    @Test fun booleanTrue() = runTypeMatrix("BooleanTrue", true)
-    @Test fun booleanFalse() = runTypeMatrix("BooleanFalse", false)
-    @Test fun stringValue() = runTypeMatrix("String", "hello")
-    @Test fun charValue() = runTypeMatrix("Char", 'A')
-    @Test fun byteArrayValue() = runTypeMatrix("ByteArray", byteArrayOf(1, 2, 3, 4, 5))
-    @Test fun charArrayValue() = runTypeMatrix("CharArray", charArrayOf('A', 'B', 'C'))
+    // Numeric values είναι μικρά ώστε να χωράνε ακόμη και σε SMALLINT (max 32767).
+    // Το test εστιάζει στο type acceptance, όχι στο value-range coverage.
+    @Test fun byteValue() = runTypeMatrix("Byte", 42.toByte(), NUMERIC_LIKE)
+    @Test fun shortValue() = runTypeMatrix("Short", 1234.toShort(), NUMERIC_LIKE)
+    @Test fun intValue() = runTypeMatrix("Int", 12345, NUMERIC_LIKE)
+    @Test fun longValue() = runTypeMatrix("Long", 12345L, NUMERIC_LIKE)
+    @Test fun floatValue() = runTypeMatrix("Float", 3.14f, NUMERIC_LIKE)
+    @Test fun doubleValue() = runTypeMatrix("Double", 2.71828, NUMERIC_LIKE)
+    @Test fun booleanTrue() = runTypeMatrix("BooleanTrue", true, BOOLEAN_LIKE)
+    @Test fun booleanFalse() = runTypeMatrix("BooleanFalse", false, BOOLEAN_LIKE)
+    @Test fun stringValue() = runTypeMatrix("String", "hello", TEXT_ONLY)
+    @Test fun charValue() = runTypeMatrix("Char", 'A', TEXT_ONLY)
+    @Test fun byteArrayValue() = runTypeMatrix("ByteArray", byteArrayOf(1, 2, 3, 4, 5), BLOB_ONLY)
+    @Test fun charArrayValue() = runTypeMatrix("CharArray", charArrayOf('A', 'B', 'C'), TEXT_ONLY)
 
     // --- Numeric large (ionspin, cross-platform) ---
-    @Test fun ionspinBigDecimal() = runTypeMatrix("IonBigDecimal", IonBigDecimal.parseString("123456789.123456"))
-    @Test fun ionspinBigInteger() = runTypeMatrix("IonBigInteger", IonBigInteger.parseString("123456789012345"))
+    // Integer-valued — drivers that send BigDecimal as text (native postgres)
+    // reject decimal points when writing to integer columns. The matrix
+    // exercises type acceptance, not value-range coverage.
+    @Test fun ionspinBigDecimal() =
+        runTypeMatrix("IonBigDecimal", IonBigDecimal.parseString("123"), NUMERIC_LIKE)
+    @Test fun ionspinBigInteger() =
+        runTypeMatrix("IonBigInteger", IonBigInteger.parseString("12345"), NUMERIC_LIKE)
 
     // --- Temporal kotlinx ---
-    @Test fun kotlinxLocalDate() = runTypeMatrix("KxLocalDate", KxLocalDate(2024, 6, 15))
-    @Test fun kotlinxLocalTime() = runTypeMatrix("KxLocalTime", KxLocalTime(14, 30, 45))
-    @Test fun kotlinxLocalDateTime() = runTypeMatrix("KxLocalDateTime", KxLocalDateTime(2024, 6, 15, 14, 30, 45))
-    @Test fun kotlinTimeInstant() = runTypeMatrix("KtInstant", KtInstant.fromEpochSeconds(1_700_000_000L))
+    @Test fun kotlinxLocalDate() =
+        runTypeMatrix("KxLocalDate", KxLocalDate(2024, 6, 15), DATE_AND_TIMESTAMP)
+    @Test fun kotlinxLocalTime() =
+        runTypeMatrix("KxLocalTime", KxLocalTime(14, 30, 45), TIME_ONLY)
+    @Test fun kotlinxLocalDateTime() =
+        runTypeMatrix("KxLocalDateTime", KxLocalDateTime(2024, 6, 15, 14, 30, 45), DATE_TIME_TIMESTAMP)
+    @Test fun kotlinTimeInstant() =
+        runTypeMatrix("KtInstant", KtInstant.fromEpochSeconds(1_700_000_000L), TIMESTAMP_ONLY)
 
     // --- Enums (raw bind, χωρίς entity-level enum-to-X conversion) ---
-    @Test fun enumPlain() = runTypeMatrix("PlainStatus", PlainStatus.ACTIVE)
-    @Test fun enumDbValue() = runTypeMatrix("CustomStatus", CustomStatus.BANNED)
+    @Test fun enumPlain() = runTypeMatrix("PlainStatus", PlainStatus.ACTIVE, TEXT_ONLY)
+    @Test fun enumDbValue() = runTypeMatrix("CustomStatus", CustomStatus.BANNED, TEXT_ONLY)
 
     // --- Null ---
-    @Test fun nullValue() = runTypeMatrix("Null", null)
+    @Test fun nullValue() = runTypeMatrix("Null", null, ALL_CATS)
 }

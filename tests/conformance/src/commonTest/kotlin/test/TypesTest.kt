@@ -2,6 +2,7 @@ package test
 
 import com.ionspin.kotlin.bignum.decimal.BigDecimal
 import com.ionspin.kotlin.bignum.integer.BigInteger
+import onl.ycode.stormify.SqlDialect
 import onl.ycode.stormify.Stormify
 import kotlin.test.*
 
@@ -160,8 +161,19 @@ open class TypesTest {
         assertTrue(binaryData.contentEquals(found.blobData!!))
         assertTrue(charData.contentEquals(found.clobAsChars!!))
         assertEquals(stringData, found.clobAsString)
+    }
 
-        // Null
+    @Test
+    fun testBlobAndClobNullRoundtrip() = withDb("BLOB-CLOB-NULL") { s ->
+        // MSSQL JDBC maps untyped null to NVARCHAR; the server refuses implicit
+        // conversion to VARBINARY. No portable client-side fix — documented.
+        if (TestDDL.dialect == SqlDialect.SQL_SERVER_NEW || TestDDL.dialect == SqlDialect.SQL_SERVER_OLD)
+            skipTest(SkipReason.DIALECT_QUIRK, "MSSQL untyped null → VARBINARY rejected by server")
+
+        TestDDL.dropTable("blob_test")
+        s.executeUpdate(TestDDL.createTable("blob_test",
+            "${TestDDL.intPrimaryKey("id")}, blob_data ${TestDDL.blobType()}, clob_as_chars ${TestDDL.textType()}, clob_as_string ${TestDDL.textType()}"))
+
         s.create(BlobEntity(id = 2))
         val nulled = s.findById<BlobEntity>(2)!!
         assertNull(nulled.blobData)

@@ -303,7 +303,10 @@ object TestDDL {
     fun dropTable(name: String) {
         when {
             isOracle -> try {
-                stormify.executeUpdate("DROP TABLE $name CASCADE CONSTRAINTS")
+                // PURGE skips the recycle bin — without it the dropped table can
+                // linger as a BIN$… object and a subsequent CREATE TABLE with
+                // the same name occasionally races into ORA-00955 on 11g.
+                stormify.executeUpdate("DROP TABLE $name CASCADE CONSTRAINTS PURGE")
             } catch (_: Exception) {
                 // ORA-00942: table or view does not exist — safe to ignore on Oracle
             }

@@ -113,11 +113,11 @@ class NativeServerEncodingTest {
                 s.registerPrimaryKeyResolver(0) { _, field -> field.lowercase().startsWith("id") }
 
                 s.transaction {
-                    executeUpdate("PRAGMA encoding = \"$encoding\"")
-                    executeUpdate("CREATE TABLE enc_probe (id INT PRIMARY KEY, value TEXT)")
-                    val reported = readOne<String>("PRAGMA encoding")
+                    s.executeUpdate("PRAGMA encoding = \"$encoding\"")
+                    s.executeUpdate("CREATE TABLE enc_probe (id INT PRIMARY KEY, value TEXT)")
+                    val reported = s.readOne<String>("PRAGMA encoding")
                     assertEquals(encoding, reported, "PRAGMA did not stick for $encoding")
-                    executeUpdate("INSERT INTO enc_probe (id, value) VALUES (?, ?)", 1, allBuckets)
+                    s.executeUpdate("INSERT INTO enc_probe (id, value) VALUES (?, ?)", 1, allBuckets)
                 }
 
                 val back = s.readOne<String>("SELECT value FROM enc_probe WHERE id = ?", 1)

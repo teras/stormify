@@ -171,9 +171,9 @@ build_native() {
     echo ""
 }
 
-LINUX_TEST_BIN="$PROJECT_DIR/stormify/build/bin/linuxX64/debugTest/test.kexe"
-ARM64_TEST_BIN="$PROJECT_DIR/stormify/build/bin/linuxArm64/debugTest/test.kexe"
-MINGW_TEST_BIN="$PROJECT_DIR/stormify/build/bin/mingwX64/debugTest/test.exe"
+LINUX_TEST_BIN="$PROJECT_DIR/tests/conformance/build/bin/linuxX64/debugTest/test.kexe"
+ARM64_TEST_BIN="$PROJECT_DIR/tests/conformance/build/bin/linuxArm64/debugTest/test.kexe"
+MINGW_TEST_BIN="$PROJECT_DIR/tests/conformance/build/bin/mingwX64/debugTest/test.exe"
 
 build_linux() {
     [ -x "$LINUX_TEST_BIN" ] && return 0
@@ -325,7 +325,7 @@ run_linux_arm64_one() {
         # x64 host — run via Docker multiarch (QEMU)
         docker run --rm --platform linux/arm64 \
             --network=host \
-            -v "$PROJECT_DIR/stormify/build/bin/linuxArm64/debugTest:/test:ro" \
+            -v "$PROJECT_DIR/tests/conformance/build/bin/linuxArm64/debugTest:/test:ro" \
             -e "STORMIFY_TEST_DB=$db" \
             ubuntu:22.04 \
             bash -c '
@@ -382,7 +382,7 @@ run_android() {
 # ========================================================================
 
 build_mingw() {
-    local test_exe="$PROJECT_DIR/stormify/build/bin/mingwX64/debugTest/test.exe"
+    local test_exe="$PROJECT_DIR/tests/conformance/build/bin/mingwX64/debugTest/test.exe"
     [ -x "$test_exe" ] && return 0
 
     echo "Building C library for mingw..."
@@ -424,7 +424,7 @@ run_mingw_one() {
 # Run example projects
 # ========================================================================
 
-ALL_EXAMPLES="java kotlin-jvm kotlin-linux kotlin-multiplatform"
+ALL_EXAMPLES="java-pom java-gradle kotlin-jvm kotlin-linux kotlin-multiplatform"
 
 run_example_one() {
     local example="$1"
@@ -445,9 +445,13 @@ run_example_one() {
 
     local rc=0
     case "$example" in
-        java)
+        java-pom)
             cd "$example_dir"
             mvn clean compile exec:java -q -Dstormify.version="$parent_version" 2>&1 || rc=$?
+            ;;
+        java-gradle)
+            cd "$example_dir"
+            gradle clean run -PstormifyVersion="$parent_version" --console=plain 2>&1 || rc=$?
             ;;
         kotlin-jvm)
             cd "$example_dir"
