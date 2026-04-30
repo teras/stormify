@@ -6,22 +6,19 @@ import kotlin.coroutines.CoroutineContext
 import kotlinx.coroutines.CoroutineScope
 
 /**
- * Runs [block] on a dispatcher suitable for the platform's transaction model.
+ * Splices [extraContext] (typically a [ConnectionElement]) into the coroutine
+ * context for the duration of [block].
  *
- * On Android, the underlying `android.database.sqlite.SQLiteDatabase` keeps per-thread
- * transaction state via `ThreadLocal<SQLiteSession>`. If a coroutine calls
- * `beginTransaction()` on thread T1, suspends, and then calls `commit()`/`rollback()`
- * on thread T2, the Android session of T2 has no record of the transaction and the
- * SQLiteConnectionPool does not release the connection — subsequent operations
- * hang forever in `waitForConnection()`.
- *
- * To avoid this, the Android implementation pins the whole transaction body to a
- * single dedicated thread, so `begin`/`commit`/`rollback` all execute on the same
- * thread regardless of suspension points inside the block.
- *
- * JVM (JDBC) and Native (libpq / libmariadb / libsqlite3 / ODPI-C / FreeTDS) drivers
- * do not have thread affinity on connections, so their implementations dispatch on
- * the regular [ioDispatcher].
+ * Per-platform behavior:
+ *  - **JVM**: dispatches on [ioDispatcher] so blocking JDBC calls do not stall the
+ *    caller's dispatcher. No thread pinning is required since JDBC connections are
+ *    not thread-affine and ConnectionElement is a ThreadContextElement that the
+ *    coroutine runtime auto-republishes on dispatcher hops.
+ *  - **Android & Native**: pinning is supplied upstream by the connection-bound
+ *    dispatcher attached to each pool entry (see [createEntryDispatcher]); the pool
+ *    wraps the borrow in `withContext(entry.dispatcher) { … }` before this function
+ *    runs. The actuals therefore just install [extraContext] without changing
+ *    dispatcher, keeping the body on the connection's dedicated worker thread.
  */
 internal expect suspend fun <R> withTxDispatcher(
     extraContext: CoroutineContext,

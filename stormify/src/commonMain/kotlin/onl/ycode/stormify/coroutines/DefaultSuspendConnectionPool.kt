@@ -1,9 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
 // (C) Panayotis Katsaloulis
+@file:OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+
 package onl.ycode.stormify.coroutines
 
 import kotlinx.atomicfu.atomic
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CloseableCoroutineDispatcher
 import kotlinx.coroutines.CoroutineName
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.SupervisorJob
@@ -73,6 +76,7 @@ internal class DefaultSuspendConnectionPool(
     private val scope = CoroutineScope(SupervisorJob() + ioDispatcher + CoroutineName("stormify-pool"))
     private val timeSource = TimeSource.Monotonic
 
+    private val entrySerial = atomic(0)
     private val totalConnections = atomic(0)
     private val inUseCount = atomic(0)
     private val acquireCount = atomic(0L)
@@ -109,7 +113,14 @@ internal class DefaultSuspendConnectionPool(
         val entry = acquireEntry()
         var success = false
         try {
-            val result = block(entry.connection)
+            val result = if (entry.dispatcher != null) {
+                // Pin the borrow to the connection's dedicated worker thread. On Native this
+                // keeps the @ThreadLocal ActiveTxRegistry coherent across suspension points;
+                // on Android it preserves SQLiteSession's per-thread transaction state.
+                withContext(entry.dispatcher) { block(entry.connection) }
+            } else {
+                block(entry.connection)
+            }
             success = true
             return result
         } finally {
@@ -228,9 +239,17 @@ internal class DefaultSuspendConnectionPool(
 
     private suspend fun createEntry(): PoolEntry {
         val conn = withContext(ioDispatcher) { dataSource.getConnection() }
+        // Dispatcher allocation can throw (OOM creating a new pthread). Close the
+        // freshly-acquired connection in that case so it is not orphaned.
+        val dispatcher = try {
+            createEntryDispatcher("stormify-pool-${entrySerial.incrementAndGet()}")
+        } catch (t: Throwable) {
+            runCatching { conn.close() }
+            throw t
+        }
         totalConnections.incrementAndGet()
         val now = timeSource.markNow()
-        return PoolEntry(conn, createdAt = now, lastUsed = now)
+        return PoolEntry(conn, dispatcher = dispatcher, createdAt = now, lastUsed = now)
     }
 
     private fun closeEntry(entry: PoolEntry) {
@@ -244,6 +263,7 @@ internal class DefaultSuspendConnectionPool(
             // considered dead, and reporting close-failures during cleanup causes more
             // confusion than it prevents.
         }
+        entry.dispatcher?.let { runCatching { it.close() } }
     }
 
     // --- validation & expiry -------------------------------------------------
@@ -255,7 +275,10 @@ internal class DefaultSuspendConnectionPool(
 
     private suspend fun validateEntry(entry: PoolEntry): Boolean {
         val query = config.validationQuery ?: return true
-        return withContext(ioDispatcher) {
+        // Honor the connection's pinned dispatcher when present so the validation query
+        // touches the connection on the same thread later borrowers will use it from.
+        // Matters most on Android, where SQLiteDatabase creates a per-thread SQLiteSession.
+        return withContext(entry.dispatcher ?: ioDispatcher) {
             try {
                 entry.connection.initStatement(query, false, null).use { stmt ->
                     stmt.executeQuery().use { rs -> rs.next() }
@@ -342,6 +365,11 @@ internal class DefaultSuspendConnectionPool(
  */
 internal class PoolEntry(
     val connection: Connection,
+    /**
+     * The single-thread dispatcher bound to this connection for its lifetime, or null when
+     * the platform does not require pinning (JVM/JDBC). See [createEntryDispatcher].
+     */
+    val dispatcher: CloseableCoroutineDispatcher?,
     val createdAt: TimeSource.Monotonic.ValueTimeMark,
     var lastUsed: TimeSource.Monotonic.ValueTimeMark,
 ) {
