@@ -90,6 +90,42 @@ const char *kdbc_global_error(void) {
     return g_error;
 }
 
+const char *kdbc_sqlstate(kdbc_conn *conn) {
+    return conn ? conn->sqlstate : "";
+}
+
+int kdbc_errcode(kdbc_conn *conn) {
+    return conn ? conn->errcode : 0;
+}
+
+const char *kdbc_stmt_sqlstate(kdbc_stmt *stmt) {
+    return stmt ? stmt->sqlstate : "";
+}
+
+int kdbc_stmt_errcode(kdbc_stmt *stmt) {
+    return stmt ? stmt->errcode : 0;
+}
+
+const char *kdbc_global_sqlstate(void) {
+    return g_sqlstate;
+}
+
+int kdbc_global_errcode(void) {
+    return g_errcode;
+}
+
+const char *kdbc_result_error(kdbc_result *rs) {
+    return rs ? rs->error : "";
+}
+
+const char *kdbc_result_sqlstate(kdbc_result *rs) {
+    return rs ? rs->sqlstate : "";
+}
+
+int kdbc_result_errcode(kdbc_result *rs) {
+    return rs ? rs->errcode : 0;
+}
+
 /* ========================================================================
  * Connection management
  * ======================================================================== */
@@ -388,7 +424,11 @@ static kdbc_stmt *prepare_impl(kdbc_conn *conn, const char *sql,
         }
     }
 
-    /* Driver-level prepare */
+    /* Driver-level prepare. Reset the connection's structured error metadata
+     * so a previous failure cannot leak into the next prepare's sqlstate /
+     * errcode if this prepare itself does not populate them. */
+    conn->sqlstate[0] = '\0';
+    conn->errcode = 0;
     stmt->native = conn->vt->prepare(conn, native_sql, col_names, n_cols,
                                      generated_keys_requested,
                                      stmt->error, KDBC_ERR_SIZE);

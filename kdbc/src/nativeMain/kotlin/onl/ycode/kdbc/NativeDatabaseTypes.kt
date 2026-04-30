@@ -44,6 +44,60 @@ private fun stmtError(stmt: CPointer<kdbc_stmt>?, fallback: String): String {
     return if (msg.isNullOrEmpty()) fallback else msg
 }
 
+/**
+ * Builds an [SQLException] for the current connection-level failure, populating
+ * [SQLException.sqlState] and [SQLException.errorCode] from the C layer's
+ * structured error fields. When [conn] is `null` the global error slot is
+ * consulted (used for connect-time failures before a connection exists).
+ * The empty SQLSTATE string and the zero errcode produced by drivers that do
+ * not surface a value are normalised to `null`.
+ */
+private fun kdbcConnException(conn: CPointer<kdbc_conn>?, message: String): SQLException {
+    val state = if (conn != null) kdbc_sqlstate(conn)?.toKString()
+                else kdbc_global_sqlstate()?.toKString()
+    val sqlState = state?.takeUnless { it.isEmpty() }
+    val raw = if (conn != null) kdbc_errcode(conn) else kdbc_global_errcode()
+    val errorCode: Int? = if (raw != 0) raw else null
+    return SQLException(message, null, sqlState, errorCode)
+}
+
+/**
+ * Builds an [SQLException] for the current statement-level failure, populating
+ * [SQLException.sqlState] and [SQLException.errorCode] from the C layer's
+ * structured error fields. The empty SQLSTATE string and the zero errcode
+ * produced by drivers that do not surface a value are normalised to `null`.
+ */
+private fun kdbcStmtException(stmt: CPointer<kdbc_stmt>?, message: String): SQLException {
+    val state = stmt?.let { kdbc_stmt_sqlstate(it)?.toKString() }
+    val sqlState = state?.takeUnless { it.isEmpty() }
+    val raw = stmt?.let { kdbc_stmt_errcode(it) } ?: 0
+    val errorCode: Int? = if (raw != 0) raw else null
+    return SQLException(message, null, sqlState, errorCode)
+}
+
+/**
+ * Builds an [SQLException] for the current result-set-level failure, populating
+ * [SQLException.sqlState] and [SQLException.errorCode] from the C layer's
+ * structured error fields. The empty SQLSTATE string and the zero errcode
+ * produced by drivers that do not surface a value are normalised to `null`.
+ */
+private fun kdbcResultException(rs: CPointer<kdbc_result>?, message: String): SQLException {
+    val state = rs?.let { kdbc_result_sqlstate(it)?.toKString() }
+    val sqlState = state?.takeUnless { it.isEmpty() }
+    val raw = rs?.let { kdbc_result_errcode(it) } ?: 0
+    val errorCode: Int? = if (raw != 0) raw else null
+    return SQLException(message, null, sqlState, errorCode)
+}
+
+/**
+ * Reads the result set's error message via [kdbc_result_error], falling back
+ * to [fallback] when the buffer is empty.
+ */
+private fun resultError(rs: CPointer<kdbc_result>?, fallback: String): String {
+    val msg = rs?.let { kdbc_result_error(it)?.toKString() }
+    return if (msg.isNullOrEmpty()) fallback else msg
+}
+
 internal fun KdbcDriverKind.toCValue(): kdbc_driver = when (this) {
     KdbcDriverKind.SQLITE -> KDBC_SQLITE
     KdbcDriverKind.POSTGRES -> KDBC_POSTGRES
@@ -85,7 +139,7 @@ class NativeKdbcDataSource internal constructor(
             password
         )
         if (conn == null) {
-            throw SQLException("Failed to connect to $kind ($nativeUrl): ${connError(null, "unknown error")}")
+            throw kdbcConnException(null, "Failed to connect to $kind ($nativeUrl): ${connError(null, "unknown error")}")
         }
         return NativeConnection(conn, kind).runInitSql(initSql)
     }
@@ -122,7 +176,7 @@ private class NativeConnection(
             kdbc_prepare(handle, sql)
         }
         if (stmt == null)
-            throw SQLException("Failed to prepare statement: ${connError(handle, "prepare failed")}\nSQL: $sql")
+            throw kdbcConnException(handle, "Failed to prepare statement: ${connError(handle, "prepare failed")}\nSQL: $sql")
         return NativeStatement(stmt, handle)
     }
 
@@ -145,14 +199,14 @@ private class NativeConnection(
     override fun prepareCall(sql: String): CallableStatement {
         ensureOpen()
         val stmt = kdbc_prepare_call(handle, sql)
-            ?: throw SQLException("Failed to prepare call: ${connError(handle, "prepare_call failed")}\nSQL: $sql")
+            ?: throw kdbcConnException(handle, "Failed to prepare call: ${connError(handle, "prepare_call failed")}\nSQL: $sql")
         return NativeCallableStatement(stmt, handle)
     }
 
     override fun commit() {
         ensureOpen()
         if (kdbc_commit(handle) != KDBC_OK)
-            throw SQLException("commit failed: ${connError(handle, "commit failed")}")
+            throw kdbcConnException(handle, "commit failed: ${connError(handle, "commit failed")}")
     }
 
     override fun rollback(savepoint: Savepoint?) {
@@ -163,13 +217,13 @@ private class NativeConnection(
             kdbc_rollback(handle)
         }
         if (rc != KDBC_OK)
-            throw SQLException("rollback failed: ${connError(handle, "rollback failed")}")
+            throw kdbcConnException(handle, "rollback failed: ${connError(handle, "rollback failed")}")
     }
 
     override fun setSavepoint(name: String): Savepoint {
         ensureOpen()
         if (kdbc_savepoint(handle, name) != KDBC_OK)
-            throw SQLException("savepoint '$name' failed: ${connError(handle, "savepoint failed")}")
+            throw kdbcConnException(handle, "savepoint '$name' failed: ${connError(handle, "savepoint failed")}")
         return SimpleSavepoint(name)
     }
 
@@ -177,13 +231,13 @@ private class NativeConnection(
         ensureOpen()
         if (!supportsReleaseSavepoint) return  // Oracle / MSSQL silently skip
         if (kdbc_release_savepoint(handle, savepoint.savepointName) != KDBC_OK)
-            throw SQLException("release savepoint '${savepoint.savepointName}' failed: ${connError(handle, "release failed")}")
+            throw kdbcConnException(handle, "release savepoint '${savepoint.savepointName}' failed: ${connError(handle, "release failed")}")
     }
 
     override fun setAutoCommit(autoCommit: Boolean) {
         ensureOpen()
         if (kdbc_set_autocommit(handle, if (autoCommit) 1 else 0) != KDBC_OK)
-            throw SQLException("setAutoCommit failed: ${connError(handle, "setAutoCommit failed")}")
+            throw kdbcConnException(handle, "setAutoCommit failed: ${connError(handle, "setAutoCommit failed")}")
     }
 
     override fun cancel() {
@@ -226,14 +280,14 @@ private open class NativeStatement(
         ensureOpen()
         val rc = kdbc_execute_update_stmt(handle)
         if (rc == KDBC_ERROR)
-            throw SQLException("executeUpdate failed: ${stmtError(handle, "executeUpdate failed")}")
+            throw kdbcStmtException(handle, "executeUpdate failed: ${stmtError(handle, "executeUpdate failed")}")
         return rc
     }
 
     override fun executeQuery(): ResultSet {
         ensureOpen()
         val rs = kdbc_execute_query_stmt(handle)
-            ?: throw SQLException("executeQuery failed: ${stmtError(handle, "executeQuery failed")}")
+            ?: throw kdbcStmtException(handle, "executeQuery failed: ${stmtError(handle, "executeQuery failed")}")
         return NativeResultSet(rs)
     }
 
@@ -248,14 +302,14 @@ private open class NativeStatement(
     override fun addBatch() {
         ensureOpen()
         if (kdbc_add_batch(handle) != KDBC_OK)
-            throw SQLException("addBatch failed: ${stmtError(handle, "addBatch failed")}")
+            throw kdbcStmtException(handle, "addBatch failed: ${stmtError(handle, "addBatch failed")}")
     }
 
     override fun executeBatch(): IntArray {
         ensureOpen()
         val total = kdbc_execute_batch(handle)
         if (total == KDBC_ERROR)
-            throw SQLException("executeBatch failed: ${stmtError(handle, "executeBatch failed")}")
+            throw kdbcStmtException(handle, "executeBatch failed: ${stmtError(handle, "executeBatch failed")}")
         // The C API returns total affected rows for the whole batch; we return a single-element
         // array for JDBC-compatibility (stormify uses the sum, not per-row counts).
         return intArrayOf(total)
@@ -287,7 +341,7 @@ private class NativeCallableStatement(
     override fun registerOutParameter(parameterIndex: Int, type: KClass<*>) {
         ensureOpen()
         if (kdbc_register_out(handle, parameterIndex) != KDBC_OK)
-            throw SQLException("registerOutParameter failed: ${stmtError(handle, "register_out failed")}")
+            throw kdbcStmtException(handle, "registerOutParameter failed: ${stmtError(handle, "register_out failed")}")
     }
 
     override fun getObject(parameterIndex: Int, type: KClass<*>): Any? {
@@ -311,7 +365,7 @@ private class NativeCallableStatement(
         ensureOpen()
         val rc = kdbc_call_execute(handle)
         if (rc == KDBC_ERROR)
-            throw SQLException("call execute failed: ${stmtError(handle, "execute failed")}")
+            throw kdbcStmtException(handle, "call execute failed: ${stmtError(handle, "execute failed")}")
         return rc == 1
     }
 }
@@ -329,7 +383,7 @@ private class NativeResultSet(
         ensureOpen()
         val rc = kdbc_next(handle)
         if (rc == KDBC_ERROR)
-            throw SQLException("next() failed")
+            throw kdbcResultException(handle, "next() failed: ${resultError(handle, "fetch failed")}")
         return rc == 1
     }
 
@@ -526,7 +580,7 @@ private fun bindValue(stmt: CPointer<kdbc_stmt>, idx: Int, value: Any?) {
         )
     }
     if (rc != KDBC_OK)
-        throw SQLException("Failed to bind parameter $idx (type ${value?.let { it::class.simpleName } ?: "null"}): ${stmtError(stmt, "bind failed")}")
+        throw kdbcStmtException(stmt, "Failed to bind parameter $idx (type ${value?.let { it::class.simpleName } ?: "null"}): ${stmtError(stmt, "bind failed")}")
 }
 
 private fun bindBlob(stmt: CPointer<kdbc_stmt>, idx: Int, bytes: ByteArray): Int {

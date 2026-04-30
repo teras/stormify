@@ -183,6 +183,36 @@ static const char *ora_get_error(void) {
     return ei.message ? ei.message : "Unknown Oracle error";
 }
 
+/* Fill a dpiErrorInfo with the last ODPI-C error, normalizing NULL strings.
+ * Used by the ORA_*_ERR macros below to populate kdbc handles with both the
+ * message and the structured sqlState/code reported by ODPI-C. */
+static void ora_fill_errinfo(dpiErrorInfo *ei) {
+    if (!g_ora_ctx) {
+        ei->code = 0;
+        ei->sqlState = "";
+        ei->message = "ODPI-C context not initialized";
+        return;
+    }
+    p_ctx_getError(g_ora_ctx, ei);
+    if (!ei->message) ei->message = "Unknown Oracle error";
+    if (!ei->sqlState) ei->sqlState = "";
+}
+
+#define ORA_CONN_ERR(c, prefix) do { \
+    dpiErrorInfo _ei; ora_fill_errinfo(&_ei); \
+    CONN_ERR_V((c), _ei.sqlState, (int)_ei.code, prefix ": %s", _ei.message); \
+} while (0)
+
+#define ORA_STMT_ERR(s, prefix) do { \
+    dpiErrorInfo _ei; ora_fill_errinfo(&_ei); \
+    STMT_ERR_V((s), _ei.sqlState, (int)_ei.code, prefix ": %s", _ei.message); \
+} while (0)
+
+#define ORA_RS_ERR(r, prefix) do { \
+    dpiErrorInfo _ei; ora_fill_errinfo(&_ei); \
+    RS_ERR_V((r), _ei.sqlState, (int)_ei.code, prefix ": %s", _ei.message); \
+} while (0)
+
 /* ========================================================================
  * Connection
  * ======================================================================== */
@@ -271,7 +301,7 @@ static int ora_set_autocommit(kdbc_conn *conn, int enabled) {
 static int ora_commit(kdbc_conn *conn) {
     ora_conn *oc = (ora_conn *)conn->native;
     if (p_conn_commit(oc->conn) != DPI_SUCCESS) {
-        CONN_ERR(conn, "Oracle commit: %s", ora_get_error());
+        ORA_CONN_ERR(conn, "Oracle commit");
         return KDBC_ERROR;
     }
     return KDBC_OK;
@@ -280,7 +310,7 @@ static int ora_commit(kdbc_conn *conn) {
 static int ora_rollback(kdbc_conn *conn) {
     ora_conn *oc = (ora_conn *)conn->native;
     if (p_conn_rollback(oc->conn) != DPI_SUCCESS) {
-        CONN_ERR(conn, "Oracle rollback: %s", ora_get_error());
+        ORA_CONN_ERR(conn, "Oracle rollback");
         return KDBC_ERROR;
     }
     return KDBC_OK;
@@ -399,7 +429,10 @@ static void *ora_prepare(kdbc_conn *conn, const char *native_sql,
     if (p_conn_prepareStmt(oc->conn, 0, sql_to_prepare,
                            (unsigned int)strlen(sql_to_prepare),
                            NULL, 0, &sd->stmt) != DPI_SUCCESS) {
-        snprintf(err, err_size, "Oracle prepare: %s", ora_get_error());
+        dpiErrorInfo _ei; ora_fill_errinfo(&_ei);
+        snprintf(err, err_size, "Oracle prepare: %s", _ei.message);
+        kdbc_copy_sqlstate(conn->sqlstate, _ei.sqlState);
+        conn->errcode = (int)_ei.code;
         free(final_sql);
         free(sd);
         return NULL;
@@ -501,12 +534,12 @@ static dpiData *ora_create_and_bind_var(kdbc_stmt *stmt, int idx,
     dpiData *data = NULL;
     if (p_conn_newVar(sd->oc->conn, oraType, natType, 1, size, 0, 0,
                       NULL, &sd->vars[i], &data) != DPI_SUCCESS) {
-        STMT_ERR(stmt, "Oracle newVar: %s", ora_get_error());
+        ORA_STMT_ERR(stmt, "Oracle newVar");
         return NULL;
     }
 
     if (p_stmt_bindByPos(sd->stmt, (unsigned int)idx, sd->vars[i]) != DPI_SUCCESS) {
-        STMT_ERR(stmt, "Oracle bind: %s", ora_get_error());
+        ORA_STMT_ERR(stmt, "Oracle bind");
         p_var_release(sd->vars[i]);
         sd->vars[i] = NULL;
         return NULL;
@@ -569,11 +602,11 @@ static int ora_bind_clob(kdbc_stmt *stmt, int idx, const char *val, unsigned int
     ora_stmt_data *sd = (ora_stmt_data *)stmt->native;
     dpiLob *lob = NULL;
     if (p_conn_newTempLob(sd->oc->conn, DPI_ORACLE_TYPE_CLOB, &lob) != DPI_SUCCESS) {
-        STMT_ERR(stmt, "Oracle newTempLob(CLOB): %s", ora_get_error());
+        ORA_STMT_ERR(stmt, "Oracle newTempLob(CLOB)");
         return KDBC_ERROR;
     }
     if (p_lob_setFromBytes(lob, val, (uint64_t)len) != DPI_SUCCESS) {
-        STMT_ERR(stmt, "Oracle LOB setFromBytes: %s", ora_get_error());
+        ORA_STMT_ERR(stmt, "Oracle LOB setFromBytes");
         p_lob_release(lob);
         return KDBC_ERROR;
     }
@@ -581,7 +614,7 @@ static int ora_bind_clob(kdbc_stmt *stmt, int idx, const char *val, unsigned int
                                             DPI_NATIVE_TYPE_LOB, 0);
     if (!data) { p_lob_release(lob); return KDBC_ERROR; }
     if (p_var_setFromLob(sd->vars[idx - 1], 0, lob) != DPI_SUCCESS) {
-        STMT_ERR(stmt, "Oracle setFromLob(CLOB): %s", ora_get_error());
+        ORA_STMT_ERR(stmt, "Oracle setFromLob(CLOB)");
         p_lob_release(lob);
         return KDBC_ERROR;
     }
@@ -617,7 +650,7 @@ static int ora_bind_string(kdbc_stmt *stmt, int idx, const char *val) {
                                             DPI_NATIVE_TYPE_BYTES, len + 1);
     if (!data) return KDBC_ERROR;
     if (p_var_setFromBytes(sd->vars[idx - 1], 0, val, len) != DPI_SUCCESS) {
-        STMT_ERR(stmt, "Oracle setBytes: %s", ora_get_error());
+        ORA_STMT_ERR(stmt, "Oracle setBytes");
         return KDBC_ERROR;
     }
     return KDBC_OK;
@@ -630,11 +663,11 @@ static int ora_bind_blob_lob(kdbc_stmt *stmt, int idx, const void *data, size_t 
     ora_stmt_data *sd = (ora_stmt_data *)stmt->native;
     dpiLob *lob = NULL;
     if (p_conn_newTempLob(sd->oc->conn, DPI_ORACLE_TYPE_BLOB, &lob) != DPI_SUCCESS) {
-        STMT_ERR(stmt, "Oracle newTempLob(BLOB): %s", ora_get_error());
+        ORA_STMT_ERR(stmt, "Oracle newTempLob(BLOB)");
         return KDBC_ERROR;
     }
     if (p_lob_setFromBytes(lob, (const char *)data, (uint64_t)len) != DPI_SUCCESS) {
-        STMT_ERR(stmt, "Oracle LOB setFromBytes(BLOB): %s", ora_get_error());
+        ORA_STMT_ERR(stmt, "Oracle LOB setFromBytes(BLOB)");
         p_lob_release(lob);
         return KDBC_ERROR;
     }
@@ -642,7 +675,7 @@ static int ora_bind_blob_lob(kdbc_stmt *stmt, int idx, const void *data, size_t 
                                           DPI_NATIVE_TYPE_LOB, 0);
     if (!dd) { p_lob_release(lob); return KDBC_ERROR; }
     if (p_var_setFromLob(sd->vars[idx - 1], 0, lob) != DPI_SUCCESS) {
-        STMT_ERR(stmt, "Oracle setFromLob(BLOB): %s", ora_get_error());
+        ORA_STMT_ERR(stmt, "Oracle setFromLob(BLOB)");
         p_lob_release(lob);
         return KDBC_ERROR;
     }
@@ -658,7 +691,7 @@ static int ora_bind_blob(kdbc_stmt *stmt, int idx, const void *data, size_t len)
     if (!dd) return KDBC_ERROR;
     if (p_var_setFromBytes(sd->vars[idx - 1], 0, (const char *)data,
                            (unsigned int)len) != DPI_SUCCESS) {
-        STMT_ERR(stmt, "Oracle setBlob: %s", ora_get_error());
+        ORA_STMT_ERR(stmt, "Oracle setBlob");
         return KDBC_ERROR;
     }
     return KDBC_OK;
@@ -713,7 +746,7 @@ static int ora_execute_update(kdbc_stmt *stmt) {
 
     unsigned int numQueryCols = 0;
     if (p_stmt_execute(sd->stmt, mode, &numQueryCols) != DPI_SUCCESS) {
-        STMT_ERR(stmt, "Oracle execute: %s", ora_get_error());
+        ORA_STMT_ERR(stmt, "Oracle execute");
         return KDBC_ERROR;
     }
 
@@ -777,7 +810,8 @@ static void *ora_execute_query(kdbc_stmt *stmt, int *out_col_count,
 
     unsigned int numQueryCols = 0;
     if (p_stmt_execute(sd->stmt, mode, &numQueryCols) != DPI_SUCCESS) {
-        snprintf(err, err_size, "Oracle execute: %s", ora_get_error());
+        ORA_STMT_ERR(stmt, "Oracle execute");
+        (void)err; (void)err_size;
         return NULL;
     }
 
@@ -862,7 +896,7 @@ static int ora_rs_next(kdbc_result *rs) {
     int found = 0;
     unsigned int bufIdx = 0;
     if (p_stmt_fetch(ors->sd->stmt, &found, &bufIdx) != DPI_SUCCESS) {
-        RS_ERR(rs, "Oracle fetch: %s", ora_get_error());
+        ORA_RS_ERR(rs, "Oracle fetch");
         return KDBC_ERROR;
     }
     return found ? 1 : 0;
@@ -952,7 +986,7 @@ static double ora_rs_get_double(kdbc_result *rs, int col) {
 static long ora_read_lob_into_strbuf(kdbc_result *rs, dpiLob *lob) {
     uint64_t size = 0;
     if (p_lob_getSize(lob, &size) != DPI_SUCCESS) {
-        RS_ERR(rs, "Oracle LOB getSize: %s", ora_get_error());
+        ORA_RS_ERR(rs, "Oracle LOB getSize");
         return -1;
     }
     /* Allocate enough for CLOB worst case (4 bytes per char, UTF-8 max) plus NUL. */
@@ -964,7 +998,7 @@ static long ora_read_lob_into_strbuf(kdbc_result *rs, dpiLob *lob) {
     }
     uint64_t len = buf_size - 1;  /* bytes available in buffer */
     if (p_lob_readBytes(lob, 1, size, rs->str_buf, &len) != DPI_SUCCESS) {
-        RS_ERR(rs, "Oracle LOB readBytes: %s", ora_get_error());
+        ORA_RS_ERR(rs, "Oracle LOB readBytes");
         return -1;
     }
     rs->str_buf[len] = '\0';
@@ -1163,7 +1197,7 @@ static int ora_call_execute(kdbc_stmt *stmt) {
         DPI_MODE_EXEC_COMMIT_ON_SUCCESS : DPI_MODE_EXEC_DEFAULT;
     unsigned int numQueryCols = 0;
     if (p_stmt_execute(sd->stmt, mode, &numQueryCols) != DPI_SUCCESS) {
-        STMT_ERR(stmt, "Oracle execute: %s", ora_get_error());
+        ORA_STMT_ERR(stmt, "Oracle execute");
         return KDBC_ERROR;
     }
 

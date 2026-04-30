@@ -117,21 +117,27 @@ static fn_dbdatecrack   p_dbdatecrack;
 static fn_dbanydatecrack p_dbanydatecrack;
 static fn_dbtds         p_dbtds;
 
-/* Thread-local buffer where message handlers stash the last server error. */
+/* Thread-local buffer where message handlers stash the last server error
+ * along with its numeric `msgno` (used as the kdbc errcode). FreeTDS db-lib
+ * does not surface SQLSTATE, so the corresponding kdbc field stays empty. */
 #if defined(TARGET_OS_IPHONE) && TARGET_OS_IPHONE
+  typedef struct { char buf[1024]; long msgno; } _g_msg_block;
   static pthread_key_t  _g_last_msg_key;
   static pthread_once_t _g_last_msg_once = PTHREAD_ONCE_INIT;
   static void _g_last_msg_init(void) { pthread_key_create(&_g_last_msg_key, free); }
-  static inline char *_g_last_msg_buf(void) {
+  static inline _g_msg_block *_g_msg_block_get(void) {
       pthread_once(&_g_last_msg_once, _g_last_msg_init);
-      char *buf = (char *)pthread_getspecific(_g_last_msg_key);
-      if (!buf) { buf = (char *)calloc(1, 1024); pthread_setspecific(_g_last_msg_key, buf); }
-      return buf;
+      _g_msg_block *blk = (_g_msg_block *)pthread_getspecific(_g_last_msg_key);
+      if (!blk) { blk = (_g_msg_block *)calloc(1, sizeof(*blk)); pthread_setspecific(_g_last_msg_key, blk); }
+      return blk;
   }
-  #define g_last_msg _g_last_msg_buf()
+  #define g_last_msg   (_g_msg_block_get()->buf)
+  #define g_last_msgno (_g_msg_block_get()->msgno)
 #else
   static _Thread_local char _g_last_msg_storage[1024] = "";
-  #define g_last_msg _g_last_msg_storage
+  static _Thread_local long _g_last_msgno_storage = 0;
+  #define g_last_msg   _g_last_msg_storage
+  #define g_last_msgno _g_last_msgno_storage
 #endif
 
 static int tds_server_msg_handler(DBPROCESS *dbproc, DBINT msgno, int msgstate,
@@ -143,6 +149,7 @@ static int tds_server_msg_handler(DBPROCESS *dbproc, DBINT msgno, int msgstate,
         snprintf(g_last_msg, sizeof(g_last_msg),
                  "SQL Server msg %ld, level %d: %s",
                  (long)msgno, severity, msgtext);
+        g_last_msgno = (long)msgno;
     }
     return 0;
 }
@@ -156,6 +163,7 @@ static int tds_err_handler(DBPROCESS *dbproc, int severity, int dberr,
     if (g_last_msg[0] == '\0' && dberrstr && dberrstr[0]) {
         snprintf(g_last_msg, sizeof(g_last_msg),
                  "db-lib error %d (sev %d): %s", dberr, severity, dberrstr);
+        g_last_msgno = (long)dberr;
     }
     return INT_CANCEL;
 }
@@ -251,6 +259,7 @@ typedef struct {
 static int tds_exec_simple(DBPROCESS *dbproc, const char *sql,
                            char *err, size_t err_size) {
     g_last_msg[0] = '\0';
+    g_last_msgno = 0;
     p_dbcancel(dbproc);
     if (p_dbcmd(dbproc, sql) == FAIL) {
         snprintf(err, err_size, "MSSQL dbcmd: %s",
@@ -313,6 +322,7 @@ static void *tds_connect(const char *url, const char *user, const char *password
     p_dbsetlname(login, "UTF-8", DBSETCHARSET);
 
     g_last_msg[0] = '\0';
+    g_last_msgno = 0;
     /* tdsdbopen(..., 1) selects MS-compatible behaviour (SYBVARCHAR→NVARCHAR
      * auto-promotion, ANSI NULL handling, etc.). */
     DBPROCESS *dbproc = p_tdsdbopen(login, server, 1);
@@ -826,6 +836,7 @@ static char *tds_build_params_decl(tds_stmt_data *sd) {
 static int tds_send_execute(tds_stmt_data *sd, char *err, size_t err_size) {
     DBPROCESS *dbproc = sd->tc->dbproc;
     g_last_msg[0] = '\0';
+    g_last_msgno = 0;
     p_dbcancel(dbproc);
 
     /* No params → plain language batch. */
@@ -1037,8 +1048,14 @@ static int tds_execute_update(kdbc_stmt *stmt) {
     tds_stmt_data *sd = (tds_stmt_data *)stmt->native;
     DBPROCESS *dbproc = sd->tc->dbproc;
 
-    if (tds_send_execute(sd, stmt->error, KDBC_ERR_SIZE) != KDBC_OK)
+    if (tds_send_execute(sd, stmt->error, KDBC_ERR_SIZE) != KDBC_OK) {
+        /* tds_send_execute writes the message into stmt->error via the err buffer
+         * but cannot reach the structured fields. The server message handler
+         * captured msgno in the thread-local g_last_msgno; surface it here. */
+        stmt->sqlstate[0] = '\0';
+        stmt->errcode = (int)g_last_msgno;
         return KDBC_ERROR;
+    }
 
     int total = 0;
     int failed = 0;
@@ -1103,7 +1120,8 @@ static int tds_execute_update(kdbc_stmt *stmt) {
     }
 
     if (failed) {
-        STMT_ERR(stmt, "MSSQL: %.1000s", g_last_msg[0] ? g_last_msg : "command failed");
+        STMT_ERR_V(stmt, NULL, (int)g_last_msgno,
+                   "MSSQL: %.1000s", g_last_msg[0] ? g_last_msg : "command failed");
         return KDBC_ERROR;
     }
 
@@ -1122,7 +1140,11 @@ static void *tds_execute_query(kdbc_stmt *stmt, int *out_col_count,
     tds_stmt_data *sd = (tds_stmt_data *)stmt->native;
     DBPROCESS *dbproc = sd->tc->dbproc;
 
-    if (tds_send_execute(sd, err, err_size) != KDBC_OK) return NULL;
+    if (tds_send_execute(sd, err, err_size) != KDBC_OK) {
+        stmt->sqlstate[0] = '\0';
+        stmt->errcode = (int)g_last_msgno;
+        return NULL;
+    }
 
     int ncols = 0;
     while (1) {
@@ -1419,6 +1441,7 @@ static int tds_call_execute(kdbc_stmt *stmt) {
     tds_stmt_data *sd = (tds_stmt_data *)stmt->native;
     DBPROCESS *dbproc = sd->tc->dbproc;
     g_last_msg[0] = '\0';
+    g_last_msgno = 0;
     p_dbcancel(dbproc);
 
     char proc_name[256];
@@ -1429,8 +1452,9 @@ static int tds_call_execute(kdbc_stmt *stmt) {
     }
 
     if (p_dbrpcinit(dbproc, proc_name, 0) == FAIL) {
-        STMT_ERR(stmt, "MSSQL dbrpcinit(%s): %s", proc_name,
-                 g_last_msg[0] ? g_last_msg : "failed");
+        STMT_ERR_V(stmt, NULL, (int)g_last_msgno,
+                   "MSSQL dbrpcinit(%s): %s", proc_name,
+                   g_last_msg[0] ? g_last_msg : "failed");
         return KDBC_ERROR;
     }
 
@@ -1440,20 +1464,23 @@ static int tds_call_execute(kdbc_stmt *stmt) {
         tds_param *p = &sd->params[i];
         int is_return = stmt->out_params && stmt->out_params[i];
         if (tds_rpc_send_param(dbproc, "", is_return, p) == FAIL) {
-            STMT_ERR(stmt, "MSSQL dbrpcparam[%d]: %s", i + 1,
-                     g_last_msg[0] ? g_last_msg : "failed");
+            STMT_ERR_V(stmt, NULL, (int)g_last_msgno,
+                       "MSSQL dbrpcparam[%d]: %s", i + 1,
+                       g_last_msg[0] ? g_last_msg : "failed");
             return KDBC_ERROR;
         }
     }
 
     if (p_dbrpcsend(dbproc) == FAIL) {
-        STMT_ERR(stmt, "MSSQL dbrpcsend: %s",
-                 g_last_msg[0] ? g_last_msg : "failed");
+        STMT_ERR_V(stmt, NULL, (int)g_last_msgno,
+                   "MSSQL dbrpcsend: %s",
+                   g_last_msg[0] ? g_last_msg : "failed");
         return KDBC_ERROR;
     }
     if (p_dbsqlok(dbproc) == FAIL) {
-        STMT_ERR(stmt, "MSSQL dbsqlok: %s",
-                 g_last_msg[0] ? g_last_msg : "failed");
+        STMT_ERR_V(stmt, NULL, (int)g_last_msgno,
+                   "MSSQL dbsqlok: %s",
+                   g_last_msg[0] ? g_last_msg : "failed");
         return KDBC_ERROR;
     }
 
@@ -1465,8 +1492,9 @@ static int tds_call_execute(kdbc_stmt *stmt) {
         RETCODE rc = p_dbresults(dbproc);
         if (rc == NO_MORE_RESULTS) break;
         if (rc == FAIL) {
-            STMT_ERR(stmt, "MSSQL: %s",
-                     g_last_msg[0] ? g_last_msg : "dbresults failed");
+            STMT_ERR_V(stmt, NULL, (int)g_last_msgno,
+                       "MSSQL: %s",
+                       g_last_msg[0] ? g_last_msg : "dbresults failed");
             return KDBC_ERROR;
         }
         while (p_dbnextrow(dbproc) != NO_MORE_ROWS) { /* drain rows */ }

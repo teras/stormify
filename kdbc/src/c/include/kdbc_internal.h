@@ -37,21 +37,31 @@
   #include <TargetConditionals.h>
 #endif
 
+/* Thread-local global vendor metadata, paired with `g_error`. The pthread_key
+ * fallback for iOS allocates a single combined slab so both buffers share the
+ * lifetime of one thread-specific key. */
 #if defined(TARGET_OS_IPHONE) && TARGET_OS_IPHONE
   #include <pthread.h>
+  typedef struct { char err[KDBC_ERR_SIZE]; char sqlstate[6]; int errcode; } _g_err_block;
   static pthread_key_t  _g_error_key;
   static pthread_once_t _g_error_once = PTHREAD_ONCE_INIT;
   static void _g_error_init(void) { pthread_key_create(&_g_error_key, free); }
-  static inline char *_g_error_buf(void) {
+  static inline _g_err_block *_g_error_block(void) {
       pthread_once(&_g_error_once, _g_error_init);
-      char *buf = (char *)pthread_getspecific(_g_error_key);
-      if (!buf) { buf = (char *)calloc(1, KDBC_ERR_SIZE); pthread_setspecific(_g_error_key, buf); }
-      return buf;
+      _g_err_block *blk = (_g_err_block *)pthread_getspecific(_g_error_key);
+      if (!blk) { blk = (_g_err_block *)calloc(1, sizeof(*blk)); pthread_setspecific(_g_error_key, blk); }
+      return blk;
   }
-  #define g_error _g_error_buf()
+  #define g_error    (_g_error_block()->err)
+  #define g_sqlstate (_g_error_block()->sqlstate)
+  #define g_errcode  (_g_error_block()->errcode)
 #else
   static _Thread_local char _g_error_storage[KDBC_ERR_SIZE] = "";
-  #define g_error _g_error_storage
+  static _Thread_local char _g_sqlstate_storage[6] = "";
+  static _Thread_local int  _g_errcode_storage = 0;
+  #define g_error    _g_error_storage
+  #define g_sqlstate _g_sqlstate_storage
+  #define g_errcode  _g_errcode_storage
 #endif
 
 static inline void kdbc_set_global_error(const char *fmt, ...) {
@@ -59,6 +69,27 @@ static inline void kdbc_set_global_error(const char *fmt, ...) {
     va_start(ap, fmt);
     vsnprintf(g_error, KDBC_ERR_SIZE, fmt, ap);
     va_end(ap);
+    g_sqlstate[0] = '\0';
+    g_errcode = 0;
+}
+
+/* Global error setter that also captures vendor sqlstate/errcode. Pass NULL
+ * for sqlstate when the driver does not provide one. */
+static inline void kdbc_set_global_error_v(const char *sqlstate, int errcode,
+                                           const char *fmt, ...) {
+    va_list ap;
+    va_start(ap, fmt);
+    vsnprintf(g_error, KDBC_ERR_SIZE, fmt, ap);
+    va_end(ap);
+    if (sqlstate) {
+        size_t n = strlen(sqlstate);
+        if (n > 5) n = 5;
+        memcpy(g_sqlstate, sqlstate, n);
+        g_sqlstate[n] = '\0';
+    } else {
+        g_sqlstate[0] = '\0';
+    }
+    g_errcode = errcode;
 }
 
 /* ========================================================================
@@ -74,6 +105,8 @@ struct kdbc_conn {
     void                *native;     /* driver-specific connection handle */
     int                  autocommit; /* 1 = autocommit on (default) */
     char                 error[KDBC_ERR_SIZE];
+    char                 sqlstate[6];   /* SQL-92 SQLSTATE, "" if driver does not provide */
+    int                  errcode;       /* vendor-specific numeric code, 0 if none */
     char                 product_name[128];
     char                 product_version[256];
 };
@@ -141,6 +174,8 @@ struct kdbc_stmt {
     /* OUT param results (stored after execution) */
     char       **out_values;  /* string representation of OUT values */
     char        error[KDBC_ERR_SIZE];
+    char        sqlstate[6];  /* SQL-92 SQLSTATE, "" if driver does not provide */
+    int         errcode;      /* vendor-specific numeric code, 0 if none */
 };
 
 struct kdbc_result {
@@ -157,6 +192,8 @@ struct kdbc_result {
     /* Synthetic result (native == NULL) column name — owned, freed on close */
     char       *synthetic_col_name;
     char        error[KDBC_ERR_SIZE];
+    char        sqlstate[6];  /* SQL-92 SQLSTATE, "" if driver does not provide */
+    int         errcode;      /* vendor-specific numeric code, 0 if none */
 };
 
 /* ========================================================================
@@ -270,16 +307,57 @@ struct kdbc_driver_vtable {
 
 /* ========================================================================
  * Helper macros for setting errors
+ *
+ * The plain CONN_ERR/STMT_ERR/RS_ERR macros set only the message and clear
+ * the structured vendor metadata so a previous driver-level error does not
+ * leak through. The _V variants additionally take an SQLSTATE string (or
+ * NULL) and a vendor errcode and copy them into the handle. SQLSTATE is
+ * truncated to 5 characters as defined by SQL-92.
  * ======================================================================== */
 
-#define CONN_ERR(conn, fmt, ...) \
-    snprintf((conn)->error, KDBC_ERR_SIZE, fmt, ##__VA_ARGS__)
+static inline void kdbc_copy_sqlstate(char *dst, const char *src) {
+    if (!src) { dst[0] = '\0'; return; }
+    size_t n = strlen(src);
+    if (n > 5) n = 5;
+    memcpy(dst, src, n);
+    dst[n] = '\0';
+}
 
-#define STMT_ERR(stmt, fmt, ...) \
-    snprintf((stmt)->error, KDBC_ERR_SIZE, fmt, ##__VA_ARGS__)
+#define CONN_ERR(conn, fmt, ...) do { \
+    snprintf((conn)->error, KDBC_ERR_SIZE, fmt, ##__VA_ARGS__); \
+    (conn)->sqlstate[0] = '\0'; \
+    (conn)->errcode = 0; \
+} while (0)
 
-#define RS_ERR(rs, fmt, ...) \
-    snprintf((rs)->error, KDBC_ERR_SIZE, fmt, ##__VA_ARGS__)
+#define STMT_ERR(stmt, fmt, ...) do { \
+    snprintf((stmt)->error, KDBC_ERR_SIZE, fmt, ##__VA_ARGS__); \
+    (stmt)->sqlstate[0] = '\0'; \
+    (stmt)->errcode = 0; \
+} while (0)
+
+#define RS_ERR(rs, fmt, ...) do { \
+    snprintf((rs)->error, KDBC_ERR_SIZE, fmt, ##__VA_ARGS__); \
+    (rs)->sqlstate[0] = '\0'; \
+    (rs)->errcode = 0; \
+} while (0)
+
+#define CONN_ERR_V(conn, sqlstate_str, code, fmt, ...) do { \
+    snprintf((conn)->error, KDBC_ERR_SIZE, fmt, ##__VA_ARGS__); \
+    kdbc_copy_sqlstate((conn)->sqlstate, (sqlstate_str)); \
+    (conn)->errcode = (code); \
+} while (0)
+
+#define STMT_ERR_V(stmt, sqlstate_str, code, fmt, ...) do { \
+    snprintf((stmt)->error, KDBC_ERR_SIZE, fmt, ##__VA_ARGS__); \
+    kdbc_copy_sqlstate((stmt)->sqlstate, (sqlstate_str)); \
+    (stmt)->errcode = (code); \
+} while (0)
+
+#define RS_ERR_V(rs, sqlstate_str, code, fmt, ...) do { \
+    snprintf((rs)->error, KDBC_ERR_SIZE, fmt, ##__VA_ARGS__); \
+    kdbc_copy_sqlstate((rs)->sqlstate, (sqlstate_str)); \
+    (rs)->errcode = (code); \
+} while (0)
 
 /* ========================================================================
  * SQL translation helpers

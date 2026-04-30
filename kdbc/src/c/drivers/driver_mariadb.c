@@ -30,6 +30,7 @@ typedef MYSQL       *(*fn_mysql_real_connect)(MYSQL *, const char *, const char 
 typedef void         (*fn_mysql_close)(MYSQL *);
 typedef const char  *(*fn_mysql_error)(MYSQL *);
 typedef unsigned int (*fn_mysql_errno)(MYSQL *);
+typedef const char  *(*fn_mysql_sqlstate)(MYSQL *);
 typedef my_bool      (*fn_mysql_autocommit)(MYSQL *, my_bool);
 typedef my_bool      (*fn_mysql_commit)(MYSQL *);
 typedef my_bool      (*fn_mysql_rollback)(MYSQL *);
@@ -49,6 +50,7 @@ typedef MYSQL_RES   *(*fn_mysql_stmt_result_metadata)(MYSQL_STMT *);
 typedef my_bool      (*fn_mysql_stmt_close)(MYSQL_STMT *);
 typedef unsigned int (*fn_mysql_stmt_errno)(MYSQL_STMT *);
 typedef const char  *(*fn_mysql_stmt_error)(MYSQL_STMT *);
+typedef const char  *(*fn_mysql_stmt_sqlstate)(MYSQL_STMT *);
 typedef unsigned long long (*fn_mysql_stmt_affected_rows)(MYSQL_STMT *);
 typedef unsigned long long (*fn_mysql_stmt_insert_id)(MYSQL_STMT *);
 typedef unsigned int (*fn_mysql_num_fields)(MYSQL_RES *);
@@ -92,6 +94,8 @@ static fn_mysql_stmt_result_metadata  p_stmt_result_metadata;
 static fn_mysql_stmt_close            p_stmt_close;
 static fn_mysql_stmt_errno            p_stmt_errno;
 static fn_mysql_stmt_error            p_stmt_error;
+static fn_mysql_sqlstate              p_sqlstate;
+static fn_mysql_stmt_sqlstate         p_stmt_sqlstate;
 static fn_mysql_stmt_affected_rows    p_stmt_affected_rows;
 static fn_mysql_stmt_insert_id        p_stmt_insert_id;
 static fn_mysql_num_fields            p_num_fields;
@@ -141,6 +145,13 @@ static void my_load_impl(void) {
     /* mysql_errno */
     p_errno_ = (fn_mysql_errno)kdbc_dl_sym(lib_handle, "mysql_errno");
     if (!p_errno_) { kdbc_dl_close(lib_handle); lib_handle = NULL; return; }
+
+    /* mysql_sqlstate / mysql_stmt_sqlstate: present in every supported libmariadb /
+     * libmysqlclient build. Used to surface SQLSTATE on driver-reported errors. */
+    p_sqlstate = (fn_mysql_sqlstate)kdbc_dl_sym(lib_handle, "mysql_sqlstate");
+    if (!p_sqlstate) { kdbc_dl_close(lib_handle); lib_handle = NULL; return; }
+    p_stmt_sqlstate = (fn_mysql_stmt_sqlstate)kdbc_dl_sym(lib_handle, "mysql_stmt_sqlstate");
+    if (!p_stmt_sqlstate) { kdbc_dl_close(lib_handle); lib_handle = NULL; return; }
 
     MY_LOAD(autocommit);
     MY_LOAD(commit);
@@ -351,7 +362,8 @@ static int my_cancel(kdbc_conn *conn) {
 static int my_exec_direct(kdbc_conn *conn, const char *sql) {
     MYSQL *mysql = (MYSQL *)conn->native;
     if (p_query(mysql, sql)) {
-        CONN_ERR(conn, "MariaDB: %s", p_error(mysql));
+        CONN_ERR_V(conn, p_sqlstate(mysql), (int)p_errno_(mysql),
+                   "MariaDB: %s", p_error(mysql));
         return KDBC_ERROR;
     }
     return KDBC_OK;
@@ -364,7 +376,8 @@ static int my_exec_direct(kdbc_conn *conn, const char *sql) {
 static int my_set_autocommit(kdbc_conn *conn, int enabled) {
     MYSQL *mysql = (MYSQL *)conn->native;
     if (p_autocommit(mysql, enabled ? 1 : 0)) {
-        CONN_ERR(conn, "MariaDB: %s", p_error(mysql));
+        CONN_ERR_V(conn, p_sqlstate(mysql), (int)p_errno_(mysql),
+                   "MariaDB: %s", p_error(mysql));
         return KDBC_ERROR;
     }
     return KDBC_OK;
@@ -373,7 +386,8 @@ static int my_set_autocommit(kdbc_conn *conn, int enabled) {
 static int my_commit_tx(kdbc_conn *conn) {
     MYSQL *mysql = (MYSQL *)conn->native;
     if (p_commit(mysql)) {
-        CONN_ERR(conn, "MariaDB: %s", p_error(mysql));
+        CONN_ERR_V(conn, p_sqlstate(mysql), (int)p_errno_(mysql),
+                   "MariaDB: %s", p_error(mysql));
         return KDBC_ERROR;
     }
     return KDBC_OK;
@@ -382,7 +396,8 @@ static int my_commit_tx(kdbc_conn *conn) {
 static int my_rollback_tx(kdbc_conn *conn) {
     MYSQL *mysql = (MYSQL *)conn->native;
     if (p_rollback(mysql)) {
-        CONN_ERR(conn, "MariaDB: %s", p_error(mysql));
+        CONN_ERR_V(conn, p_sqlstate(mysql), (int)p_errno_(mysql),
+                   "MariaDB: %s", p_error(mysql));
         return KDBC_ERROR;
     }
     return KDBC_OK;
@@ -485,12 +500,16 @@ static void *my_prepare(kdbc_conn *conn, const char *native_sql,
     sd->stmt = p_stmt_init(mysql);
     if (!sd->stmt) {
         snprintf(err, err_size, "MariaDB: %s", p_error(mysql));
+        kdbc_copy_sqlstate(conn->sqlstate, p_sqlstate(mysql));
+        conn->errcode = (int)p_errno_(mysql);
         free(sd);
         return NULL;
     }
 
     if (p_stmt_prepare(sd->stmt, native_sql, (unsigned long)strlen(native_sql))) {
         snprintf(err, err_size, "MariaDB prepare: %s", p_stmt_error(sd->stmt));
+        kdbc_copy_sqlstate(conn->sqlstate, p_stmt_sqlstate(sd->stmt));
+        conn->errcode = (int)p_stmt_errno(sd->stmt);
         p_stmt_close(sd->stmt);
         free(sd);
         return NULL;
@@ -734,7 +753,8 @@ static int my_execute_update(kdbc_stmt *stmt) {
     /* Direct-exec path: DDL that MySQL doesn't accept via PS protocol. */
     if (sd->direct_sql) {
         if (p_query(sd->mysql, sd->direct_sql)) {
-            STMT_ERR(stmt, "MariaDB: %s", p_error(sd->mysql));
+            STMT_ERR_V(stmt, p_sqlstate(sd->mysql), (int)p_errno_(sd->mysql),
+                       "MariaDB: %s", p_error(sd->mysql));
             return KDBC_ERROR;
         }
         return 0;
@@ -742,13 +762,15 @@ static int my_execute_update(kdbc_stmt *stmt) {
 
     if (sd->param_count > 0) {
         if (p_stmt_bind_param(sd->stmt, sd->bind_params)) {
-            STMT_ERR(stmt, "MariaDB bind: %s", p_stmt_error(sd->stmt));
+            STMT_ERR_V(stmt, p_stmt_sqlstate(sd->stmt), (int)p_stmt_errno(sd->stmt),
+                       "MariaDB bind: %s", p_stmt_error(sd->stmt));
             return KDBC_ERROR;
         }
     }
 
     if (p_stmt_execute(sd->stmt)) {
-        STMT_ERR(stmt, "MariaDB execute: %s", p_stmt_error(sd->stmt));
+        STMT_ERR_V(stmt, p_stmt_sqlstate(sd->stmt), (int)p_stmt_errno(sd->stmt),
+                   "MariaDB execute: %s", p_stmt_error(sd->stmt));
         return KDBC_ERROR;
     }
 
@@ -950,7 +972,8 @@ static int my_rs_next(kdbc_result *rs) {
         return 1;
     }
     if (rc == 1) {
-        RS_ERR(rs, "MariaDB fetch: %s", p_stmt_error(mrs->stmt));
+        RS_ERR_V(rs, p_stmt_sqlstate(mrs->stmt), (int)p_stmt_errno(mrs->stmt),
+                 "MariaDB fetch: %s", p_stmt_error(mrs->stmt));
         return KDBC_ERROR;
     }
     return 0; /* MYSQL_NO_DATA (100) */
@@ -1249,7 +1272,8 @@ static int my_call_execute(kdbc_stmt *stmt) {
             return KDBC_ERROR;
         }
         if (p_stmt_prepare(set_stmt, set_sql, (unsigned long)strlen(set_sql))) {
-            STMT_ERR(stmt, "MariaDB prepare combined SET: %s", p_stmt_error(set_stmt));
+            STMT_ERR_V(stmt, p_stmt_sqlstate(set_stmt), (int)p_stmt_errno(set_stmt),
+                       "MariaDB prepare combined SET: %s", p_stmt_error(set_stmt));
             p_stmt_close(set_stmt);
             free(set_sql);
             return KDBC_ERROR;
@@ -1271,12 +1295,14 @@ static int my_call_execute(kdbc_stmt *stmt) {
         }
 
         if (p_stmt_bind_param(set_stmt, sd->bind_params)) {
-            STMT_ERR(stmt, "MariaDB bind combined SET: %s", p_stmt_error(set_stmt));
+            STMT_ERR_V(stmt, p_stmt_sqlstate(set_stmt), (int)p_stmt_errno(set_stmt),
+                       "MariaDB bind combined SET: %s", p_stmt_error(set_stmt));
             p_stmt_close(set_stmt);
             return KDBC_ERROR;
         }
         if (p_stmt_execute(set_stmt)) {
-            STMT_ERR(stmt, "MariaDB execute combined SET: %s", p_stmt_error(set_stmt));
+            STMT_ERR_V(stmt, p_stmt_sqlstate(set_stmt), (int)p_stmt_errno(set_stmt),
+                       "MariaDB execute combined SET: %s", p_stmt_error(set_stmt));
             p_stmt_close(set_stmt);
             return KDBC_ERROR;
         }
@@ -1300,7 +1326,8 @@ static int my_call_execute(kdbc_stmt *stmt) {
     snprintf(call_sql + off, call_len - off, ")");
 
     if (p_query(mysql, call_sql)) {
-        STMT_ERR(stmt, "MariaDB CALL %s: %s", proc_name, p_error(mysql));
+        STMT_ERR_V(stmt, p_sqlstate(mysql), (int)p_errno_(mysql),
+                   "MariaDB CALL %s: %s", proc_name, p_error(mysql));
         free(call_sql);
         return KDBC_ERROR;
     }
@@ -1314,7 +1341,8 @@ static int my_call_execute(kdbc_stmt *stmt) {
         if (res) p_free_result(res);
         int next = p_next_result(mysql);
         if (next > 0) {
-            STMT_ERR(stmt, "MariaDB CALL next_result: %s", p_error(mysql));
+            STMT_ERR_V(stmt, p_sqlstate(mysql), (int)p_errno_(mysql),
+                       "MariaDB CALL next_result: %s", p_error(mysql));
             return KDBC_ERROR;
         }
         if (next < 0) break;  /* no more results */
@@ -1345,7 +1373,8 @@ static int my_call_execute(kdbc_stmt *stmt) {
             }
 
             if (p_query(mysql, sel_sql)) {
-                STMT_ERR(stmt, "MariaDB SELECT out vars: %s", p_error(mysql));
+                STMT_ERR_V(stmt, p_sqlstate(mysql), (int)p_errno_(mysql),
+                           "MariaDB SELECT out vars: %s", p_error(mysql));
                 free(sel_sql);
                 return KDBC_ERROR;
             }
@@ -1353,7 +1382,8 @@ static int my_call_execute(kdbc_stmt *stmt) {
 
             MYSQL_RES *res = p_store_result(mysql);
             if (!res) {
-                STMT_ERR(stmt, "MariaDB store_result: %s", p_error(mysql));
+                STMT_ERR_V(stmt, p_sqlstate(mysql), (int)p_errno_(mysql),
+                           "MariaDB store_result: %s", p_error(mysql));
                 return KDBC_ERROR;
             }
             MYSQL_ROW row = p_fetch_row(res);

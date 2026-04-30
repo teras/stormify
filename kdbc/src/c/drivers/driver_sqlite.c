@@ -47,6 +47,7 @@ typedef int    (*fn_sqlite3_exec)(sqlite3 *, const char *, void *, void *, char 
 typedef void   (*fn_sqlite3_interrupt)(sqlite3 *);
 typedef void   (*fn_sqlite3_free)(void *);
 typedef int    (*fn_sqlite3_get_autocommit)(sqlite3 *);
+typedef int    (*fn_sqlite3_extended_errcode)(sqlite3 *);
 
 /* ========================================================================
  * Loaded function pointers
@@ -85,6 +86,7 @@ static fn_sqlite3_exec              p_exec;
 static fn_sqlite3_interrupt         p_interrupt;
 static fn_sqlite3_free              p_sq_free;
 static fn_sqlite3_get_autocommit   p_get_autocommit;
+static fn_sqlite3_extended_errcode p_extended_errcode;
 
 /* ========================================================================
  * Driver-specific result set structure
@@ -150,6 +152,9 @@ static void sq_load_impl(void) {
     if (!p_sq_free) { kdbc_dl_close(lib_handle); lib_handle = NULL; return; }
     p_get_autocommit = (fn_sqlite3_get_autocommit)kdbc_dl_sym(lib_handle, "sqlite3_get_autocommit");
     if (!p_get_autocommit) { kdbc_dl_close(lib_handle); lib_handle = NULL; return; }
+    /* sqlite3_extended_errcode is present in every supported SQLite (≥3.6.5). */
+    p_extended_errcode = (fn_sqlite3_extended_errcode)kdbc_dl_sym(lib_handle, "sqlite3_extended_errcode");
+    if (!p_extended_errcode) { kdbc_dl_close(lib_handle); lib_handle = NULL; return; }
 
     sq_load_ok = 1;
 }
@@ -208,7 +213,8 @@ static int sq_exec_sql(kdbc_conn *conn, const char *sql) {
     char *errmsg = NULL;
     int rc = p_exec(db, sql, NULL, NULL, &errmsg);
     if (rc != SQLITE_OK) {
-        CONN_ERR(conn, "SQLite: %s", errmsg ? errmsg : "unknown error");
+        CONN_ERR_V(conn, NULL, p_extended_errcode(db),
+                   "SQLite: %s", errmsg ? errmsg : "unknown error");
         if (errmsg) p_sq_free(errmsg);
         return KDBC_ERROR;
     }
@@ -281,6 +287,11 @@ static void *sq_prepare(kdbc_conn *conn, const char *native_sql,
     int rc = p_prepare_v2(db, native_sql, -1, &stmt, NULL);
     if (rc != SQLITE_OK) {
         snprintf(err, err_size, "SQLite prepare: %s", p_errmsg(db));
+        /* The core copies the err buffer into conn->error after failure but
+         * does not touch sqlstate/errcode. Set them directly so kdbc_sqlstate
+         * / kdbc_errcode see the vendor-reported code at the throw site. */
+        conn->sqlstate[0] = '\0';
+        conn->errcode = p_extended_errcode(db);
         return NULL;
     }
     return stmt;
@@ -298,7 +309,9 @@ static void sq_stmt_close(void *native_stmt, void *native_conn) {
 static int sq_bind_null(kdbc_stmt *stmt, int idx) {
     int rc = p_bind_null((sqlite3_stmt *)stmt->native, idx);
     if (rc != SQLITE_OK) {
-        STMT_ERR(stmt, "SQLite bind_null: %s", p_errmsg((sqlite3 *)stmt->conn->native));
+        sqlite3 *db = (sqlite3 *)stmt->conn->native;
+        STMT_ERR_V(stmt, NULL, p_extended_errcode(db),
+                   "SQLite bind_null: %s", p_errmsg(db));
         return KDBC_ERROR;
     }
     return KDBC_OK;
@@ -307,7 +320,9 @@ static int sq_bind_null(kdbc_stmt *stmt, int idx) {
 static int sq_bind_int(kdbc_stmt *stmt, int idx, int val) {
     int rc = p_bind_int((sqlite3_stmt *)stmt->native, idx, val);
     if (rc != SQLITE_OK) {
-        STMT_ERR(stmt, "SQLite bind_int: %s", p_errmsg((sqlite3 *)stmt->conn->native));
+        sqlite3 *db = (sqlite3 *)stmt->conn->native;
+        STMT_ERR_V(stmt, NULL, p_extended_errcode(db),
+                   "SQLite bind_int: %s", p_errmsg(db));
         return KDBC_ERROR;
     }
     return KDBC_OK;
@@ -316,7 +331,9 @@ static int sq_bind_int(kdbc_stmt *stmt, int idx, int val) {
 static int sq_bind_long(kdbc_stmt *stmt, int idx, int64_t val) {
     int rc = p_bind_int64((sqlite3_stmt *)stmt->native, idx, val);
     if (rc != SQLITE_OK) {
-        STMT_ERR(stmt, "SQLite bind_long: %s", p_errmsg((sqlite3 *)stmt->conn->native));
+        sqlite3 *db = (sqlite3 *)stmt->conn->native;
+        STMT_ERR_V(stmt, NULL, p_extended_errcode(db),
+                   "SQLite bind_long: %s", p_errmsg(db));
         return KDBC_ERROR;
     }
     return KDBC_OK;
@@ -325,7 +342,9 @@ static int sq_bind_long(kdbc_stmt *stmt, int idx, int64_t val) {
 static int sq_bind_double(kdbc_stmt *stmt, int idx, double val) {
     int rc = p_bind_double((sqlite3_stmt *)stmt->native, idx, val);
     if (rc != SQLITE_OK) {
-        STMT_ERR(stmt, "SQLite bind_double: %s", p_errmsg((sqlite3 *)stmt->conn->native));
+        sqlite3 *db = (sqlite3 *)stmt->conn->native;
+        STMT_ERR_V(stmt, NULL, p_extended_errcode(db),
+                   "SQLite bind_double: %s", p_errmsg(db));
         return KDBC_ERROR;
     }
     return KDBC_OK;
@@ -338,7 +357,9 @@ static int sq_bind_bool(kdbc_stmt *stmt, int idx, int val) {
 static int sq_bind_string(kdbc_stmt *stmt, int idx, const char *val) {
     int rc = p_bind_text((sqlite3_stmt *)stmt->native, idx, val, -1, SQLITE_TRANSIENT);
     if (rc != SQLITE_OK) {
-        STMT_ERR(stmt, "SQLite bind_string: %s", p_errmsg((sqlite3 *)stmt->conn->native));
+        sqlite3 *db = (sqlite3 *)stmt->conn->native;
+        STMT_ERR_V(stmt, NULL, p_extended_errcode(db),
+                   "SQLite bind_string: %s", p_errmsg(db));
         return KDBC_ERROR;
     }
     return KDBC_OK;
@@ -347,7 +368,9 @@ static int sq_bind_string(kdbc_stmt *stmt, int idx, const char *val) {
 static int sq_bind_blob(kdbc_stmt *stmt, int idx, const void *data, size_t len) {
     int rc = p_bind_blob((sqlite3_stmt *)stmt->native, idx, data, (int)len, SQLITE_TRANSIENT);
     if (rc != SQLITE_OK) {
-        STMT_ERR(stmt, "SQLite bind_blob: %s", p_errmsg((sqlite3 *)stmt->conn->native));
+        sqlite3 *db = (sqlite3 *)stmt->conn->native;
+        STMT_ERR_V(stmt, NULL, p_extended_errcode(db),
+                   "SQLite bind_blob: %s", p_errmsg(db));
         return KDBC_ERROR;
     }
     return KDBC_OK;
@@ -402,7 +425,8 @@ static int sq_execute_update(kdbc_stmt *stmt) {
 
     int rc = p_step(s);
     if (rc != SQLITE_DONE && rc != SQLITE_ROW) {
-        STMT_ERR(stmt, "SQLite execute: %s", p_errmsg(db));
+        STMT_ERR_V(stmt, NULL, p_extended_errcode(db),
+                   "SQLite execute: %s", p_errmsg(db));
         p_reset(s);
         return KDBC_ERROR;
     }
@@ -463,7 +487,8 @@ static int sq_rs_next(kdbc_result *rs) {
     int rc = p_step(sr->stmt);
     if (rc == SQLITE_ROW) return 1;
     if (rc == SQLITE_DONE) return 0;
-    RS_ERR(rs, "SQLite fetch: %s", p_errmsg(sr->db));
+    RS_ERR_V(rs, NULL, p_extended_errcode(sr->db),
+             "SQLite fetch: %s", p_errmsg(sr->db));
     return KDBC_ERROR;
 }
 

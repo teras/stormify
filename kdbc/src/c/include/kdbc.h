@@ -211,6 +211,86 @@ const char *kdbc_stmt_error(kdbc_stmt *stmt);
  */
 const char *kdbc_global_error(void);
 
+/**
+ * @brief Get the SQLSTATE code for the last connection error.
+ *
+ * SQLSTATE is the 5-character standard code defined by SQL-92 and reported
+ * by drivers that support it (PostgreSQL, MariaDB/MySQL, Oracle). Drivers
+ * that do not surface SQLSTATE (SQLite, MS SQL Server via db-lib) leave the
+ * field empty. The pointer is owned by the connection and remains valid
+ * until the next KDBC call on it.
+ *
+ * @param conn  The connection to query.
+ * @return The SQLSTATE code, or `""` if none.
+ */
+const char *kdbc_sqlstate(kdbc_conn *conn);
+
+/**
+ * @brief Get the vendor-specific error code for the last connection error.
+ *
+ * The semantics depend on the driver: SQLite returns the extended result
+ * code, MariaDB/MySQL returns `mysql_errno`, Oracle returns the ORA number,
+ * MS SQL Server returns the message number. PostgreSQL and other drivers
+ * that only carry SQLSTATE return `0`.
+ *
+ * @param conn  The connection to query.
+ * @return The vendor error code, or `0` if none.
+ */
+int kdbc_errcode(kdbc_conn *conn);
+
+/**
+ * @brief Get the SQLSTATE code for the last statement error.
+ * @param stmt  The statement to query.
+ * @return The SQLSTATE code, or `""` if none. See [kdbc_sqlstate] for semantics.
+ */
+const char *kdbc_stmt_sqlstate(kdbc_stmt *stmt);
+
+/**
+ * @brief Get the vendor-specific error code for the last statement error.
+ * @param stmt  The statement to query.
+ * @return The vendor error code, or `0` if none. See [kdbc_errcode] for semantics.
+ */
+int kdbc_stmt_errcode(kdbc_stmt *stmt);
+
+/**
+ * @brief Get the SQLSTATE code for the last connection-less (global) error.
+ *
+ * Thread-local — safe to call from any thread.
+ *
+ * @return The SQLSTATE code, or `""` if none.
+ */
+const char *kdbc_global_sqlstate(void);
+
+/**
+ * @brief Get the vendor-specific error code for the last connection-less error.
+ *
+ * Thread-local — safe to call from any thread.
+ *
+ * @return The vendor error code, or `0` if none.
+ */
+int kdbc_global_errcode(void);
+
+/**
+ * @brief Get the last error message for a result set.
+ * @param rs  The result set to query.
+ * @return The error message, or `""` if no error.
+ */
+const char *kdbc_result_error(kdbc_result *rs);
+
+/**
+ * @brief Get the SQLSTATE code for the last result-set error.
+ * @param rs  The result set to query.
+ * @return The SQLSTATE code, or `""` if none. See [kdbc_sqlstate] for semantics.
+ */
+const char *kdbc_result_sqlstate(kdbc_result *rs);
+
+/**
+ * @brief Get the vendor-specific error code for the last result-set error.
+ * @param rs  The result set to query.
+ * @return The vendor error code, or `0` if none. See [kdbc_errcode] for semantics.
+ */
+int kdbc_result_errcode(kdbc_result *rs);
+
 /** @} */ /* end of errors */
 
 /* ========================================================================

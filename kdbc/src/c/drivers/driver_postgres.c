@@ -86,6 +86,13 @@ typedef int        (*fn_PQcancel)(PGcancel *, char *, int);
 typedef void       (*fn_PQfreeCancel)(PGcancel *);
 typedef int        (*fn_PQsetClientEncoding)(PGconn *, const char *);
 typedef PGTransactionStatusType (*fn_PQtransactionStatus)(const PGconn *);
+typedef char      *(*fn_PQresultErrorField)(const PGresult *, int);
+
+/* PG_DIAG_* selectors from libpq-fe.h. Re-declared here so we don't depend
+ * on the application-side header for the field selector constants. */
+#ifndef PG_DIAG_SQLSTATE
+#define PG_DIAG_SQLSTATE 'C'
+#endif
 
 /* ========================================================================
  * Loaded function pointers
@@ -118,6 +125,7 @@ static fn_PQcancel             p_cancel;
 static fn_PQfreeCancel         p_freeCancel;
 static fn_PQsetClientEncoding  p_setClientEncoding;
 static fn_PQtransactionStatus  p_transactionStatus;
+static fn_PQresultErrorField   p_resultErrorField;
 
 /* ========================================================================
  * Driver-specific structures
@@ -199,6 +207,7 @@ static void pg_load_impl(void) {
     PG_LOAD(freeCancel);
     PG_LOAD(setClientEncoding);
     PG_LOAD(transactionStatus);
+    PG_LOAD(resultErrorField);
 
     pg_load_ok = 1;
 }
@@ -286,7 +295,9 @@ static int pg_exec_simple(kdbc_conn *conn, const char *sql) {
     }
     int st = p_resultStatus(res);
     if (st != PGRES_COMMAND_OK && st != PGRES_TUPLES_OK) {
-        CONN_ERR(conn, "PostgreSQL: %s", p_resultErrorMessage(res));
+        const char *sqlst = p_resultErrorField(res, PG_DIAG_SQLSTATE);
+        CONN_ERR_V(conn, sqlst, 0,
+                   "PostgreSQL: %s", p_resultErrorMessage(res));
         p_clear(res);
         return KDBC_ERROR;
     }
@@ -414,7 +425,8 @@ static void *pg_prepare(kdbc_conn *conn, const char *native_sql,
  * bind state. Re-Parses (DEALLOCATE + PQprepare) if Oids have changed since
  * the last execute — rare in practice but necessary when a caller rebinds
  * the same prepared statement with a different Kotlin-side type. */
-static int pg_ensure_prepared(pg_stmt_data *sd, char *err, size_t err_size) {
+static int pg_ensure_prepared(kdbc_stmt *stmt, char *err, size_t err_size) {
+    pg_stmt_data *sd = (pg_stmt_data *)stmt->native;
     /* Collect current Oids from bind state. */
     Oid *current = NULL;
     if (sd->param_count > 0) {
@@ -451,8 +463,11 @@ static int pg_ensure_prepared(pg_stmt_data *sd, char *err, size_t err_size) {
     PGresult *res = p_prepare(sd->pg, sd->stmt_name, sd->sql,
                               sd->param_count, current);
     if (!res || p_resultStatus(res) != PGRES_COMMAND_OK) {
-        snprintf(err, err_size, "PostgreSQL prepare: %s",
-                 res ? p_resultErrorMessage(res) : p_errorMessage(sd->pg));
+        const char *sqlst = res ? p_resultErrorField(res, PG_DIAG_SQLSTATE) : NULL;
+        STMT_ERR_V(stmt, sqlst, 0,
+                   "PostgreSQL prepare: %s",
+                   res ? p_resultErrorMessage(res) : p_errorMessage(sd->pg));
+        (void)err; (void)err_size;
         if (res) p_clear(res);
         free(current);
         return KDBC_ERROR;
@@ -710,7 +725,7 @@ static void pg_free_args(pg_exec_args *a) {
 
 static int pg_execute_update(kdbc_stmt *stmt) {
     pg_stmt_data *sd = (pg_stmt_data *)stmt->native;
-    if (pg_ensure_prepared(sd, stmt->error, KDBC_ERR_SIZE) != KDBC_OK)
+    if (pg_ensure_prepared(stmt, stmt->error, KDBC_ERR_SIZE) != KDBC_OK)
         return KDBC_ERROR;
     pg_exec_args args = pg_build_args(sd);
 
@@ -759,7 +774,9 @@ static int pg_execute_update(kdbc_stmt *stmt) {
         p_clear(res);
         return rows;
     } else {
-        STMT_ERR(stmt, "PostgreSQL: %s", p_resultErrorMessage(res));
+        const char *sqlst = p_resultErrorField(res, PG_DIAG_SQLSTATE);
+        STMT_ERR_V(stmt, sqlst, 0,
+                   "PostgreSQL: %s", p_resultErrorMessage(res));
         p_clear(res);
         return KDBC_ERROR;
     }
@@ -768,7 +785,7 @@ static int pg_execute_update(kdbc_stmt *stmt) {
 static void *pg_execute_query(kdbc_stmt *stmt, int *out_col_count,
                               char *err, size_t err_size) {
     pg_stmt_data *sd = (pg_stmt_data *)stmt->native;
-    if (pg_ensure_prepared(sd, err, err_size) != KDBC_OK) return NULL;
+    if (pg_ensure_prepared(stmt, err, err_size) != KDBC_OK) return NULL;
     pg_exec_args args = pg_build_args(sd);
 
     /* Request binary result format */
@@ -785,7 +802,9 @@ static void *pg_execute_query(kdbc_stmt *stmt, int *out_col_count,
 
     int status = p_resultStatus(res);
     if (status != PGRES_TUPLES_OK) {
-        snprintf(err, err_size, "PostgreSQL: %s", p_resultErrorMessage(res));
+        const char *sqlst = p_resultErrorField(res, PG_DIAG_SQLSTATE);
+        STMT_ERR_V(stmt, sqlst, 0,
+                   "PostgreSQL: %s", p_resultErrorMessage(res));
         p_clear(res);
         return NULL;
     }
@@ -1312,7 +1331,7 @@ static void pg_rs_close(void *native_rs) {
 
 static int pg_call_execute(kdbc_stmt *stmt) {
     pg_stmt_data *sd = (pg_stmt_data *)stmt->native;
-    if (pg_ensure_prepared(sd, stmt->error, KDBC_ERR_SIZE) != KDBC_OK)
+    if (pg_ensure_prepared(stmt, stmt->error, KDBC_ERR_SIZE) != KDBC_OK)
         return KDBC_ERROR;
 
     pg_exec_args args = pg_build_args(sd);
@@ -1331,7 +1350,9 @@ static int pg_call_execute(kdbc_stmt *stmt) {
 
     int status = p_resultStatus(res);
     if (status != PGRES_TUPLES_OK && status != PGRES_COMMAND_OK) {
-        STMT_ERR(stmt, "PostgreSQL: %s", p_resultErrorMessage(res));
+        const char *sqlst = p_resultErrorField(res, PG_DIAG_SQLSTATE);
+        STMT_ERR_V(stmt, sqlst, 0,
+                   "PostgreSQL: %s", p_resultErrorMessage(res));
         p_clear(res);
         return KDBC_ERROR;
     }
