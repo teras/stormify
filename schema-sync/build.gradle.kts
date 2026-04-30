@@ -14,6 +14,14 @@ dependencies {
     implementation("org.apache.lucene:lucene-analysis-common:9.11.1")
     implementation("com.akuleshov7:ktoml-core:0.7.0")
     implementation("com.akuleshov7:ktoml-file:0.7.0")
+    implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.8.1")
+    implementation("org.jetbrains.kotlin:kotlin-compiler-embeddable:2.2.21")
+    runtimeOnly("org.xerial:sqlite-jdbc:3.46.1.0")
+    runtimeOnly("org.postgresql:postgresql:42.7.4")
+    runtimeOnly("org.mariadb.jdbc:mariadb-java-client:3.4.1")
+    runtimeOnly("com.mysql:mysql-connector-j:9.0.0")
+    runtimeOnly("com.oracle.database.jdbc:ojdbc11:23.5.0.24.07")
+    runtimeOnly("com.microsoft.sqlserver:mssql-jdbc:12.8.1.jre11")
 }
 
 application {
@@ -33,6 +41,34 @@ tasks.register<JavaExec>("classifierDemo") {
     description = "Runs the classifier smoke test against built-in seeds"
     classpath = sourceSets.main.get().runtimeClasspath
     mainClass = "onl.ycode.stormify.schemasync.classifier.ClassifierDemoKt"
+}
+
+tasks.register<JavaExec>("introspectorDemo") {
+    group = "verification"
+    description = "Connects to a JDBC URL and dumps the columns it would classify"
+    classpath = sourceSets.main.get().runtimeClasspath
+    mainClass = "onl.ycode.stormify.schemasync.db.IntrospectorDemoKt"
+}
+
+tasks.register<JavaExec>("writerDemo") {
+    group = "verification"
+    description = "Applies a single PSI splice edit to a Kotlin source file"
+    classpath = sourceSets.main.get().runtimeClasspath
+    mainClass = "onl.ycode.stormify.schemasync.entity.source.WriterDemoKt"
+}
+
+tasks.register<JavaExec>("scannerDemo") {
+    group = "verification"
+    description = "Walks Kotlin sources via PSI and prints discovered entities"
+    classpath = sourceSets.main.get().runtimeClasspath
+    mainClass = "onl.ycode.stormify.schemasync.entity.source.ScannerDemoKt"
+}
+
+tasks.register<JavaExec>("migrationDemo") {
+    group = "verification"
+    description = "End-to-end: jdbc-url + entities.json → migration.sql"
+    classpath = sourceSets.main.get().runtimeClasspath
+    mainClass = "onl.ycode.stormify.schemasync.db.MigrationDemoKt"
 }
 
 tasks.register<Jar>("fatJar") {

@@ -1,21 +1,41 @@
 package onl.ycode.stormify.schemasync.tui
 
 import onl.ycode.stormify.schemasync.model.TableEntry
+import onl.ycode.stormify.schemasync.model.TableStatus
 
 class RowFormatter(entries: List<TableEntry>) {
-    private val tableWidth: Int = maxOf(10, entries.maxOf { it.table.length })
-    private val entityWidth: Int = maxOf(10, entries.maxOf { entityShort(it.entity).length })
+    private val tableWidth: Int = maxOf("table".length, entries.maxOf { it.table.length })
+    private val entityWidth: Int = maxOf("entity".length, entries.maxOf { entityShort(it.entity).length })
 
-    fun renderRow(entry: TableEntry, action: Action): String =
-        " ${action.label}  ${entry.table.fit(tableWidth)} ${Symbols.vbar} ${entityShort(entry.entity).fit(entityWidth)} "
+    fun renderRow(entry: TableEntry): String =
+        " ${badge(entry.status)} ${entry.table.fit(tableWidth)} ${Symbols.vbar} ${entityShort(entry.entity).fit(entityWidth)} "
 
     fun headerRow(): String =
-        "     ${"table".fit(tableWidth)} ${Symbols.vbar} ${"entity".fit(entityWidth)} "
+        "   ${"table".fit(tableWidth)} ${Symbols.vbar} ${"entity".fit(entityWidth)} "
 
-    /** Column index where the row separator (`│`) sits. Used by HeaderRule to place its cross. */
-    val crossColumn: Int get() = 1 + 2 + 2 + tableWidth + 1
+    /** Column index where the row separator (`│`) sits. */
+    val crossColumns: List<Int> = listOf(1 + 1 + 1 + tableWidth + 1)
 
-    val leftPaneWidth: Int get() = 1 + 2 + 2 + tableWidth + 3 + entityWidth + 1 + 2 + 2
+    val leftPaneWidth: Int = 1 + 1 + 1 + tableWidth + 3 + entityWidth + 1
+
+    /** 1-cell status badge (unicode glyph, ASCII fallback in `--ascii` mode). */
+    private fun badge(status: TableStatus): String = if (Symbols.ascii) {
+        when (status) {
+            TableStatus.SYNCED -> "="
+            TableStatus.DIFF -> "*"
+            TableStatus.ENTITY_ONLY -> ">"
+            TableStatus.DB_ONLY -> "<"
+            TableStatus.PROBLEMATIC -> "!"
+        }
+    } else {
+        when (status) {
+            TableStatus.SYNCED -> "═"
+            TableStatus.DIFF -> "≠"
+            TableStatus.ENTITY_ONLY -> "▶"
+            TableStatus.DB_ONLY -> "◀"
+            TableStatus.PROBLEMATIC -> "✗"
+        }
+    }
 }
 
 internal fun entityShort(fqn: String?): String = fqn?.substringAfterLast('.') ?: ""

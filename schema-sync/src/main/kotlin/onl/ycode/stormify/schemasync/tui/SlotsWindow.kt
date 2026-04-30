@@ -160,6 +160,10 @@ fun runSlotsView(gui: WindowBasedTextGUI, state: ConfigState) {
         override fun onUnhandledInput(basePane: Window, keyStroke: KeyStroke, hasBeenHandled: AtomicBoolean) {
             val focused = window.focusedInteractable
             when {
+                keyStroke.keyType == KeyType.F1 || keyStroke.character == '?' -> {
+                    showHelp(gui)
+                    hasBeenHandled.set(true)
+                }
                 keyStroke.keyType == KeyType.Escape || keyStroke.character == 'q' || keyStroke.character == 'Q' -> {
                     window.close()
                     hasBeenHandled.set(true)

@@ -5,12 +5,10 @@ import com.googlecode.lanterna.TextColor
 import com.googlecode.lanterna.bundle.LanternaThemes
 import com.googlecode.lanterna.gui2.ActionListBox
 import com.googlecode.lanterna.gui2.BasicWindow
-import com.googlecode.lanterna.gui2.Button
 import com.googlecode.lanterna.gui2.CheckBox
 import com.googlecode.lanterna.gui2.DefaultWindowManager
 import com.googlecode.lanterna.gui2.Direction
 import com.googlecode.lanterna.gui2.EmptySpace
-import com.googlecode.lanterna.gui2.GridLayout
 import com.googlecode.lanterna.gui2.Interactable
 import com.googlecode.lanterna.gui2.Label
 import com.googlecode.lanterna.gui2.LinearLayout
@@ -24,27 +22,35 @@ import com.googlecode.lanterna.gui2.dialogs.MessageDialog
 import com.googlecode.lanterna.gui2.dialogs.MessageDialogButton
 import com.googlecode.lanterna.input.KeyStroke
 import com.googlecode.lanterna.input.KeyType
-import com.googlecode.lanterna.input.MouseAction
-import com.googlecode.lanterna.input.MouseActionType
 import com.googlecode.lanterna.screen.Screen
+import onl.ycode.stormify.schemasync.classifier.SchemaClassifier
 import onl.ycode.stormify.schemasync.config.ConfigState
-import onl.ycode.stormify.schemasync.model.ColumnDiff
+import onl.ycode.stormify.schemasync.db.Dialect
+import onl.ycode.stormify.schemasync.db.MigrationGenerator
+import onl.ycode.stormify.schemasync.entity.ColumnDelta
+import onl.ycode.stormify.schemasync.entity.KotlinEntity
+import onl.ycode.stormify.schemasync.entity.TableDiff
+import onl.ycode.stormify.schemasync.model.ColumnRef
 import onl.ycode.stormify.schemasync.model.TableEntry
 import onl.ycode.stormify.schemasync.model.TableStatus
+import java.nio.file.Path
 import java.util.concurrent.atomic.AtomicBoolean
 
-private enum class Outcome { APPLY, CANCEL }
+enum class SchemaSyncOutcome { CANCEL, RESCAN }
+private typealias Outcome = SchemaSyncOutcome
 
-private const val ACTION_COL_WIDTH = 4
-private const val DOUBLE_CLICK_MS = 400L
-
+@Suppress("LongParameterList", "LongMethod")
 fun runSchemaSync(
     screen: Screen,
     configState: ConfigState,
+    classifier: SchemaClassifier,
+    columnsToClassify: List<ColumnRef>,
     tables: List<TableEntry>,
-    diffs: Map<String, List<ColumnDiff>>,
+    diffsByTable: Map<String, TableDiff>,
+    entities: List<KotlinEntity> = emptyList(),
+    dialect: Dialect = Dialect.GENERIC,
     title: String = "Stormify Schema Sync",
-) {
+): SchemaSyncOutcome {
     val gui = MultiWindowTextGUI(screen, DefaultWindowManager(), EmptySpace(TextColor.ANSI.DEFAULT))
     val themeNames = listOf("default", "businessmachine", "blaster", "bigsnake", "conqueror", "defrost")
     var themeIdx = 0
@@ -55,14 +61,15 @@ fun runSchemaSync(
     val window = BasicWindow(title)
     window.setHints(listOf(Window.Hint.FULL_SCREEN, Window.Hint.NO_DECORATIONS))
 
-    val root = Panel(LinearLayout(Direction.VERTICAL))
-    root.layoutManager = LinearLayout(Direction.VERTICAL).setSpacing(0)
+    val propertyActions = PropertyActions()
+
+    val root = Panel(LinearLayout(Direction.VERTICAL).setSpacing(0))
 
     val statusLabel = Label("")
     fun refreshStatus() {
         statusLabel.text =
             "${tables.size} tables · ${tables.count { it.status == TableStatus.DIFF }} with diffs · " +
-                "↑↓ Space / Tab Enter Esc · F2 [${themeNames[themeIdx]}] · F3 slots"
+                "${dialect.tomlKey} · F2 [${themeNames[themeIdx]}] · F3 slots · F5 export · F6 defaults · F7 writer"
     }
     refreshStatus()
     root.addComponent(statusLabel)
@@ -72,171 +79,224 @@ fun runSchemaSync(
     filterRow.addComponent(Label("Filter (/): "))
     root.addComponent(filterRow)
 
-    val formatter = RowFormatter(tables)
-    val previewRenderer = DiffPreviewRenderer(diffs)
+    val tableFormatter = RowFormatter(tables)
 
-    val allRows = tables.map { RowAction(it, formatter) }
+    val allTableRows = tables.map { TableRowItem(it, tableFormatter) }
     var currentFilter = ""
     var hideSynced = false
 
-    val split = Panel(GridLayout(2).setHorizontalSpacing(0).setVerticalSpacing(0))
-    split.layoutData = LinearLayout.createLayoutData(LinearLayout.Alignment.Fill, LinearLayout.GrowPolicy.CanGrow)
+    val tablesList = SelectionAwareListBox(separatorColumns = tableFormatter.crossColumns)
 
-    val list = object : ActionListBox() {
-        var onSelectionChanged: (() -> Unit)? = null
-        private var lastClickAt: Long = 0L
-        private var lastClickRow: Int = -1
-
-        init {
-            renderer = AsciiListBoxRenderer()
-        }
-
-        override fun handleKeyStroke(keyStroke: KeyStroke): Interactable.Result {
-            val cancelCycle: Pair<Int, Action>? = run {
-                if (keyStroke !is MouseAction) return@run null
-                if (keyStroke.actionType != MouseActionType.CLICK_DOWN) return@run null
-                val gp = globalPosition ?: return@run null
-                val localCol = keyStroke.position.column - gp.column
-                val idx = getIndexByMouseAction(keyStroke)
-                if (idx !in 0 until itemCount) return@run null
-
-                val now = System.currentTimeMillis()
-                val isDoubleClick = idx == lastClickRow && (now - lastClickAt) <= DOUBLE_CLICK_MS
-                if (isDoubleClick) {
-                    lastClickAt = 0L
-                    lastClickRow = -1
-                } else {
-                    lastClickAt = now
-                    lastClickRow = idx
-                }
-
-                if (localCol < ACTION_COL_WIDTH || isDoubleClick) return@run null
-                val item = getItemAt(idx) as? RowAction ?: return@run null
-                idx to item.action
-            }
-
-            val before = selectedIndex
-            val r = super.handleKeyStroke(keyStroke)
-            if (cancelCycle != null) {
-                val (idx, savedAction) = cancelCycle
-                (getItemAt(idx) as? RowAction)?.action = savedAction
-            }
-            if (selectedIndex != before) onSelectionChanged?.invoke()
-            return r
-        }
-    }
-    fun rebuildList() {
-        val prevSelected = (list.selectedItem as? RowAction)?.entry
-        list.clearItems()
+    fun rebuildTablesList() {
+        val prev = (tablesList.selectedItem as? TableRowItem)?.entry
+        tablesList.clearItems()
         val filter = currentFilter.lowercase()
-        val visible = allRows.filter { row ->
+        val visible = allTableRows.filter { row ->
             (!hideSynced || row.entry.status != TableStatus.SYNCED) &&
                 (filter.isEmpty() ||
                     row.entry.table.lowercase().contains(filter) ||
                     (row.entry.entity?.lowercase()?.contains(filter) == true))
         }
-        visible.forEach { list.addItem(it) }
-        if (prevSelected != null) {
-            val idx = visible.indexOfFirst { it.entry == prevSelected }
-            if (idx >= 0) list.selectedIndex = idx
+        visible.forEach { tablesList.addItem(it) }
+        if (prev != null) {
+            val idx = visible.indexOfFirst { it.entry == prev }
+            if (idx >= 0) tablesList.selectedIndex = idx
         }
     }
-    rebuildList()
-
-    val previewPanel = Panel(LinearLayout(Direction.VERTICAL))
-    val previewTitleLabel = Label("")
-    val previewBodyLabel = Label("")
-    previewPanel.addComponent(previewTitleLabel)
-    previewPanel.addComponent(EmptySpace(TerminalSize(1, 1)))
-    previewPanel.addComponent(previewBodyLabel)
+    rebuildTablesList()
 
     val filterBox = TextBox(TerminalSize(40, 1))
     filterBox.setTextChangeListener { newText, _ ->
         currentFilter = newText
-        rebuildList()
+        rebuildTablesList()
     }
     filterRow.addComponent(filterBox)
     filterRow.addComponent(EmptySpace(TerminalSize(2, 1)))
     val hideSyncedBox = CheckBox("Hide synced").apply {
         addListener { checked ->
             hideSynced = checked
-            rebuildList()
+            rebuildTablesList()
         }
     }
     filterRow.addComponent(hideSyncedBox)
 
-    val headerLabel = Label(formatter.headerRow())
-    val ruleLabel = HeaderRule(formatter.crossColumn).apply {
+    val tablesHeader = Label(tableFormatter.headerRow())
+    val tablesRule = HeaderRule(tableFormatter.crossColumns).apply {
         layoutData = LinearLayout.createLayoutData(LinearLayout.Alignment.Fill)
     }
-    val listWithHeader = Panel(LinearLayout(Direction.VERTICAL).setSpacing(0))
-    listWithHeader.addComponent(headerLabel)
-    listWithHeader.addComponent(ruleLabel)
-    listWithHeader.addComponent(list)
-
-    val leftBordered = listWithHeader.withTitledBorder("Tables (${tables.size})")
-    val rightBordered = previewPanel.withTitledBorder("Diff preview")
-
-    val termCols = screen.terminalSize.columns
-    val leftWidth = formatter.leftPaneWidth.coerceAtMost(termCols / 2)
-    val rightWidth = (termCols - leftWidth - 1).coerceAtLeast(30)
-    leftBordered.preferredSize = TerminalSize(leftWidth, screen.terminalSize.rows - 6)
-    rightBordered.preferredSize = TerminalSize(rightWidth, screen.terminalSize.rows - 6)
-    leftBordered.layoutData = GridLayout.createLayoutData(
-        GridLayout.Alignment.BEGINNING, GridLayout.Alignment.FILL, false, true,
-    )
-    rightBordered.layoutData = GridLayout.createLayoutData(
-        GridLayout.Alignment.FILL, GridLayout.Alignment.FILL, true, true,
-    )
-    previewBodyLabel.preferredSize = TerminalSize(rightWidth - 4, screen.terminalSize.rows - 10)
-    split.addComponent(leftBordered)
-    split.addComponent(rightBordered)
-    root.addComponent(split)
-
-    fun applyBulk(target: Action) {
-        for (i in 0 until list.itemCount) {
-            val item = list.getItemAt(i) as? RowAction ?: continue
-            if (!item.action.locked) item.action = target
-        }
-        list.invalidate()
+    tablesList.layoutData = LinearLayout.createLayoutData(LinearLayout.Alignment.Fill, LinearLayout.GrowPolicy.CanGrow)
+    val tablesPanel = Panel(LinearLayout(Direction.VERTICAL).setSpacing(0)).apply {
+        addComponent(tablesHeader)
+        addComponent(tablesRule)
+        addComponent(tablesList)
     }
-    fun flatButton(label: String, onClick: () -> Unit): Button =
-        Button(label, onClick).apply { renderer = Button.FlatButtonRenderer() }
+    val tablesBordered = tablesPanel.withTitledBorder("Tables (${tables.size})")
 
-    val bottom = Panel(LinearLayout(Direction.HORIZONTAL))
+    val globalPropsFormatter = PropertyRowFormatter(diffsByTable.values.flatMap { it.columnDeltas })
+    val propsList = SelectionAwareListBox(globalPropsFormatter.crossColumns)
+    val propsHeaderLabel = Label(globalPropsFormatter.headerRow())
+    val propsRule = HeaderRule(globalPropsFormatter.crossColumns).apply {
+        layoutData = LinearLayout.createLayoutData(LinearLayout.Alignment.Fill)
+    }
+    propsList.layoutData = LinearLayout.createLayoutData(LinearLayout.Alignment.Fill, LinearLayout.GrowPolicy.CanGrow)
+    val propsPanel = Panel(LinearLayout(Direction.VERTICAL).setSpacing(0)).apply {
+        addComponent(propsHeaderLabel)
+        addComponent(propsRule)
+        addComponent(propsList)
+    }
+    val propsBordered = propsPanel.withTitledBorder("Properties")
+
+    val classifierPane = ClassifierPane(configState, classifier) {
+        propsList.invalidate()
+    }
+    val classifierBordered = classifierPane.component.withTitledBorder("Classification")
+
+    val infoLabel = Label("")
+    val infoBordered = Panel(LinearLayout(Direction.VERTICAL)).apply {
+        addComponent(infoLabel)
+    }.withTitledBorder("Entity info")
+
+    tablesBordered.preferredSize = TerminalSize(tableFormatter.leftPaneWidth + 2, 8)
+    tablesBordered.layoutData = LinearLayout.createLayoutData(LinearLayout.Alignment.Fill)
+    propsBordered.preferredSize = TerminalSize(globalPropsFormatter.paneWidth + 2, 8)
+    propsBordered.layoutData = LinearLayout.createLayoutData(LinearLayout.Alignment.Fill)
+    classifierBordered.layoutData =
+        LinearLayout.createLayoutData(LinearLayout.Alignment.Fill, LinearLayout.GrowPolicy.CanGrow)
+
+    val topRow = Panel(LinearLayout(Direction.HORIZONTAL).setSpacing(0)).apply {
+        addComponent(propsBordered)
+        addComponent(classifierBordered)
+        layoutData = LinearLayout.createLayoutData(LinearLayout.Alignment.Fill, LinearLayout.GrowPolicy.CanGrow)
+    }
+    infoBordered.layoutData = LinearLayout.createLayoutData(LinearLayout.Alignment.Fill)
+
+    val rightCol = Panel(LinearLayout(Direction.VERTICAL).setSpacing(0)).apply {
+        addComponent(topRow)
+        addComponent(infoBordered)
+        layoutData = LinearLayout.createLayoutData(LinearLayout.Alignment.Fill, LinearLayout.GrowPolicy.CanGrow)
+    }
+
+    val mainRow = Panel(LinearLayout(Direction.HORIZONTAL).setSpacing(0)).apply {
+        addComponent(tablesBordered)
+        addComponent(rightCol)
+        layoutData = LinearLayout.createLayoutData(LinearLayout.Alignment.Fill, LinearLayout.GrowPolicy.CanGrow)
+    }
+    root.addComponent(mainRow)
+
+    var currentTableKey: String? = null
+    val currentDeltasRef: MutableList<ColumnDelta> = mutableListOf()
+
+    fun updateInfoBar() {
+        val key = currentTableKey
+        if (key == null) {
+            infoLabel.text = ""
+            return
+        }
+        val diff = diffsByTable[key]
+        val deltas = currentDeltasRef
+        val adds = deltas.count { it.kind == ColumnDelta.Kind.ENTITY_ONLY }
+        val orphans = deltas.count { it.kind == ColumnDelta.Kind.DB_ONLY }
+        val mismatches = deltas.count { it.kind == ColumnDelta.Kind.TYPE_MISMATCH }
+        val sb = StringBuilder()
+        sb.append("table:    ").append(key).append('\n')
+        sb.append("entity:   ").append(diff?.entity?.className ?: "(none)").append('\n')
+        sb.append("source:   ").append(diff?.entity?.sourcePath ?: "-").append('\n')
+        sb.append("status:   ").append("$adds add · $orphans orphan · $mismatches mismatch · ${deltas.size} total")
+        infoLabel.text = sb.toString()
+    }
+
+    fun selectedDelta(): ColumnDelta? {
+        val idx = propsList.selectedIndex
+        return (propsList.getItemAt(idx) as? PropertyRow)?.delta
+    }
+
+    fun refreshClassifierForSelection() {
+        val key = currentTableKey ?: return
+        classifierPane.showFor(key, selectedDelta())
+        if (window.focusedInteractable === classifierPane.focusTarget &&
+            !classifierPane.hasFocusableContent) {
+            propsList.takeFocus()
+        }
+    }
+
+    fun loadPropsFor(tableKey: String) {
+        currentTableKey = tableKey
+        propsList.clearItems()
+        currentDeltasRef.clear()
+        val diff = diffsByTable[tableKey]
+        if (diff == null) {
+            propsHeaderLabel.text = "(no diff data)"
+            updateInfoBar()
+            classifierPane.showFor(tableKey, null)
+            return
+        }
+        val deltas = diff.columnDeltas
+        currentDeltasRef.addAll(deltas)
+        deltas.forEach { delta ->
+            propsList.addItem(PropertyRow(tableKey, delta, propertyActions, globalPropsFormatter))
+        }
+        if (deltas.isNotEmpty()) propsList.selectedIndex = 0
+        updateInfoBar()
+        refreshClassifierForSelection()
+    }
+
+    fun selectedTableKey(): String? =
+        (tablesList.selectedItem as? TableRowItem)?.entry?.table
+
+    tablesList.onSelectionChanged = {
+        selectedTableKey()?.let { loadPropsFor(it) }
+    }
+    propsList.onSelectionChanged = {
+        refreshClassifierForSelection()
+    }
+    propsList.onSpace = {
+        val delta = selectedDelta()
+        val key = currentTableKey
+        if (delta != null && key != null) {
+            propertyActions.cycle(key, delta.name, delta.kind)
+            propsList.invalidate()
+            updateInfoBar()
+        }
+    }
+    propsList.onDelete = {
+        val delta = selectedDelta()
+        val key = currentTableKey
+        if (delta != null && key != null) {
+            propertyActions.set(key, delta.name, PropertyAction.NONE)
+            propsList.invalidate()
+            updateInfoBar()
+        }
+    }
+
+    selectedTableKey()?.let { loadPropsFor(it) }
+
     var outcome = Outcome.CANCEL
-    bottom.addComponent(EmptySpace(TerminalSize(1, 1)))
-    bottom.addComponent(flatButton("${Action.TABLE_TO_ENTITY.label} All") { applyBulk(Action.TABLE_TO_ENTITY) })
-    bottom.addComponent(EmptySpace(TerminalSize(1, 1)))
-    bottom.addComponent(flatButton("${Action.ENTITY_TO_TABLE.label} All") { applyBulk(Action.ENTITY_TO_TABLE) })
-    bottom.addComponent(EmptySpace(TerminalSize(1, 1)))
-    bottom.addComponent(flatButton("Clear") { applyBulk(Action.NONE) })
-    bottom.addComponent(EmptySpace(TerminalSize(3, 1)))
-    bottom.addComponent(flatButton("Apply") {
-        outcome = Outcome.APPLY
-        window.close()
-    })
-    bottom.addComponent(EmptySpace(TerminalSize(1, 1)))
-    bottom.addComponent(flatButton("Cancel") {
-        outcome = Outcome.CANCEL
-        window.close()
-    })
-    root.addComponent(bottom)
-    root.addComponent(EmptySpace(TerminalSize(1, 1)))
 
-    list.onSelectionChanged = {
-        val idx = list.selectedIndex
-        if (idx in 0 until list.itemCount) {
-            (list.getItemAt(idx) as? RowAction)?.let {
-                previewRenderer.update(it.entry, previewTitleLabel, previewBodyLabel)
-            }
-        }
+    // Classifier is included only when it has actionable content; otherwise
+    // focusing it would land on an empty list and look like "focus lost".
+    fun activePanes(): List<Interactable> = buildList {
+        add(tablesList)
+        add(propsList)
+        if (classifierPane.hasFocusableContent) add(classifierPane.focusTarget)
     }
-    if (list.itemCount > 0) {
-        (list.getItemAt(0) as? RowAction)?.let {
-            previewRenderer.update(it.entry, previewTitleLabel, previewBodyLabel)
-        }
+
+    fun currentPaneIndex(): Int {
+        val f = window.focusedInteractable ?: return -1
+        return activePanes().indexOf(f)
     }
+
+    fun movePane(delta: Int): Boolean {
+        val panes = activePanes()
+        val idx = currentPaneIndex()
+        if (idx < 0) return false
+        val next = idx + delta
+        if (next !in panes.indices) return true
+        panes[next].takeFocus()
+        return true
+    }
+
+    fun focusInRightPane(): Boolean =
+        window.focusedInteractable === classifierPane.focusTarget
 
     window.addWindowListener(object : WindowListenerAdapter() {
         override fun onUnhandledInput(basePane: Window, keyStroke: KeyStroke, hasBeenHandled: AtomicBoolean) {
@@ -249,12 +309,23 @@ fun runSchemaSync(
                     if (window.focusedInteractable === filterBox && filterBox.text.isNotEmpty()) {
                         filterBox.text = ""
                         currentFilter = ""
-                        rebuildList()
-                        list.takeFocus()
+                        rebuildTablesList()
+                        tablesList.takeFocus()
                     } else {
                         outcome = Outcome.CANCEL
                         window.close()
                     }
+                    hasBeenHandled.set(true)
+                }
+                keyStroke.keyType == KeyType.ArrowRight && currentPaneIndex() >= 0 -> {
+                    movePane(+1)
+                    hasBeenHandled.set(true)
+                }
+                keyStroke.keyType == KeyType.ArrowLeft && currentPaneIndex() >= 0 -> {
+                    movePane(-1)
+                    hasBeenHandled.set(true)
+                }
+                focusInRightPane() && classifierPane.handleKey(keyStroke) -> {
                     hasBeenHandled.set(true)
                 }
                 keyStroke.keyType == KeyType.F2 -> {
@@ -272,6 +343,48 @@ fun runSchemaSync(
                     runSlotsView(gui, configState)
                     hasBeenHandled.set(true)
                 }
+                keyStroke.keyType == KeyType.F5 -> {
+                    val out = Path.of("migration.sql").toAbsolutePath()
+                    val stats = MigrationGenerator.generate(
+                        diffs = diffsByTable.values.toList(),
+                        profile = configState.current.slots,
+                        defaults = configState.current.defaults,
+                        assignments = configState.current.assignments,
+                        output = out,
+                        dialect = dialect,
+                    )
+                    val msg = buildString {
+                        appendLine("Migration written to:")
+                        appendLine(out.toString())
+                        appendLine()
+                        appendLine("${stats.addedColumns} ALTER TABLE ADD COLUMN")
+                        appendLine("${stats.createdTables} CREATE TABLE")
+                        if (stats.unclassifiedFields > 0) {
+                            appendLine("${stats.unclassifiedFields} fields skipped (unclassified)")
+                        }
+                        if (stats.orphanColumns > 0) {
+                            appendLine("${stats.orphanColumns} orphan DB columns (informational only)")
+                        }
+                    }
+                    MessageDialog.showMessageDialog(gui, "Exported", msg, MessageDialogButton.OK)
+                    hasBeenHandled.set(true)
+                }
+                keyStroke.keyType == KeyType.F6 -> {
+                    runDefaultsView(gui, configState, dialect)
+                    hasBeenHandled.set(true)
+                }
+                keyStroke.keyType == KeyType.F7 -> {
+                    val applied = runWriterView(gui, entities, diffsByTable.values)
+                    if (applied > 0) {
+                        outcome = Outcome.RESCAN
+                        window.close()
+                    }
+                    hasBeenHandled.set(true)
+                }
+                keyStroke.keyType == KeyType.F1 || keyStroke.character == '?' -> {
+                    showHelp(gui)
+                    hasBeenHandled.set(true)
+                }
                 keyStroke.character == 'q' || keyStroke.character == 'Q' -> {
                     outcome = Outcome.CANCEL
                     window.close()
@@ -282,23 +395,60 @@ fun runSchemaSync(
     })
 
     window.component = root
-    window.focusedInteractable = list
+    window.focusedInteractable = tablesList
     gui.addWindowAndWait(window)
 
-    if (outcome == Outcome.APPLY) {
-        val selected = allRows.filter { it.action != Action.NONE && !it.action.locked }
-        showApplySummary(gui, selected)
-    }
+    return outcome
 }
 
-private fun showApplySummary(gui: WindowBasedTextGUI, selected: List<RowAction>) {
-    val toEntity = selected.count { it.action == Action.TABLE_TO_ENTITY }
-    val toTable = selected.count { it.action == Action.ENTITY_TO_TABLE }
-    val arrow = Symbols.arrow
-    MessageDialog.showMessageDialog(
-        gui,
-        "Applied",
-        "Processed ${selected.size} tables\n  $toEntity table $arrow entity\n  $toTable entity $arrow table\nSQL written to ./stormify-schema-changes.sql\n\nReview with: git diff",
-        MessageDialogButton.OK,
-    )
+private class TableRowItem(val entry: TableEntry, private val formatter: RowFormatter) : Runnable {
+    override fun run() = Unit
+    override fun toString(): String = formatter.renderRow(entry)
+}
+
+/**
+ * ActionListBox tuned for the schema-sync 3-pane layout:
+ *  - ←/→ are returned UNHANDLED so the window dispatcher can route them as pane navigation
+ *  - ↑/↓ at the first/last row are trapped (HANDLED) so focus stays inside the list
+ *  - [onSelectionChanged] / [onSpace] / [onDelete] are optional hooks for the property pane
+ */
+internal class SelectionAwareListBox(
+    separatorColumns: List<Int> = emptyList(),
+) : ActionListBox() {
+    var onSelectionChanged: (() -> Unit)? = null
+    var onSpace: (() -> Unit)? = null
+    var onDelete: (() -> Unit)? = null
+
+    private val asciiRenderer = AsciiListBoxRenderer(separatorColumns)
+
+    init {
+        renderer = asciiRenderer
+    }
+
+    fun setSeparatorColumns(cols: List<Int>) {
+        asciiRenderer.separatorColumns = cols
+        invalidate()
+    }
+
+    override fun handleKeyStroke(keyStroke: KeyStroke): Interactable.Result {
+        if (keyStroke.character == ' ' && onSpace != null) {
+            onSpace?.invoke()
+            return Interactable.Result.HANDLED
+        }
+        if (keyStroke.keyType == KeyType.Delete && onDelete != null) {
+            onDelete?.invoke()
+            return Interactable.Result.HANDLED
+        }
+        if (keyStroke.keyType == KeyType.ArrowLeft || keyStroke.keyType == KeyType.ArrowRight) {
+            return Interactable.Result.UNHANDLED
+        }
+        val before = selectedIndex
+        val r = super.handleKeyStroke(keyStroke)
+        if (selectedIndex != before) onSelectionChanged?.invoke()
+        return when (r) {
+            Interactable.Result.MOVE_FOCUS_UP,
+            Interactable.Result.MOVE_FOCUS_DOWN -> Interactable.Result.HANDLED
+            else -> r
+        }
+    }
 }

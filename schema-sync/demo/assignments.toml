@@ -1,0 +1,175 @@
+# Pre-classified slot assignments for the demo entities.
+# Appended to a fresh copy of default-config.toml at e2e start.
+
+[[assignments]]
+column = "users.username"
+category = "TEXT"
+slot = "name"
+[[assignments]]
+column = "users.email"
+category = "TEXT"
+slot = "line"
+[[assignments]]
+column = "users.password_hash"
+category = "TEXT"
+slot = "line"
+[[assignments]]
+column = "users.bio"
+category = "TEXT"
+slot = "page"
+
+[[assignments]]
+column = "addresses.street"
+category = "TEXT"
+slot = "line"
+[[assignments]]
+column = "addresses.city"
+category = "TEXT"
+slot = "name"
+[[assignments]]
+column = "addresses.state"
+category = "TEXT"
+slot = "name"
+[[assignments]]
+column = "addresses.zip"
+category = "TEXT"
+slot = "short"
+[[assignments]]
+column = "addresses.country"
+category = "TEXT"
+slot = "name"
+
+[[assignments]]
+column = "wishlists.name"
+category = "TEXT"
+slot = "name"
+
+[[assignments]]
+column = "categories.name"
+category = "TEXT"
+slot = "name"
+[[assignments]]
+column = "categories.description"
+category = "TEXT"
+slot = "page"
+[[assignments]]
+column = "categories.sort_order"
+category = "INTEGRAL"
+slot = "int"
+
+[[assignments]]
+column = "products.name"
+category = "TEXT"
+slot = "name"
+[[assignments]]
+column = "products.description"
+category = "TEXT"
+slot = "page"
+[[assignments]]
+column = "products.price"
+category = "DECIMAL"
+slot = "money"
+[[assignments]]
+column = "products.weight_kg"
+category = "DECIMAL"
+slot = "volume"
+
+[[assignments]]
+column = "tags.label"
+category = "TEXT"
+slot = "name"
+[[assignments]]
+column = "tags.color"
+category = "TEXT"
+slot = "short"
+
+[[assignments]]
+column = "orders.total_amount"
+category = "DECIMAL"
+slot = "money"
+[[assignments]]
+column = "orders.tax_amount"
+category = "DECIMAL"
+slot = "money"
+[[assignments]]
+column = "orders.currency"
+category = "TEXT"
+slot = "short"
+[[assignments]]
+column = "orders.notes"
+category = "TEXT"
+slot = "page"
+[[assignments]]
+column = "orders.status_ordinal"
+category = "INTEGRAL"
+slot = "flag"
+
+[[assignments]]
+column = "order_items.quantity"
+category = "INTEGRAL"
+slot = "int"
+[[assignments]]
+column = "order_items.unit_price"
+category = "DECIMAL"
+slot = "money"
+[[assignments]]
+column = "order_items.discount_percent"
+category = "DECIMAL"
+slot = "small"
+
+[[assignments]]
+column = "invoices.amount"
+category = "DECIMAL"
+slot = "money"
+
+[[assignments]]
+column = "payments.method"
+category = "TEXT"
+slot = "name"
+[[assignments]]
+column = "payments.transaction_ref"
+category = "TEXT"
+slot = "line"
+[[assignments]]
+column = "payments.amount"
+category = "DECIMAL"
+slot = "money"
+
+[[assignments]]
+column = "reviews.rating"
+category = "INTEGRAL"
+slot = "flag"
+[[assignments]]
+column = "reviews.title"
+category = "TEXT"
+slot = "name"
+[[assignments]]
+column = "reviews.body"
+category = "TEXT"
+slot = "page"
+
+[[assignments]]
+column = "audit_log.action"
+category = "TEXT"
+slot = "name"
+[[assignments]]
+column = "audit_log.entity_type"
+category = "TEXT"
+slot = "name"
+[[assignments]]
+column = "audit_log.entity_id"
+category = "TEXT"
+slot = "name"
+
+[[assignments]]
+column = "settings.key"
+category = "TEXT"
+slot = "name"
+[[assignments]]
+column = "settings.value"
+category = "TEXT"
+slot = "page"
+[[assignments]]
+column = "settings.description"
+category = "TEXT"
+slot = "page"
