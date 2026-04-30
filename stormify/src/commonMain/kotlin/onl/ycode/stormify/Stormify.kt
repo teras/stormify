@@ -19,7 +19,8 @@ import kotlin.reflect.KClass
 
 
 private class Reference<T>(var item: T? = null)
-private class FixedParams(val query: String, val params: List<Any?>)
+
+private class PreparedSql(val sql: String, val params: List<Any?>)
 
 /**
  * The main ORM controller. Entry point for all database operations.
@@ -221,41 +222,52 @@ class Stormify(val dataSource: DataSource, vararg registrars: EntityRegistrar) {
 
     // --- Parameter handling ---
 
-    private fun fixParams(givenQuery: String, args: List<Any?>): FixedParams {
-        if (args.isEmpty()) return FixedParams(givenQuery, emptyList<Any>())
-        val params: MutableList<Any?> = mutableListOf()
-        val query = StringBuilder(givenQuery.length)
-        var countQuestionMarks = 0
-        for (i in givenQuery.indices) {
-            if (givenQuery[i] == '?') {
-                if (countQuestionMarks >= args.size) throw SQLException(
-                    ("The number of placeholders (" + count(
-                        givenQuery,
-                        '?'
-                    )) + ") in query '" + givenQuery + "' exceeds the number of parameters (" + args.size + ")"
-                )
-                val arg = sqlData(args[countQuestionMarks++], true)
-                if (arg is List<*>) {
-                    query.append("(").append(nCopies("?", ", ", arg.size)).append(")")
-                    params.addAll(arg)
-                } else {
-                    query.append("?")
-                    params.add(arg)
+    /**
+     * Walks [givenQuery] once, expands list-typed args into `(?, ?, …)`, and
+     * produces the SQL string ready for the driver plus the flat parameter
+     * list. Empty [args] is legal — it covers both parameterless queries and
+     * the batch path where per-row values are supplied later by
+     * `batchParamOf` — and skips expansion and count validation entirely.
+     */
+    private fun prepareSql(givenQuery: String, args: List<Any?>): PreparedSql {
+        if (args.isEmpty()) return PreparedSql(givenQuery, emptyList<Any>())
+        val sql = StringBuilder(givenQuery.length)
+        val params = mutableListOf<Any?>()
+        var consumed = 0
+        var lastFlush = 0
+        scanPlaceholders(givenQuery) { idx ->
+            if (consumed >= args.size) throw SQLException(
+                "The number of placeholders in query '$givenQuery'" +
+                        " exceeds the number of parameters (${args.size})"
+            )
+            sql.append(givenQuery, lastFlush, idx)
+            val arg = sqlData(args[consumed++], true)
+            if (arg is List<*>) {
+                sql.append("(")
+                arg.forEachIndexed { i, v ->
+                    if (i > 0) sql.append(", ")
+                    sql.append("?")
+                    params.add(v)
                 }
-            } else query.append(givenQuery[i])
+                sql.append(")")
+            } else {
+                sql.append("?")
+                params.add(arg)
+            }
+            lastFlush = idx + 1
         }
-        if (countQuestionMarks != args.size) throw SQLException(
-            "The number of placeholders (" + count(givenQuery, '?')
-                    + ") in query '" + givenQuery + "' is less than the number of parameters (" + args.size + ")"
+        if (lastFlush < givenQuery.length) sql.append(givenQuery, lastFlush, givenQuery.length)
+        if (consumed < args.size) throw SQLException(
+            "The number of placeholders ($consumed) in query '$givenQuery'" +
+                    " is less than the number of parameters (${args.size})"
         )
-        return FixedParams(query.toString(), params)
+        return PreparedSql(sql.toString(), params)
     }
 
-    private fun bindAndLog(stmt: Statement, query: String, params: List<Any?>) {
-        val q = query.canonical
-        _dbLog(q, *params.toTypedArray())
+    private fun bindAndLog(stmt: Statement, sql: String, params: List<Any?>) {
+        _dbLog(sql, *params.toTypedArray())
         for (i in params.indices)
-            bindParam(stmt, q, i + 1, params[i])
+            bindParam(stmt, sql, i + 1, params[i])
     }
 
     /**
@@ -292,17 +304,17 @@ class Stormify(val dataSource: DataSource, vararg registrars: EntityRegistrar) {
         generatedKeys: Boolean = false,
         code: (Statement) -> T
     ): T {
-        val params = fixParams(givenQuery, givenParams)
-        val errorMsg = if (params.params.isEmpty()) "" else " with values ${params.params}"
-        return ConnectionMaker(conn).useWithException("Unable to execute query '${params.query.canonical}'$errorMsg") { maker ->
-            maker.connection.initStatement(params.query, generatedKeys, null).use { stmt ->
+        val prepared = prepareSql(givenQuery, givenParams)
+        val errorMsg = if (prepared.params.isEmpty()) "" else " with values ${prepared.params}"
+        return ConnectionMaker(conn).useWithException("Unable to execute query '${prepared.sql}'$errorMsg") { maker ->
+            maker.connection.initStatement(prepared.sql, generatedKeys, null).use { stmt ->
                 if (batchItems != null && batchParamOf != null) {
                     for (item in batchItems) {
-                        bindAndLog(stmt, params.query, batchParamOf(item))
+                        bindAndLog(stmt, prepared.sql, batchParamOf(item))
                         stmt.addBatch()
                     }
                 } else {
-                    bindAndLog(stmt, params.query, params.params)
+                    bindAndLog(stmt, prepared.sql, prepared.params)
                 }
                 code(stmt)
             }

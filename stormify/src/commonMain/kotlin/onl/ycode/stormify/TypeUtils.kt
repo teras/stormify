@@ -59,7 +59,52 @@ object TypeUtils {
     ) = TypeConversion.register(sourceClass, targetClass, converter)
 }
 
-internal fun count(container: String?, searchable: Char) = container?.count { it == searchable } ?: 0
+/**
+ * Reports the index of every `?` placeholder in [sql] that lives in
+ * executable SQL — i.e. outside the following constructs:
+ * - single-quoted string literals `'…'` (with `''` as an embedded quote);
+ * - double-quoted identifiers `"…"` (with `""` as an embedded quote);
+ * - backtick identifiers `` `…` `` (with `` `` `` as an embedded backtick);
+ * - line comments `-- …` up to the next newline;
+ * - block comments `/* … */` (non-nesting).
+ *
+ * Oracle's `q'[…]'` literals and PostgreSQL's nested block comments are
+ * intentionally not handled — they are vanishingly rare in parameterised
+ * queries and would cost more in complexity than they buy in correctness.
+ * An unterminated literal or comment is treated as extending to end-of-input.
+ */
+internal fun scanPlaceholders(sql: String, onPlaceholder: (Int) -> Unit) {
+    var i = 0
+    val n = sql.length
+    while (i < n) {
+        val c = sql[i]
+        when {
+            c == '\'' || c == '"' || c == '`' -> {
+                val quote = c
+                i++
+                while (i < n) {
+                    val d = sql[i++]
+                    if (d == quote) {
+                        if (i < n && sql[i] == quote) i++  // doubled = embedded
+                        else break
+                    }
+                }
+            }
+            c == '-' && i + 1 < n && sql[i + 1] == '-' -> {
+                while (i < n && sql[i] != '\n') i++
+            }
+            c == '/' && i + 1 < n && sql[i + 1] == '*' -> {
+                i += 2
+                while (i < n) {
+                    if (sql[i] == '*' && i + 1 < n && sql[i + 1] == '/') { i += 2; break }
+                    i++
+                }
+            }
+            c == '?' -> { onPlaceholder(i); i++ }
+            else -> i++
+        }
+    }
+}
 
 internal fun nCopies(base: String, delimiter: String, count: Int) =
     if (count <= 0) "" else List(count) { base }.joinToString(delimiter)
@@ -83,51 +128,6 @@ internal fun Throwable.throwQuery(reason: String): Nothing =
     if (this is SQLException) throw this else throw SQLException(reason, this)
 
 internal val KClass<*>.fullName get() = qualifiedName ?: throw SQLException("Unknown class name of class $this")
-
-/**
- * Collapses every run of whitespace (spaces, tabs, newlines) into a single
- * space outside of single-quoted string literals. Used wherever a SQL
- * statement is shown to the user — debug logs, error messages — so multi-line
- * query strings don't bloat the output without losing any of the SQL's
- * meaning. Whitespace inside `'...'` literals is preserved verbatim, with
- * `''` recognised as the SQL escape for an embedded single quote.
- */
-internal val String.canonical: String
-    get() {
-        val out = StringBuilder(length)
-        var i = 0
-        var inLiteral = false
-        var pendingSpace = false
-        while (i < length) {
-            val c = this[i]
-            if (inLiteral) {
-                out.append(c)
-                if (c == '\'') {
-                    // SQL escapes '' as a single embedded quote — stay inside the literal.
-                    if (i + 1 < length && this[i + 1] == '\'') {
-                        out.append('\''); i += 2; continue
-                    }
-                    inLiteral = false
-                }
-                i++
-            } else if (c == '\'') {
-                if (pendingSpace && out.isNotEmpty()) out.append(' ')
-                pendingSpace = false
-                out.append(c)
-                inLiteral = true
-                i++
-            } else if (c.isWhitespace()) {
-                pendingSpace = true
-                i++
-            } else {
-                if (pendingSpace && out.isNotEmpty()) out.append(' ')
-                pendingSpace = false
-                out.append(c)
-                i++
-            }
-        }
-        return out.toString()
-    }
 
 internal inline fun <T : AutoCloseable, R> T.useWithException(
     message: String,
