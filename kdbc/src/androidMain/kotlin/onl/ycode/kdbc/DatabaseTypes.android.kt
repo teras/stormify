@@ -273,12 +273,22 @@ private class AndroidStatement(
                 is Double -> stmt.bindDouble(index, value)
                 is Float -> stmt.bindDouble(index, value.toDouble())
                 is String -> stmt.bindString(index, value)
+                is Char -> stmt.bindString(index, value.toString())
+                // Stormify treats any CharSequence as a scalar (StringBuilder,
+                // etc.). The Android SQLite layer only takes String — materialize.
+                is CharSequence -> stmt.bindString(index, value.toString())
                 is ByteArray -> stmt.bindBlob(index, value)
                 is BigInteger ->
                     runCatching { stmt.bindLong(index, value.longValueExact()) }
                         .getOrElse { stmt.bindString(index, value.toString()) }
                 is BigDecimal -> stmt.bindString(index, value.toPlainString())
-                else -> stmt.bindString(index, value.toString())
+                // Refuse anything outside the supported set instead of silently
+                // stringifying it. A silent .toString() fallback hides logic
+                // errors — an unknown type at bind time always indicates a
+                // missing converter.
+                else -> throw SQLException(
+                    "Cannot bind parameter $index: unsupported type ${value::class.qualifiedName ?: value::class.simpleName}"
+                )
             }
         }
     }

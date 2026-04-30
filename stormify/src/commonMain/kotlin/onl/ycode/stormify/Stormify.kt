@@ -252,9 +252,35 @@ class Stormify(val dataSource: DataSource, vararg registrars: EntityRegistrar) {
     }
 
     private fun bindAndLog(stmt: Statement, query: String, params: List<Any?>) {
-        _dbLog(query, *params.toTypedArray())
+        val q = query.canonical
+        _dbLog(q, *params.toTypedArray())
         for (i in params.indices)
-            stmt.setObject(i + 1, params[i])
+            bindParam(stmt, q, i + 1, params[i])
+    }
+
+    /**
+     * Single-parameter setObject with contextualized rethrow. When the driver
+     * rejects a value, its generic `SQLException` does not say which `?`
+     * placeholder failed. This wrapper catches the exception and rethrows it
+     * with the SQL query, the parameter index, the runtime type and a bounded
+     * preview of the value — so the caller can immediately locate the
+     * offending field without counting `?` placeholders in the SQL.
+     */
+    private fun bindParam(stmt: Statement, query: String, parameterIndex: Int, value: Any?) {
+        try {
+            stmt.setObject(parameterIndex, value)
+        } catch (e: Throwable) {
+            val type = value?.let { it::class.qualifiedName ?: it::class.simpleName } ?: "null"
+            val preview = when (value) {
+                null -> "null"
+                is ByteArray -> "ByteArray(size=${value.size})"
+                is CharArray -> "CharArray(size=${value.size})"
+                else -> value.toString().let { if (it.length > 80) it.take(77) + "..." else it }
+            }
+            throw SQLException(
+                "Bind failed for parameter $parameterIndex (type=$type, value=$preview) in query [$query]", e
+            )
+        }
     }
 
     private fun <T> performQuery(
@@ -268,7 +294,7 @@ class Stormify(val dataSource: DataSource, vararg registrars: EntityRegistrar) {
     ): T {
         val params = fixParams(givenQuery, givenParams)
         val errorMsg = if (params.params.isEmpty()) "" else " with values ${params.params}"
-        return ConnectionMaker(conn).useWithException("Unable to execute query '${params.query}'$errorMsg") { maker ->
+        return ConnectionMaker(conn).useWithException("Unable to execute query '${params.query.canonical}'$errorMsg") { maker ->
             maker.connection.initStatement(params.query, generatedKeys, null).use { stmt ->
                 if (batchItems != null && batchParamOf != null) {
                     for (item in batchItems) {
@@ -930,11 +956,11 @@ class Stormify(val dataSource: DataSource, vararg registrars: EntityRegistrar) {
             maker.connection.prepareCall(statement).use { cs ->
                 for (i in params.indices) {
                     when (val p = params[i]) {
-                        is Sp.In -> cs.setObject(i + 1, p.value)
+                        is Sp.In -> bindParam(cs, statement, i + 1, p.value)
                         is Sp.Out<*> -> cs.registerOutParameter(i + 1, p.type)
                         is Sp.InOut<*> -> {
                             cs.registerOutParameter(i + 1, p.type)
-                            cs.setObject(i + 1, p.input)
+                            bindParam(cs, statement, i + 1, p.input)
                         }
                         else -> throw SQLException("Unexpected Sp subtype: ${p::class}")
                     }

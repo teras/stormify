@@ -160,8 +160,13 @@ kotlin.sourceSets.named("commonMain") {
     kotlin.srcDir("build/generated/ksp/metadata/commonMain/kotlin")
 }
 
+// Every Kotlin compile task in this module (main, test, Android variants) needs
+// the metadata-generated entity classes (Tables, GeneratedEntities) on its
+// classpath. Match anything that compiles Kotlin so test compilations pick up
+// the KSP outputs as well — without this, compileTestKotlin* would race the
+// generator and fail with "Unresolved reference 'Tables'".
 tasks.matching {
-    it.name.startsWith("compileKotlin") || it.name.startsWith("compile") && it.name.endsWith("KotlinAndroid")
+    it.name.startsWith("compile") && it.name.contains("Kotlin")
 }.configureEach {
     if (name != "kspCommonMainKotlinMetadata") dependsOn("kspCommonMainKotlinMetadata")
 }

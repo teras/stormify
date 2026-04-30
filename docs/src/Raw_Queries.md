@@ -128,3 +128,22 @@ Parameter types:
 | Input | `spIn(value)` or raw value | `Sp.In(value)` or raw value |
 | Output | `spOut<T>()` | `Sp.outParam(Type.class)` |
 | Bidirectional | `spInOut(value)` | `Sp.inOutParam(Type.class, value)` |
+
+## Microsoft SQL Server NULL into VARBINARY
+
+The Microsoft JDBC driver maps an untyped null bind to NVARCHAR, which
+Microsoft SQL Server refuses to coerce into a VARBINARY column. The same
+limitation applies to entity inserts/updates — a `ByteArray?` property
+holding `null` reaches the driver as a null bind. To write NULL into a
+binary column on Microsoft SQL Server, use one of:
+
+- Set the property (or the bound argument) to `ByteArray(0)` — an empty
+  blob instead of `null`.
+- Write a literal NULL in the SQL when issuing a raw statement:
+  `... VALUES (?, NULL)`.
+- Cast the placeholder explicitly: `... VALUES (?, CAST(? AS VARBINARY(MAX)))`.
+
+Every other column type (numeric, date, string) accepts null binds without
+issue on Microsoft SQL Server, and every other supported database
+(PostgreSQL, MySQL, MariaDB, Oracle, SQLite) accepts null into binary
+columns natively.

@@ -38,7 +38,8 @@ internal actual fun transformResultValue(value: Any?): Any? {
 
 actual val Any.isOtherPrimitive: Boolean
     get() = this is java.util.Date ||
-            this is java.time.temporal.Temporal
+            this is java.time.temporal.Temporal ||
+            this is java.util.UUID
             || (supportsIonspinBigNumbers && this is com.ionspin.kotlin.bignum.BigNumber<*>)
             || (supportsKotlinxDatetime && (this is kotlinx.datetime.LocalDateTime
                     || this is kotlinx.datetime.LocalDate

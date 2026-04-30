@@ -28,12 +28,38 @@ private val kmpToJdbcTarget = mapOf<String, KClass<*>>(
 )
 
 /**
- * Convert a value to a JDBC-compatible type using the [TypeConversion] registry.
- * KMP types (ionspin, kotlinx-datetime) are converted to their java equivalents.
- * Standard Java types and Kotlin primitives pass through unchanged.
+ * Convert a value to a JDBC-compatible type before reaching `setObject`.
+ *
+ * Strict JDBC drivers refuse `java.util.Date` and the absolute-instant
+ * `java.time.*` classes at bind time — they are not legal JDBC parameter
+ * types. Normalize them to `java.sql.Timestamp` so every driver accepts them.
+ *
+ * KMP types (ionspin, kotlinx-datetime, kotlin.time) are routed through the
+ * [TypeConversion] registry. Standard Java types and Kotlin primitives pass
+ * through unchanged.
  */
 private fun toJdbcValue(value: Any?): Any? {
     if (value == null) return null
+    // Avoid downgrading the more specific java.sql.* subclasses, which JDBC
+    // already accepts as-is.
+    if (value is java.sql.Timestamp || value is java.sql.Date || value is java.sql.Time) return value
+    when (value) {
+        is java.util.Date -> return java.sql.Timestamp(value.time)
+        is java.time.Instant -> return java.sql.Timestamp.from(value)
+        is java.time.OffsetDateTime -> return java.sql.Timestamp.from(value.toInstant())
+        is java.time.ZonedDateTime -> return java.sql.Timestamp.from(value.toInstant())
+        is java.time.OffsetTime -> return java.sql.Time.valueOf(value.toLocalTime())
+        // Char is not a JDBC parameter type — strict drivers refuse it.
+        is Char -> return value.toString()
+        // UUID is portable as the canonical 36-char string. PostgreSQL and SQL
+        // Server happily coerce it to their native UUID/UNIQUEIDENTIFIER types
+        // server-side; everywhere else it lands in CHAR/VARCHAR.
+        is java.util.UUID -> return value.toString()
+        // Stormify treats any CharSequence as a scalar (StringBuilder, etc.),
+        // but JDBC's setObject only reliably accepts String. Materialize.
+        is String -> return value
+        is CharSequence -> return value.toString()
+    }
     val targetClass = kmpToJdbcTarget[value::class.qualifiedName] ?: return value
     return try { TypeConversion.castScalar(targetClass, value) } catch (_: Throwable) { value }
 }
@@ -68,9 +94,22 @@ private class JdbcStatement(
     }
 
     override fun setObject(parameterIndex: Int, value: Any?) {
-        val v = toJdbcValue(value)
-        if (v == null) ensurePrepared().setNull(parameterIndex, java.sql.Types.NULL)
-        else ensurePrepared().setObject(parameterIndex, v)
+        // Nulls go through plain setObject(idx, null) — no setNull branch.
+        // setNull(idx, Types.NULL) breaks on Microsoft SQL Server for typed
+        // columns (REAL/FLOAT/DATE/TIME/DATETIME2) because the driver maps
+        // the sentinel to VARBINARY and the server rejects the implicit
+        // conversion. setObject(idx, null) is portable across every other
+        // tested driver (PostgreSQL, MySQL, MariaDB, Oracle, SQLite).
+        //
+        // Known residual corner case: Microsoft SQL Server + VARBINARY(MAX)
+        // column + null value. The driver maps untyped null to NVARCHAR,
+        // and the server rejects "Implicit conversion from data type
+        // nvarchar to varbinary(max) is not allowed." Resolving this
+        // without a round-trip to fetch parameter metadata is not possible
+        // — the column type lives on the server and the JDBC bind layer
+        // has no local knowledge of it. See docs/src/Raw_Queries.md for
+        // user-facing workarounds.
+        ensurePrepared().setObject(parameterIndex, toJdbcValue(value))
     }
 
     override fun executeUpdate(): Int =

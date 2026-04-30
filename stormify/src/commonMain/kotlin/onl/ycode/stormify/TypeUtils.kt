@@ -84,6 +84,51 @@ internal fun Throwable.throwQuery(reason: String): Nothing =
 
 internal val KClass<*>.fullName get() = qualifiedName ?: throw SQLException("Unknown class name of class $this")
 
+/**
+ * Collapses every run of whitespace (spaces, tabs, newlines) into a single
+ * space outside of single-quoted string literals. Used wherever a SQL
+ * statement is shown to the user — debug logs, error messages — so multi-line
+ * query strings don't bloat the output without losing any of the SQL's
+ * meaning. Whitespace inside `'...'` literals is preserved verbatim, with
+ * `''` recognised as the SQL escape for an embedded single quote.
+ */
+internal val String.canonical: String
+    get() {
+        val out = StringBuilder(length)
+        var i = 0
+        var inLiteral = false
+        var pendingSpace = false
+        while (i < length) {
+            val c = this[i]
+            if (inLiteral) {
+                out.append(c)
+                if (c == '\'') {
+                    // SQL escapes '' as a single embedded quote — stay inside the literal.
+                    if (i + 1 < length && this[i + 1] == '\'') {
+                        out.append('\''); i += 2; continue
+                    }
+                    inLiteral = false
+                }
+                i++
+            } else if (c == '\'') {
+                if (pendingSpace && out.isNotEmpty()) out.append(' ')
+                pendingSpace = false
+                out.append(c)
+                inLiteral = true
+                i++
+            } else if (c.isWhitespace()) {
+                pendingSpace = true
+                i++
+            } else {
+                if (pendingSpace && out.isNotEmpty()) out.append(' ')
+                pendingSpace = false
+                out.append(c)
+                i++
+            }
+        }
+        return out.toString()
+    }
+
 internal inline fun <T : AutoCloseable, R> T.useWithException(
     message: String,
     block: (T) -> R

@@ -494,6 +494,9 @@ private fun bindValue(stmt: CPointer<kdbc_stmt>, idx: Int, value: Any?) {
         is Double -> kdbc_bind_double(stmt, idx, value)
         is Boolean -> kdbc_bind_bool(stmt, idx, if (value) 1 else 0)
         is String -> kdbc_bind_string(stmt, idx, value)
+        // Stormify treats any CharSequence as a scalar (StringBuilder, etc.).
+        // The native driver layer only takes String — materialize first.
+        is CharSequence -> kdbc_bind_string(stmt, idx, value.toString())
         is ByteArray -> bindBlob(stmt, idx, value)
         is CharArray -> kdbc_bind_string(stmt, idx, value.concatToString())
         is BigInteger -> bindBigInteger(stmt, idx, value)
@@ -513,7 +516,14 @@ private fun bindValue(stmt: CPointer<kdbc_stmt>, idx: Int, value: Any?) {
                 ldt.hour, ldt.minute, ldt.second, ldt.nanosecond / 1000
             )
         }
-        else -> kdbc_bind_string(stmt, idx, value.toString())
+        // Char is not a native-driver primitive — coerce to a one-character string.
+        is Char -> kdbc_bind_string(stmt, idx, value.toString())
+        // Refuse anything outside the supported set instead of silently
+        // stringifying it. A silent .toString() fallback hides logic errors —
+        // an unknown type at bind time always indicates a missing converter.
+        else -> throw SQLException(
+            "Cannot bind parameter $idx: unsupported type ${value::class.qualifiedName ?: value::class.simpleName}"
+        )
     }
     if (rc != KDBC_OK)
         throw SQLException("Failed to bind parameter $idx (type ${value?.let { it::class.simpleName } ?: "null"}): ${stmtError(stmt, "bind failed")}")
