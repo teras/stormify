@@ -64,13 +64,6 @@ tasks.register<JavaExec>("scannerDemo") {
     mainClass = "onl.ycode.stormify.schemasync.entity.source.ScannerDemoKt"
 }
 
-tasks.register<JavaExec>("migrationDemo") {
-    group = "verification"
-    description = "End-to-end: jdbc-url + entities.json → migration.sql"
-    classpath = sourceSets.main.get().runtimeClasspath
-    mainClass = "onl.ycode.stormify.schemasync.db.MigrationDemoKt"
-}
-
 tasks.register<Jar>("fatJar") {
     archiveClassifier.set("all")
     manifest {

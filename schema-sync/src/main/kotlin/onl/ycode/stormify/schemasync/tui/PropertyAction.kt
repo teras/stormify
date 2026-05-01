@@ -52,12 +52,12 @@ fun symbolFor(kind: ColumnDelta.Kind, action: PropertyAction): String {
         ColumnDelta.Kind.TYPE_MISMATCH -> if (ascii) "!" else "⚠"
         ColumnDelta.Kind.SYNCED -> if (ascii) "=" else "═"
         ColumnDelta.Kind.ENTITY_ONLY -> when (action) {
-            PropertyAction.INSERT -> if (ascii) ">" else "▶"
+            PropertyAction.INSERT -> if (ascii) "<" else "◀"
             PropertyAction.DELETE -> if (ascii) "x" else "✗"
             else -> if (ascii) "." else "·"
         }
         ColumnDelta.Kind.DB_ONLY -> when (action) {
-            PropertyAction.INSERT -> if (ascii) "<" else "◀"
+            PropertyAction.INSERT -> if (ascii) ">" else "▶"
             PropertyAction.DELETE -> if (ascii) "x" else "✗"
             else -> if (ascii) "." else "·"
         }

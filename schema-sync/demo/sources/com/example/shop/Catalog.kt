@@ -7,7 +7,7 @@ import java.time.Instant
 import java.time.LocalDate
 import java.util.UUID
 
-@DbTable(name = "categories")
+@DbTable
 data class Category(
     @DbField(primaryKey = true)
     var id: UUID = UUID.randomUUID(),
@@ -17,7 +17,7 @@ data class Category(
     var sortOrder: Int = 0,
 )
 
-@DbTable(name = "products")
+@DbTable
 data class Product(
     @DbField(primaryKey = true)
     var sku: String = "",
@@ -31,7 +31,7 @@ data class Product(
     var lastUpdatedAt: Instant? = null,
 )
 
-@DbTable(name = "tags")
+@DbTable
 data class Tag(
     @DbField(primaryKey = true, autoIncrement = true)
     var id: Int = 0,
@@ -39,7 +39,7 @@ data class Tag(
     var color: String = "#000000",
 )
 
-@DbTable(name = "product_tags")
+@DbTable
 data class ProductTag(
     @DbField(primaryKey = true, autoIncrement = true)
     var id: Long = 0,

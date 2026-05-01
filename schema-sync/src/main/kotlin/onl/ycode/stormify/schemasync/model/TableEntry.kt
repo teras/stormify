@@ -7,4 +7,4 @@ data class TableEntry(
     val status: TableStatus,
 )
 
-enum class TableStatus { SYNCED, DIFF, ENTITY_ONLY, DB_ONLY, PROBLEMATIC }
+enum class TableStatus { SYNCED, DIFF, ENTITY_ONLY, DB_ONLY }

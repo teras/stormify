@@ -16,6 +16,17 @@ enum class Dialect(val tomlKey: String) {
     SQLITE("sqlite"),
     GENERIC("generic");
 
+    /**
+     * True for dialect-internal bookkeeping tables that JDBC's `getTables`
+     * may surface alongside user tables. Most dialects already scope us via
+     * `defaultSchema` (PostgreSQL → `public`, MSSQL → `dbo`, Oracle →
+     * `USER_TABLES`); only SQLite leaks `sqlite_*` housekeeping tables.
+     */
+    fun isSystemTable(table: String): Boolean = when (this) {
+        SQLITE -> table.startsWith("sqlite_")
+        else -> false
+    }
+
     companion object {
         fun detect(conn: Connection): Dialect {
             val name = conn.metaData.databaseProductName.lowercase()

@@ -25,24 +25,18 @@ class PropertyRow(
 class PropertyRowFormatter(deltas: List<ColumnDelta>) {
     private val nameWidth: Int =
         maxOf("property".length, deltas.maxOfOrNull { it.name.length } ?: 0).coerceAtMost(32)
-    private val typeWidth: Int =
-        maxOf("type".length, deltas.maxOfOrNull { typeText(it).length } ?: 0).coerceAtMost(28)
 
     fun render(delta: ColumnDelta, action: PropertyAction): String {
         val sym = symbolFor(delta.kind, action)
         val name = delta.name.fit(nameWidth)
-        val type = typeText(delta).fit(typeWidth)
-        return " $sym ${name} ${Symbols.vbar} $type "
+        return " $sym $name "
     }
 
-    fun headerRow(): String =
-        "   ${"property".fit(nameWidth)} ${Symbols.vbar} ${"type".fit(typeWidth)} "
+    /** Border title; this pane has a single column, so just the column name. */
+    val titleText: String = "Property"
 
-    /** Column index of the `│` separator between name and type. */
-    val crossColumns: List<Int> = listOf(1 + 1 + 1 + nameWidth + 1)
+    /** No interior column separator — single-column list. */
+    val crossColumns: List<Int> = emptyList()
 
-    val paneWidth: Int = 1 + 1 + 1 + nameWidth + 3 + typeWidth + 1
-
-    private fun typeText(delta: ColumnDelta): String =
-        delta.dbColumn?.dbType ?: delta.entityField?.type ?: ""
+    val paneWidth: Int = 1 + 1 + 1 + nameWidth + 1
 }

@@ -1,9 +1,6 @@
 package onl.ycode.stormify.schemasync.model
 
-/**
- * A column awaiting classification. Sourced either from JDBC introspection or
- * from the bundled fixture for offline demos.
- */
+/** A column awaiting classification, populated from JDBC introspection. */
 data class ColumnRef(
     val schema: String?,
     val table: String,
@@ -11,7 +8,7 @@ data class ColumnRef(
     /** Null when the underlying SQL type is deterministic (Boolean, Date, UUID, …) and needs no slot. */
     val category: SlotCategory?,
     val dbType: String,
-    /** Raw `java.sql.Types` constant; `Types.OTHER` for fixture data. */
+    /** Raw `java.sql.Types` constant; defaults to `Types.OTHER` when not available. */
     val jdbcType: Int = java.sql.Types.OTHER,
     /** True when DB metadata reports the column nullable. */
     val nullable: Boolean = true,

@@ -27,7 +27,7 @@ class AsciiListBoxRenderer(
         // empty rows below the last item; non-empty rows already contain the
         // same char at the same column).
         if (separatorColumns.isNotEmpty()) {
-            val sep = if (Symbols.ascii) '|' else '│'
+            val sep = Symbols.vbar[0]
             for (sepCol in separatorColumns) {
                 if (sepCol in 0 until width) {
                     for (y in 0 until height) {

@@ -15,9 +15,10 @@ class DbIntrospector(private val conn: Connection) {
     /** All user tables in the database. The dialect's default schema (`public`, `dbo`, …) is stripped so keys match entity table names. */
     fun listTables(): List<TableId> {
         val defaultSchema = defaultSchemaFor(conn)
+        val dialect = Dialect.detect(conn)
         val out = mutableListOf<TableId>()
         // Oracle: bypass JDBC metadata to avoid driver/server PL/SQL incompatibility.
-        if (Dialect.detect(conn) == Dialect.ORACLE) {
+        if (dialect == Dialect.ORACLE) {
             conn.prepareStatement("SELECT TABLE_NAME FROM USER_TABLES").use { ps ->
                 ps.executeQuery().use { rs ->
                     while (rs.next()) out += TableId(null, rs.getString(1).lowercase())
@@ -27,22 +28,36 @@ class DbIntrospector(private val conn: Connection) {
         }
         conn.metaData.getTables(null, defaultSchema, "%", arrayOf("TABLE")).use { rs ->
             while (rs.next()) {
+                val name = rs.getString("TABLE_NAME") ?: continue
+                if (dialect.isSystemTable(name)) continue
                 val rawSchema = rs.getString("TABLE_SCHEM")
                 val schema = if (rawSchema != null && rawSchema.equals(defaultSchema, ignoreCase = true)) null else rawSchema
-                out += TableId(schema, rs.getString("TABLE_NAME"))
+                out += TableId(schema, name)
             }
         }
         return out
     }
 
+    /**
+     * The schema that JDBC `getTables` / `getColumns` should be scoped to.
+     * For dialects that have first-class schemas (PostgreSQL, MSSQL), we trust
+     * `Connection.getSchema()` so URL parameters like `?currentSchema=…` are
+     * honoured; we only fall back to the dialect's conventional default when
+     * the driver returns nothing. MySQL/MariaDB use catalogs (== databases)
+     * rather than schemas, so we leave the schema pattern null and let the
+     * URL's database segment scope the query.
+     */
     private fun defaultSchemaFor(conn: java.sql.Connection): String? {
         return when (Dialect.detect(conn)) {
-            Dialect.POSTGRESQL -> "public"
-            Dialect.MSSQL -> "dbo"
+            Dialect.POSTGRESQL -> conn.connectionSchemaOrNull() ?: "public"
+            Dialect.MSSQL -> conn.connectionSchemaOrNull() ?: "dbo"
             Dialect.ORACLE -> conn.metaData.userName
             else -> null
         }
     }
+
+    private fun java.sql.Connection.connectionSchemaOrNull(): String? =
+        runCatching { schema?.takeIf { it.isNotBlank() } }.getOrNull()
 
     /**
      * All columns in user tables. Deterministic-type columns (Boolean, Date, UUID, …)

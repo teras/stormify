@@ -5,7 +5,7 @@ import onl.ycode.stormify.DbTable
 import java.time.Instant
 import java.util.UUID
 
-@DbTable(name = "users")
+@DbTable
 data class User(
     @DbField(primaryKey = true, autoIncrement = true)
     var id: Long = 0,
@@ -22,7 +22,7 @@ data class User(
     var sessionToken: String = "",
 )
 
-@DbTable(name = "addresses")
+@DbTable
 data class Address(
     @DbField(primaryKey = true, autoIncrement = true)
     var id: Long = 0,
@@ -36,7 +36,7 @@ data class Address(
     var validatedAt: Instant? = null,
 )
 
-@DbTable(name = "wishlists")
+@DbTable
 data class Wishlist(
     @DbField(primaryKey = true)
     var id: UUID = UUID.randomUUID(),

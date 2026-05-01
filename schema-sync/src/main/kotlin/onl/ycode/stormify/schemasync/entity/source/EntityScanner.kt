@@ -99,10 +99,11 @@ object EntityScanner {
 
         val dbTable = findAnnotation(klass, "DbTable", "Table")
         val fields = collectFields(klass)
-        // Opt-in: must have @DbTable, OR at least one @DbField, OR a property named "id".
+        // Opt-in: a class must declare a stormify/JPA annotation to count as an
+        // entity. Matching on a property named `id` would false-positive on
+        // ordinary DTOs.
         val hasDbField = fields.any { it.hasAnnotation("DbField") }
-        val hasIdProperty = fields.any { it.kotlinName == "id" }
-        if (dbTable == null && !hasDbField && !hasIdProperty) return null
+        if (dbTable == null && !hasDbField) return null
         if (fields.isEmpty()) return null
 
         val tableName = dbTable?.literalArg("name")?.takeIf { it.isNotBlank() }

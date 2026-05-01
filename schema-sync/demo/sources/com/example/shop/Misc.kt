@@ -4,7 +4,7 @@ import onl.ycode.stormify.DbField
 import onl.ycode.stormify.DbTable
 import java.time.Instant
 
-@DbTable(name = "reviews")
+@DbTable
 data class Review(
     @DbField(primaryKey = true, autoIncrement = true)
     var id: Long = 0,
@@ -17,7 +17,7 @@ data class Review(
     var postedAt: Instant? = null,
 )
 
-@DbTable(name = "audit_log")
+@DbTable
 data class AuditLog(
     @DbField(primaryKey = true, autoIncrement = true)
     var id: Long = 0,
@@ -28,7 +28,7 @@ data class AuditLog(
     var occurredAt: Instant? = null,
 )
 
-@DbTable(name = "settings")
+@DbTable
 data class Setting(
     @DbField(primaryKey = true)
     var key: String = "",

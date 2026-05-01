@@ -11,18 +11,14 @@ import onl.ycode.stormify.schemasync.config.ConnectionConfig
 import onl.ycode.stormify.schemasync.db.DbIntrospector
 import onl.ycode.stormify.schemasync.db.Dialect
 import onl.ycode.stormify.schemasync.entity.DiffEngine
-import onl.ycode.stormify.schemasync.entity.EntityCatalog
 import onl.ycode.stormify.schemasync.entity.EntityLoader
-import onl.ycode.stormify.schemasync.entity.KotlinEntity
 import onl.ycode.stormify.schemasync.entity.source.EntityScanner
-import onl.ycode.stormify.schemasync.fixture.sampleColumns
 import onl.ycode.stormify.schemasync.model.ColumnRef
 import onl.ycode.stormify.schemasync.tui.Symbols
 import onl.ycode.stormify.schemasync.tui.buildTableEntries
 import onl.ycode.stormify.schemasync.tui.groupByTable
 import onl.ycode.stormify.schemasync.tui.SchemaSyncOutcome
 import onl.ycode.stormify.schemasync.tui.runSchemaSync
-import java.nio.file.Files
 import java.nio.file.Path
 
 private const val USAGE = """Usage: schema-sync [options]
@@ -32,8 +28,7 @@ Options:
                          Persisted to .schema-sync.toml after first use.
   --user <user>          DB user. Persisted to .schema-sync.toml.
   --password <password>  DB password. Persisted to .schema-sync.toml.
-  --entities <path>      Path to entities JSON. Defaults to ./entities.json
-                         in cwd, or a bundled sample if neither exists.
+  --entities <path>      Path to entities JSON.
   --sources <dir>        Path to a Kotlin source root. Scans recursively for
                          entities (classes with @DbTable or property `id`).
                          May be repeated. Takes precedence over --entities.
@@ -47,8 +42,6 @@ Supported JDBC URLs (drivers bundled):
   jdbc:mariadb://<host>[:<port>]/<db>
   jdbc:oracle:thin:@<host>:<port>:<sid>
   jdbc:sqlserver://<host>[:<port>];databaseName=<db>
-
-Without a connection the tool starts in offline mode using a built-in fixture.
 """
 
 fun main(args: Array<String>) {
@@ -62,7 +55,6 @@ fun main(args: Array<String>) {
     val configResult = store.load()
     val state = ConfigState(configResult.config, store)
 
-    // CLI overrides → persist to TOML on first use.
     val cliUrl = argValue(args, "--url")
     val cliUser = argValue(args, "--user")
     val cliPassword = argValue(args, "--password")
@@ -78,6 +70,12 @@ fun main(args: Array<String>) {
             )
         }
     }
+
+    val connection = state.current.connection
+        ?: run {
+            System.err.println("No DB connection configured. Pass --url <jdbc-url> (see --help).")
+            return
+        }
 
     val classifier = SchemaClassifier().apply {
         seed(state.current.seeds)
@@ -97,16 +95,17 @@ fun main(args: Array<String>) {
     try {
         var outcome: SchemaSyncOutcome
         do {
-            val (columns, tableKeys, dialect) = loadColumnsAndTables(state.current.connection)
+            val (columns, tableKeys, dialect) = loadColumnsAndTables(connection)
             val columnsByTable = groupByTable(columns)
             val effectiveTableKeys = tableKeys.ifEmpty { columnsByTable.keys.toList() }
-            val entities = if (sourceRoots.isNotEmpty()) EntityScanner.scan(sourceRoots).entities
-                           else loadEntities(entitiesJsonPath)
+            val entities = when {
+                sourceRoots.isNotEmpty() -> EntityScanner.scan(sourceRoots).entities
+                entitiesJsonPath != null -> EntityLoader.load(Path.of(entitiesJsonPath))
+                else -> emptyList()
+            }
             val diffs = DiffEngine.diff(entities, columnsByTable, effectiveTableKeys)
             val diffsByTable = diffs.associateBy { it.tableKey }
             val tables = buildTableEntries(diffs)
-            val title = state.current.connection?.let { "Stormify Schema Sync — ${it.url}" }
-                ?: "Stormify Schema Sync — (offline fixture)"
             outcome = runSchemaSync(
                 screen = screen,
                 configState = state,
@@ -116,7 +115,7 @@ fun main(args: Array<String>) {
                 diffsByTable = diffsByTable,
                 entities = entities,
                 dialect = dialect,
-                title = title,
+                title = "Stormify Schema Sync — ${connection.url}",
             )
         } while (outcome == SchemaSyncOutcome.RESCAN)
     } finally {
@@ -131,57 +130,16 @@ private data class IntrospectionResult(
     val dialect: Dialect,
 )
 
-private fun loadColumnsAndTables(connection: ConnectionConfig?): IntrospectionResult {
-    if (connection == null) {
-        return IntrospectionResult(
-            columns = sampleColumns,
-            tableKeys = sampleColumns
-                .groupBy { listOfNotNull(it.schema, it.table).joinToString(".") }
-                .keys.toList(),
-            dialect = Dialect.GENERIC,
-        )
-    }
-    return runCatching {
-        DbIntrospector.connect(connection.url, connection.user, connection.password).use { jdbc ->
-            val intro = DbIntrospector(jdbc)
-            val keys = intro.listTables().map { it.key }
-            val cols = intro.listColumns { done, total ->
-                if (total > 20) System.err.print("\rIntrospecting $done/$total tables...")
-            }
-            if (keys.size > 20) System.err.println()
-            IntrospectionResult(cols, keys, Dialect.detect(jdbc))
+private fun loadColumnsAndTables(connection: ConnectionConfig): IntrospectionResult =
+    DbIntrospector.connect(connection.url, connection.user, connection.password).use { jdbc ->
+        val intro = DbIntrospector(jdbc)
+        val keys = intro.listTables().map { it.key }
+        val cols = intro.listColumns { done, total ->
+            if (total > 20) System.err.print("\rIntrospecting $done/$total tables...")
         }
-    }.getOrElse {
-        System.err.println("Connection to ${connection.url} failed: ${it.message}")
-        System.err.println("Falling back to offline fixture data.")
-        IntrospectionResult(
-            columns = sampleColumns,
-            tableKeys = sampleColumns
-                .groupBy { listOfNotNull(it.schema, it.table).joinToString(".") }
-                .keys.toList(),
-            dialect = Dialect.GENERIC,
-        )
+        if (keys.size > 20) System.err.println()
+        IntrospectionResult(cols, keys, Dialect.detect(jdbc))
     }
-}
-
-private fun loadEntities(cliPath: String?): List<KotlinEntity> {
-    val explicit = cliPath?.let(Path::of)
-    if (explicit != null) return EntityLoader.load(explicit)
-    val cwd = Path.of("entities.json")
-    if (Files.exists(cwd)) return EntityLoader.load(cwd)
-    // Fall back to bundled sample
-    val text = Companion::class.java.classLoader
-        .getResourceAsStream("entities-sample.json")
-        ?.bufferedReader()?.use { it.readText() }
-        ?: return emptyList()
-    val tmp = Files.createTempFile("schema-sync-entities", ".json")
-    Files.writeString(tmp, text)
-    val result = EntityLoader.load(tmp)
-    Files.deleteIfExists(tmp)
-    return result
-}
-
-private object Companion
 
 private fun argValue(args: Array<String>, name: String): String? {
     val idx = args.indexOfFirst { it == name || it.startsWith("$name=") }

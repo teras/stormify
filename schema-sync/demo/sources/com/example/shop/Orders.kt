@@ -5,6 +5,8 @@ import onl.ycode.stormify.DbTable
 import java.math.BigDecimal
 import java.time.Instant
 
+// `order` is a reserved SQL keyword; we override the inferred name here to
+// keep the demo runnable across every dialect — and to demonstrate @DbTable.
 @DbTable(name = "orders")
 data class Order(
     @DbField(primaryKey = true, autoIncrement = true)
@@ -19,7 +21,7 @@ data class Order(
     var shippedAt: Instant? = null,
 )
 
-@DbTable(name = "order_items")
+@DbTable
 data class OrderItem(
     @DbField(primaryKey = true, autoIncrement = true)
     var id: Long = 0,
@@ -32,7 +34,7 @@ data class OrderItem(
     var discountPercent: BigDecimal = BigDecimal.ZERO,
 )
 
-@DbTable(name = "invoices")
+@DbTable
 data class Invoice(
     @DbField(primaryKey = true, primarySequence = "invoice_seq")
     var id: Long = 0,
@@ -47,7 +49,7 @@ data class Invoice(
     var generatedAt: Instant? = null,
 )
 
-@DbTable(name = "payments")
+@DbTable
 data class Payment(
     @DbField(primaryKey = true, autoIncrement = true)
     var id: Long = 0,

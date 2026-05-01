@@ -5,7 +5,7 @@ import com.googlecode.lanterna.TextColor
 import com.googlecode.lanterna.bundle.LanternaThemes
 import com.googlecode.lanterna.gui2.ActionListBox
 import com.googlecode.lanterna.gui2.BasicWindow
-import com.googlecode.lanterna.gui2.CheckBox
+import com.googlecode.lanterna.gui2.ComboBox
 import com.googlecode.lanterna.gui2.DefaultWindowManager
 import com.googlecode.lanterna.gui2.Direction
 import com.googlecode.lanterna.gui2.EmptySpace
@@ -73,17 +73,17 @@ fun runSchemaSync(
     }
     refreshStatus()
     root.addComponent(statusLabel)
-    root.addComponent(EmptySpace(TerminalSize(1, 1)))
 
     val filterRow = Panel(LinearLayout(Direction.HORIZONTAL))
     filterRow.addComponent(Label("Filter (/): "))
     root.addComponent(filterRow)
+    root.addComponent(EmptySpace(TerminalSize(1, 1)))
 
     val tableFormatter = RowFormatter(tables)
 
     val allTableRows = tables.map { TableRowItem(it, tableFormatter) }
     var currentFilter = ""
-    var hideSynced = false
+    var statusFilter: StatusFilter = StatusFilter.NEEDS_SYNC
 
     val tablesList = SelectionAwareListBox(separatorColumns = tableFormatter.crossColumns)
 
@@ -92,7 +92,7 @@ fun runSchemaSync(
         tablesList.clearItems()
         val filter = currentFilter.lowercase()
         val visible = allTableRows.filter { row ->
-            (!hideSynced || row.entry.status != TableStatus.SYNCED) &&
+            statusFilter.accept(row.entry.status) &&
                 (filter.isEmpty() ||
                     row.entry.table.lowercase().contains(filter) ||
                     (row.entry.entity?.lowercase()?.contains(filter) == true))
@@ -112,39 +112,23 @@ fun runSchemaSync(
     }
     filterRow.addComponent(filterBox)
     filterRow.addComponent(EmptySpace(TerminalSize(2, 1)))
-    val hideSyncedBox = CheckBox("Hide synced").apply {
-        addListener { checked ->
-            hideSynced = checked
+    filterRow.addComponent(Label("Show: "))
+    val statusCombo = ComboBox<StatusFilter>(StatusFilter.entries).apply {
+        selectedIndex = StatusFilter.entries.indexOf(statusFilter)
+        addListener { newIndex, _, _ ->
+            statusFilter = StatusFilter.entries[newIndex]
             rebuildTablesList()
         }
     }
-    filterRow.addComponent(hideSyncedBox)
+    filterRow.addComponent(statusCombo)
 
-    val tablesHeader = Label(tableFormatter.headerRow())
-    val tablesRule = HeaderRule(tableFormatter.crossColumns).apply {
-        layoutData = LinearLayout.createLayoutData(LinearLayout.Alignment.Fill)
-    }
     tablesList.layoutData = LinearLayout.createLayoutData(LinearLayout.Alignment.Fill, LinearLayout.GrowPolicy.CanGrow)
-    val tablesPanel = Panel(LinearLayout(Direction.VERTICAL).setSpacing(0)).apply {
-        addComponent(tablesHeader)
-        addComponent(tablesRule)
-        addComponent(tablesList)
-    }
-    val tablesBordered = tablesPanel.withTitledBorder("Tables (${tables.size})")
+    val tablesBordered = tablesList.withTitledBorder(tableFormatter.titleText, tableFormatter.crossColumns)
 
     val globalPropsFormatter = PropertyRowFormatter(diffsByTable.values.flatMap { it.columnDeltas })
     val propsList = SelectionAwareListBox(globalPropsFormatter.crossColumns)
-    val propsHeaderLabel = Label(globalPropsFormatter.headerRow())
-    val propsRule = HeaderRule(globalPropsFormatter.crossColumns).apply {
-        layoutData = LinearLayout.createLayoutData(LinearLayout.Alignment.Fill)
-    }
     propsList.layoutData = LinearLayout.createLayoutData(LinearLayout.Alignment.Fill, LinearLayout.GrowPolicy.CanGrow)
-    val propsPanel = Panel(LinearLayout(Direction.VERTICAL).setSpacing(0)).apply {
-        addComponent(propsHeaderLabel)
-        addComponent(propsRule)
-        addComponent(propsList)
-    }
-    val propsBordered = propsPanel.withTitledBorder("Properties")
+    val propsBordered = propsList.withTitledBorder(globalPropsFormatter.titleText)
 
     val classifierPane = ClassifierPane(configState, classifier) {
         propsList.invalidate()
@@ -225,7 +209,6 @@ fun runSchemaSync(
         currentDeltasRef.clear()
         val diff = diffsByTable[tableKey]
         if (diff == null) {
-            propsHeaderLabel.text = "(no diff data)"
             updateInfoBar()
             classifierPane.showFor(tableKey, null)
             return
@@ -399,6 +382,18 @@ fun runSchemaSync(
     gui.addWindowAndWait(window)
 
     return outcome
+}
+
+/** Status-based row filter exposed in the top dropdown. */
+private enum class StatusFilter(private val label: String, val accept: (TableStatus) -> Boolean) {
+    NEEDS_SYNC("Needs sync", { it != TableStatus.SYNCED }),
+    ALL("All", { true }),
+    SYNCED("Synced", { it == TableStatus.SYNCED }),
+    DIFF("Diff", { it == TableStatus.DIFF }),
+    DB_ONLY("DB only", { it == TableStatus.DB_ONLY }),
+    ENTITY_ONLY("Entity only", { it == TableStatus.ENTITY_ONLY });
+
+    override fun toString(): String = label
 }
 
 private class TableRowItem(val entry: TableEntry, private val formatter: RowFormatter) : Runnable {

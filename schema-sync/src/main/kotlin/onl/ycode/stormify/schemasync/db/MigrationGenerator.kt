@@ -135,11 +135,6 @@ object MigrationGenerator {
                     sb.appendLine()
                     orphanColumns += diff.dbColumns.size
                 }
-                TableStatus.PROBLEMATIC -> {
-                    sb.appendLine("-- ── ${diff.tableKey} (PROBLEMATIC) ──")
-                    sb.appendLine("-- requires manual review")
-                    sb.appendLine()
-                }
             }
         }
 
