@@ -408,10 +408,15 @@ try {
 } catch (e: SQLException) {
     println("Database error: ${e.message}")
     // e.cause may contain the underlying platform exception
+    // e.sqlState  -> standard 5-char SQLSTATE (e.g. "23505"), if the driver provides it
+    // e.errorCode -> vendor-specific code (e.g. ORA-00942, MySQL errno), if available
 }
 ```
 
 `SQLException` is the same class on all platforms -- no need for platform-specific catch blocks.
+The `sqlState` and `errorCode` properties are populated from the underlying driver
+(JDBC on JVM/Android, native vtable on Kotlin/Native) and are `null` when the driver
+does not surface them.
 
 ## JDBC URL Parsing
 

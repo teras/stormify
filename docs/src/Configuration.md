@@ -90,6 +90,10 @@ Stormify connects to your database through a data source. On JVM, it accepts any
     // MS SQL Server
     val ds = KdbcDataSource("jdbc:sqlserver://localhost:1433;databaseName=mydb", "sa", "pass")
     val stormify = Stormify(ds)
+
+    // Optional initSql runs on every freshly opened connection.
+    val ds = KdbcDataSource("jdbc:sqlite:/tmp/mydb.db", initSql = "PRAGMA foreign_keys = ON")
+    val stormify = Stormify(ds)
     ```
 
     Database client libraries are loaded at runtime via `dlopen` / `LoadLibrary` —
