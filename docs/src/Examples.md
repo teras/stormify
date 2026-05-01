@@ -79,7 +79,7 @@ Run on any available target:
 
 ```bash
 cd kotlin-multiplatform
-gradle run                                # JVM
+gradle jvmRun                             # JVM
 gradle runDebugExecutableLinuxX64         # Linux x64
 gradle runDebugExecutableMacosArm64       # macOS Apple Silicon
 gradle runDebugExecutableMingwX64         # Windows
@@ -130,11 +130,13 @@ A Ktor REST server backed by Stormify over SQLite. It shows how Stormify fits in
 
 The companion [`frontend-react`](https://github.com/teras/stormify-examples/tree/main/frontend-react) folder contains a React + TypeScript admin UI (Vite, MUI Data Grid, TanStack Query, React Router) that consumes this backend through the same `PageSpec`/`PagedResponse` contract — useful if you want to see what a real client for these paged endpoints looks like.
 
-Run the backend:
+Run the backend (Kotlin/Native — pick the executable for your host):
 
 ```bash
 cd kotlin-rest
-gradle run
+gradle runDebugExecutableLinuxX64         # Linux x64
+gradle runDebugExecutableMingwX64         # Windows (or under Wine)
+gradle runDebugExecutableMacosArm64       # macOS Apple Silicon (build on macOS)
 ```
 
 Then, in a separate terminal, run the frontend pointing at it:

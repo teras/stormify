@@ -52,6 +52,13 @@ toolchain supports.
 
 A complete, five-minute walkthrough from zero to your first query.
 
+!!! tip "Prefer to skip the typing?"
+
+    Clone a ready-to-run project from
+    [stormify-examples](https://github.com/teras/stormify-examples) — every
+    target Stormify supports has a self-contained sample. See the
+    [Examples gallery](Examples.md) for descriptions and run commands.
+
 ### 1. Add the dependency
 
 === "Gradle"
