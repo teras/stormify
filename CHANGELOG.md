@@ -2,6 +2,49 @@
 
 Stormify release history.
 
+## [2.5.0] — 2026-05-01
+
+### Added
+- **`stormify-gradle-plugin`** that auto-wires KSP, `annproc`, and the
+  runtime dependency for JVM, Android, and Kotlin Multiplatform
+  projects, with a lifecycle-aware generated entity registrar so the
+  generated `TableInfo` is wired in without manual setup.
+- `initSql` parameter on `KdbcDataSource` — single SQL statement
+  executed on every freshly opened connection.
+- `sqlState` and `errorCode` properties on `kdbc.SQLException`,
+  populated from the underlying driver (JDBC on JVM/Android, native
+  vtable on Kotlin/Native) when available.
+- Single-argument constructors for `Stormify` and `StormifyJ` to
+  support Spring XML dependency injection.
+- Per-source-set tables placement planner for the annotation
+  processor: intermediate consolidation, expect/actual/plain emission,
+  hard-fail wiring reflection, and a scenario test matrix.
+- Suspend transaction stress test and a cross-driver bind type matrix
+  test suite.
+
+### Changed
+- **Ambient transaction registry** replaces the `TransactionContext`
+  receiver. `transaction { ... }` now installs a thread-local active
+  context, so CRUD calls work directly inside the block without the
+  receiver. Nested transactions and savepoints behave the same as
+  before.
+- Tests moved into their own module for cleaner build separation.
+- Pooled connections on native and Android are now bound to a
+  long-lived single-thread dispatcher, giving consistent suspend
+  semantics and reliable cancellation.
+- Placeholder scanning is quote- and comment-aware: `?` inside string
+  literals and SQL comments is no longer counted as a parameter, and
+  list expansion respects the same rules.
+- Normalized bind type coercions across all drivers; bind errors now
+  include parameter index and value context for easier debugging.
+- Examples REST DB generator cleaned up.
+
+### Removed
+- `TransactionContext` class and its receiver-style extension methods
+  — superseded by the ambient transaction registry. Code that
+  previously took `TransactionContext` as a receiver or parameter
+  must be updated to use the ambient context instead.
+
 ## [2.1.1] — 2026-04-22
 
 ### Added
@@ -137,6 +180,7 @@ Initial public release on Maven Central.
 - JPA annotation compatibility (`@Id`, `@Table`, `@Column`, …).
 - JVM / JDBC-only, reflection-based entity discovery.
 
+[2.5.0]: https://github.com/teras/stormify/compare/v2.1.1...v2.5.0
 [2.1.1]: https://github.com/teras/stormify/compare/v2.1.0...v2.1.1
 [2.1.0]: https://github.com/teras/stormify/compare/v2.0.0...v2.1.0
 [2.0.0]: https://github.com/teras/stormify/compare/v1.3.0...v2.0.0
