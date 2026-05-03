@@ -268,7 +268,7 @@ internal fun renderEntitiesDiffLines(
             val original = runCatching { Files.readString(path) }.getOrNull() ?: continue
             val patched = EntityWriter.previewEdits(env, path, splices.map { it.edit }, style) ?: continue
             if (patched == original) continue
-            out += DiffLine("─── ${path.fileName} ───")
+            out += DiffLine("${Symbols.rule} ${path.fileName} ${Symbols.rule}")
             out += DiffLine("(${path})")
             out += DiffLine("")
             out += unifiedDiffLines(original.lines(), patched.lines())
@@ -277,7 +277,7 @@ internal fun renderEntitiesDiffLines(
     }
     if (pending.newEntities.isNotEmpty()) {
         for (ent in pending.newEntities) {
-            out += DiffLine("─── + ${ent.targetPath.fileName} ───")
+            out += DiffLine("${Symbols.rule} + ${ent.targetPath.fileName} ${Symbols.rule}")
             out += DiffLine("(${ent.targetPath})")
             out += DiffLine("")
             EntityWriter.renderEntitySource(ent, style).lines().forEach {
@@ -385,7 +385,7 @@ fun runApplyConfirmation(
         }) {
         MessageDialog.showMessageDialog(
             gui, "Apply",
-            "Nothing to do — schema and entities are in sync.",
+            "Nothing to do ${Symbols.dash} schema and entities are in sync.",
             MessageDialogButton.OK,
         )
         return 0

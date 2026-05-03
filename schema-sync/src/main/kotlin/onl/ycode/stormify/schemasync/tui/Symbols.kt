@@ -16,4 +16,10 @@ object Symbols {
     val slotEmpty: Char get() = if (ascii) '.' else '·'
     val selectMark: String get() = if (ascii) ">>" else "▶▶"
     val selectEmpty: String get() = "  "
+    /** Em dash used as a separator inside titles (`Diff — name`). */
+    val dash: String get() = if (ascii) "-" else "—"
+    /** Section rule prefix/suffix in diff previews (`─── DB needs ───`). */
+    val rule: String get() = if (ascii) "---" else "───"
+    /** Inline "not equal" marker before a type-conflict line. */
+    val neq: String get() = if (ascii) "!=" else "≠"
 }

@@ -251,6 +251,18 @@ fun runSchemaSync(
         return activePanes().indexOf(f)
     }
 
+    /** Mark the focused pane's titled border with a "●" so the user sees at a
+     *  glance which pane owns focus. Direct identity checks against each pane's
+     *  known focusables — `currentPaneIndex()` uses strict equality with
+     *  `diffPane.focusTarget` and misses cases where focus lands on the other
+     *  diff-pane child (slots vs targets). */
+    fun applyFocusMarkers() {
+        val f = window.focusedInteractable
+        tablesBordered.title = markFocused(tableFormatter.titleText, f === tablesList)
+        propsBordered.title = markFocused(globalPropsFormatter.titleText, f === propsList)
+        diffPane.paneFocused = f != null && diffPane.ownsFocus(f)
+    }
+
     fun movePane(delta: Int): Boolean {
         val panes = activePanes()
         val idx = currentPaneIndex()
@@ -265,6 +277,14 @@ fun runSchemaSync(
         window.focusedInteractable === diffPane.focusTarget
 
     window.addWindowListener(object : WindowListenerAdapter() {
+        // Lanterna's Tab traversal handles focus internally — `onUnhandledInput`
+        // never fires for Tab, and tracking per-component `afterEnterFocus`
+        // would mean subclassing every focusable widget. Instead defer one
+        // refresh per input via the GUI thread; by the time it runs, focus has
+        // settled wherever Lanterna routed it.
+        override fun onInput(basePane: Window, keyStroke: KeyStroke, deliverEvent: AtomicBoolean) {
+            gui.guiThread.invokeLater { applyFocusMarkers() }
+        }
         override fun onUnhandledInput(basePane: Window, keyStroke: KeyStroke, hasBeenHandled: AtomicBoolean) {
             when {
                 keyStroke.character == '/' -> {
@@ -336,6 +356,7 @@ fun runSchemaSync(
 
     window.component = root
     window.focusedInteractable = tablesList
+    applyFocusMarkers()
     gui.addWindowAndWait(window)
 
     return outcome
@@ -532,7 +553,7 @@ private fun showCategoryPicker(
     val root = Panel(LinearLayout(Direction.VERTICAL).setSpacing(0))
     FilterGroup.entries.forEachIndexed { idx, group ->
         if (idx > 0) root.addComponent(EmptySpace(TerminalSize(1, 1)))
-        root.addComponent(Label("── ${group.label} ──"))
+        root.addComponent(Label("${Symbols.hbar}${Symbols.hbar} ${group.label} ${Symbols.hbar}${Symbols.hbar}"))
         root.addComponent(groupLists.getValue(group))
     }
     root.addComponent(EmptySpace(TerminalSize(1, 1)))
@@ -545,15 +566,37 @@ private fun showCategoryPicker(
 
     window.addWindowListener(object : WindowListenerAdapter() {
         override fun onUnhandledInput(basePane: Window, keyStroke: KeyStroke, hasBeenHandled: AtomicBoolean) {
-            if (keyStroke.keyType == KeyType.Escape) {
-                window.close()
-                hasBeenHandled.set(true)
+            when {
+                keyStroke.keyType == KeyType.Escape -> {
+                    window.close()
+                    hasBeenHandled.set(true)
+                }
+                ThemeManager.handleKey(keyStroke, gui) -> {
+                    gui.screen.refresh()
+                    hasBeenHandled.set(true)
+                }
             }
         }
     })
 
     gui.addWindowAndWait(window)
     return confirmed
+}
+
+/** Substitute the first two horizontal-bar fillers in [base] with `"● "` when
+ *  [focused], preserving overall length so multi-segment titles keep aligning
+ *  with the body's column separators. The trailing space prevents the marker
+ *  from visually merging with the surrounding `─` run. Falls back to appending
+ *  " ●" when the title has no filler (single-segment titles like `Property`). */
+private fun markFocused(base: String, focused: Boolean): String {
+    if (!focused) return base
+    val hbar = Symbols.hbar[0]
+    val idx = base.indexOf(hbar)
+    if (idx < 0) return "$base ●"
+    val sb = StringBuilder(base)
+    sb[idx] = '●'
+    if (idx + 1 < sb.length && sb[idx + 1] == hbar) sb[idx + 1] = ' '
+    return sb.toString()
 }
 
 private class TableRowItem(val entry: TableEntry, private val formatter: RowFormatter) : Runnable {
@@ -578,6 +621,7 @@ internal class SelectionAwareListBox(
 
     init {
         renderer = asciiRenderer
+        setListItemRenderer(PersistentSelectionItemRenderer())
     }
 
     fun setSeparatorColumns(cols: List<Int>) {

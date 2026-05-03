@@ -113,7 +113,7 @@ fun main(args: Array<String>) {
                 diffsByTable = diffsByTable,
                 entities = entities,
                 dialect = dialect,
-                title = "Stormify Schema Sync — ${connection.url}",
+                title = "Stormify Schema Sync ${Symbols.dash} ${connection.url}",
             )
         } while (outcome == SchemaSyncOutcome.RESCAN)
     } finally {

@@ -138,19 +138,36 @@ class DiffPane(
         }
     }
 
+    /** Whether the right pane currently owns focus. Drives the leading "● "
+     *  marker injected by [applyTitle]. Set externally by the window dispatcher
+     *  after each navigation event. */
+    var paneFocused: Boolean = false
+        set(value) {
+            field = value
+            applyTitle(currentBaseTitle)
+        }
+
+    private var currentBaseTitle: String = "Diff"
+
+    private fun applyTitle(base: String) {
+        currentBaseTitle = base
+        bordered.title = base + (if (paneFocused) " ●" else "")
+    }
+
     private fun renderDiff() {
         val diff = currentDiff
         if (diff == null) {
-            bordered.title = "Diff"
+            applyTitle("Diff")
             diffViewer.setLines(listOf(DiffLine("(no table selected)")))
             return
         }
-        bordered.title = when (diff.status) {
-            TableStatus.SYNCED -> "Synced — ${diff.tableKey}"
-            TableStatus.DIFF -> "Diff — ${diff.tableKey}"
-            TableStatus.ENTITY_ONLY -> "New table — ${diff.tableKey}"
-            TableStatus.DB_ONLY -> "New entity — ${pascalCase(diff.tableKey.substringAfterLast('.'))}"
-        }
+        val sep = Symbols.dash
+        applyTitle(when (diff.status) {
+            TableStatus.SYNCED -> "Synced $sep ${diff.tableKey}"
+            TableStatus.DIFF -> "Diff $sep ${diff.tableKey}"
+            TableStatus.ENTITY_ONLY -> "New table $sep ${diff.tableKey}"
+            TableStatus.DB_ONLY -> "New entity $sep ${pascalCase(diff.tableKey.substringAfterLast('.'))}"
+        })
         diffViewer.setLines(buildDiffLines(diff))
     }
 
@@ -165,12 +182,12 @@ class DiffPane(
         val typeMismatch = diff.columnDeltas.filter { it.kind == ColumnDelta.Kind.TYPE_MISMATCH }
 
         if (entityOnly.isEmpty() && dbOnly.isEmpty() && typeMismatch.isEmpty()) {
-            out += DiffLine("(in sync — entity matches DB)")
+            out += DiffLine("(in sync ${Symbols.dash} entity matches DB)")
             return out
         }
 
         if (entityOnly.isNotEmpty()) {
-            out += DiffLine("─── DB needs ───")
+            out += DiffLine("${Symbols.rule} DB needs ${Symbols.rule}")
             // For ENTITY_ONLY tables the whole table is missing → CREATE TABLE.
             // For DIFF tables only the listed columns are missing → ALTER TABLE.
             val sqlLines = if (diff.status == TableStatus.ENTITY_ONLY) {
@@ -212,12 +229,12 @@ class DiffPane(
         }
 
         if (typeMismatch.isNotEmpty()) {
-            out += DiffLine("─── Type conflicts ───")
+            out += DiffLine("${Symbols.rule} Type conflicts ${Symbols.rule}")
             for (d in typeMismatch) {
                 val field = d.entityField ?: continue
                 val col = d.dbColumn ?: continue
-                val reason = d.mismatchReason?.let { " — $it" } ?: ""
-                out += DiffLine("≠ ${col.name}$reason", TextColor.ANSI.YELLOW)
+                val reason = d.mismatchReason?.let { " ${Symbols.dash} $it" } ?: ""
+                out += DiffLine("${Symbols.neq} ${col.name}$reason", TextColor.ANSI.YELLOW)
                 out += DiffLine("    DB:     ${col.dbType}", TextColor.ANSI.RED)
                 out += DiffLine(
                     "    entity: ${field.type}${if (field.nullable) "?" else ""}  (${field.name})",
@@ -298,5 +315,13 @@ class DiffPane(
         get() = if (targetsList.itemCount > 0) targetsList else slotsList
     val hasFocusableContent: Boolean
         get() = slotsList.itemCount > 0 || targetsList.itemCount > 0
+
+    /** True when [target] is one of this pane's own focusable widgets — used by
+     *  the window dispatcher to decide whether to mark the diff title focused.
+     *  Includes [diffViewer] (the scrollable text body) since Lanterna's Tab
+     *  traversal lands there first; checking only slots/targets would silently
+     *  skip the most common landing spot. */
+    fun ownsFocus(target: com.googlecode.lanterna.gui2.Interactable): Boolean =
+        target === slotsList || target === targetsList || target === diffViewer
 }
 

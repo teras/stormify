@@ -1,5 +1,6 @@
 package onl.ycode.stormify.schemasync.tui
 
+import com.googlecode.lanterna.TerminalTextUtils
 import com.googlecode.lanterna.gui2.AbstractListBox
 import com.googlecode.lanterna.gui2.ActionListBox
 import com.googlecode.lanterna.gui2.TextGUIGraphics
@@ -52,5 +53,39 @@ class AsciiListBoxRenderer(
                 .coerceIn(1, height - 2)
             graphics.setCharacter(col, thumbY, '#')
         }
+    }
+}
+
+/**
+ * Item renderer that **keeps the selected row visible even when the list has
+ * lost focus**, so the user can see "where they were" in the left/middle pane
+ * after Tab/arrow navigation. Default Lanterna behaviour renders the selected
+ * row identically to any other row when the list is unfocused — there is no
+ * visual cue at all. This renderer applies the [getActive] theme style (a
+ * dimmer highlight than focused-selected) for the unfocused-selected case.
+ */
+class PersistentSelectionItemRenderer
+    : AbstractListBox.ListItemRenderer<Runnable, ActionListBox>() {
+
+    override fun drawItem(
+        graphics: TextGUIGraphics,
+        listBox: ActionListBox,
+        index: Int,
+        item: Runnable,
+        selected: Boolean,
+        focused: Boolean,
+    ) {
+        val themeDef = listBox.theme.getDefinition(AbstractListBox::class.java)
+        val style = when {
+            selected && focused -> themeDef.selected
+            selected -> themeDef.active
+            else -> themeDef.normal
+        }
+        graphics.applyThemeStyle(style)
+
+        val width = graphics.size.columns
+        var label = TerminalTextUtils.fitString(getLabel(listBox, index, item), width)
+        while (TerminalTextUtils.getColumnWidth(label) < width) label += " "
+        graphics.putString(0, 0, label)
     }
 }
