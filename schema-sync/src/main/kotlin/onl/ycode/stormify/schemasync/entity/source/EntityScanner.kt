@@ -1,9 +1,9 @@
 package onl.ycode.stormify.schemasync.entity.source
 
-import onl.ycode.stormify.schemasync.entity.EntityCatalog
 import onl.ycode.stormify.schemasync.entity.EntityField
 import onl.ycode.stormify.schemasync.entity.KotlinEntity
 import onl.ycode.stormify.schemasync.entity.KotlinTypeMapper
+import onl.ycode.stormify.schemasync.model.NamingPolicy
 import org.jetbrains.kotlin.psi.KtAnnotated
 import org.jetbrains.kotlin.psi.KtClass
 import org.jetbrains.kotlin.psi.KtFile
@@ -18,7 +18,7 @@ import kotlin.streams.asSequence
 
 /**
  * Walks one or more source roots, parses every `*.kt` file via [PsiEnvironment],
- * and produces an [EntityCatalog] containing every class annotated with `@DbTable`.
+ * and yields the [KotlinEntity] objects it finds.
  *
  * Convention-by-name fallback: if a class has properties with `@DbField` but no
  * `@DbTable`, we still treat it as an entity (matches stormify's runtime behavior).
@@ -28,13 +28,9 @@ import kotlin.streams.asSequence
  */
 object EntityScanner {
 
-    /** Convert camelCase to snake_case (matches stormify's default LOWER_CASE_WITH_UNDERSCORES). */
-    private fun snake(s: String): String = buildString {
-        for ((i, c) in s.withIndex()) {
-            if (c.isUpperCase() && i > 0) append('_')
-            append(c.lowercaseChar())
-        }
-    }
+    private var policy: NamingPolicy = NamingPolicy.LOWER_CASE_WITH_UNDERSCORES
+
+    private fun snake(s: String): String = policy.fromKotlin(s)
 
     /** Type names that are known scalars or deterministic — never references. */
     private val KNOWN_NON_REFERENCE = setOf(
@@ -60,7 +56,8 @@ object EntityScanner {
         "ImmutableList", "ImmutableSet", "ImmutableMap",
     )
 
-    fun scan(roots: List<Path>): EntityCatalog {
+    fun scan(roots: List<Path>, policy: NamingPolicy = NamingPolicy.LOWER_CASE_WITH_UNDERSCORES): List<KotlinEntity> {
+        this.policy = policy
         val files = roots.flatMap { root ->
             if (!Files.exists(root)) emptyList()
             else if (root.isDirectory())
@@ -77,7 +74,7 @@ object EntityScanner {
                 entities += extractEntities(ktFile, path.toString())
             }
         }
-        return resolveReferences(EntityCatalog(entities))
+        return resolveReferences(entities)
     }
 
     private fun extractEntities(file: KtFile, sourcePath: String): List<KotlinEntity> {
@@ -97,7 +94,7 @@ object EntityScanner {
         if (klass.isInterface() || klass.isEnum() || klass.isAnnotation()) return null
         val className = klass.fqName?.asString() ?: klass.name ?: return null
 
-        val dbTable = findAnnotation(klass, "DbTable", "Table")
+        val dbTable = findAnnotation(klass, "DbTable", "Table", "Entity")
         val fields = collectFields(klass)
         // Opt-in: a class must declare a stormify/JPA annotation to count as an
         // entity. Matching on a property named `id` would false-positive on
@@ -106,16 +103,20 @@ object EntityScanner {
         if (dbTable == null && !hasDbField) return null
         if (fields.isEmpty()) return null
 
-        val tableName = dbTable?.literalArg("name")?.takeIf { it.isNotBlank() }
-            ?: snake(klass.name ?: return null)
+        val explicitName = dbTable?.literalArg("name")?.takeIf { it.isNotBlank() }
+        val tableName = explicitName ?: snake(klass.name ?: return null)
 
         val mapped = fields.map { it.toEntityField() }
+        val imports = file.importDirectives.mapNotNull { it.importedFqName?.asString() }
         return KotlinEntity(
             className = className,
             schema = null,
             table = tableName,
             fields = mapped,
             sourcePath = sourcePath,
+            imports = imports,
+            hasSuperType = klass.superTypeListEntries.isNotEmpty(),
+            explicitTableName = explicitName != null,
         )
     }
 
@@ -136,7 +137,7 @@ object EntityScanner {
         if (isTransient(p)) return null
         if (isCollection(typeRef)) return null
         val initText = p.defaultValue?.text
-        return RawField(p, name, typeRef, initText)
+        return RawField(p, name, typeRef, initText, inConstructor = true)
     }
 
     private fun toRaw(p: KtProperty): RawField? {
@@ -145,7 +146,33 @@ object EntityScanner {
         if (isTransient(p)) return null
         if (isCollection(typeRef)) return null
         val initText = p.initializer?.text
-        return RawField(p, name, typeRef, initText)
+        return RawField(
+            owner = p,
+            kotlinName = name,
+            typeRef = typeRef,
+            initializerText = initText,
+            inConstructor = false,
+            precedingBlankLine = hasLeadingBlankLine(p),
+        )
+    }
+
+    /** True when the source between this property and the previous sibling
+     *  contains two or more newlines (i.e. an empty line in between). */
+    private fun hasLeadingBlankLine(p: KtProperty): Boolean {
+        val text = p.containingKtFile.text
+        var i = p.textRange.startOffset - 1
+        var newlines = 0
+        while (i >= 0) {
+            val ch = text[i]
+            if (ch == '\n') {
+                newlines++
+                if (newlines >= 2) return true
+            } else if (ch != ' ' && ch != '\t' && ch != '\r') {
+                return false
+            }
+            i--
+        }
+        return false
     }
 
     private fun isTransient(target: KtAnnotated): Boolean =
@@ -161,22 +188,29 @@ object EntityScanner {
         val kotlinName: String,
         val typeRef: KtTypeReference,
         val initializerText: String?,
+        val inConstructor: Boolean,
+        val precedingBlankLine: Boolean? = null,
     ) {
         fun hasAnnotation(name: String) = findAnnotation(owner, name) != null
 
         fun toEntityField(): EntityField {
             val dbField = findAnnotation(owner, "DbField")
+            // JPA @Column / @JoinColumn carry `name = "…"`; we honour them as a
+            // fallback when no @DbField is present.
+            val jpaColumn = findAnnotation(owner, "Column", "JoinColumn")
             val typeText = typeRef.text.trim()
             val nullable = typeText.endsWith("?")
             val baseType = typeText.removeSuffix("?").trim()
             val simpleType = baseType.substringBefore('<').substringAfterLast('.')
 
             val column = dbField?.literalArg("name")?.takeIf { it.isNotBlank() }
+                ?: jpaColumn?.literalArg("name")?.takeIf { it.isNotBlank() }
                 ?: snake(kotlinName)
 
             val explicitPk = dbField?.boolArg("primaryKey") == true
-            val conventionPk = dbField == null && kotlinName == "id"
-            val primaryKey = explicitPk || conventionPk
+            val jpaId = findAnnotation(owner, "Id") != null
+            val conventionPk = dbField == null && !jpaId && kotlinName == "id"
+            val primaryKey = explicitPk || jpaId || conventionPk
 
             val isReference = baseType !in KNOWN_NON_REFERENCE &&
                 simpleType !in KNOWN_NON_REFERENCE &&
@@ -195,6 +229,8 @@ object EntityScanner {
                 updatable = dbField?.boolArg("updatable") ?: true,
                 referencedEntity = if (isReference) simpleType else null,
                 defaultLiteral = sanitizeLiteral(initializerText),
+                inConstructor = inConstructor,
+                precedingBlankLine = precedingBlankLine,
             )
         }
     }
@@ -204,28 +240,26 @@ object EntityScanner {
      * Replaces FK field types with the target entity's PK type so the
      * downstream classifier/generator sees a concrete scalar instead of a class name.
      */
-    private fun resolveReferences(catalog: EntityCatalog): EntityCatalog {
+    private fun resolveReferences(entities: List<KotlinEntity>): List<KotlinEntity> {
         // Build maps both ways: by FQN (preferred) and by simple-name (best-effort).
         // Entities with composite PKs are excluded from auto-resolution since a FK
         // can't simply mirror the first PK column's type.
-        val singlePkEntities = catalog.entities.filter { e -> e.fields.count { it.primaryKey } == 1 }
+        val singlePkEntities = entities.filter { e -> e.fields.count { it.primaryKey } == 1 }
         val pkByFqn: Map<String, String> = singlePkEntities.associate { e ->
             e.className to e.fields.first { it.primaryKey }.type
         }
         val pkBySimple: Map<String, String> = singlePkEntities
             .groupBy { it.className.substringAfterLast('.') }
-            // Only auto-resolve when there's a unique simple-name match.
             .filterValues { it.size == 1 }
             .mapValues { (_, list) -> list.first().fields.first { it.primaryKey }.type }
 
-        val resolved = catalog.entities.map { entity ->
+        return entities.map { entity ->
             entity.copy(fields = entity.fields.map { f ->
                 val ref = f.referencedEntity ?: return@map f
                 val pkType = pkByFqn[ref] ?: pkBySimple[ref] ?: return@map f
                 f.copy(type = pkType)
             })
         }
-        return EntityCatalog(resolved)
     }
 }
 
@@ -258,6 +292,9 @@ private fun sanitizeLiteral(text: String?): String? {
 private val POSITIONAL_ARG_NAMES: Map<String, List<String>> = mapOf(
     "DbTable" to listOf("name"),
     "Table" to listOf("name"),
+    "Entity" to listOf("name"),
+    "Column" to listOf("name"),
+    "JoinColumn" to listOf("name"),
     "DbField" to listOf("name", "primaryKey", "primarySequence", "autoIncrement", "creatable", "updatable", "enumAsString"),
 )
 

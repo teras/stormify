@@ -23,11 +23,19 @@ import com.googlecode.lanterna.gui2.TextGUIGraphics
  *                      wrapped component draws full-height column separators.
  */
 class TitledBorder(
-    private val title: String,
+    initialTitle: String,
     private val crossColumns: List<Int> = emptyList(),
 ) : AbstractBorder() {
 
-    private val decoratedTitle: String = if (title.isEmpty()) "" else " $title "
+    /** Mutable so callers can update the title at runtime; setting triggers a redraw. */
+    var title: String = initialTitle
+        set(value) {
+            field = value
+            decoratedTitle = if (value.isEmpty()) "" else " $value "
+            invalidate()
+        }
+
+    private var decoratedTitle: String = if (initialTitle.isEmpty()) "" else " $initialTitle "
 
     override fun createDefaultRenderer(): ComponentRenderer<Border> = Renderer()
 
@@ -107,7 +115,7 @@ class TitledBorder(
 }
 
 /** Wraps a component with a titled box border (ASCII or Unicode based on [Symbols.ascii]). */
-fun Component.withTitledBorder(title: String, crossColumns: List<Int> = emptyList()): Component =
+fun Component.withTitledBorder(title: String, crossColumns: List<Int> = emptyList()): TitledBorder =
     TitledBorder(title, crossColumns).apply { component = this@withTitledBorder }
 
 /**

@@ -1,8 +1,9 @@
 package onl.ycode.stormify.schemasync.db
 
-import onl.ycode.stormify.schemasync.config.Assignment
+import onl.ycode.stormify.schemasync.classifier.ClassificationCache
 import onl.ycode.stormify.schemasync.entity.ColumnDelta
 import onl.ycode.stormify.schemasync.entity.EntityField
+import onl.ycode.stormify.schemasync.entity.KotlinEntity
 import onl.ycode.stormify.schemasync.entity.TableDiff
 import onl.ycode.stormify.schemasync.model.DefaultsProfile
 import onl.ycode.stormify.schemasync.model.SlotCategory
@@ -25,16 +26,162 @@ import java.time.LocalDate
  */
 object MigrationGenerator {
 
+    /** Build the migration SQL text and stats; the [render] entry point used by both
+     *  the on-disk writer and the diff preview. */
+    fun render(
+        diffs: List<TableDiff>,
+        profile: SlotProfile,
+        defaults: DefaultsProfile,
+        cache: ClassificationCache,
+        dialect: Dialect = Dialect.GENERIC,
+        entities: List<KotlinEntity> = emptyList(),
+    ): RenderResult {
+        val (sb, stats) = buildSql(diffs, profile, defaults, cache, dialect, entities)
+        return RenderResult(sb.toString(), stats)
+    }
+
     fun generate(
         diffs: List<TableDiff>,
         profile: SlotProfile,
         defaults: DefaultsProfile,
-        assignments: List<Assignment>,
+        cache: ClassificationCache,
         output: Path,
         dialect: Dialect = Dialect.GENERIC,
+        entities: List<KotlinEntity> = emptyList(),
     ): Stats {
+        val rendered = render(diffs, profile, defaults, cache, dialect, entities)
+        Files.writeString(output, rendered.sql)
+        return rendered.stats
+    }
+
+    data class RenderResult(val sql: String, val stats: Stats)
+
+    /** Public entry point for the live diff pane. Returns just the actionable
+     *  ALTER TABLE statements for [diff], no header comments and no stats. */
+    fun alterStatementsFor(
+        diff: TableDiff,
+        profile: SlotProfile,
+        defaults: DefaultsProfile,
+        cache: ClassificationCache,
+        dialect: Dialect = Dialect.GENERIC,
+        entities: List<KotlinEntity> = emptyList(),
+    ): List<String> = alterStatementsForInternal(
+        diff, profile, defaults.mergedFor(dialect.tomlKey), cache, dialect, entities,
+    ).statements
+
+    /** Public entry point for the live diff pane. Returns the full CREATE TABLE
+     *  block as a list of lines, or empty when nothing classifiable. */
+    fun createTableStatementFor(
+        diff: TableDiff,
+        profile: SlotProfile,
+        defaults: DefaultsProfile,
+        cache: ClassificationCache,
+        dialect: Dialect = Dialect.GENERIC,
+        entities: List<KotlinEntity> = emptyList(),
+    ): List<String> = createTableStatementForInternal(
+        diff, profile, defaults.mergedFor(dialect.tomlKey), cache, dialect, entities,
+    ).statements
+
+    private data class AlterResult(val statements: List<String>, val unclassified: Int)
+    private data class CreateResult(val statements: List<String>, val unclassified: Int, val skippedFields: Int)
+
+    /** Resolves `var owner: User` (FK) → ` REFERENCES user(id)` clause. */
+    private fun fkClauseFor(
+        field: EntityField,
+        entityByClassName: Map<String, KotlinEntity>,
+        dialect: Dialect,
+    ): String? {
+        val ref = field.referencedEntity ?: return null
+        val target = entityByClassName[ref] ?: return null
+        val pk = target.fields.firstOrNull { it.primaryKey } ?: return null
+        return " REFERENCES ${quoteIdent(target.tableKey, dialect)}(${quoteIdent(pk.column, dialect)})"
+    }
+
+    private fun classNameIndex(entities: List<KotlinEntity>): Map<String, KotlinEntity> =
+        entities.associateBy { it.className } +
+            entities.associateBy { it.className.substringAfterLast('.') }
+
+    private fun createTableStatementForInternal(
+        diff: TableDiff,
+        profile: SlotProfile,
+        effectiveDefaults: DefaultsProfile,
+        cache: ClassificationCache,
+        dialect: Dialect,
+        entities: List<KotlinEntity>,
+    ): CreateResult {
+        if (diff.status != TableStatus.ENTITY_ONLY) return CreateResult(emptyList(), 0, 0)
+        if (diff.entities.isEmpty()) return CreateResult(emptyList(), 0, 0)
+        val byName = classNameIndex(entities)
+        var unclassified = 0
+        // Union of all entity fields across the slot, primary-first so its
+        // spelling/type wins on duplicate column names.
+        val unionFields = diff.entities
+            .asSequence()
+            .flatMap { it.fields.asSequence() }
+            .distinctBy { it.column.lowercase() }
+            .toList()
+        val cols = unionFields.mapNotNull { field ->
+            val ddl = ddlForField(field, profile, effectiveDefaults, cache, diff.tableKey)
+            if (ddl == null) { unclassified++; return@mapNotNull null }
+            val nullClause = if (field.nullable) "" else " NOT NULL"
+            val ddlHasPk = ddl.contains("PRIMARY KEY", ignoreCase = true)
+            val pkClause = if (field.primaryKey && !ddlHasPk) " PRIMARY KEY" else ""
+            val defaultClause = defaultClauseFor(field, dialect, effectiveDefaults)?.let { " DEFAULT $it" } ?: ""
+            val fkClause = fkClauseFor(field, byName, dialect) ?: ""
+            "    ${quoteIdent(field.column, dialect)} $ddl$defaultClause$nullClause$pkClause$fkClause"
+        }
+        if (cols.isEmpty()) return CreateResult(emptyList(), unclassified, 0)
+        val out = mutableListOf<String>()
+        out += "CREATE TABLE ${quoteIdent(diff.tableKey, dialect)} ("
+        cols.forEachIndexed { i, line ->
+            out += if (i < cols.size - 1) "$line," else line
+        }
+        out += ");"
+        return CreateResult(out, unclassified, unionFields.size - cols.size)
+    }
+
+    /** Shared core used by both [alterStatementsFor] (live diff pane) and
+     *  [buildSql] (the on-disk migration writer) so they emit byte-identical
+     *  SQL and tally unclassified columns the same way. */
+    private fun alterStatementsForInternal(
+        diff: TableDiff,
+        profile: SlotProfile,
+        effectiveDefaults: DefaultsProfile,
+        cache: ClassificationCache,
+        dialect: Dialect,
+        entities: List<KotlinEntity>,
+    ): AlterResult {
+        if (diff.status != TableStatus.DIFF) return AlterResult(emptyList(), 0)
+        val byName = classNameIndex(entities)
+        val out = mutableListOf<String>()
+        var unclassified = 0
+        for (delta in diff.columnDeltas) {
+            if (delta.kind != ColumnDelta.Kind.ENTITY_ONLY) continue
+            val field = delta.entityField ?: continue
+            val ddl = ddlForField(field, profile, effectiveDefaults, cache, diff.tableKey)
+            if (ddl == null) { unclassified++; continue }
+            if (!dialect.supportsAlterAddPrimaryKey && ddl.contains("PRIMARY KEY", ignoreCase = true)) {
+                unclassified++; continue
+            }
+            val defaultClause = defaultClauseFor(field, dialect, effectiveDefaults)
+            if (!dialect.supportsAlterAddNotNullWithoutDefault && !field.nullable && defaultClause == null) {
+                unclassified++; continue
+            }
+            out += alterAdd(dialect, diff.tableKey, field.column, ddl, field.nullable, defaultClause,
+                fkClauseFor(field, byName, dialect))
+        }
+        return AlterResult(out, unclassified)
+    }
+
+    private fun buildSql(
+        diffs: List<TableDiff>,
+        profile: SlotProfile,
+        defaults: DefaultsProfile,
+        cache: ClassificationCache,
+        dialect: Dialect,
+        entities: List<KotlinEntity>,
+    ): Pair<StringBuilder, Stats> {
         val effectiveDefaults = defaults.mergedFor(dialect.tomlKey)
-        val assignmentsByColumn = assignments.associateBy { it.column }
         val sb = StringBuilder()
         var addedColumns = 0
         var createdTables = 0
@@ -51,75 +198,29 @@ object MigrationGenerator {
                     // skip silently
                 }
                 TableStatus.DIFF -> {
-                    val entityOnly = diff.columnDeltas.filter { it.kind == ColumnDelta.Kind.ENTITY_ONLY }
-                    val dbOnly = diff.columnDeltas.filter { it.kind == ColumnDelta.Kind.DB_ONLY }
-                    if (entityOnly.isEmpty() && dbOnly.isEmpty()) continue
-                    sb.appendLine("-- ── ${diff.tableKey} ──")
-                    for (delta in entityOnly) {
-                        val field = delta.entityField!!
-                        val ddl = ddlForField(field, profile, effectiveDefaults, assignmentsByColumn, diff.tableKey)
-                        if (ddl == null) {
-                            sb.appendLine("-- TODO classify ${diff.tableKey}.${field.column} (type=${field.type}); ALTER skipped")
-                            unclassifiedFields++
-                            continue
-                        }
-                        if (dialect == Dialect.SQLITE && ddl.contains("PRIMARY KEY", ignoreCase = true)) {
-                            sb.appendLine(
-                                "-- TODO SQLite cannot ADD a PRIMARY KEY column via ALTER TABLE; " +
-                                    "rebuild ${diff.tableKey} to add ${field.column}",
-                            )
-                            unclassifiedFields++
-                            continue
-                        }
-                        val defaultClause = defaultClauseFor(field, dialect, effectiveDefaults)
-                        if (dialect == Dialect.SQLITE && !field.nullable && defaultClause == null) {
-                            sb.appendLine(
-                                "-- TODO SQLite cannot ADD a NOT NULL column without DEFAULT; " +
-                                    "set an auto-default in F6 for ${field.type} or initialize ${field.column} in the entity",
-                            )
-                            unclassifiedFields++
-                            continue
-                        }
-                        sb.appendLine(alterAdd(dialect, diff.tableKey, field.column, ddl, field.nullable, defaultClause))
-                        addedColumns++
+                    val result = alterStatementsForInternal(
+                        diff, profile, effectiveDefaults, cache, dialect, entities,
+                    )
+                    unclassifiedFields += result.unclassified
+                    if (result.statements.isNotEmpty()) {
+                        sb.appendLine("-- ── ${diff.tableKey} ──")
+                        for (stmt in result.statements) sb.appendLine(stmt)
+                        addedColumns += result.statements.size
+                        sb.appendLine()
                     }
-                    for (delta in dbOnly) {
-                        sb.appendLine("-- info: column ${diff.tableKey}.${delta.name} exists in DB but not in entity")
-                        orphanColumns++
-                    }
-                    sb.appendLine()
                 }
                 TableStatus.ENTITY_ONLY -> {
-                    val entity = diff.entity!!
-                    val lines = entity.fields.mapNotNull { field ->
-                        val ddl = ddlForField(field, profile, effectiveDefaults, assignmentsByColumn, diff.tableKey)
-                        if (ddl == null) {
-                            unclassifiedFields++
-                            null
-                        } else {
-                            val nullClause = if (field.nullable) "" else " NOT NULL"
-                            val ddlHasPk = ddl.contains("PRIMARY KEY", ignoreCase = true)
-                            val pkClause = if (field.primaryKey && !ddlHasPk) " PRIMARY KEY" else ""
-                            val defaultClause = defaultClauseFor(field, dialect, effectiveDefaults)?.let { " DEFAULT $it" } ?: ""
-                            "    ${quoteIdent(field.column, dialect)} $ddl$defaultClause$nullClause$pkClause"
-                        }
-                    }
-                    if (lines.isEmpty()) {
-                        sb.appendLine("-- ── ${diff.tableKey} (entity ${entity.className}) — SKIPPED ──")
-                        sb.appendLine(
-                            "-- All ${entity.fields.size} fields are unclassified; classify in F4 first " +
-                                "or supply slot assignments.",
-                        )
-                        sb.appendLine()
-                    } else {
+                    val entity = diff.primary!!
+                    val result = createTableStatementForInternal(
+                        diff, profile, effectiveDefaults, cache, dialect, entities,
+                    )
+                    unclassifiedFields += result.unclassified
+                    if (result.statements.isNotEmpty()) {
                         sb.appendLine("-- ── CREATE ${diff.tableKey} (entity ${entity.className}) ──")
-                        sb.appendLine("CREATE TABLE ${quoteIdent(diff.tableKey, dialect)} (")
-                        sb.append(lines.joinToString(",\n"))
-                        sb.appendLine()
-                        sb.appendLine(");")
-                        if (lines.size < entity.fields.size) {
+                        for (line in result.statements) sb.appendLine(line)
+                        if (result.skippedFields > 0) {
                             sb.appendLine(
-                                "-- WARNING: ${entity.fields.size - lines.size} fields skipped due to missing slot assignment",
+                                "-- WARNING: ${result.skippedFields} fields skipped due to missing slot assignment",
                             )
                         }
                         sb.appendLine()
@@ -127,12 +228,8 @@ object MigrationGenerator {
                     }
                 }
                 TableStatus.DB_ONLY -> {
-                    sb.appendLine("-- ── ${diff.tableKey} (DB only) ──")
-                    sb.appendLine("-- table exists in DB but no matching entity")
-                    diff.dbColumns.forEach { col ->
-                        sb.appendLine("--   ${col.name}  ${col.dbType}")
-                    }
-                    sb.appendLine()
+                    // No SQL to emit for DB-only tables; informational comments
+                    // alone aren't useful in a migration file.
                     orphanColumns += diff.dbColumns.size
                 }
             }
@@ -142,8 +239,7 @@ object MigrationGenerator {
             sb.appendLine("-- (everything is in sync, nothing to do)")
         }
 
-        Files.writeString(output, sb.toString())
-        return Stats(addedColumns, createdTables, orphanColumns, unclassifiedFields)
+        return sb to Stats(addedColumns, createdTables, orphanColumns, unclassifiedFields)
     }
 
     /** ALTER TABLE … ADD [COLUMN] … with dialect-correct syntax. */
@@ -154,15 +250,14 @@ object MigrationGenerator {
         ddl: String,
         nullable: Boolean,
         defaultLiteral: String?,
+        fkClause: String? = null,
     ): String {
         val nullClause = if (nullable) "" else " NOT NULL"
         val defaultClause = defaultLiteral?.let { " DEFAULT $it" } ?: ""
+        val fk = fkClause ?: ""
         val tbl = quoteIdent(table, dialect)
         val col = quoteIdent(column, dialect)
-        return when (dialect) {
-            Dialect.MSSQL, Dialect.ORACLE -> "ALTER TABLE $tbl ADD $col $ddl$defaultClause$nullClause;"
-            else -> "ALTER TABLE $tbl ADD COLUMN $col $ddl$defaultClause$nullClause;"
-        }
+        return "ALTER TABLE $tbl ${dialect.alterAddKeyword} $col $ddl$defaultClause$nullClause$fk;"
     }
 
     /** Reserved words common across mainstream SQL dialects. Quoted on output. */
@@ -186,11 +281,7 @@ object MigrationGenerator {
 
     private fun quoteSegment(name: String, dialect: Dialect): String {
         if (name.lowercase() !in RESERVED_IDENTIFIERS) return name
-        return when (dialect) {
-            Dialect.MYSQL, Dialect.MARIADB -> "`$name`"
-            Dialect.MSSQL -> "[$name]"
-            else -> "\"$name\""
-        }
+        return dialect.quoteIdentifier(name)
     }
 
     /**
@@ -212,13 +303,7 @@ object MigrationGenerator {
 
     private fun renderLiteral(raw: String, fieldType: String, dialect: Dialect): String? {
         val t = raw.trim()
-        if (t == "true" || t == "false") {
-            val v = t == "true"
-            return when (dialect) {
-                Dialect.MYSQL, Dialect.MARIADB, Dialect.MSSQL, Dialect.SQLITE, Dialect.ORACLE -> if (v) "1" else "0"
-                else -> if (v) "TRUE" else "FALSE"
-            }
-        }
+        if (t == "true" || t == "false") return dialect.booleanLiteral(t == "true")
         if (t.startsWith("\"") && t.endsWith("\"")) {
             val inner = t.substring(1, t.length - 1).replace("'", "''")
             return "'$inner'"
@@ -254,7 +339,7 @@ object MigrationGenerator {
         field: EntityField,
         profile: SlotProfile,
         defaults: DefaultsProfile,
-        assignments: Map<String, Assignment>,
+        cache: ClassificationCache,
         tableKey: String,
     ): String? {
         if (field.primaryKey) {
@@ -271,16 +356,14 @@ object MigrationGenerator {
                 "Long", "kotlin.Long" -> defaults.pkLongDdl
                 "Int", "Integer", "kotlin.Int" -> defaults.pkIntDdl
                 else -> null
-            } ?: ddlForSlot(profile, key = "$tableKey.${field.column}", assignments)
+            } ?: cachedSlotDdl(profile, cache, "$tableKey.${field.column}")
         }
-        val key = "$tableKey.${field.column}"
-        val assignment = assignments[key] ?: return null
-        return ddlForSlot(profile, assignment.category, assignment.slot)
+        return cachedSlotDdl(profile, cache, "$tableKey.${field.column}")
     }
 
-    private fun ddlForSlot(profile: SlotProfile, key: String, assignments: Map<String, Assignment>): String? {
-        val a = assignments[key] ?: return null
-        return ddlForSlot(profile, a.category, a.slot)
+    private fun cachedSlotDdl(profile: SlotProfile, cache: ClassificationCache, key: String): String? {
+        val (cat, slot) = cache.get(key) ?: return null
+        return ddlForSlot(profile, cat, slot)
     }
 
     private fun pkDdl(field: EntityField, defaults: DefaultsProfile): String? {
@@ -299,13 +382,16 @@ object MigrationGenerator {
     private fun deterministicDdl(type: String, defaults: DefaultsProfile): String? = when (type.removeSuffix("?").trim()) {
         "Boolean", "kotlin.Boolean" -> defaults.booleanDdl
         "LocalDate", "java.time.LocalDate", "java.sql.Date" -> defaults.localDateDdl
-        "LocalTime", "java.time.LocalTime", "java.sql.Time" -> defaults.localTimeDdl
-        "LocalDateTime", "java.time.LocalDateTime", "java.sql.Timestamp" -> defaults.localDateTimeDdl
+        "LocalTime", "java.time.LocalTime", "java.sql.Time", "Time" -> defaults.localTimeDdl
+        "LocalDateTime", "java.time.LocalDateTime", "java.sql.Timestamp", "Timestamp" -> defaults.localDateTimeDdl
         "Instant", "java.time.Instant", "OffsetDateTime", "java.time.OffsetDateTime",
-        "ZonedDateTime", "java.time.ZonedDateTime" -> defaults.instantDdl
+        "ZonedDateTime", "java.time.ZonedDateTime",
+        // Bare `Date` is most commonly java.util.Date (Hibernate / legacy JPA),
+        // which carries both date and time → map to the instant DDL.
+        "Date", "java.util.Date" -> defaults.instantDdl
         "ByteArray", "kotlin.ByteArray" -> defaults.byteArrayDdl
         "CharArray", "kotlin.CharArray" -> defaults.charArrayDdl
-        "UUID", "java.util.UUID" -> defaults.uuidDdl
+        "UUID", "java.util.UUID", "Uuid", "kotlin.uuid.Uuid" -> defaults.uuidDdl
         else -> null
     }
 

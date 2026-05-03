@@ -12,4 +12,8 @@ object Symbols {
     val cornerBR: Char get() = if (ascii) '+' else '┘'
     val ellipsis: String get() = if (ascii) "..." else "…"
     val arrow: String get() = if (ascii) "->" else "→"
+    val slotMark: Char get() = if (ascii) '#' else '█'
+    val slotEmpty: Char get() = if (ascii) '.' else '·'
+    val selectMark: String get() = if (ascii) ">>" else "▶▶"
+    val selectEmpty: String get() = "  "
 }

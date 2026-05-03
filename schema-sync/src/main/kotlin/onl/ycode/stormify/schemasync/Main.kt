@@ -4,14 +4,15 @@ import com.googlecode.lanterna.screen.Screen
 import com.googlecode.lanterna.screen.TerminalScreen
 import com.googlecode.lanterna.terminal.DefaultTerminalFactory
 import com.googlecode.lanterna.terminal.MouseCaptureMode
+import onl.ycode.stormify.schemasync.classifier.ClassificationCache
 import onl.ycode.stormify.schemasync.classifier.SchemaClassifier
+import onl.ycode.stormify.schemasync.classifier.autoFillCache
 import onl.ycode.stormify.schemasync.config.ConfigState
 import onl.ycode.stormify.schemasync.config.ConfigStore
 import onl.ycode.stormify.schemasync.config.ConnectionConfig
 import onl.ycode.stormify.schemasync.db.DbIntrospector
 import onl.ycode.stormify.schemasync.db.Dialect
 import onl.ycode.stormify.schemasync.entity.DiffEngine
-import onl.ycode.stormify.schemasync.entity.EntityLoader
 import onl.ycode.stormify.schemasync.entity.source.EntityScanner
 import onl.ycode.stormify.schemasync.model.ColumnRef
 import onl.ycode.stormify.schemasync.tui.Symbols
@@ -28,10 +29,10 @@ Options:
                          Persisted to .schema-sync.toml after first use.
   --user <user>          DB user. Persisted to .schema-sync.toml.
   --password <password>  DB password. Persisted to .schema-sync.toml.
-  --entities <path>      Path to entities JSON.
   --sources <dir>        Path to a Kotlin source root. Scans recursively for
-                         entities (classes with @DbTable or property `id`).
-                         May be repeated. Takes precedence over --entities.
+                         entities (classes annotated with @DbTable, @Table,
+                         @Entity, or carrying any @DbField / @Id property).
+                         May be repeated.
   --ascii                Render the TUI using only ASCII characters.
   -h, --help             Show this help and exit.
 
@@ -77,40 +78,37 @@ fun main(args: Array<String>) {
             return
         }
 
-    val classifier = SchemaClassifier().apply {
-        seed(state.current.seeds)
-        state.current.assignments.forEach { a ->
-            train(a.category, a.slot, a.column.substringAfterLast('.'))
-        }
-    }
-
     val sourceRoots = argValuesAll(args, "--sources").map(Path::of)
-    val entitiesJsonPath = argValue(args, "--entities")
 
     val factory = DefaultTerminalFactory()
         .setMouseCaptureMode(MouseCaptureMode.CLICK_RELEASE)
     val terminal = factory.createTerminal()
     val screen: Screen = TerminalScreen(terminal)
     screen.startScreen()
+    val classifier = SchemaClassifier()
     try {
         var outcome: SchemaSyncOutcome
         do {
-            val (columns, tableKeys, dialect) = loadColumnsAndTables(connection)
-            val columnsByTable = groupByTable(columns)
-            val effectiveTableKeys = tableKeys.ifEmpty { columnsByTable.keys.toList() }
-            val entities = when {
-                sourceRoots.isNotEmpty() -> EntityScanner.scan(sourceRoots).entities
-                entitiesJsonPath != null -> EntityLoader.load(Path.of(entitiesJsonPath))
-                else -> emptyList()
-            }
-            val diffs = DiffEngine.diff(entities, columnsByTable, effectiveTableKeys)
+            val intro = loadColumnsAndTables(connection)
+            val columnsByTable = groupByTable(intro.columns)
+            val effectiveTableKeys = intro.tableKeys.ifEmpty { columnsByTable.keys.toList() }
+            val entities = if (sourceRoots.isNotEmpty()) EntityScanner.scan(sourceRoots, state.current.namingPolicy) else emptyList()
+            val diffs = DiffEngine.diff(entities, columnsByTable, effectiveTableKeys, state.current.namingPolicy)
             val diffsByTable = diffs.associateBy { it.tableKey }
-            val tables = buildTableEntries(diffs)
+            val tables = buildTableEntries(diffs, intro.viewKeys)
+            val dialect = intro.dialect
+
+            classifier.trainFromSync(diffs, state.current.slots)
+            val cache = ClassificationCache().also {
+                autoFillCache(it, classifier, diffs, state.current.slots)
+            }
+
             outcome = runSchemaSync(
                 screen = screen,
                 configState = state,
                 classifier = classifier,
-                columnsToClassify = columns.filter { it.category != null },
+                cache = cache,
+                columnsToClassify = intro.columns.filter { it.category != null },
                 tables = tables,
                 diffsByTable = diffsByTable,
                 entities = entities,
@@ -127,18 +125,24 @@ fun main(args: Array<String>) {
 private data class IntrospectionResult(
     val columns: List<ColumnRef>,
     val tableKeys: List<String>,
+    val viewKeys: Set<String>,
     val dialect: Dialect,
 )
 
 private fun loadColumnsAndTables(connection: ConnectionConfig): IntrospectionResult =
     DbIntrospector.connect(connection.url, connection.user, connection.password).use { jdbc ->
         val intro = DbIntrospector(jdbc)
-        val keys = intro.listTables().map { it.key }
+        val tables = intro.listTables()
+        val keys = tables.map { it.key }
+        val views = tables.asSequence()
+            .filter { it.kind == DbIntrospector.TableId.Kind.VIEW }
+            .map { it.name.lowercase() }
+            .toSet()
         val cols = intro.listColumns { done, total ->
             if (total > 20) System.err.print("\rIntrospecting $done/$total tables...")
         }
         if (keys.size > 20) System.err.println()
-        IntrospectionResult(cols, keys, Dialect.detect(jdbc))
+        IntrospectionResult(cols, keys, views, Dialect.detect(jdbc))
     }
 
 private fun argValue(args: Array<String>, name: String): String? {

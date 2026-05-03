@@ -46,14 +46,32 @@ internal fun entityShort(fqn: String?): String = fqn?.substringAfterLast('.') ?:
  * its simple class name; for DB-only rows we surface the class name the table
  * *would* take if it were turned into an entity (snake_case → PascalCase) so
  * both columns stay populated and the badge alone disambiguates direction.
+ * A trailing `*` flags slots that have more than one entity claim.
  */
-internal fun entityDisplay(entry: TableEntry): String =
-    entry.entity?.let(::entityShort)
+internal fun entityDisplay(entry: TableEntry): String {
+    val base = entry.entity?.let(::entityShort)
         ?: pascalCase(entry.table.substringAfterLast('.'))
+    return if (entry.entityCount > 1) "$base *" else base
+}
 
-private fun pascalCase(snake: String): String =
+internal fun pascalCase(snake: String): String =
     snake.split('_').filter { it.isNotEmpty() }
         .joinToString("") { it.replaceFirstChar { c -> c.uppercaseChar() } }
+
+/** snake_case → camelCase. */
+internal fun camelCase(snake: String): String {
+    val parts = snake.split('_').filter { it.isNotEmpty() }
+    if (parts.size == 1) return parts[0]
+    return parts[0] + parts.drop(1).joinToString("") { it.replaceFirstChar { c -> c.uppercaseChar() } }
+}
+
+/** PascalCase → snake_case (matches stormify's LOWER_CASE_WITH_UNDERSCORES). */
+internal fun snakeCase(pascal: String): String = buildString {
+    for ((i, c) in pascal.withIndex()) {
+        if (c.isUpperCase() && i > 0) append('_')
+        append(c.lowercaseChar())
+    }
+}
 
 internal fun String.fit(n: Int): String =
     if (length > n) take(n - Symbols.ellipsis.length) + Symbols.ellipsis else padEnd(n)

@@ -1,23 +1,38 @@
 #!/usr/bin/env bash
-# Launch schema-sync against the bundled demo data.
+# Launch schema-sync against one of three demo variants. The DB schema is the
+# same across all three; the variants differ only in the Kotlin entity layout
+# (constructor style). Pass one of:
 #
-# First run: builds the fatJar and copies demo.db + sources/ into a working
-# directory under schema-sync/build/. Subsequent runs reuse what's already
-# there. `gradle clean` wipes everything (build/ goes away), so the next run
-# starts fresh.
+#   ./run.sh all       # all properties in the constructor (sources-all)
+#   ./run.sh id        # only the primary key in the constructor (sources-id)
+#   ./run.sh none      # all properties in the class body (sources-none)
+#   ./run.sh blank     # like `id`, but body decls separated by blank lines
 #
-# The TUI persists state to a .schema-sync.toml in the cwd; this script cd's
-# into the work directory before launching, so the toml stays scoped to the
-# demo.
+# Each variant materialises into its own work directory under build/, so the
+# .schema-sync.toml + any user edits stay scoped to that variant. `gradle clean`
+# wipes everything.
 
 set -euo pipefail
+
+if [[ $# -lt 1 ]]; then
+    echo "usage: $0 <all|id|none|blank>" >&2
+    exit 64
+fi
+
+VARIANT="$1"
+case "$VARIANT" in
+    all|id|none|blank) ;;
+    *) echo "usage: $0 <all|id|none|blank>" >&2; exit 64;;
+esac
+shift
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 SCHEMA_SYNC_DIR="$(dirname "$SCRIPT_DIR")"
 REPO_ROOT="$(dirname "$SCHEMA_SYNC_DIR")"
 
 JAR="$SCHEMA_SYNC_DIR/build/libs/schema-sync-all.jar"
-WORK_DIR="$SCHEMA_SYNC_DIR/build/demo-work"
+WORK_DIR="$SCHEMA_SYNC_DIR/build/demo-$VARIANT"
+SOURCES_DIR="$SCRIPT_DIR/sources-$VARIANT"
 
 if [[ ! -f "$JAR" ]]; then
     echo "Building schema-sync fatJar..."
@@ -25,10 +40,10 @@ if [[ ! -f "$JAR" ]]; then
 fi
 
 if [[ ! -d "$WORK_DIR" ]]; then
-    echo "Materialising demo work dir at $WORK_DIR"
+    echo "Materialising demo work dir at $WORK_DIR (variant=$VARIANT)"
     mkdir -p "$WORK_DIR"
     \cp "$SCRIPT_DIR/demo.db" "$WORK_DIR/demo.db"
-    \cp -r "$SCRIPT_DIR/sources" "$WORK_DIR/sources"
+    \cp -r "$SOURCES_DIR" "$WORK_DIR/sources"
 fi
 
 cd "$WORK_DIR"

@@ -48,7 +48,7 @@ fun editTextSlot(gui: WindowBasedTextGUI, slot: TextSlot): TextSlot? {
 
 fun editIntegralSlot(gui: WindowBasedTextGUI, slot: IntegralSlot): IntegralSlot? {
     val nameBox = TextBox(TerminalSize(NAME_BOX_WIDTH, 1), slot.name)
-    val digitsBox = TextBox(TerminalSize(NUM_BOX_WIDTH, 1), slot.digits.toString())
+    val digitsBox = TextBox(TerminalSize(NUM_BOX_WIDTH, 1), slot.digits?.toString() ?: "")
     val errorLabel = Label("")
     return runDialog(
         gui = gui,
@@ -57,22 +57,28 @@ fun editIntegralSlot(gui: WindowBasedTextGUI, slot: IntegralSlot): IntegralSlot?
             "Name" to nameBox,
             "Digits" to digitsBox,
         ),
-        helpLine = "digits = total number of decimal digits (1–38)",
+        helpLine = "digits = total number of decimal digits (1–38), empty for unbounded NUMERIC",
         errorLabel = errorLabel,
         validate = {
             if (nameBox.text.trim().isEmpty()) return@runDialog "name cannot be empty"
-            val d = digitsBox.text.toIntOrNull()
-            if (d == null || d !in 1..38) return@runDialog "digits must be 1–38"
+            val raw = digitsBox.text.trim()
+            if (raw.isNotEmpty()) {
+                val d = raw.toIntOrNull()
+                if (d == null || d !in 1..38) return@runDialog "digits must be 1–38 or empty"
+            }
             null
         },
-        produce = { IntegralSlot(nameBox.text.trim(), digitsBox.text.toInt()) },
+        produce = {
+            val raw = digitsBox.text.trim()
+            IntegralSlot(nameBox.text.trim(), if (raw.isEmpty()) null else raw.toInt())
+        },
     )
 }
 
 fun editDecimalSlot(gui: WindowBasedTextGUI, slot: DecimalSlot): DecimalSlot? {
     val nameBox = TextBox(TerminalSize(NAME_BOX_WIDTH, 1), slot.name)
-    val precBox = TextBox(TerminalSize(NUM_BOX_WIDTH, 1), slot.precision.toString())
-    val scaleBox = TextBox(TerminalSize(NUM_BOX_WIDTH, 1), slot.scale.toString())
+    val precBox = TextBox(TerminalSize(NUM_BOX_WIDTH, 1), slot.precision?.toString() ?: "")
+    val scaleBox = TextBox(TerminalSize(NUM_BOX_WIDTH, 1), slot.scale?.toString() ?: "")
     val errorLabel = Label("")
     return runDialog(
         gui = gui,
@@ -82,18 +88,31 @@ fun editDecimalSlot(gui: WindowBasedTextGUI, slot: DecimalSlot): DecimalSlot? {
             "Precision" to precBox,
             "Scale" to scaleBox,
         ),
-        helpLine = "precision = total digits, scale = digits after decimal point",
+        helpLine = "empty precision → unbounded NUMERIC; empty scale → NUMERIC(precision)",
         errorLabel = errorLabel,
         validate = {
             if (nameBox.text.trim().isEmpty()) return@runDialog "name cannot be empty"
-            val p = precBox.text.toIntOrNull()
-            val s = scaleBox.text.toIntOrNull()
-            if (p == null || p !in 1..38) return@runDialog "precision must be 1–38"
-            if (s == null || s < 0) return@runDialog "scale must be ≥ 0"
-            if (s > p) return@runDialog "scale cannot exceed precision"
+            val pRaw = precBox.text.trim()
+            val sRaw = scaleBox.text.trim()
+            val p = if (pRaw.isEmpty()) null else pRaw.toIntOrNull()
+                ?: return@runDialog "precision must be 1–38 or empty"
+            val s = if (sRaw.isEmpty()) null else sRaw.toIntOrNull()
+                ?: return@runDialog "scale must be ≥ 0 or empty"
+            if (p != null && p !in 1..38) return@runDialog "precision must be 1–38 or empty"
+            if (s != null && s < 0) return@runDialog "scale must be ≥ 0 or empty"
+            if (p == null && s != null) return@runDialog "scale requires a precision"
+            if (p != null && s != null && s > p) return@runDialog "scale cannot exceed precision"
             null
         },
-        produce = { DecimalSlot(nameBox.text.trim(), precBox.text.toInt(), scaleBox.text.toInt()) },
+        produce = {
+            val pRaw = precBox.text.trim()
+            val sRaw = scaleBox.text.trim()
+            DecimalSlot(
+                nameBox.text.trim(),
+                if (pRaw.isEmpty()) null else pRaw.toInt(),
+                if (sRaw.isEmpty()) null else sRaw.toInt(),
+            )
+        },
     )
 }
 
@@ -124,16 +143,16 @@ private fun <T> runDialog(
 
     var result: T? = null
 
-    val okButton = Button("OK") {
+    val okButton = plainButton("OK") {
         val err = validate()
         if (err != null) {
             errorLabel.text = err
-            return@Button
+            return@plainButton
         }
         result = produce()
         window.close()
     }
-    val cancelButton = Button("Cancel") {
+    val cancelButton = plainButton("Cancel") {
         window.close()
     }
 

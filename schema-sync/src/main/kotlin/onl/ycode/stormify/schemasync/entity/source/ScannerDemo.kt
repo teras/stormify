@@ -8,9 +8,9 @@ fun main(args: Array<String>) {
         System.err.println("usage: scannerDemo <src-root> [<src-root>...]")
         return
     }
-    val catalog = EntityScanner.scan(args.map(Path::of))
-    println("Found ${catalog.entities.size} entities")
-    for (e in catalog.entities) {
+    val entities = EntityScanner.scan(args.map(Path::of))
+    println("Found ${entities.size} entities")
+    for (e in entities) {
         println("  ${e.className} → ${e.table}")
         for (f in e.fields) {
             val flags = buildList {

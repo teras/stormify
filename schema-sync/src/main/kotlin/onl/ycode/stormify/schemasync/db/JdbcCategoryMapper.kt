@@ -25,15 +25,22 @@ object JdbcCategoryMapper {
         else -> null
     }
 
-    /** Broader bucket used for diff-time mismatch detection (covers booleans / dates / blobs). */
-    fun familyFor(jdbcType: Int): TypeFamily? = when (jdbcType) {
+    /** Broader bucket used for diff-time mismatch detection (covers booleans / dates / blobs).
+     *  When [scale] is provided and zero, NUMERIC/DECIMAL collapses into INTEGRAL — Oracle's
+     *  `NUMBER(p)` (no scale) is functionally an integer column even though JDBC reports
+     *  it as `Types.NUMERIC`, so it must not be flagged as a mismatch against `Int`/`Long`. */
+    fun familyFor(jdbcType: Int, scale: Int? = null): TypeFamily? = when (jdbcType) {
         Types.CHAR, Types.VARCHAR, Types.LONGVARCHAR,
         Types.NCHAR, Types.NVARCHAR, Types.LONGNVARCHAR,
         Types.CLOB, Types.NCLOB, Types.SQLXML -> TypeFamily.TEXT
 
         Types.TINYINT, Types.SMALLINT, Types.INTEGER, Types.BIGINT -> TypeFamily.INTEGRAL
 
-        Types.DECIMAL, Types.NUMERIC,
+        Types.DECIMAL, Types.NUMERIC ->
+            // Oracle reports NUMBER(p) with a null scale; treat that as
+            // scale 0 (the Oracle default) rather than DECIMAL so it matches
+            // INTEGRAL Kotlin types like Int/Long/Short.
+            if (scale == null || scale == 0) TypeFamily.INTEGRAL else TypeFamily.DECIMAL
         Types.REAL, Types.FLOAT, Types.DOUBLE -> TypeFamily.DECIMAL
 
         Types.BOOLEAN, Types.BIT -> TypeFamily.BOOLEAN
@@ -49,25 +56,44 @@ object JdbcCategoryMapper {
      * an entity. Used by the writer's "INSERT into entity" path. Result includes
      * no `?` suffix; nullability is decided by the caller.
      */
-    fun kotlinTypeFor(jdbcType: Int): String = when (jdbcType) {
+    fun kotlinTypeFor(
+        jdbcType: Int,
+        primaryKey: Boolean = false,
+        kotlinDefaults: onl.ycode.stormify.schemasync.model.KotlinDefaults = onl.ycode.stormify.schemasync.model.KotlinDefaults(),
+    ): String = kotlinTypeChoice(jdbcType, primaryKey, kotlinDefaults).kotlin
+
+    /** Like [kotlinTypeFor] but also returns the import the generator should add. */
+    fun kotlinTypeChoice(
+        jdbcType: Int,
+        primaryKey: Boolean,
+        kotlinDefaults: onl.ycode.stormify.schemasync.model.KotlinDefaults,
+    ): KotlinType = when (jdbcType) {
         Types.CHAR, Types.VARCHAR, Types.LONGVARCHAR,
         Types.NCHAR, Types.NVARCHAR, Types.LONGNVARCHAR,
-        Types.CLOB, Types.NCLOB, Types.SQLXML -> "String"
+        Types.CLOB, Types.NCLOB, Types.SQLXML -> KotlinType("String")
 
-        Types.TINYINT, Types.SMALLINT, Types.INTEGER -> "Int"
-        Types.BIGINT -> "Long"
+        Types.TINYINT, Types.SMALLINT -> KotlinType("Int")
+        Types.INTEGER ->
+            if (primaryKey) KotlinType(kotlinDefaults.pkIntegerType.kotlin, kotlinDefaults.pkIntegerType.import)
+            else KotlinType("Int")
+        Types.BIGINT ->
+            if (primaryKey) KotlinType(kotlinDefaults.pkIntegerType.kotlin, kotlinDefaults.pkIntegerType.import)
+            else KotlinType("Long")
 
-        Types.DECIMAL, Types.NUMERIC -> "BigDecimal"
-        Types.REAL, Types.FLOAT -> "Float"
-        Types.DOUBLE -> "Double"
+        Types.DECIMAL, Types.NUMERIC -> KotlinType(kotlinDefaults.decimalType.kotlin, kotlinDefaults.decimalType.import)
+        Types.REAL, Types.FLOAT -> KotlinType("Float")
+        Types.DOUBLE -> KotlinType("Double")
 
-        Types.BOOLEAN, Types.BIT -> "Boolean"
-        Types.DATE -> "LocalDate"
-        Types.TIME -> "LocalTime"
-        Types.TIMESTAMP -> "LocalDateTime"
-        Types.TIMESTAMP_WITH_TIMEZONE, Types.TIME_WITH_TIMEZONE -> "Instant"
-        Types.BINARY, Types.VARBINARY, Types.LONGVARBINARY, Types.BLOB -> "ByteArray"
-        Types.OTHER -> "String"      // catch-all (e.g. Postgres UUID, Oracle ROWID)
-        else -> "String"
+        Types.BOOLEAN, Types.BIT -> KotlinType("Boolean")
+        Types.DATE -> KotlinType(kotlinDefaults.dateType.kotlin, kotlinDefaults.dateType.import)
+        Types.TIME -> KotlinType(kotlinDefaults.timeType.kotlin, kotlinDefaults.timeType.import)
+        Types.TIMESTAMP -> KotlinType(kotlinDefaults.timestampType.kotlin, kotlinDefaults.timestampType.import)
+        Types.TIMESTAMP_WITH_TIMEZONE, Types.TIME_WITH_TIMEZONE ->
+            KotlinType(kotlinDefaults.timestampType.kotlin, kotlinDefaults.timestampType.import)
+        Types.BINARY, Types.VARBINARY, Types.LONGVARBINARY, Types.BLOB -> KotlinType("ByteArray")
+        Types.OTHER -> KotlinType("String")
+        else -> KotlinType("String")
     }
+
+    data class KotlinType(val kotlin: String, val import: String? = null)
 }

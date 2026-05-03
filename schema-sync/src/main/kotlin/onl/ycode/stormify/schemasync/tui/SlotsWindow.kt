@@ -30,6 +30,37 @@ fun runSlotsView(gui: WindowBasedTextGUI, state: ConfigState) {
     val window = BasicWindow("Slots")
     window.setHints(listOf(Window.Hint.FULL_SCREEN, Window.Hint.NO_DECORATIONS))
 
+    val pane = buildSlotsPane(gui, state)
+    val root = Panel(LinearLayout(Direction.VERTICAL).setSpacing(0))
+    root.addComponent(pane.component)
+    root.addComponent(EmptySpace(TerminalSize(1, 1)))
+    root.addComponent(Label(SLOTS_PANE_HINT))
+
+    window.component = root
+    window.focusedInteractable = pane.initialFocus
+
+    window.addWindowListener(object : WindowListenerAdapter() {
+        override fun onUnhandledInput(basePane: Window, keyStroke: KeyStroke, hasBeenHandled: AtomicBoolean) {
+            when {
+                keyStroke.keyType == KeyType.F1 || keyStroke.character == '?' -> {
+                    showHelp(gui); hasBeenHandled.set(true)
+                }
+                keyStroke.keyType == KeyType.Escape || keyStroke.character == 'q' || keyStroke.character == 'Q' -> {
+                    window.close(); hasBeenHandled.set(true)
+                }
+                pane.handleKey(keyStroke, window.focusedInteractable) -> hasBeenHandled.set(true)
+            }
+        }
+    })
+
+    gui.addWindowAndWait(window)
+}
+
+internal const val SLOTS_PANE_HINT =
+    "↑↓ navigate · Tab next pane · Enter edit · Ins dup · Del rm · Shift+↑↓ move · D set default · Esc back"
+
+/** Builds the slots editor as a reusable [TabPane], independent of the window it lives in. */
+internal fun buildSlotsPane(gui: WindowBasedTextGUI, state: ConfigState): TabPane {
     val textList = OpAwareListBox()
     val integralList = OpAwareListBox()
     val decimalList = OpAwareListBox()
@@ -46,7 +77,7 @@ fun runSlotsView(gui: WindowBasedTextGUI, state: ConfigState) {
         val keep = textList.selectedIndex.coerceAtLeast(0)
         textList.clearItems()
         state.current.slots.text.forEachIndexed { i, slot ->
-            textList.addItem(formatRow(i, slot.name, slot.ddl), Runnable {
+            textList.addItem(formatRow(i, slot.name, slot.ddl, slot.default), Runnable {
                 val current = state.current.slots.text[i]
                 val edited = editTextSlot(gui, current) ?: return@Runnable
                 state.update { cfg ->
@@ -65,7 +96,7 @@ fun runSlotsView(gui: WindowBasedTextGUI, state: ConfigState) {
         val keep = integralList.selectedIndex.coerceAtLeast(0)
         integralList.clearItems()
         state.current.slots.integral.forEachIndexed { i, slot ->
-            integralList.addItem(formatRow(i, slot.name, slot.ddl), Runnable {
+            integralList.addItem(formatRow(i, slot.name, slot.ddl, slot.default), Runnable {
                 val current = state.current.slots.integral[i]
                 val edited = editIntegralSlot(gui, current) ?: return@Runnable
                 state.update { cfg ->
@@ -84,7 +115,7 @@ fun runSlotsView(gui: WindowBasedTextGUI, state: ConfigState) {
         val keep = decimalList.selectedIndex.coerceAtLeast(0)
         decimalList.clearItems()
         state.current.slots.decimal.forEachIndexed { i, slot ->
-            decimalList.addItem(formatRow(i, slot.name, slot.ddl), Runnable {
+            decimalList.addItem(formatRow(i, slot.name, slot.ddl, slot.default), Runnable {
                 val current = state.current.slots.decimal[i]
                 val edited = editDecimalSlot(gui, current) ?: return@Runnable
                 state.update { cfg ->
@@ -127,6 +158,38 @@ fun runSlotsView(gui: WindowBasedTextGUI, state: ConfigState) {
     decimalList.onShiftUp = { applyDecimalOp(::opMoveUp) }
     decimalList.onShiftDown = { applyDecimalOp(::opMoveDown) }
 
+    /** Mark the row at [idx] as the per-category default; clears the flag on the others. */
+    fun setTextDefault(idx: Int) {
+        if (idx !in state.current.slots.text.indices) return
+        state.update { cfg ->
+            cfg.copy(slots = cfg.slots.copy(
+                text = cfg.slots.text.mapIndexed { i, s -> s.copy(default = i == idx) },
+            ))
+        }
+        rebuildText()
+        textList.selectedIndex = idx
+    }
+    fun setIntegralDefault(idx: Int) {
+        if (idx !in state.current.slots.integral.indices) return
+        state.update { cfg ->
+            cfg.copy(slots = cfg.slots.copy(
+                integral = cfg.slots.integral.mapIndexed { i, s -> s.copy(default = i == idx) },
+            ))
+        }
+        rebuildIntegral()
+        integralList.selectedIndex = idx
+    }
+    fun setDecimalDefault(idx: Int) {
+        if (idx !in state.current.slots.decimal.indices) return
+        state.update { cfg ->
+            cfg.copy(slots = cfg.slots.copy(
+                decimal = cfg.slots.decimal.mapIndexed { i, s -> s.copy(default = i == idx) },
+            ))
+        }
+        rebuildDecimal()
+        decimalList.selectedIndex = idx
+    }
+
     rebuildText()
     rebuildIntegral()
     rebuildDecimal()
@@ -148,51 +211,46 @@ fun runSlotsView(gui: WindowBasedTextGUI, state: ConfigState) {
     grid.addComponent(pane(integralCount, integralList, "INTEGRAL"))
     grid.addComponent(pane(decimalCount, decimalList, "DECIMAL"))
 
-    val root = Panel(LinearLayout(Direction.VERTICAL).setSpacing(0))
-    root.addComponent(grid)
-    root.addComponent(EmptySpace(TerminalSize(1, 1)))
-    root.addComponent(Label("↑↓ navigate · Tab next pane · Enter edit · Ins dup · Del rm · Shift+↑↓ move · Esc back"))
-
-    window.component = root
-    window.focusedInteractable = textList
-
-    window.addWindowListener(object : WindowListenerAdapter() {
-        override fun onUnhandledInput(basePane: Window, keyStroke: KeyStroke, hasBeenHandled: AtomicBoolean) {
-            val focused = window.focusedInteractable
+    return TabPane(
+        component = grid,
+        initialFocus = textList,
+        handleKey = { ks, focused ->
+            val onSlotList = focused == textList || focused == integralList || focused == decimalList
             when {
-                keyStroke.keyType == KeyType.F1 || keyStroke.character == '?' -> {
-                    showHelp(gui)
-                    hasBeenHandled.set(true)
-                }
-                keyStroke.keyType == KeyType.Escape || keyStroke.character == 'q' || keyStroke.character == 'Q' -> {
-                    window.close()
-                    hasBeenHandled.set(true)
-                }
-                keyStroke.keyType == KeyType.Insert -> {
+                ks.keyType == KeyType.Insert && onSlotList -> {
                     when (focused) {
                         textList -> applyTextOp(::opDuplicate)
                         integralList -> applyIntegralOp(::opDuplicate)
                         decimalList -> applyDecimalOp(::opDuplicate)
                     }
-                    hasBeenHandled.set(true)
+                    true
                 }
-                keyStroke.keyType == KeyType.Delete -> {
+                ks.keyType == KeyType.Delete && onSlotList -> {
                     when (focused) {
                         textList -> applyTextOp(::opDelete)
                         integralList -> applyIntegralOp(::opDelete)
                         decimalList -> applyDecimalOp(::opDelete)
                     }
-                    hasBeenHandled.set(true)
+                    true
                 }
+                (ks.character == 'd' || ks.character == 'D') && onSlotList -> {
+                    when (focused) {
+                        textList -> setTextDefault(textList.selectedIndex)
+                        integralList -> setIntegralDefault(integralList.selectedIndex)
+                        decimalList -> setDecimalDefault(decimalList.selectedIndex)
+                    }
+                    true
+                }
+                else -> false
             }
-        }
-    })
-
-    gui.addWindowAndWait(window)
+        },
+    )
 }
 
-private fun formatRow(index: Int, name: String, ddl: String): String =
-    "${index + 1} ${name.padEnd(NAME_WIDTH)} ${ddl.padEnd(DDL_WIDTH)}"
+private fun formatRow(index: Int, name: String, ddl: String, isDefault: Boolean): String {
+    val marker = if (isDefault) "*" else " "
+    return "${index + 1} $marker ${name.padEnd(NAME_WIDTH)} ${ddl.padEnd(DDL_WIDTH)}"
+}
 
 /** ActionListBox that intercepts Shift+Up/Down before navigation can consume them. */
 private class OpAwareListBox : ActionListBox() {

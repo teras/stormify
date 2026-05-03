@@ -5,59 +5,37 @@ import java.sql.Connection
 import java.sql.DriverManager
 import java.sql.ResultSet
 
-/** Reads the target schema via JDBC `DatabaseMetaData`. */
+/** Reads the target schema via JDBC `DatabaseMetaData`. All dialect-specific
+ *  branches are routed through [Dialect]; this class never compares dialects. */
 class DbIntrospector(private val conn: Connection) {
 
-    data class TableId(val schema: String?, val name: String) {
+    private val dialect = Dialect.detect(conn)
+
+    data class TableId(val schema: String?, val name: String, val kind: Kind = Kind.TABLE) {
         val key: String = listOfNotNull(schema, name).joinToString(".")
+        enum class Kind { TABLE, VIEW }
     }
 
-    /** All user tables in the database. The dialect's default schema (`public`, `dbo`, …) is stripped so keys match entity table names. */
+    /** All user tables AND views in the database. Views are surfaced too because
+     *  many JPA / stormify entities are mapped to views rather than tables — the
+     *  diff would otherwise flag every view-mapped entity as `entity-only`. The
+     *  dialect's default schema is stripped so keys match entity table names. */
     fun listTables(): List<TableId> {
-        val defaultSchema = defaultSchemaFor(conn)
-        val dialect = Dialect.detect(conn)
+        dialect.listTablesViaDictionary(conn)?.let { return it }
+        val defaultSchema = dialect.defaultSchema(conn)
         val out = mutableListOf<TableId>()
-        // Oracle: bypass JDBC metadata to avoid driver/server PL/SQL incompatibility.
-        if (dialect == Dialect.ORACLE) {
-            conn.prepareStatement("SELECT TABLE_NAME FROM USER_TABLES").use { ps ->
-                ps.executeQuery().use { rs ->
-                    while (rs.next()) out += TableId(null, rs.getString(1).lowercase())
-                }
-            }
-            return out
-        }
-        conn.metaData.getTables(null, defaultSchema, "%", arrayOf("TABLE")).use { rs ->
+        conn.metaData.getTables(null, defaultSchema, "%", arrayOf("TABLE", "VIEW")).use { rs ->
             while (rs.next()) {
                 val name = rs.getString("TABLE_NAME") ?: continue
                 if (dialect.isSystemTable(name)) continue
                 val rawSchema = rs.getString("TABLE_SCHEM")
                 val schema = if (rawSchema != null && rawSchema.equals(defaultSchema, ignoreCase = true)) null else rawSchema
-                out += TableId(schema, name)
+                val kind = if (rs.getString("TABLE_TYPE") == "VIEW") TableId.Kind.VIEW else TableId.Kind.TABLE
+                out += TableId(schema, name, kind)
             }
         }
         return out
     }
-
-    /**
-     * The schema that JDBC `getTables` / `getColumns` should be scoped to.
-     * For dialects that have first-class schemas (PostgreSQL, MSSQL), we trust
-     * `Connection.getSchema()` so URL parameters like `?currentSchema=…` are
-     * honoured; we only fall back to the dialect's conventional default when
-     * the driver returns nothing. MySQL/MariaDB use catalogs (== databases)
-     * rather than schemas, so we leave the schema pattern null and let the
-     * URL's database segment scope the query.
-     */
-    private fun defaultSchemaFor(conn: java.sql.Connection): String? {
-        return when (Dialect.detect(conn)) {
-            Dialect.POSTGRESQL -> conn.connectionSchemaOrNull() ?: "public"
-            Dialect.MSSQL -> conn.connectionSchemaOrNull() ?: "dbo"
-            Dialect.ORACLE -> conn.metaData.userName
-            else -> null
-        }
-    }
-
-    private fun java.sql.Connection.connectionSchemaOrNull(): String? =
-        runCatching { schema?.takeIf { it.isNotBlank() } }.getOrNull()
 
     /**
      * All columns in user tables. Deterministic-type columns (Boolean, Date, UUID, …)
@@ -65,20 +43,16 @@ class DbIntrospector(private val conn: Connection) {
      * one broad `getColumns(null,null,"%","%")` call with per-table fallback.
      */
     fun listColumns(onProgress: ((Int, Int) -> Unit)? = null): List<ColumnRef> {
-        val defaultSchema = defaultSchemaFor(conn)
-        val dialect = Dialect.detect(conn)
         val tables = listTables()
-        val tableSet = tables.mapTo(HashSet()) { (it.schema ?: "") to it.name }
         onProgress?.invoke(0, tables.size)
-
+        dialect.listColumnsViaDictionary(conn, tables)?.let {
+            onProgress?.invoke(tables.size, tables.size)
+            return decorateWithFks(it, tables)
+        }
+        val defaultSchema = dialect.defaultSchema(conn)
+        val tableSet = tables.mapTo(HashSet()) { (it.schema ?: "") to it.name }
         val results = mutableListOf<ColumnRef>()
         val meta = conn.metaData
-
-        // Oracle JDBC driver versions sometimes ship a metadata PL/SQL block that
-        // references columns absent from older DB versions (ORA-00904). Bypass
-        // the driver and query USER_TAB_COLUMNS directly.
-        if (dialect == Dialect.ORACLE) return columnsViaOracleDictionary(onProgress, tables)
-
         try {
             val seenTables = HashSet<Pair<String, String>>()
             meta.getColumns(null, defaultSchema, "%", "%").use { rs ->
@@ -93,71 +67,45 @@ class DbIntrospector(private val conn: Connection) {
                 }
             }
             onProgress?.invoke(tables.size, tables.size)
-            return results
+            return decorateWithFks(results, tables)
         } catch (broadFailure: Exception) {
             System.err.println("Broad getColumns failed (${broadFailure.message}); falling back per-table.")
-            return columnsPerTable(meta, tables, onProgress)
+            return decorateWithFks(columnsPerTable(meta, tables, onProgress), tables)
         }
     }
 
-    /** Bypasses Oracle JDBC metadata and queries USER_TAB_COLUMNS directly. */
-    private fun columnsViaOracleDictionary(
-        onProgress: ((Int, Int) -> Unit)?,
-        tables: List<TableId>,
-    ): List<ColumnRef> {
-        val userTables = tables.mapTo(HashSet()) { it.name }
-        val out = mutableListOf<ColumnRef>()
-        val sql = """
-            SELECT TABLE_NAME, COLUMN_NAME, DATA_TYPE, DATA_LENGTH, DATA_PRECISION, DATA_SCALE, NULLABLE
-            FROM USER_TAB_COLUMNS
-            ORDER BY TABLE_NAME, COLUMN_ID
-        """.trimIndent()
-        conn.prepareStatement(sql).use { ps ->
-            ps.executeQuery().use { rs ->
-                while (rs.next()) {
-                    val table = rs.getString("TABLE_NAME").lowercase()
-                    if (table !in userTables) continue
-                    val name = rs.getString("COLUMN_NAME").lowercase()
-                    val typeName = rs.getString("DATA_TYPE")
-                    val length = rs.getInt("DATA_LENGTH")
-                    val precision = rs.getInt("DATA_PRECISION").let { if (rs.wasNull()) 0 else it }
-                    val scale = rs.getInt("DATA_SCALE").let { if (rs.wasNull()) null else it }
-                    val nullable = rs.getString("NULLABLE") == "Y"
-                    val jdbcType = oracleTypeNameToJdbc(typeName)
-                    val size = if (typeName.startsWith("VARCHAR") || typeName.startsWith("CHAR")) length else precision
-                    out += ColumnRef(
-                        schema = null,
-                        table = table,
-                        name = name,
-                        category = JdbcCategoryMapper.categoryFor(jdbcType),
-                        dbType = formatDbType(typeName, size, scale),
-                        jdbcType = jdbcType,
-                        nullable = nullable,
-                        family = JdbcCategoryMapper.familyFor(jdbcType),
-                    )
+    /** Read all FK edges. Bulk dialect dictionary first; per-table JDBC
+     *  `getImportedKeys` only as fallback. */
+    private fun readFks(tables: List<TableId>): List<FkEdge> {
+        dialect.listForeignKeys(conn)?.takeIf { it.isNotEmpty() }?.let { return it }
+        val out = mutableListOf<FkEdge>()
+        val meta = conn.metaData
+        for (t in tables) {
+            try {
+                meta.getImportedKeys(null, t.schema, t.name).use { rs ->
+                    while (rs.next()) {
+                        val column = rs.getString("FKCOLUMN_NAME") ?: continue
+                        val refTable = rs.getString("PKTABLE_NAME") ?: continue
+                        val refColumn = rs.getString("PKCOLUMN_NAME") ?: continue
+                        out += FkEdge(t.schema, t.name, column, refTable, refColumn)
+                    }
                 }
+            } catch (_: Exception) {
+                // Some drivers don't support getImportedKeys reliably (e.g. pre-Oracle12); skip.
             }
         }
-        onProgress?.invoke(tables.size, tables.size)
         return out
     }
 
-    private fun oracleTypeNameToJdbc(typeName: String): Int = when {
-        typeName.startsWith("VARCHAR2") || typeName.startsWith("VARCHAR") -> java.sql.Types.VARCHAR
-        typeName.startsWith("NVARCHAR") -> java.sql.Types.NVARCHAR
-        typeName.startsWith("CHAR") -> java.sql.Types.CHAR
-        typeName.startsWith("NCHAR") -> java.sql.Types.NCHAR
-        typeName == "CLOB" -> java.sql.Types.CLOB
-        typeName == "NCLOB" -> java.sql.Types.NCLOB
-        typeName == "BLOB" || typeName == "RAW" || typeName.startsWith("RAW") -> java.sql.Types.BLOB
-        typeName == "DATE" -> java.sql.Types.TIMESTAMP
-        typeName.startsWith("TIMESTAMP(") || typeName == "TIMESTAMP" -> java.sql.Types.TIMESTAMP
-        typeName.contains("WITH TIME ZONE") -> java.sql.Types.TIMESTAMP_WITH_TIMEZONE
-        typeName == "FLOAT" -> java.sql.Types.DOUBLE
-        typeName == "BINARY_FLOAT" -> java.sql.Types.FLOAT
-        typeName == "BINARY_DOUBLE" -> java.sql.Types.DOUBLE
-        typeName == "NUMBER" -> java.sql.Types.NUMERIC
-        else -> java.sql.Types.OTHER
+    private fun decorateWithFks(cols: List<ColumnRef>, tables: List<TableId>): List<ColumnRef> {
+        val edges = readFks(tables)
+        if (edges.isEmpty()) return cols
+        val byKey: Map<Triple<String, String, String>, FkEdge> = edges
+            .associateBy { Triple(it.schema ?: "", it.table.lowercase(), it.column.lowercase()) }
+        return cols.map { c ->
+            val edge = byKey[Triple(c.schema ?: "", c.table.lowercase(), c.name.lowercase())] ?: return@map c
+            c.copy(referencedTable = edge.refTable, referencedColumn = edge.refColumn)
+        }
     }
 
     private fun columnsPerTable(
@@ -191,7 +139,8 @@ class DbIntrospector(private val conn: Connection) {
             dbType = formatDbType(typeName, size, scale),
             jdbcType = jdbcType,
             nullable = nullable,
-            family = JdbcCategoryMapper.familyFor(jdbcType),
+            family = JdbcCategoryMapper.familyFor(jdbcType, scale),
+            precision = size.takeIf { it > 0 },
         )
     }
 
@@ -216,8 +165,31 @@ class DbIntrospector(private val conn: Connection) {
             "DECIMAL", "NUMERIC", "NUMBER",
         )
 
+        /** Drivers we ship in the fatJar; pre-loaded so SPI registration isn't
+         *  required (the fatJar's `DuplicatesStrategy.EXCLUDE` flattens
+         *  `META-INF/services/java.sql.Driver` to a single entry, dropping the
+         *  rest). Each entry is best-effort: a driver missing from the
+         *  classpath is silently skipped. */
+        private val BUNDLED_DRIVERS = listOf(
+            "org.sqlite.JDBC",
+            "org.postgresql.Driver",
+            "org.mariadb.jdbc.Driver",
+            "com.mysql.cj.jdbc.Driver",
+            "oracle.jdbc.OracleDriver",
+            "com.microsoft.sqlserver.jdbc.SQLServerDriver",
+        )
+
+        private val driversInitialized = run {
+            for (cls in BUNDLED_DRIVERS) {
+                runCatching { Class.forName(cls) }
+            }
+            true
+        }
+
         /** Convenience constructor: opens connection from [ConnectionConfig]-style coords. */
-        fun connect(url: String, user: String?, password: String?): Connection =
-            DriverManager.getConnection(url, user, password)
+        fun connect(url: String, user: String?, password: String?): Connection {
+            check(driversInitialized)
+            return DriverManager.getConnection(url, user, password)
+        }
     }
 }

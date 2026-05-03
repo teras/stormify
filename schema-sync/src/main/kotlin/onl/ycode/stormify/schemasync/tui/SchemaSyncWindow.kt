@@ -2,10 +2,9 @@ package onl.ycode.stormify.schemasync.tui
 
 import com.googlecode.lanterna.TerminalSize
 import com.googlecode.lanterna.TextColor
-import com.googlecode.lanterna.bundle.LanternaThemes
 import com.googlecode.lanterna.gui2.ActionListBox
 import com.googlecode.lanterna.gui2.BasicWindow
-import com.googlecode.lanterna.gui2.ComboBox
+import com.googlecode.lanterna.gui2.CheckBoxList
 import com.googlecode.lanterna.gui2.DefaultWindowManager
 import com.googlecode.lanterna.gui2.Direction
 import com.googlecode.lanterna.gui2.EmptySpace
@@ -17,23 +16,21 @@ import com.googlecode.lanterna.gui2.Panel
 import com.googlecode.lanterna.gui2.TextBox
 import com.googlecode.lanterna.gui2.Window
 import com.googlecode.lanterna.gui2.WindowBasedTextGUI
+import com.googlecode.lanterna.gui2.Button
 import com.googlecode.lanterna.gui2.WindowListenerAdapter
-import com.googlecode.lanterna.gui2.dialogs.MessageDialog
-import com.googlecode.lanterna.gui2.dialogs.MessageDialogButton
 import com.googlecode.lanterna.input.KeyStroke
 import com.googlecode.lanterna.input.KeyType
 import com.googlecode.lanterna.screen.Screen
+import onl.ycode.stormify.schemasync.classifier.ClassificationCache
 import onl.ycode.stormify.schemasync.classifier.SchemaClassifier
 import onl.ycode.stormify.schemasync.config.ConfigState
 import onl.ycode.stormify.schemasync.db.Dialect
-import onl.ycode.stormify.schemasync.db.MigrationGenerator
 import onl.ycode.stormify.schemasync.entity.ColumnDelta
 import onl.ycode.stormify.schemasync.entity.KotlinEntity
 import onl.ycode.stormify.schemasync.entity.TableDiff
 import onl.ycode.stormify.schemasync.model.ColumnRef
 import onl.ycode.stormify.schemasync.model.TableEntry
 import onl.ycode.stormify.schemasync.model.TableStatus
-import java.nio.file.Path
 import java.util.concurrent.atomic.AtomicBoolean
 
 enum class SchemaSyncOutcome { CANCEL, RESCAN }
@@ -44,6 +41,7 @@ fun runSchemaSync(
     screen: Screen,
     configState: ConfigState,
     classifier: SchemaClassifier,
+    cache: ClassificationCache,
     columnsToClassify: List<ColumnRef>,
     tables: List<TableEntry>,
     diffsByTable: Map<String, TableDiff>,
@@ -52,12 +50,7 @@ fun runSchemaSync(
     title: String = "Stormify Schema Sync",
 ): SchemaSyncOutcome {
     val gui = MultiWindowTextGUI(screen, DefaultWindowManager(), EmptySpace(TextColor.ANSI.DEFAULT))
-    val themeNames = listOf("default", "businessmachine", "blaster", "bigsnake", "conqueror", "defrost")
-    var themeIdx = 0
-    fun applyTheme() {
-        LanternaThemes.getRegisteredTheme(themeNames[themeIdx])?.let { gui.theme = it }
-    }
-    applyTheme()
+    ThemeManager.apply(gui)
     val window = BasicWindow(title)
     window.setHints(listOf(Window.Hint.FULL_SCREEN, Window.Hint.NO_DECORATIONS))
 
@@ -66,13 +59,19 @@ fun runSchemaSync(
     val root = Panel(LinearLayout(Direction.VERTICAL).setSpacing(0))
 
     val statusLabel = Label("")
+    val pendingLabel = Label("")
+    fun pendingCount(): Int =
+        buildPendingChanges(entities, diffsByTable.values, propertyActions, policy = configState.current.namingPolicy, kotlinDefaults = configState.current.kotlin).total
+    var visibleCount = 0
     fun refreshStatus() {
         statusLabel.text =
-            "${tables.size} tables · ${tables.count { it.status == TableStatus.DIFF }} with diffs · " +
-                "${dialect.tomlKey} · F2 [${themeNames[themeIdx]}] · F3 slots · F5 export · F6 defaults · F7 writer"
+            "${tables.size} tables · $visibleCount visible · " +
+                "${dialect.tomlKey} · F2 apply · F3 classify · F7 config · F8 theme [${ThemeManager.current()}]"
+        pendingLabel.text = "${pendingCount()} pending code edit${if (pendingCount() == 1) "" else "s"}"
     }
     refreshStatus()
     root.addComponent(statusLabel)
+    root.addComponent(pendingLabel)
 
     val filterRow = Panel(LinearLayout(Direction.HORIZONTAL))
     filterRow.addComponent(Label("Filter (/): "))
@@ -83,16 +82,22 @@ fun runSchemaSync(
 
     val allTableRows = tables.map { TableRowItem(it, tableFormatter) }
     var currentFilter = ""
-    var statusFilter: StatusFilter = StatusFilter.NEEDS_SYNC
+    val categoryFilter = CategoryFilter.defaultSelection()
 
     val tablesList = SelectionAwareListBox(separatorColumns = tableFormatter.crossColumns)
+
+    // Set after loadPropsFor / selectedTableKey are declared further down. The
+    // initial rebuildTablesList() call at construction time uses a no-op stub
+    // because the initial pane state is established separately at the bottom
+    // of the function via the explicit selectedTableKey()?.let { … } call.
+    var refreshPanesAfterRebuild: () -> Unit = {}
 
     fun rebuildTablesList() {
         val prev = (tablesList.selectedItem as? TableRowItem)?.entry
         tablesList.clearItems()
         val filter = currentFilter.lowercase()
         val visible = allTableRows.filter { row ->
-            statusFilter.accept(row.entry.status) &&
+            categoryFilter.accept(row.entry) &&
                 (filter.isEmpty() ||
                     row.entry.table.lowercase().contains(filter) ||
                     (row.entry.entity?.lowercase()?.contains(filter) == true))
@@ -102,6 +107,9 @@ fun runSchemaSync(
             val idx = visible.indexOfFirst { it.entry == prev }
             if (idx >= 0) tablesList.selectedIndex = idx
         }
+        visibleCount = visible.size
+        refreshStatus()
+        refreshPanesAfterRebuild()
     }
     rebuildTablesList()
 
@@ -113,14 +121,14 @@ fun runSchemaSync(
     filterRow.addComponent(filterBox)
     filterRow.addComponent(EmptySpace(TerminalSize(2, 1)))
     filterRow.addComponent(Label("Show: "))
-    val statusCombo = ComboBox<StatusFilter>(StatusFilter.entries).apply {
-        selectedIndex = StatusFilter.entries.indexOf(statusFilter)
-        addListener { newIndex, _, _ ->
-            statusFilter = StatusFilter.entries[newIndex]
+    lateinit var categoryButton: Button
+    categoryButton = plainButton(categoryFilter.summary()) {
+        if (showCategoryPicker(gui, categoryFilter)) {
+            categoryButton.label = categoryFilter.summary()
             rebuildTablesList()
         }
     }
-    filterRow.addComponent(statusCombo)
+    filterRow.addComponent(categoryButton)
 
     tablesList.layoutData = LinearLayout.createLayoutData(LinearLayout.Alignment.Fill, LinearLayout.GrowPolicy.CanGrow)
     val tablesBordered = tablesList.withTitledBorder(tableFormatter.titleText, tableFormatter.crossColumns)
@@ -130,75 +138,42 @@ fun runSchemaSync(
     propsList.layoutData = LinearLayout.createLayoutData(LinearLayout.Alignment.Fill, LinearLayout.GrowPolicy.CanGrow)
     val propsBordered = propsList.withTitledBorder(globalPropsFormatter.titleText)
 
-    val classifierPane = ClassifierPane(configState, classifier) {
-        propsList.invalidate()
-    }
-    val classifierBordered = classifierPane.component.withTitledBorder("Classification")
-
-    val infoLabel = Label("")
-    val infoBordered = Panel(LinearLayout(Direction.VERTICAL)).apply {
-        addComponent(infoLabel)
-    }.withTitledBorder("Entity info")
+    val diffPane = DiffPane(
+        configState, classifier, cache, propertyActions,
+        onAssigned = { propsList.invalidate() },
+        dialect = dialect,
+        entities = entities,
+    )
+    val diffBordered = diffPane.borderedComponent
 
     tablesBordered.preferredSize = TerminalSize(tableFormatter.leftPaneWidth + 2, 8)
     tablesBordered.layoutData = LinearLayout.createLayoutData(LinearLayout.Alignment.Fill)
     propsBordered.preferredSize = TerminalSize(globalPropsFormatter.paneWidth + 2, 8)
     propsBordered.layoutData = LinearLayout.createLayoutData(LinearLayout.Alignment.Fill)
-    classifierBordered.layoutData =
+    diffBordered.layoutData =
         LinearLayout.createLayoutData(LinearLayout.Alignment.Fill, LinearLayout.GrowPolicy.CanGrow)
-
-    val topRow = Panel(LinearLayout(Direction.HORIZONTAL).setSpacing(0)).apply {
-        addComponent(propsBordered)
-        addComponent(classifierBordered)
-        layoutData = LinearLayout.createLayoutData(LinearLayout.Alignment.Fill, LinearLayout.GrowPolicy.CanGrow)
-    }
-    infoBordered.layoutData = LinearLayout.createLayoutData(LinearLayout.Alignment.Fill)
-
-    val rightCol = Panel(LinearLayout(Direction.VERTICAL).setSpacing(0)).apply {
-        addComponent(topRow)
-        addComponent(infoBordered)
-        layoutData = LinearLayout.createLayoutData(LinearLayout.Alignment.Fill, LinearLayout.GrowPolicy.CanGrow)
-    }
 
     val mainRow = Panel(LinearLayout(Direction.HORIZONTAL).setSpacing(0)).apply {
         addComponent(tablesBordered)
-        addComponent(rightCol)
+        addComponent(propsBordered)
+        addComponent(diffBordered)
         layoutData = LinearLayout.createLayoutData(LinearLayout.Alignment.Fill, LinearLayout.GrowPolicy.CanGrow)
     }
     root.addComponent(mainRow)
 
     var currentTableKey: String? = null
-    val currentDeltasRef: MutableList<ColumnDelta> = mutableListOf()
-
-    fun updateInfoBar() {
-        val key = currentTableKey
-        if (key == null) {
-            infoLabel.text = ""
-            return
-        }
-        val diff = diffsByTable[key]
-        val deltas = currentDeltasRef
-        val adds = deltas.count { it.kind == ColumnDelta.Kind.ENTITY_ONLY }
-        val orphans = deltas.count { it.kind == ColumnDelta.Kind.DB_ONLY }
-        val mismatches = deltas.count { it.kind == ColumnDelta.Kind.TYPE_MISMATCH }
-        val sb = StringBuilder()
-        sb.append("table:    ").append(key).append('\n')
-        sb.append("entity:   ").append(diff?.entity?.className ?: "(none)").append('\n')
-        sb.append("source:   ").append(diff?.entity?.sourcePath ?: "-").append('\n')
-        sb.append("status:   ").append("$adds add · $orphans orphan · $mismatches mismatch · ${deltas.size} total")
-        infoLabel.text = sb.toString()
-    }
 
     fun selectedDelta(): ColumnDelta? {
         val idx = propsList.selectedIndex
+        if (idx < 0 || idx >= propsList.itemCount) return null
         return (propsList.getItemAt(idx) as? PropertyRow)?.delta
     }
 
-    fun refreshClassifierForSelection() {
+    fun refreshDiffForSelection() {
         val key = currentTableKey ?: return
-        classifierPane.showFor(key, selectedDelta())
-        if (window.focusedInteractable === classifierPane.focusTarget &&
-            !classifierPane.hasFocusableContent) {
+        diffPane.showFor(diffsByTable[key], selectedDelta())
+        if (window.focusedInteractable === diffPane.focusTarget &&
+            !diffPane.hasFocusableContent) {
             propsList.takeFocus()
         }
     }
@@ -206,21 +181,16 @@ fun runSchemaSync(
     fun loadPropsFor(tableKey: String) {
         currentTableKey = tableKey
         propsList.clearItems()
-        currentDeltasRef.clear()
         val diff = diffsByTable[tableKey]
         if (diff == null) {
-            updateInfoBar()
-            classifierPane.showFor(tableKey, null)
+            diffPane.showFor(null, null)
             return
         }
-        val deltas = diff.columnDeltas
-        currentDeltasRef.addAll(deltas)
-        deltas.forEach { delta ->
+        diff.columnDeltas.forEach { delta ->
             propsList.addItem(PropertyRow(tableKey, delta, propertyActions, globalPropsFormatter))
         }
-        if (deltas.isNotEmpty()) propsList.selectedIndex = 0
-        updateInfoBar()
-        refreshClassifierForSelection()
+        if (diff.columnDeltas.isNotEmpty()) propsList.selectedIndex = 0
+        refreshDiffForSelection()
     }
 
     fun selectedTableKey(): String? =
@@ -230,7 +200,7 @@ fun runSchemaSync(
         selectedTableKey()?.let { loadPropsFor(it) }
     }
     propsList.onSelectionChanged = {
-        refreshClassifierForSelection()
+        refreshDiffForSelection()
     }
     propsList.onSpace = {
         val delta = selectedDelta()
@@ -238,7 +208,8 @@ fun runSchemaSync(
         if (delta != null && key != null) {
             propertyActions.cycle(key, delta.name, delta.kind)
             propsList.invalidate()
-            updateInfoBar()
+            diffPane.refresh()
+            refreshStatus()
         }
     }
     propsList.onDelete = {
@@ -247,7 +218,19 @@ fun runSchemaSync(
         if (delta != null && key != null) {
             propertyActions.set(key, delta.name, PropertyAction.NONE)
             propsList.invalidate()
-            updateInfoBar()
+            diffPane.refresh()
+            refreshStatus()
+        }
+    }
+
+    refreshPanesAfterRebuild = {
+        val key = selectedTableKey()
+        if (key != null) {
+            if (key != currentTableKey) loadPropsFor(key)
+        } else {
+            currentTableKey = null
+            propsList.clearItems()
+            diffPane.showFor(null, null)
         }
     }
 
@@ -255,12 +238,12 @@ fun runSchemaSync(
 
     var outcome = Outcome.CANCEL
 
-    // Classifier is included only when it has actionable content; otherwise
+    // Diff pane is focusable only when its slot picker is active; otherwise
     // focusing it would land on an empty list and look like "focus lost".
     fun activePanes(): List<Interactable> = buildList {
         add(tablesList)
         add(propsList)
-        if (classifierPane.hasFocusableContent) add(classifierPane.focusTarget)
+        if (diffPane.hasFocusableContent) add(diffPane.focusTarget)
     }
 
     fun currentPaneIndex(): Int {
@@ -279,7 +262,7 @@ fun runSchemaSync(
     }
 
     fun focusInRightPane(): Boolean =
-        window.focusedInteractable === classifierPane.focusTarget
+        window.focusedInteractable === diffPane.focusTarget
 
     window.addWindowListener(object : WindowListenerAdapter() {
         override fun onUnhandledInput(basePane: Window, keyStroke: KeyStroke, hasBeenHandled: AtomicBoolean) {
@@ -294,7 +277,7 @@ fun runSchemaSync(
                         currentFilter = ""
                         rebuildTablesList()
                         tablesList.takeFocus()
-                    } else {
+                    } else if (confirmQuit(gui, propertyActions.userEditCount())) {
                         outcome = Outcome.CANCEL
                         window.close()
                     }
@@ -308,60 +291,32 @@ fun runSchemaSync(
                     movePane(-1)
                     hasBeenHandled.set(true)
                 }
-                focusInRightPane() && classifierPane.handleKey(keyStroke) -> {
+                focusInRightPane() && diffPane.handleKey(keyStroke) -> {
                     hasBeenHandled.set(true)
                 }
                 keyStroke.keyType == KeyType.F2 -> {
-                    themeIdx = if (keyStroke.isShiftDown) {
-                        (themeIdx - 1 + themeNames.size) % themeNames.size
-                    } else {
-                        (themeIdx + 1) % themeNames.size
-                    }
-                    applyTheme()
-                    refreshStatus()
-                    gui.screen.refresh()
-                    hasBeenHandled.set(true)
-                }
-                keyStroke.keyType == KeyType.F3 -> {
-                    runSlotsView(gui, configState)
-                    hasBeenHandled.set(true)
-                }
-                keyStroke.keyType == KeyType.F5 -> {
-                    val out = Path.of("migration.sql").toAbsolutePath()
-                    val stats = MigrationGenerator.generate(
-                        diffs = diffsByTable.values.toList(),
-                        profile = configState.current.slots,
-                        defaults = configState.current.defaults,
-                        assignments = configState.current.assignments,
-                        output = out,
-                        dialect = dialect,
+                    val pending = buildPendingChanges(entities, diffsByTable.values, propertyActions, policy = configState.current.namingPolicy, kotlinDefaults = configState.current.kotlin)
+                    val applied = runApplyConfirmation(
+                        gui, configState, cache, diffsByTable.values, pending, dialect, entities,
                     )
-                    val msg = buildString {
-                        appendLine("Migration written to:")
-                        appendLine(out.toString())
-                        appendLine()
-                        appendLine("${stats.addedColumns} ALTER TABLE ADD COLUMN")
-                        appendLine("${stats.createdTables} CREATE TABLE")
-                        if (stats.unclassifiedFields > 0) {
-                            appendLine("${stats.unclassifiedFields} fields skipped (unclassified)")
-                        }
-                        if (stats.orphanColumns > 0) {
-                            appendLine("${stats.orphanColumns} orphan DB columns (informational only)")
-                        }
-                    }
-                    MessageDialog.showMessageDialog(gui, "Exported", msg, MessageDialogButton.OK)
-                    hasBeenHandled.set(true)
-                }
-                keyStroke.keyType == KeyType.F6 -> {
-                    runDefaultsView(gui, configState, dialect)
-                    hasBeenHandled.set(true)
-                }
-                keyStroke.keyType == KeyType.F7 -> {
-                    val applied = runWriterView(gui, entities, diffsByTable.values)
                     if (applied > 0) {
                         outcome = Outcome.RESCAN
                         window.close()
                     }
+                    hasBeenHandled.set(true)
+                }
+                keyStroke.keyType == KeyType.F3 -> {
+                    runBulkClassifyView(gui, configState, cache, diffsByTable.values)
+                    diffPane.refresh()
+                    hasBeenHandled.set(true)
+                }
+                keyStroke.keyType == KeyType.F7 -> {
+                    runConfigView(gui, configState, dialect)
+                    hasBeenHandled.set(true)
+                }
+                ThemeManager.handleKey(keyStroke, gui) -> {
+                    refreshStatus()
+                    gui.screen.refresh()
                     hasBeenHandled.set(true)
                 }
                 keyStroke.keyType == KeyType.F1 || keyStroke.character == '?' -> {
@@ -369,8 +324,10 @@ fun runSchemaSync(
                     hasBeenHandled.set(true)
                 }
                 keyStroke.character == 'q' || keyStroke.character == 'Q' -> {
-                    outcome = Outcome.CANCEL
-                    window.close()
+                    if (confirmQuit(gui, propertyActions.userEditCount())) {
+                        outcome = Outcome.CANCEL
+                        window.close()
+                    }
                     hasBeenHandled.set(true)
                 }
             }
@@ -384,16 +341,219 @@ fun runSchemaSync(
     return outcome
 }
 
-/** Status-based row filter exposed in the top dropdown. */
-private enum class StatusFilter(private val label: String, val accept: (TableStatus) -> Boolean) {
-    NEEDS_SYNC("Needs sync", { it != TableStatus.SYNCED }),
-    ALL("All", { true }),
-    SYNCED("Synced", { it == TableStatus.SYNCED }),
-    DIFF("Diff", { it == TableStatus.DIFF }),
-    DB_ONLY("DB only", { it == TableStatus.DB_ONLY }),
-    ENTITY_ONLY("Entity only", { it == TableStatus.ENTITY_ONLY });
+/**
+ * Asks the user before discarding pending code edits. Returns true when the
+ * caller may proceed — i.e. there's nothing pending, or the user picked Exit.
+ * Cancel (or Esc inside the dialog) leaves the main window open.
+ *
+ * Uses [Window.Hint.NO_DECORATIONS] + our own [TitledBorder] so the frame
+ * looks identical across every theme (Lanterna's bundled `default-theme`
+ * leaves `windowdecoration` unset, which renders title-only stubs that look
+ * borderless on the top and left — the custom themes use
+ * `FatWindowDecorationRenderer` which draws a full frame).
+ */
+private fun confirmQuit(
+    gui: com.googlecode.lanterna.gui2.WindowBasedTextGUI,
+    pending: Int,
+): Boolean {
+    if (pending <= 0) return true
+
+    var exit = false
+    val dialog = com.googlecode.lanterna.gui2.BasicWindow()
+    dialog.setHints(listOf(
+        com.googlecode.lanterna.gui2.Window.Hint.CENTERED,
+        com.googlecode.lanterna.gui2.Window.Hint.NO_DECORATIONS,
+    ))
+
+    val msg = "$pending property action${if (pending == 1) "" else "s"} you marked will be lost."
+
+    val cancelBtn = plainButton("Cancel") { dialog.close() }
+    val exitBtn = plainButton("Exit") { exit = true; dialog.close() }
+
+    val buttons = com.googlecode.lanterna.gui2.Panel(
+        com.googlecode.lanterna.gui2.LinearLayout(com.googlecode.lanterna.gui2.Direction.HORIZONTAL).setSpacing(2)
+    )
+    buttons.addComponent(cancelBtn)
+    buttons.addComponent(exitBtn)
+
+    val inner = com.googlecode.lanterna.gui2.Panel(
+        com.googlecode.lanterna.gui2.LinearLayout(com.googlecode.lanterna.gui2.Direction.VERTICAL).setSpacing(0)
+    )
+    inner.addComponent(com.googlecode.lanterna.gui2.Label(" $msg "))
+    inner.addComponent(com.googlecode.lanterna.gui2.EmptySpace(com.googlecode.lanterna.TerminalSize(1, 1)))
+    inner.addComponent(buttons)
+    inner.addComponent(com.googlecode.lanterna.gui2.EmptySpace(com.googlecode.lanterna.TerminalSize(1, 0)))
+
+    dialog.component = inner.withTitledBorder("Discard pending changes?")
+    dialog.focusedInteractable = cancelBtn
+
+    dialog.addWindowListener(object : WindowListenerAdapter() {
+        override fun onUnhandledInput(
+            basePane: com.googlecode.lanterna.gui2.Window,
+            keyStroke: KeyStroke,
+            hasBeenHandled: java.util.concurrent.atomic.AtomicBoolean,
+        ) {
+            if (keyStroke.keyType == com.googlecode.lanterna.input.KeyType.Escape) {
+                dialog.close()
+                hasBeenHandled.set(true)
+            }
+        }
+    })
+
+    gui.addWindowAndWait(dialog)
+    return exit
+}
+
+/**
+ * Filter dimensions in the popup. **OR within a group, AND across groups** —
+ * a row is visible only when it matches at least one checked option in *every*
+ * group. Splitting categories this way avoids the "Views + DIFF rows" mix-up
+ * that pure OR semantics produce: the user can now ask for "DIFF tables only"
+ * by leaving Views unchecked while keeping the DIFF status options checked.
+ */
+private enum class FilterGroup(val label: String) {
+    KIND("Object kind"),
+    STATUS("Status"),
+    CARDINALITY("Cardinality");
+}
+
+private enum class RowCategory(
+    val group: FilterGroup,
+    val label: String,
+    val accept: (onl.ycode.stormify.schemasync.model.TableEntry) -> Boolean,
+) {
+    TABLES(FilterGroup.KIND, "Tables", { !it.isView }),
+    VIEWS(FilterGroup.KIND, "Views", { it.isView }),
+
+    // Column-scope: gated on `status == DIFF` so they never overlap with the
+    // table-scope rows below — a DB_ONLY table is **not** considered "missing
+    // Kotlin fields", it's a different category entirely.
+    SYNCED(FilterGroup.STATUS, "In sync", { it.status == TableStatus.SYNCED }),
+    TYPE_CONFLICTS(FilterGroup.STATUS, "Type conflicts",
+        { it.status == TableStatus.DIFF && it.hasTypeMismatch }),
+    MISSING_DB_FIELDS(FilterGroup.STATUS, "Missing DB fields",
+        { it.status == TableStatus.DIFF && it.hasMissingDbFields }),
+    MISSING_KOTLIN_FIELDS(FilterGroup.STATUS, "Missing Kotlin fields",
+        { it.status == TableStatus.DIFF && it.hasMissingKotlinFields }),
+    // Table-scope: whole-table absences, mutually exclusive with everything above.
+    DB_ONLY(FilterGroup.STATUS, "DB-only tables", { it.status == TableStatus.DB_ONLY }),
+    ENTITY_ONLY(FilterGroup.STATUS, "Entity-only tables", { it.status == TableStatus.ENTITY_ONLY }),
+
+    SINGLE_ENTITY(FilterGroup.CARDINALITY, "Single entity", { it.entityCount <= 1 }),
+    MULTI_ENTITY(FilterGroup.CARDINALITY, "Multi-entity", { it.entityCount > 1 });
 
     override fun toString(): String = label
+}
+
+/** Mutable selection set backing the filter popup. Default = every option in
+ *  every group except `In sync` — surfaces every row that needs attention while
+ *  still satisfying the AND-across-groups rule. */
+private class CategoryFilter(initial: Set<RowCategory>) {
+    private val selected: MutableSet<RowCategory> = initial.toMutableSet()
+
+    fun snapshot(): Set<RowCategory> = selected.toSet()
+    fun replace(next: Set<RowCategory>) { selected.clear(); selected += next }
+
+    /** AND across groups: every group must contribute at least one match. A
+     *  group with **zero** checked options vacuously fails the AND, so the row
+     *  is rejected — the user opted everything out of that dimension. */
+    fun accept(entry: onl.ycode.stormify.schemasync.model.TableEntry): Boolean =
+        FilterGroup.entries.all { group ->
+            selected.any { it.group == group && it.accept(entry) }
+        }
+
+    fun summary(): String {
+        val total = RowCategory.entries.size
+        return when {
+            selected.isEmpty() -> "(none)"
+            selected.size == total -> "All"
+            selected.size == 1 -> selected.first().label
+            else -> "${selected.size}/$total categories"
+        }
+    }
+
+    companion object {
+        fun defaultSelection() = CategoryFilter(RowCategory.entries.toSet() - RowCategory.SYNCED)
+    }
+}
+
+/**
+ * Modal popup with one [CheckBoxList] per [FilterGroup], stacked under a
+ * header [Label]. Returns true when the user confirmed (OK), and [filter] has
+ * been updated in place. Cancel / Esc leaves the filter untouched.
+ */
+private fun showCategoryPicker(
+    gui: com.googlecode.lanterna.gui2.WindowBasedTextGUI,
+    filter: CategoryFilter,
+): Boolean {
+    val snapshot = filter.snapshot()
+    val groupLists: Map<FilterGroup, CheckBoxList<RowCategory>> = FilterGroup.entries.associateWith { group ->
+        CheckBoxList<RowCategory>().apply {
+            RowCategory.entries.filter { it.group == group }
+                .forEach { addItem(it, it in snapshot) }
+        }
+    }
+
+    val window = BasicWindow("Show categories")
+    window.setHints(listOf(Window.Hint.CENTERED, Window.Hint.MODAL))
+
+    var confirmed = false
+    val ok = plainButton("OK") {
+        val next = groupLists.values.flatMap { list ->
+            (0 until list.itemCount).mapNotNull { i ->
+                list.getItemAt(i).takeIf { list.isChecked(it) }
+            }
+        }.toSet()
+        filter.replace(next)
+        confirmed = true
+        window.close()
+    }
+    val cancel = plainButton("Cancel") { window.close() }
+
+    fun setAll(checked: Boolean) {
+        groupLists.values.forEach { list ->
+            (0 until list.itemCount).forEach { i ->
+                list.setChecked(list.getItemAt(i), checked)
+            }
+        }
+    }
+    val selectAll = plainButton("Select all") { setAll(true) }
+    val deselectAll = plainButton("Deselect all") { setAll(false) }
+
+    val buttons = Panel(LinearLayout(Direction.HORIZONTAL))
+    buttons.addComponent(selectAll)
+    buttons.addComponent(EmptySpace(TerminalSize(1, 1)))
+    buttons.addComponent(deselectAll)
+    buttons.addComponent(EmptySpace(TerminalSize(3, 1)))
+    buttons.addComponent(ok)
+    buttons.addComponent(EmptySpace(TerminalSize(2, 1)))
+    buttons.addComponent(cancel)
+
+    val root = Panel(LinearLayout(Direction.VERTICAL).setSpacing(0))
+    FilterGroup.entries.forEachIndexed { idx, group ->
+        if (idx > 0) root.addComponent(EmptySpace(TerminalSize(1, 1)))
+        root.addComponent(Label("── ${group.label} ──"))
+        root.addComponent(groupLists.getValue(group))
+    }
+    root.addComponent(EmptySpace(TerminalSize(1, 1)))
+    root.addComponent(Label("Space toggles · Tab moves between groups · Esc cancels"))
+    root.addComponent(EmptySpace(TerminalSize(1, 1)))
+    root.addComponent(buttons)
+
+    window.component = root
+    window.focusedInteractable = groupLists.getValue(FilterGroup.entries.first())
+
+    window.addWindowListener(object : WindowListenerAdapter() {
+        override fun onUnhandledInput(basePane: Window, keyStroke: KeyStroke, hasBeenHandled: AtomicBoolean) {
+            if (keyStroke.keyType == KeyType.Escape) {
+                window.close()
+                hasBeenHandled.set(true)
+            }
+        }
+    })
+
+    gui.addWindowAndWait(window)
+    return confirmed
 }
 
 private class TableRowItem(val entry: TableEntry, private val formatter: RowFormatter) : Runnable {

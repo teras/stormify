@@ -8,7 +8,7 @@ import java.nio.file.Path
  * Loads and (later) saves `.schema-sync.toml`. On first launch the project
  * file is bootstrapped from the bundled `default-config.toml` resource.
  */
-class ConfigStore(private val projectFile: Path) {
+class ConfigStore(val projectFile: Path) {
 
     /**
      * Reads the project config file, or copies the bundled default into place

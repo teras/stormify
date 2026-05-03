@@ -14,13 +14,13 @@ dependencies {
     implementation("org.apache.lucene:lucene-analysis-common:9.11.1")
     implementation("com.akuleshov7:ktoml-core:0.7.0")
     implementation("com.akuleshov7:ktoml-file:0.7.0")
-    implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.8.1")
     implementation("org.jetbrains.kotlin:kotlin-compiler-embeddable:2.2.21")
     runtimeOnly("org.xerial:sqlite-jdbc:3.46.1.0")
     runtimeOnly("org.postgresql:postgresql:42.7.4")
     runtimeOnly("org.mariadb.jdbc:mariadb-java-client:3.4.1")
     runtimeOnly("com.mysql:mysql-connector-j:9.0.0")
     runtimeOnly("com.oracle.database.jdbc:ojdbc11:23.5.0.24.07")
+    runtimeOnly("com.oracle.database.nls:orai18n:23.5.0.24.07")
     runtimeOnly("com.microsoft.sqlserver:mssql-jdbc:12.8.1.jre11")
 }
 
@@ -34,13 +34,6 @@ kotlin {
 
 tasks.named<JavaExec>("run") {
     standardInput = System.`in`
-}
-
-tasks.register<JavaExec>("classifierDemo") {
-    group = "verification"
-    description = "Runs the classifier smoke test against built-in seeds"
-    classpath = sourceSets.main.get().runtimeClasspath
-    mainClass = "onl.ycode.stormify.schemasync.classifier.ClassifierDemoKt"
 }
 
 tasks.register<JavaExec>("introspectorDemo") {

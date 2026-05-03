@@ -1,41 +1,105 @@
 package onl.ycode.stormify.schemasync.tui
 
 import com.googlecode.lanterna.TerminalSize
-import com.googlecode.lanterna.gui2.BasicWindow
+import com.googlecode.lanterna.gui2.ComboBox
 import com.googlecode.lanterna.gui2.Direction
-import com.googlecode.lanterna.gui2.EmptySpace
 import com.googlecode.lanterna.gui2.GridLayout
 import com.googlecode.lanterna.gui2.Label
 import com.googlecode.lanterna.gui2.LinearLayout
 import com.googlecode.lanterna.gui2.Panel
 import com.googlecode.lanterna.gui2.TextBox
-import com.googlecode.lanterna.gui2.Window
 import com.googlecode.lanterna.gui2.WindowBasedTextGUI
-import com.googlecode.lanterna.gui2.WindowListenerAdapter
-import com.googlecode.lanterna.input.KeyStroke
-import com.googlecode.lanterna.input.KeyType
 import onl.ycode.stormify.schemasync.config.ConfigState
 import onl.ycode.stormify.schemasync.db.Dialect
+import onl.ycode.stormify.schemasync.model.DateType
+import onl.ycode.stormify.schemasync.model.DecimalType
 import onl.ycode.stormify.schemasync.model.DefaultsProfile
 import onl.ycode.stormify.schemasync.model.DialectOverride
-import java.util.concurrent.atomic.AtomicBoolean
+import onl.ycode.stormify.schemasync.model.EntityBase
+import onl.ycode.stormify.schemasync.model.NamingPolicy
+import onl.ycode.stormify.schemasync.model.PkIntegerType
+import onl.ycode.stormify.schemasync.model.TimeType
+import onl.ycode.stormify.schemasync.model.TimestampType
 
 private const val DDL_BOX_WIDTH = 36
 
-/**
- * F6 Defaults — edit DDL templates for deterministic Kotlin types.
- *
- * If a connected dialect is provided (anything other than [Dialect.GENERIC]),
- * the boxes are populated with the *merged* effective values for that dialect
- * and edits persist into the corresponding `[defaults.<dialect>]` override
- * block, so you can tweak a single dialect without disturbing the base profile
- * or the other dialects' overrides.
- */
-fun runDefaultsView(gui: WindowBasedTextGUI, state: ConfigState, dialect: Dialect = Dialect.GENERIC) {
-    val title = if (dialect == Dialect.GENERIC) "Defaults (base)" else "Defaults [${dialect.tomlKey}]"
-    val window = BasicWindow(title)
-    window.setHints(listOf(Window.Hint.FULL_SCREEN, Window.Hint.NO_DECORATIONS))
+internal const val DEFAULTS_PANE_HINT =
+    "Tab next field · Up/Down/PgUp/PgDn scroll · Esc save & close · F1 help"
 
+internal const val KT_PANE_HINT =
+    "Choose how schema-sync writes Kotlin code · Esc save & close"
+
+/** F7 → KT tab: Kotlin-side preferences (naming policy + type choices). */
+internal fun buildKtDefaultsPane(state: ConfigState): TabPane {
+    val policyCombo = ComboBox<String>(NamingPolicy.entries.map { it.name }).apply {
+        selectedIndex = NamingPolicy.entries.indexOf(state.current.namingPolicy)
+        isReadOnly = true
+    }
+    val pkIntCombo = ComboBox<String>(PkIntegerType.entries.map { it.display }).apply {
+        selectedIndex = PkIntegerType.entries.indexOf(state.current.kotlin.pkIntegerType)
+        isReadOnly = true
+    }
+    val dateCombo = ComboBox<String>(DateType.entries.map { it.display }).apply {
+        selectedIndex = DateType.entries.indexOf(state.current.kotlin.dateType)
+        isReadOnly = true
+    }
+    val timeCombo = ComboBox<String>(TimeType.entries.map { it.display }).apply {
+        selectedIndex = TimeType.entries.indexOf(state.current.kotlin.timeType)
+        isReadOnly = true
+    }
+    val timestampCombo = ComboBox<String>(TimestampType.entries.map { it.display }).apply {
+        selectedIndex = TimestampType.entries.indexOf(state.current.kotlin.timestampType)
+        isReadOnly = true
+    }
+    val decimalCombo = ComboBox<String>(DecimalType.entries.map { it.display }).apply {
+        selectedIndex = DecimalType.entries.indexOf(state.current.kotlin.decimalType)
+        isReadOnly = true
+    }
+    val entityBaseLabels = mapOf(
+        EntityBase.NONE to "no ByDb",
+        EntityBase.BYDB_ALWAYS to "ByDb (retrofit existing)",
+        EntityBase.BYDB_FOR_NEW to "ByDb (new entities only)",
+    )
+    val entityBaseCombo = ComboBox<String>(EntityBase.entries.map { entityBaseLabels.getValue(it) }).apply {
+        selectedIndex = EntityBase.entries.indexOf(state.current.kotlin.entityBase)
+        isReadOnly = true
+    }
+
+    val grid = Panel(GridLayout(2).setHorizontalSpacing(2).setVerticalSpacing(0))
+    grid.addComponent(Label("Naming policy".padEnd(20)));     grid.addComponent(policyCombo)
+    grid.addComponent(Label("Entity base".padEnd(20)));       grid.addComponent(entityBaseCombo)
+    grid.addComponent(Label("PK Integer".padEnd(20)));        grid.addComponent(pkIntCombo)
+    grid.addComponent(Label("DATE".padEnd(20)));              grid.addComponent(dateCombo)
+    grid.addComponent(Label("TIME".padEnd(20)));              grid.addComponent(timeCombo)
+    grid.addComponent(Label("TIMESTAMP".padEnd(20)));         grid.addComponent(timestampCombo)
+    grid.addComponent(Label("DECIMAL".padEnd(20)));           grid.addComponent(decimalCombo)
+
+    val root = Panel(LinearLayout(Direction.VERTICAL).setSpacing(0))
+    root.addComponent(grid.withTitledBorder("Kotlin code-generation defaults"))
+
+    return TabPane(
+        component = root,
+        initialFocus = policyCombo,
+        commit = {
+            state.update { cfg ->
+                cfg.copy(
+                    namingPolicy = NamingPolicy.entries[policyCombo.selectedIndex.coerceIn(0, NamingPolicy.entries.lastIndex)],
+                    kotlin = cfg.kotlin.copy(
+                        pkIntegerType = PkIntegerType.entries[pkIntCombo.selectedIndex.coerceIn(0, PkIntegerType.entries.lastIndex)],
+                        dateType = DateType.entries[dateCombo.selectedIndex.coerceIn(0, DateType.entries.lastIndex)],
+                        timeType = TimeType.entries[timeCombo.selectedIndex.coerceIn(0, TimeType.entries.lastIndex)],
+                        timestampType = TimestampType.entries[timestampCombo.selectedIndex.coerceIn(0, TimestampType.entries.lastIndex)],
+                        decimalType = DecimalType.entries[decimalCombo.selectedIndex.coerceIn(0, DecimalType.entries.lastIndex)],
+                        entityBase = EntityBase.entries[entityBaseCombo.selectedIndex.coerceIn(0, EntityBase.entries.lastIndex)],
+                    ),
+                )
+            }
+        },
+    )
+}
+
+/** F7 → DB tab: dialect-aware DDL templates + per-type auto-DEFAULT literals. */
+internal fun buildDbDefaultsPane(gui: WindowBasedTextGUI, state: ConfigState, dialect: Dialect): TabPane {
     val effective = state.current.defaults.mergedFor(dialect.tomlKey)
 
     data class Row(
@@ -104,6 +168,22 @@ fun runDefaultsView(gui: WindowBasedTextGUI, state: ConfigState, dialect: Dialec
         boxes += box to row
     }
 
+    val title =
+        if (dialect == Dialect.GENERIC) "DDL templates for deterministic Kotlin types"
+        else "DDL templates for ${dialect.tomlKey} (overrides base profile)"
+    val bordered = grid.withTitledBorder(title).apply {
+        layoutData = LinearLayout.createLayoutData(LinearLayout.Alignment.Fill, LinearLayout.GrowPolicy.CanGrow)
+    }
+    val scroller = ScrollableContainer(Panel(LinearLayout(Direction.VERTICAL).setSpacing(0)).apply {
+        addComponent(bordered)
+    }).apply {
+        layoutData = LinearLayout.createLayoutData(LinearLayout.Alignment.Fill, LinearLayout.GrowPolicy.CanGrow)
+    }
+    val root = Panel(LinearLayout(Direction.VERTICAL).setSpacing(0)).apply {
+        layoutData = LinearLayout.createLayoutData(LinearLayout.Alignment.Fill, LinearLayout.GrowPolicy.CanGrow)
+        addComponent(scroller)
+    }
+
     fun saveAll() {
         state.update { cfg ->
             if (dialect == Dialect.GENERIC) {
@@ -113,7 +193,6 @@ fun runDefaultsView(gui: WindowBasedTextGUI, state: ConfigState, dialect: Dialec
                 }
                 cfg.copy(defaults = d)
             } else {
-                // Persist as dialect override; field is recorded only when it differs from base.
                 var override = currentOverride(cfg.defaults, dialect)
                 val base = cfg.defaults
                 for ((box, row) in boxes) {
@@ -127,35 +206,21 @@ fun runDefaultsView(gui: WindowBasedTextGUI, state: ConfigState, dialect: Dialec
         }
     }
 
-    val root = Panel(LinearLayout(Direction.VERTICAL).setSpacing(0))
-    root.addComponent(grid.withTitledBorder(
-        if (dialect == Dialect.GENERIC) "DDL templates for deterministic Kotlin types"
-        else "DDL templates for ${dialect.tomlKey} (overrides base profile)",
-    ))
-    root.addComponent(EmptySpace(TerminalSize(1, 1)))
-    root.addComponent(Label("Tab next field · Enter / Esc save & close · F1 help"))
-
-    window.component = root
-    if (boxes.isNotEmpty()) window.focusedInteractable = boxes.first().first
-
-    window.addWindowListener(object : WindowListenerAdapter() {
-        override fun onUnhandledInput(basePane: Window, keyStroke: KeyStroke, hasBeenHandled: AtomicBoolean) {
-            when {
-                keyStroke.keyType == KeyType.F1 || keyStroke.character == '?' -> {
-                    showHelp(gui)
-                    hasBeenHandled.set(true)
-                }
-                keyStroke.keyType == KeyType.Escape || keyStroke.keyType == KeyType.Enter
-                    || keyStroke.character == 'q' || keyStroke.character == 'Q' -> {
-                    saveAll()
-                    window.close()
-                    hasBeenHandled.set(true)
-                }
+    return TabPane(
+        component = root,
+        initialFocus = boxes.first().first,
+        handleKey = handle@{ keyStroke, focused ->
+            scroller.ensureVisible(focused as? com.googlecode.lanterna.gui2.Component)
+            val delta = keyStroke.scrollDelta()
+            if (delta != null) { scroller.scrollBy(delta); return@handle true }
+            when (keyStroke.keyType) {
+                com.googlecode.lanterna.input.KeyType.PageUp   -> { scroller.scrollBy(-10); true }
+                com.googlecode.lanterna.input.KeyType.PageDown -> { scroller.scrollBy(+10); true }
+                else -> false
             }
-        }
-    })
-
-    gui.addWindowAndWait(window)
+        },
+        commit = { saveAll() },
+    )
 }
 
 private fun currentOverride(p: DefaultsProfile, d: Dialect): DialectOverride = when (d) {

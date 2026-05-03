@@ -2,17 +2,35 @@ package onl.ycode.stormify.schemasync.config
 
 import kotlinx.serialization.Serializable
 import onl.ycode.stormify.schemasync.model.DefaultsProfile
-import onl.ycode.stormify.schemasync.model.SlotCategory
+import onl.ycode.stormify.schemasync.model.KotlinDefaults
+import onl.ycode.stormify.schemasync.model.NamingPolicy
 import onl.ycode.stormify.schemasync.model.SlotProfile
 
-/** Top-level config root, deserialized from `.schema-sync.toml`. */
+/**
+ * Top-level config root, deserialized from `.schema-sync.toml`. Holds the
+ * JDBC connection, slot definitions (one marked `default = true` per
+ * category), and the per-dialect DDL templates.
+ */
 @Serializable
 data class SchemaSyncConfig(
     val connection: ConnectionConfig? = null,
     val slots: SlotProfile,
-    val seeds: Seeds,
     val defaults: DefaultsProfile = DefaultsProfile(),
-    val assignments: List<Assignment> = emptyList(),
+    val paths: PathsConfig = PathsConfig(),
+    /** Maps Kotlin property names to DB column names. Defaults to stormify's
+     *  built-in convention (snake_case). */
+    val namingPolicy: NamingPolicy = NamingPolicy.LOWER_CASE_WITH_UNDERSCORES,
+    /** Preferences applied when generating Kotlin entity properties from DB columns. */
+    val kotlin: KotlinDefaults = KotlinDefaults(),
+)
+
+/** Output paths the F2 apply view writes to. Both are relative to the project
+ *  directory (the directory holding `.schema-sync.toml`) so the config travels
+ *  with the project. */
+@Serializable
+data class PathsConfig(
+    val entitiesDir: String? = null,
+    val migrationSql: String? = null,
 )
 
 /** JDBC connection coordinates. Persisted in TOML; may be overridden via CLI. */
@@ -21,31 +39,4 @@ data class ConnectionConfig(
     val url: String,
     val user: String? = null,
     val password: String? = null,
-)
-
-@Serializable
-data class SeedEntry(
-    val slot: String,
-    val words: List<String>,
-)
-
-/** Seed vocabularies grouped by slot category. Each entry is `(slot, words)`. */
-@Serializable
-data class Seeds(
-    val text: List<SeedEntry>,
-    val integral: List<SeedEntry>,
-    val decimal: List<SeedEntry>,
-)
-
-/**
- * A user's classification choice, persisted across runs. The `column` key is
- * `schema.table.column` (or `table.column` when no schema). The classifier
- * is re-trained from these on every startup so suggestions improve over time
- * within the project.
- */
-@Serializable
-data class Assignment(
-    val column: String,
-    val category: SlotCategory,
-    val slot: String,
 )

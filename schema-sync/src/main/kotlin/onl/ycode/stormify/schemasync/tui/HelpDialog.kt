@@ -7,31 +7,27 @@ import com.googlecode.lanterna.gui2.dialogs.MessageDialogButton
 private const val HELP_TEXT = """schema-sync — keybindings
 
 Main view:
-  ↑ ↓             navigate tables
+  ↑ ↓             navigate within current pane
+  ← →             switch panes (tables / properties / diff)
+  Space           in properties pane: cycle insert/delete/none for current row
+  Delete          in properties pane: clear action on current row
   / Tab           filter / switch panes
+  1-9             in diff pane: pick slot for current entity-only column
   F1 / ?          this help
-  F2              cycle theme
-  F3              slots editor
-  F4              classify columns
-  F5              export migration.sql
-  F6              defaults (DDL templates + auto-default values)
-  F7              code edits (insert into entity / mark @Transient)
+  F2              apply pending code edits + write migration.sql
+  F3              bulk classify entity-only fields
+  F7              config (slots / defaults)
+  F8              cycle theme
   Esc / q         quit
 
-Slots editor (F3):
+Slots editor (F7 → Slots):
   ↑ ↓             navigate
   Tab             next pane
   Enter           edit slot
   Insert          duplicate
   Delete          remove
   Shift+↑↓        move up/down
-  Esc             back
-
-Classify columns (F4):
-  1-9             pick slot at position (auto-advances)
-  Enter           accept selected slot (auto-advances)
-  ← →             prev / next column
-  ↑ ↓             change selected slot (resolution)
+  D               set as default for category (* marker)
   Esc             back"""
 
 fun showHelp(gui: WindowBasedTextGUI) {
