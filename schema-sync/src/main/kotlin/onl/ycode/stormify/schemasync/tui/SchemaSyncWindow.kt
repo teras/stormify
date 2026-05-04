@@ -74,7 +74,7 @@ fun runSchemaSync(
     root.addComponent(pendingLabel)
 
     val filterRow = Panel(LinearLayout(Direction.HORIZONTAL))
-    filterRow.addComponent(Label("Filter (/): "))
+    filterRow.addComponent(Label("Filter (/) — prefix @ for column: "))
     root.addComponent(filterRow)
     root.addComponent(EmptySpace(TerminalSize(1, 1)))
 
@@ -95,12 +95,20 @@ fun runSchemaSync(
     fun rebuildTablesList() {
         val prev = (tablesList.selectedItem as? TableRowItem)?.entry
         tablesList.clearItems()
-        val filter = currentFilter.lowercase()
+        val raw = currentFilter.lowercase()
+        // `@needle` switches the search to column / property names (any of the
+        // slot's deltas matches). Anything else searches table + entity names
+        // as before. The `@` prefix was picked so it doesn't collide with the
+        // F3 bulk classifier syntax (which uses `!`, `:`, `*`).
+        val byColumn = raw.startsWith("@")
+        val filter = if (byColumn) raw.removePrefix("@") else raw
         val visible = allTableRows.filter { row ->
-            categoryFilter.accept(row.entry) &&
-                (filter.isEmpty() ||
-                    row.entry.table.lowercase().contains(filter) ||
-                    (row.entry.entity?.lowercase()?.contains(filter) == true))
+            categoryFilter.accept(row.entry) && (filter.isEmpty() || when {
+                byColumn -> diffsByTable[row.entry.table]?.columnDeltas
+                    ?.any { it.name.lowercase().contains(filter) } == true
+                else -> row.entry.table.lowercase().contains(filter) ||
+                    (row.entry.entity?.lowercase()?.contains(filter) == true)
+            })
         }
         visible.forEach { tablesList.addItem(it) }
         if (prev != null) {
@@ -189,7 +197,20 @@ fun runSchemaSync(
         diff.columnDeltas.forEach { delta ->
             propsList.addItem(PropertyRow(tableKey, delta, propertyActions, globalPropsFormatter))
         }
-        if (diff.columnDeltas.isNotEmpty()) propsList.selectedIndex = 0
+        // Land on the first row that needs attention so the user can act on it
+        // immediately. Priority: missing DB field (entity-only), then missing
+        // entity property (db-only), then type mismatch, else the first row.
+        if (diff.columnDeltas.isNotEmpty()) {
+            val priorities = listOf(
+                ColumnDelta.Kind.ENTITY_ONLY,
+                ColumnDelta.Kind.DB_ONLY,
+                ColumnDelta.Kind.TYPE_MISMATCH,
+            )
+            propsList.selectedIndex = priorities
+                .firstNotNullOfOrNull { kind ->
+                    diff.columnDeltas.indexOfFirst { it.kind == kind }.takeIf { it >= 0 }
+                } ?: 0
+        }
         refreshDiffForSelection()
     }
 
@@ -276,6 +297,16 @@ fun runSchemaSync(
     fun focusInRightPane(): Boolean =
         window.focusedInteractable === diffPane.focusTarget
 
+    /** True when focus is on any of the three main panes (tables / properties /
+     *  diff). Lets `1`–`9` slot-picker shortcuts work from the left/middle pane
+     *  too — the user expects digits to act on the visible slot picker without
+     *  first Tabbing to the diff pane. Filter widgets are excluded so typing
+     *  digits into the filter box still types the digit. */
+    fun focusInMainPanes(): Boolean {
+        val f = window.focusedInteractable ?: return false
+        return f === tablesList || f === propsList || diffPane.ownsFocus(f)
+    }
+
     window.addWindowListener(object : WindowListenerAdapter() {
         // Lanterna's Tab traversal handles focus internally — `onUnhandledInput`
         // never fires for Tab, and tracking per-component `afterEnterFocus`
@@ -311,7 +342,7 @@ fun runSchemaSync(
                     movePane(-1)
                     hasBeenHandled.set(true)
                 }
-                focusInRightPane() && diffPane.handleKey(keyStroke) -> {
+                focusInMainPanes() && diffPane.handleKey(keyStroke) -> {
                     hasBeenHandled.set(true)
                 }
                 keyStroke.keyType == KeyType.F2 -> {
@@ -433,9 +464,10 @@ private fun confirmQuit(
  * by leaving Views unchecked while keeping the DIFF status options checked.
  */
 private enum class FilterGroup(val label: String) {
+    CARDINALITY("Cardinality"),
     KIND("Object kind"),
-    STATUS("Status"),
-    CARDINALITY("Cardinality");
+    TABLE_PRESENCE("Table presence"),
+    COLUMN_STATUS("Column status");
 }
 
 private enum class RowCategory(
@@ -446,19 +478,26 @@ private enum class RowCategory(
     TABLES(FilterGroup.KIND, "Tables", { !it.isView }),
     VIEWS(FilterGroup.KIND, "Views", { it.isView }),
 
-    // Column-scope: gated on `status == DIFF` so they never overlap with the
-    // table-scope rows below — a DB_ONLY table is **not** considered "missing
-    // Kotlin fields", it's a different category entirely.
-    SYNCED(FilterGroup.STATUS, "In sync", { it.status == TableStatus.SYNCED }),
-    TYPE_CONFLICTS(FilterGroup.STATUS, "Type conflicts",
+    // Column-scope: gated on `status` so they only describe the state inside
+    // slots that have both an entity and a DB table. The three DIFF
+    // subdivisions can overlap (a single DIFF row may have a type mismatch
+    // *and* a missing DB field) — that is intentional: pick the union you
+    // care about. `In sync` stands alone since SYNCED rules out all three.
+    SYNCED(FilterGroup.COLUMN_STATUS, "In sync", { it.status == TableStatus.SYNCED }),
+    TYPE_CONFLICTS(FilterGroup.COLUMN_STATUS, "Type conflicts",
         { it.status == TableStatus.DIFF && it.hasTypeMismatch }),
-    MISSING_DB_FIELDS(FilterGroup.STATUS, "Missing DB fields",
+    MISSING_DB_FIELDS(FilterGroup.COLUMN_STATUS, "Missing DB fields",
         { it.status == TableStatus.DIFF && it.hasMissingDbFields }),
-    MISSING_KOTLIN_FIELDS(FilterGroup.STATUS, "Missing Kotlin fields",
+    MISSING_KOTLIN_FIELDS(FilterGroup.COLUMN_STATUS, "Missing Kotlin fields",
         { it.status == TableStatus.DIFF && it.hasMissingKotlinFields }),
-    // Table-scope: whole-table absences, mutually exclusive with everything above.
-    DB_ONLY(FilterGroup.STATUS, "DB-only tables", { it.status == TableStatus.DB_ONLY }),
-    ENTITY_ONLY(FilterGroup.STATUS, "Entity-only tables", { it.status == TableStatus.ENTITY_ONLY }),
+
+    // Table-scope: every slot is in **exactly one** of the three. `Both`
+    // covers SYNCED and DIFF (slot has both sides); the other two cover the
+    // whole-table absences. Mutually exclusive and exhaustive.
+    BOTH_PRESENT(FilterGroup.TABLE_PRESENCE, "Both",
+        { it.status == TableStatus.SYNCED || it.status == TableStatus.DIFF }),
+    DB_ONLY(FilterGroup.TABLE_PRESENCE, "DB-only tables", { it.status == TableStatus.DB_ONLY }),
+    ENTITY_ONLY(FilterGroup.TABLE_PRESENCE, "Entity-only tables", { it.status == TableStatus.ENTITY_ONLY }),
 
     SINGLE_ENTITY(FilterGroup.CARDINALITY, "Single entity", { it.entityCount <= 1 }),
     MULTI_ENTITY(FilterGroup.CARDINALITY, "Multi-entity", { it.entityCount > 1 });
@@ -477,9 +516,17 @@ private class CategoryFilter(initial: Set<RowCategory>) {
 
     /** AND across groups: every group must contribute at least one match. A
      *  group with **zero** checked options vacuously fails the AND, so the row
-     *  is rejected — the user opted everything out of that dimension. */
+     *  is rejected — the user opted everything out of that dimension.
+     *
+     *  Column-status options describe what's happening *inside* a slot that
+     *  has both sides. For DB-only / entity-only rows there is no column-level
+     *  status, so the column-status group is treated as vacuously true and the
+     *  row's visibility is governed solely by [FilterGroup.TABLE_PRESENCE]. */
     fun accept(entry: onl.ycode.stormify.schemasync.model.TableEntry): Boolean =
         FilterGroup.entries.all { group ->
+            if (group == FilterGroup.COLUMN_STATUS &&
+                entry.status != TableStatus.SYNCED &&
+                entry.status != TableStatus.DIFF) return@all true
             selected.any { it.group == group && it.accept(entry) }
         }
 
@@ -531,12 +578,28 @@ private fun showCategoryPicker(
     }
     val cancel = plainButton("Cancel") { window.close() }
 
+    // Column status only describes Both rows; when Both is unchecked the
+    // options can't filter anything (CategoryFilter.accept short-circuits the
+    // group for non-Both rows). Keep the rows visible to avoid layout
+    // jitter, but render them as plain labels (no `[x]`/`[ ]` brackets) and
+    // disable focus so the user sees they're inert. The internal checked
+    // state is preserved, so re-checking Both restores the prior selection.
+    val tablePresenceList = groupLists.getValue(FilterGroup.TABLE_PRESENCE)
+    val columnStatusList = groupLists.getValue(FilterGroup.COLUMN_STATUS)
+    columnStatusList.setListItemRenderer(InertWhenDisabledCheckBoxRenderer())
+    fun syncColumnStatusEnabled() {
+        columnStatusList.isEnabled = tablePresenceList.isChecked(RowCategory.BOTH_PRESENT) == true
+        columnStatusList.invalidate()
+    }
+    tablePresenceList.addListener { _, _ -> syncColumnStatusEnabled() }
+
     fun setAll(checked: Boolean) {
         groupLists.values.forEach { list ->
             (0 until list.itemCount).forEach { i ->
                 list.setChecked(list.getItemAt(i), checked)
             }
         }
+        syncColumnStatusEnabled()
     }
     val selectAll = plainButton("Select all") { setAll(true) }
     val deselectAll = plainButton("Deselect all") { setAll(false) }
@@ -556,6 +619,7 @@ private fun showCategoryPicker(
         root.addComponent(Label("${Symbols.hbar}${Symbols.hbar} ${group.label} ${Symbols.hbar}${Symbols.hbar}"))
         root.addComponent(groupLists.getValue(group))
     }
+    syncColumnStatusEnabled()
     root.addComponent(EmptySpace(TerminalSize(1, 1)))
     root.addComponent(Label("Space toggles · Tab moves between groups · Esc cancels"))
     root.addComponent(EmptySpace(TerminalSize(1, 1)))
@@ -618,6 +682,7 @@ internal class SelectionAwareListBox(
     var onDelete: (() -> Unit)? = null
 
     private val asciiRenderer = AsciiListBoxRenderer(separatorColumns)
+    val scrollbarMouse = ScrollbarMouse()
 
     init {
         renderer = asciiRenderer
@@ -641,6 +706,9 @@ internal class SelectionAwareListBox(
         if (keyStroke.keyType == KeyType.ArrowLeft || keyStroke.keyType == KeyType.ArrowRight) {
             return Interactable.Result.UNHANDLED
         }
+        keyStroke.asMouse?.let { m ->
+            if (handleScrollbarMouse(m)) return Interactable.Result.HANDLED
+        }
         val before = selectedIndex
         val r = super.handleKeyStroke(keyStroke)
         if (selectedIndex != before) onSelectionChanged?.invoke()
@@ -649,5 +717,25 @@ internal class SelectionAwareListBox(
             Interactable.Result.MOVE_FOCUS_DOWN -> Interactable.Result.HANDLED
             else -> r
         }
+    }
+
+    private fun handleScrollbarMouse(action: com.googlecode.lanterna.input.MouseAction): Boolean {
+        val sz = size ?: return false
+        if (itemCount <= sz.rows) return false
+        val local = toLocal(action.position) ?: return false
+        val newIndex = scrollbarMouse.handle(
+            action = action,
+            localX = local.column,
+            localY = local.row,
+            scrollbarCol = sz.columns - 1,
+            height = sz.rows,
+            contentRows = itemCount,
+            viewportRows = 1,
+            currentTop = selectedIndex.coerceAtLeast(0),
+        ) ?: return action.actionType == com.googlecode.lanterna.input.MouseActionType.DRAG
+        val before = selectedIndex
+        selectedIndex = newIndex.coerceIn(0, itemCount - 1)
+        if (selectedIndex != before) onSelectionChanged?.invoke()
+        return true
     }
 }

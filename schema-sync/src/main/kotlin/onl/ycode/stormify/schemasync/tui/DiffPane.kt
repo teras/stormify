@@ -70,9 +70,11 @@ class DiffPane(
      *  re-toggles every entry against the persistent action state. */
     private var suppressTargetsListener = false
 
+    private val pickersSeparator = EmptySpace(TerminalSize(1, 1))
+
     init {
         container.addComponent(diffViewer)
-        container.addComponent(EmptySpace(TerminalSize(1, 1)))
+        container.addComponent(pickersSeparator)
         container.addComponent(targetsHeader)
         container.addComponent(targetsList)
         container.addComponent(slotsHeader)
@@ -101,6 +103,7 @@ class DiffPane(
         renderDiff()
         renderTargetsPicker()
         renderSlotPicker()
+        updateSeparator()
     }
 
     /** Re-render diff text without changing the current selection — used after Space toggles. */
@@ -108,6 +111,11 @@ class DiffPane(
         renderDiff()
         renderTargetsPicker()
         renderSlotPicker()
+        updateSeparator()
+    }
+
+    private fun updateSeparator() {
+        pickersSeparator.isVisible = targetsList.isVisible || slotsList.isVisible
     }
 
     /** Show one checkbox per claiming entity when the slot has more than one
@@ -124,11 +132,15 @@ class DiffPane(
             val hasInsertableColumns = diff?.columnDeltas?.any { it.kind == ColumnDelta.Kind.DB_ONLY } == true
             if (diff == null || diff.entities.size < 2 || !hasInsertableColumns) {
                 targetsHeader.text = ""
+                targetsHeader.isVisible = false
+                targetsList.isVisible = false
                 return
             }
             val primary = diff.entities.first().className
             val checked = actions.targetsFor(diff.tableKey, primary)
             targetsHeader.text = "Insert new columns into:"
+            targetsHeader.isVisible = true
+            targetsList.isVisible = true
             diff.entities.forEach { e ->
                 val short = e.className.substringAfterLast('.')
                 targetsList.addItem(short, e.className in checked)
@@ -252,21 +264,28 @@ class DiffPane(
         currentSlots = emptyList()
         val diff = currentDiff
         val delta = currentDelta
-        if (diff == null || delta == null || delta.kind != ColumnDelta.Kind.ENTITY_ONLY) {
+        fun hideSlots() {
             slotsHeader.text = ""
+            slotsHeader.isVisible = false
+            slotsList.isVisible = false
+        }
+        if (diff == null || delta == null || delta.kind != ColumnDelta.Kind.ENTITY_ONLY) {
+            hideSlots()
             return
         }
-        val field = delta.entityField ?: run { slotsHeader.text = ""; return }
-        val cat = field.category ?: run { slotsHeader.text = ""; return }
+        val field = delta.entityField ?: run { hideSlots(); return }
+        val cat = field.category ?: run { hideSlots(); return }
         val act = actions.get(diff.tableKey, delta.name, delta.kind)
         if (act != PropertyAction.INSERT) {
-            slotsHeader.text = ""
+            hideSlots()
             return
         }
         val key = "${diff.tableKey}.${field.column}"
         val current = cache.slotFor(key)
 
         slotsHeader.text = "Slot for ${field.column} (${cat.name.lowercase()})"
+        slotsHeader.isVisible = true
+        slotsList.isVisible = true
 
         currentSlots = slotsFor(cat)
         currentSlots.forEachIndexed { i, (name, ddl) ->

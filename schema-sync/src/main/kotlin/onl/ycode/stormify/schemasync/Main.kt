@@ -81,7 +81,7 @@ fun main(args: Array<String>) {
     val sourceRoots = argValuesAll(args, "--sources").map(Path::of)
 
     val factory = DefaultTerminalFactory()
-        .setMouseCaptureMode(MouseCaptureMode.CLICK_RELEASE)
+        .setMouseCaptureMode(MouseCaptureMode.CLICK_RELEASE_DRAG)
     val terminal = factory.createTerminal()
     val screen: Screen = TerminalScreen(terminal)
     screen.startScreen()

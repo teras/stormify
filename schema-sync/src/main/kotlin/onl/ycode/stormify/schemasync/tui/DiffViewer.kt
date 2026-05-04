@@ -24,6 +24,7 @@ class DiffViewer(initialLines: List<DiffLine> = emptyList())
 
     private var lines: List<DiffLine> = initialLines
     private var topRow: Int = 0
+    private val scrollbarMouse = ScrollbarMouse()
 
     fun setLines(newLines: List<DiffLine>) {
         lines = newLines
@@ -35,6 +36,8 @@ class DiffViewer(initialLines: List<DiffLine> = emptyList())
 
     private fun maxTop(): Int = (lines.size - visibleRows()).coerceAtLeast(0)
 
+    private fun showsScrollbar(): Boolean = lines.size > visibleRows()
+
     override fun scrollBy(delta: Int) {
         val nt = (topRow + delta).coerceIn(0, maxTop())
         if (nt != topRow) {
@@ -43,8 +46,19 @@ class DiffViewer(initialLines: List<DiffLine> = emptyList())
         }
     }
 
+    private fun setTop(newTop: Int) {
+        val nt = newTop.coerceIn(0, maxTop())
+        if (nt != topRow) {
+            topRow = nt
+            invalidate()
+        }
+    }
+
     override fun handleKeyStroke(keyStroke: KeyStroke): Interactable.Result {
         keyStroke.scrollDelta()?.let { scrollBy(it); return Interactable.Result.HANDLED }
+        keyStroke.asMouse?.let { m ->
+            if (handleMouse(m)) return Interactable.Result.HANDLED
+        }
         return when (keyStroke.keyType) {
             KeyType.ArrowUp -> { scrollBy(-1); Interactable.Result.HANDLED }
             KeyType.ArrowDown -> { scrollBy(+1); Interactable.Result.HANDLED }
@@ -56,10 +70,29 @@ class DiffViewer(initialLines: List<DiffLine> = emptyList())
         }
     }
 
+    private fun handleMouse(action: com.googlecode.lanterna.input.MouseAction): Boolean {
+        val sz = size ?: return false
+        if (!showsScrollbar()) return false
+        val local = toLocal(action.position) ?: return false
+        val newTop = scrollbarMouse.handle(
+            action = action,
+            localX = local.column,
+            localY = local.row,
+            scrollbarCol = sz.columns - 1,
+            height = sz.rows,
+            contentRows = lines.size,
+            viewportRows = sz.rows,
+            currentTop = topRow,
+        ) ?: return action.actionType == com.googlecode.lanterna.input.MouseActionType.DRAG
+        setTop(newTop)
+        return true
+    }
+
     override fun createDefaultRenderer(): InteractableRenderer<DiffViewer> = DiffViewerRenderer()
 
     fun lines(): List<DiffLine> = lines
     fun topRow(): Int = topRow
+    fun thumbYOverride(): Int? = scrollbarMouse.dragThumbY
 
     private class DiffViewerRenderer : InteractableRenderer<DiffViewer> {
         override fun getCursorLocation(component: DiffViewer): TerminalPosition? = null
@@ -76,6 +109,8 @@ class DiffViewer(initialLines: List<DiffLine> = emptyList())
             val rows = graphics.size.rows
             val cols = graphics.size.columns
             val lines = component.lines()
+            val showsBar = lines.size > rows
+            val textCols = if (showsBar) (cols - 1).coerceAtLeast(0) else cols
             for (i in 0 until rows) {
                 val idx = component.topRow() + i
                 if (idx >= lines.size) break
@@ -85,9 +120,21 @@ class DiffViewer(initialLines: List<DiffLine> = emptyList())
                     graphics.setForegroundColor(line.color)
                     graphics.enableModifiers(SGR.BOLD)
                 }
-                val text = line.text.let { if (it.length > cols) it.substring(0, cols) else it }
+                val text = line.text.let { if (it.length > textCols) it.substring(0, textCols) else it }
                 graphics.putString(0, i, text)
                 if (line.color != null) graphics.disableModifiers(SGR.BOLD)
+            }
+            if (showsBar && cols >= 1) {
+                graphics.applyThemeStyle(themeDef.normal)
+                Scrollbar.draw(
+                    graphics = graphics,
+                    col = cols - 1,
+                    height = rows,
+                    contentRows = lines.size,
+                    viewportRows = rows,
+                    top = component.topRow(),
+                    thumbYOverride = component.thumbYOverride(),
+                )
             }
         }
     }

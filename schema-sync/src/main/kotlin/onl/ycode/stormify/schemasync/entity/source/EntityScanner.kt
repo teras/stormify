@@ -94,16 +94,24 @@ object EntityScanner {
         if (klass.isInterface() || klass.isEnum() || klass.isAnnotation()) return null
         val className = klass.fqName?.asString() ?: klass.name ?: return null
 
-        val dbTable = findAnnotation(klass, "DbTable", "Table", "Entity")
+        // Look up each annotation independently so a `@Table(name=…)` paired
+        // with a bare `@Entity` doesn't lose the explicit name to whichever
+        // annotation appears first in source. Only `@DbTable` and `@Table`
+        // can carry a name; `@Entity` is treated as a marker.
+        val dbTableAnn = findAnnotation(klass, "DbTable")
+        val jpaTableAnn = findAnnotation(klass, "Table")
+        val entityAnn = findAnnotation(klass, "Entity")
+        val anyClassAnn = dbTableAnn ?: jpaTableAnn ?: entityAnn
         val fields = collectFields(klass)
         // Opt-in: a class must declare a stormify/JPA annotation to count as an
         // entity. Matching on a property named `id` would false-positive on
         // ordinary DTOs.
         val hasDbField = fields.any { it.hasAnnotation("DbField") }
-        if (dbTable == null && !hasDbField) return null
+        if (anyClassAnn == null && !hasDbField) return null
         if (fields.isEmpty()) return null
 
-        val explicitName = dbTable?.literalArg("name")?.takeIf { it.isNotBlank() }
+        val explicitName = (dbTableAnn?.literalArg("name") ?: jpaTableAnn?.literalArg("name"))
+            ?.takeIf { it.isNotBlank() }
         val tableName = explicitName ?: snake(klass.name ?: return null)
 
         val mapped = fields.map { it.toEntityField() }
@@ -298,6 +306,38 @@ private val POSITIONAL_ARG_NAMES: Map<String, List<String>> = mapOf(
     "DbField" to listOf("name", "primaryKey", "primarySequence", "autoIncrement", "creatable", "updatable", "enumAsString"),
 )
 
+/** Resolves Kotlin string-literal escape sequences (`\n`, `\t`, `\\`, `\"`,
+ *  `\uXXXX`, etc.) the way the compiler would. The PSI tree gives us the raw
+ *  source text of the literal, so a `@Column(name = "T501_PROTΟKOL")` in
+ *  user source would otherwise reach us as the literal six-character escape
+ *  instead of the Greek capital omicron the user actually wrote. */
+private fun unescapeKotlinString(s: String): String {
+    if ('\\' !in s) return s
+    val out = StringBuilder(s.length)
+    var i = 0
+    while (i < s.length) {
+        val c = s[i]
+        if (c != '\\' || i + 1 >= s.length) { out.append(c); i++; continue }
+        when (val n = s[i + 1]) {
+            'n' -> { out.append('\n'); i += 2 }
+            'r' -> { out.append('\r'); i += 2 }
+            't' -> { out.append('\t'); i += 2 }
+            'b' -> { out.append('\b'); i += 2 }
+            '\\', '"', '\'', '$' -> { out.append(n); i += 2 }
+            'u' -> {
+                if (i + 5 < s.length) {
+                    val hex = s.substring(i + 2, i + 6)
+                    val cp = hex.toIntOrNull(16)
+                    if (cp != null) { out.append(cp.toChar()); i += 6 }
+                    else { out.append(c); i++ }
+                } else { out.append(c); i++ }
+            }
+            else -> { out.append(c); i++ }
+        }
+    }
+    return out.toString()
+}
+
 private fun findAnnotation(target: KtAnnotated, vararg simpleNames: String): AnnotationData? {
     for (entry in target.annotationEntries) {
         val text = entry.shortName?.asString() ?: continue
@@ -307,7 +347,9 @@ private fun findAnnotation(target: KtAnnotated, vararg simpleNames: String): Ann
             var posIdx = 0
             for (arg in entry.valueArguments) {
                 val raw = arg.getArgumentExpression()?.text ?: continue
-                val unquoted = if (raw.startsWith("\"") && raw.endsWith("\"")) raw.substring(1, raw.length - 1) else raw
+                val unquoted = if (raw.startsWith("\"") && raw.endsWith("\"")) {
+                    unescapeKotlinString(raw.substring(1, raw.length - 1))
+                } else raw
                 val argName = arg.getArgumentName()?.asName?.asString()
                     ?: positionalNames.getOrNull(posIdx++)
                     ?: continue

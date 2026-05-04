@@ -67,6 +67,8 @@ fun runBulkClassifyView(
     val slotsPanel = Panel(LinearLayout(Direction.VERTICAL).setSpacing(0))
     val slotLabels = mutableListOf<Label>()
     val fieldsList = object : ActionListBox() {
+        private val scrollbarMouse = ScrollbarMouse()
+
         override fun handleKeyStroke(keyStroke: KeyStroke): Interactable.Result {
             if (keyStroke.keyType == KeyType.Tab
                 || keyStroke.keyType == KeyType.ArrowLeft
@@ -76,6 +78,32 @@ fun runBulkClassifyView(
                 || keyStroke.character == '+' || keyStroke.character == '='
                 || keyStroke.character == '-' || keyStroke.character == '_'
             ) return Interactable.Result.UNHANDLED
+            keyStroke.asMouse?.let { m ->
+                val sz = size
+                if (sz != null && itemCount > sz.rows) {
+                    val local = toLocal(m.position)
+                    if (local != null) {
+                        val newIndex = scrollbarMouse.handle(
+                            action = m,
+                            localX = local.column,
+                            localY = local.row,
+                            scrollbarCol = sz.columns - 1,
+                            height = sz.rows,
+                            contentRows = itemCount,
+                            viewportRows = sz.rows,
+                            currentTop = selectedIndex.coerceAtLeast(0),
+                        )
+                        if (newIndex != null) {
+                            val before = selectedIndex
+                            selectedIndex = newIndex.coerceIn(0, itemCount - 1)
+                            if (selectedIndex != before) onFieldsCursorChanged()
+                            return Interactable.Result.HANDLED
+                        }
+                        if (m.actionType == com.googlecode.lanterna.input.MouseActionType.DRAG)
+                            return Interactable.Result.HANDLED
+                    }
+                }
+            }
             val before = selectedIndex
             val r = super.handleKeyStroke(keyStroke)
             if (selectedIndex != before) onFieldsCursorChanged()
