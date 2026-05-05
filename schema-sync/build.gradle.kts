@@ -36,6 +36,16 @@ tasks.named<Test>("test") {
     useJUnitPlatform()
 }
 
+// Reseed a target database + emit Kotlin entity files using the
+// MockupBuilder spec. The generator lives in src/test so it has free
+// access to JUnit assertions for the smoke variant.
+tasks.register<JavaExec>("seedMockup") {
+    group = "schema-sync"
+    description = "Generate the synthetic 1000-table / 1000-entity mockup against a target DB."
+    classpath = sourceSets.test.get().runtimeClasspath
+    mainClass = "onl.ycode.stormify.schemasync.mockup.MockupCli"
+}
+
 application {
     mainClass = "onl.ycode.stormify.schemasync.MainKt"
 }

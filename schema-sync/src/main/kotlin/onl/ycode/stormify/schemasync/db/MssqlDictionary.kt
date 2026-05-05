@@ -13,7 +13,8 @@ import onl.ycode.stormify.schemasync.model.SqlTypeCode
 
 internal fun mssqlListTables(stormify: Stormify): List<DbIntrospector.TableId> {
     val schema = Dialect.MSSQL.queryDefaultSchema(stormify) ?: "dbo"
-    return stormify.read<Row>(
+    val out = mutableListOf<DbIntrospector.TableId>()
+    stormify.read<Row>(
         """
         SELECT table_name, table_type
         FROM information_schema.tables
@@ -22,11 +23,27 @@ internal fun mssqlListTables(stormify: Stormify): List<DbIntrospector.TableId> {
         ORDER BY table_name
         """.trimIndent(),
         schema,
-    ).map { row ->
+    ).forEach { row ->
         val kind = if (row.str("table_type") == "VIEW") DbIntrospector.TableId.Kind.VIEW
         else DbIntrospector.TableId.Kind.TABLE
-        DbIntrospector.TableId(null, row.str("table_name")!!, kind)
+        out += DbIntrospector.TableId(null, row.str("table_name")!!, kind)
     }
+    // Synonyms aren't visible through information_schema.tables; they
+    // live in sys.synonyms. Surfaced as TABLEs so the diff layer treats
+    // them like any other entity-mapped object.
+    stormify.read<Row>(
+        """
+        SELECT s.name AS synonym_name
+        FROM sys.synonyms s
+        JOIN sys.schemas sch ON sch.schema_id = s.schema_id
+        WHERE sch.name = ?
+        ORDER BY s.name
+        """.trimIndent(),
+        schema,
+    ).forEach { row ->
+        out += DbIntrospector.TableId(null, row.str("synonym_name")!!, DbIntrospector.TableId.Kind.TABLE)
+    }
+    return out
 }
 
 internal fun mssqlListColumns(
@@ -54,7 +71,71 @@ internal fun mssqlListColumns(
         if (seen.add(table)) onProgress?.invoke(seen.size.coerceAtMost(tables.size), tables.size)
         out += mssqlRowToColumn(row, table)
     }
+    // Synonyms: resolve each synonym to its base object and emit the
+    // base's columns under the synonym's name. base_object_name is the
+    // bracketed `[schema].[table]` form; PARSENAME extracts segments.
+    stormify.read<Row>(
+        """
+        SELECT s.name AS synonym_name,
+               c.name AS column_name,
+               t.name AS data_type,
+               c.max_length AS character_maximum_length,
+               c.precision AS numeric_precision,
+               c.scale AS numeric_scale,
+               c.is_nullable AS is_nullable,
+               OBJECT_DEFINITION(c.default_object_id) AS column_default
+        FROM sys.synonyms s
+        JOIN sys.schemas sch ON sch.schema_id = s.schema_id
+        JOIN sys.objects o ON o.object_id = OBJECT_ID(s.base_object_name)
+        JOIN sys.columns c ON c.object_id = o.object_id
+        JOIN sys.types t ON t.user_type_id = c.user_type_id
+        WHERE sch.name = ?
+        ORDER BY s.name, c.column_id
+        """.trimIndent(),
+        schema,
+    ).forEach { row ->
+        val table = row.str("synonym_name") ?: return@forEach
+        if (table !in tableSet) return@forEach
+        if (seen.add(table)) onProgress?.invoke(seen.size.coerceAtMost(tables.size), tables.size)
+        out += mssqlSynonymRowToColumn(row, table)
+    }
     return out
+}
+
+private fun mssqlSynonymRowToColumn(row: Row, table: String): ColumnRef {
+    val name = row.str("column_name")!!
+    val dataType = row.str("data_type") ?: ""
+    // sys.columns reports max_length in bytes (×2 for nvarchar/nchar),
+    // and `-1` for MAX. We only need precision-grade fidelity for the
+    // diff layer, so we collapse `-1` to 0 and divide unicode types
+    // back to character length.
+    val rawLen = row.intOrZero("character_maximum_length")
+    val charLen = when {
+        rawLen <= 0 -> 0
+        dataType.lowercase() in setOf("nvarchar", "nchar", "ntext") -> rawLen / 2
+        else -> rawLen
+    }
+    val numPrec = row.intOrZero("numeric_precision")
+    val numScale = row.intOrNull("numeric_scale")
+    // sys.columns.is_nullable is a Boolean (BIT) — Stormify presents it
+    // as Number/Boolean depending on driver; reuse the Yes/No helper.
+    val nullable = row.boolFromYesNo("is_nullable", default = true)
+    val rawDefault = row.str("column_default")?.trim()?.takeIf { it.isNotEmpty() }
+        ?.let { stripMssqlDefaultParens(it) }
+    val sqlType = mssqlTypeToSqlType(dataType)
+    val size = if (charLen > 0) charLen else numPrec
+    return ColumnRef(
+        schema = null,
+        table = table,
+        name = name,
+        category = TypeCategoryMapper.categoryFor(sqlType),
+        dbType = formatMssqlDbType(dataType, size, numScale),
+        sqlType = sqlType,
+        nullable = nullable,
+        family = TypeCategoryMapper.familyFor(sqlType, numScale),
+        precision = size.takeIf { it > 0 },
+        defaultValue = rawDefault,
+    )
 }
 
 private fun mssqlRowToColumn(row: Row, table: String): ColumnRef {

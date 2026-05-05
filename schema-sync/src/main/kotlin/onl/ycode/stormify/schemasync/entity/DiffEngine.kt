@@ -182,13 +182,38 @@ object DiffEngine {
     /** Compares the entity-side Kotlin literal with the DB-side raw default
      *  after normalization. Returns null when both are absent or compare
      *  equal; otherwise returns the (entity, db) pair as the user should see
-     *  it on the diff line. */
+     *  it on the diff line.
+     *
+     *  Auto-increment primary keys are exempt: the entity's init literal
+     *  (`var id: Long = 0`) is a Kotlin compile-time placeholder that the
+     *  database fills in via its IDENTITY/SERIAL/AUTOINCREMENT mechanism,
+     *  not a semantic default. Without this exemption every entity with
+     *  an autoIncrement PK trips a permanent defaultMismatch, and even
+     *  the canonical `Case7Synced` demo never reaches `TableStatus.SYNCED`.
+     *
+     *  Numeric equality across `0` ↔ `0.0` ↔ `0L` is also reconciled here:
+     *  the regex normaliser strips suffixes but keeps the lexical form,
+     *  so `0.0` (Kotlin literal for `Double = 0`) would otherwise never
+     *  match `0` (the form most dialects return for `DEFAULT 0`). */
     private fun defaultMismatch(field: EntityField, col: ColumnRef): Pair<String?, String?>? {
+        if (field.primaryKey && field.autoIncrement) return null
         val ent = normalizeKotlinLiteral(field.defaultLiteral)
         val db = normalizeDbDefault(col.defaultValue)
         if (ent == null && db == null) return null
         if (ent != null && db != null && ent == db) return null
+        if (ent != null && db != null && numericallyEqual(ent, db)) return null
         return field.defaultLiteral to col.defaultValue
+    }
+
+    /** Treats `0` ≡ `0.0`, `1` ≡ `1.0`, `5L` ≡ `5`, etc. — numeric strings
+     *  that would parse as the same double. Used to absorb the lexical
+     *  divergence between Kotlin literals (always carry a decimal point
+     *  for floats) and DB-reported defaults (most dialects strip trailing
+     *  zeros). */
+    private fun numericallyEqual(a: String, b: String): Boolean {
+        val da = a.toDoubleOrNull() ?: return false
+        val db = b.toDoubleOrNull() ?: return false
+        return da == db
     }
 
     private val NUMERIC_FAMILIES = setOf(TypeFamily.INTEGRAL, TypeFamily.DECIMAL)
