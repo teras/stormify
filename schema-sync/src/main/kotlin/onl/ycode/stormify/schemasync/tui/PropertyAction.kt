@@ -27,14 +27,18 @@ enum class PropertyAction {
     }
 }
 
-/** Row-kind glyph; ASCII fallback honours `--ascii`. */
-fun symbolFor(kind: ColumnDelta.Kind): String {
+/** Row glyph; ASCII fallback honours `--ascii`. A SYNCED column with an
+ *  entity-vs-DB default mismatch is rendered as the mismatch glyph rather than
+ *  as in-sync, so the eye can spot it without opening the diff pane. */
+fun symbolFor(delta: ColumnDelta): String {
     val ascii = Symbols.ascii
-    return when (kind) {
-        ColumnDelta.Kind.TYPE_MISMATCH -> if (ascii) "!" else "⚠"
-        ColumnDelta.Kind.SYNCED -> if (ascii) "=" else "═"
-        ColumnDelta.Kind.ENTITY_ONLY -> if (ascii) "<" else "◀"
-        ColumnDelta.Kind.DB_ONLY -> if (ascii) ">" else "▶"
+    val syncedWithDefaultIssue = delta.kind == ColumnDelta.Kind.SYNCED && delta.defaultMismatch != null
+    return when {
+        delta.kind == ColumnDelta.Kind.TYPE_MISMATCH || syncedWithDefaultIssue ->
+            if (ascii) "!" else "⚠"
+        delta.kind == ColumnDelta.Kind.SYNCED -> if (ascii) "=" else "═"
+        delta.kind == ColumnDelta.Kind.ENTITY_ONLY -> if (ascii) "<" else "◀"
+        else -> if (ascii) ">" else "▶"
     }
 }
 

@@ -23,6 +23,7 @@ import onl.ycode.stormify.schemasync.config.ConfigState
 import onl.ycode.stormify.schemasync.db.Dialect
 import onl.ycode.stormify.schemasync.db.JdbcCategoryMapper
 import onl.ycode.stormify.schemasync.db.MigrationGenerator
+import onl.ycode.stormify.schemasync.db.dbDefaultToKotlinLiteral
 import onl.ycode.stormify.schemasync.entity.ColumnDelta
 import onl.ycode.stormify.schemasync.entity.EntityStyle
 import onl.ycode.stormify.schemasync.entity.EntityStyleDetector
@@ -150,6 +151,7 @@ fun buildPendingChanges(
                                 autoIncrement = false,
                                 import = fqn,
                                 explicitColumnName = policy.fromKotlin(propName) != col.name,
+                                defaultLiteral = dbDefaultToKotlinLiteral(col.defaultValue, simpleType),
                             )
                         } else {
                             val choice = JdbcCategoryMapper.kotlinTypeChoice(col.jdbcType, isPk, effectiveDefaults)
@@ -163,6 +165,7 @@ fun buildPendingChanges(
                                 autoIncrement = false,
                                 import = choice.import,
                                 explicitColumnName = policy.fromKotlin(propName) != col.name,
+                                defaultLiteral = dbDefaultToKotlinLiteral(col.defaultValue, choice.kotlin),
                             )
                         }
                     },
@@ -193,6 +196,7 @@ fun buildPendingChanges(
                                 typeImport = choice.import
                             }
                             val nul = if (col.nullable) "?" else ""
+                            val translatedDefault = dbDefaultToKotlinLiteral(col.defaultValue, typeName)
                             for (target in insertTargets) {
                                 val source = target.sourcePath ?: continue
                                 splices += PsiSplice(
@@ -206,6 +210,7 @@ fun buildPendingChanges(
                                         import = typeImport,
                                         columnName = col.name,
                                         explicitColumnName = policy.fromKotlin(propName) != col.name,
+                                        defaultLiteral = translatedDefault,
                                     ),
                                 )
                             }

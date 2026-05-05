@@ -45,7 +45,7 @@ class DbIntrospector(private val conn: Connection) {
     fun listColumns(onProgress: ((Int, Int) -> Unit)? = null): List<ColumnRef> {
         val tables = listTables()
         onProgress?.invoke(0, tables.size)
-        dialect.listColumnsViaDictionary(conn, tables)?.let {
+        dialect.listColumnsViaDictionary(conn, tables, onProgress)?.let {
             onProgress?.invoke(tables.size, tables.size)
             return decorateWithFks(it, tables)
         }
@@ -131,6 +131,7 @@ class DbIntrospector(private val conn: Connection) {
         val size = rs.getInt("COLUMN_SIZE")
         val scale = readScale(rs)
         val nullable = rs.getInt("NULLABLE") != java.sql.DatabaseMetaData.columnNoNulls
+        val rawDefault = runCatching { rs.getString("COLUMN_DEF") }.getOrNull()
         return ColumnRef(
             schema = schema,
             table = table,
@@ -141,6 +142,7 @@ class DbIntrospector(private val conn: Connection) {
             nullable = nullable,
             family = JdbcCategoryMapper.familyFor(jdbcType, scale),
             precision = size.takeIf { it > 0 },
+            defaultValue = rawDefault?.trim()?.takeIf { it.isNotEmpty() },
         )
     }
 

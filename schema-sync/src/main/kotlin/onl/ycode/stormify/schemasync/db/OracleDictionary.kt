@@ -38,10 +38,26 @@ internal fun oracleListTables(conn: Connection): List<DbIntrospector.TableId> {
 internal fun oracleListColumns(
     conn: Connection,
     tables: List<DbIntrospector.TableId>,
+    onProgress: ((Int, Int) -> Unit)? = null,
 ): List<ColumnRef> {
     val userTables = tables.mapTo(HashSet()) { it.name }
+    val total = tables.size
     val out = mutableListOf<ColumnRef>()
+    // Track which tables have been seen across both queries so progress reflects
+    // unique tables, not row count. The two queries together yield each table
+    // at most once (owned tables vs. synonyms), so a single set is enough.
+    val seen = HashSet<String>()
+    fun bump(table: String) {
+        if (seen.add(table)) onProgress?.invoke(seen.size.coerceAtMost(total), total)
+    }
     // Owned tables/views: USER_TAB_COLUMNS — direct, no joins.
+    // DATA_DEFAULT is intentionally excluded here: it's a LONG column, and
+    // Oracle JDBC fetches LONG values via one network roundtrip per row
+    // regardless of fetch size. Pulling it inline turns a single bulk SELECT
+    // into N synchronous trips and dominates the introspection time on any
+    // schema with hundreds of tables. Defaults are fetched separately below
+    // with a `WHERE DATA_DEFAULT IS NOT NULL` filter that drops 80–95% of
+    // the rows in a typical schema.
     conn.prepareStatement(
         """
         SELECT TABLE_NAME, COLUMN_NAME, DATA_TYPE, DATA_LENGTH, DATA_PRECISION, DATA_SCALE, NULLABLE
@@ -53,6 +69,7 @@ internal fun oracleListColumns(
             while (rs.next()) {
                 val table = rs.getString("TABLE_NAME").lowercase()
                 if (table !in userTables) continue
+                bump(table)
                 out += oracleRowToColumn(rs, table)
             }
         }
@@ -76,11 +93,66 @@ internal fun oracleListColumns(
             while (rs.next()) {
                 val table = rs.getString("SYNONYM_NAME").lowercase()
                 if (table !in userTables) continue
+                bump(table)
                 out += oracleRowToColumn(rs, table)
             }
         }
     }
-    return out
+    return overlayDefaults(conn, out, userTables)
+}
+
+/** Fetches DATA_DEFAULT only for columns that have one, then merges those
+ *  values into [columns]. The two source queries (owned tables / synonyms)
+ *  filter on `WHERE DATA_DEFAULT IS NOT NULL` so the LONG fetch happens for
+ *  the small subset that needs it instead of for every column in the schema. */
+private fun overlayDefaults(
+    conn: Connection,
+    columns: List<ColumnRef>,
+    userTables: Set<String>,
+): List<ColumnRef> {
+    val defaults = HashMap<Pair<String, String>, String>()
+    fun captureRow(rs: java.sql.ResultSet, tableCol: String) {
+        val table = rs.getString(tableCol).lowercase()
+        if (table !in userTables) return
+        val column = rs.getString("COLUMN_NAME").lowercase()
+        val raw = runCatching { rs.getString("DATA_DEFAULT") }.getOrNull()
+            ?.trim()?.takeIf { it.isNotEmpty() } ?: return
+        defaults[table to column] = raw
+    }
+    runCatching {
+        conn.prepareStatement(
+            """
+            SELECT TABLE_NAME, COLUMN_NAME, DATA_DEFAULT
+            FROM USER_TAB_COLUMNS
+            WHERE DATA_DEFAULT IS NOT NULL
+            """.trimIndent(),
+        ).use { ps ->
+            ps.executeQuery().use { rs ->
+                while (rs.next()) captureRow(rs, "TABLE_NAME")
+            }
+        }
+    }
+    runCatching {
+        conn.prepareStatement(
+            """
+            SELECT s.SYNONYM_NAME, c.COLUMN_NAME, c.DATA_DEFAULT
+            FROM USER_SYNONYMS s
+            JOIN ALL_TAB_COLUMNS c
+              ON c.OWNER = s.TABLE_OWNER
+             AND c.TABLE_NAME = s.TABLE_NAME
+            WHERE c.DATA_DEFAULT IS NOT NULL
+            """.trimIndent(),
+        ).use { ps ->
+            ps.executeQuery().use { rs ->
+                while (rs.next()) captureRow(rs, "SYNONYM_NAME")
+            }
+        }
+    }
+    if (defaults.isEmpty()) return columns
+    return columns.map { c ->
+        val raw = defaults[c.table to c.name] ?: return@map c
+        c.copy(defaultValue = raw)
+    }
 }
 
 private fun oracleRowToColumn(rs: java.sql.ResultSet, table: String): ColumnRef {

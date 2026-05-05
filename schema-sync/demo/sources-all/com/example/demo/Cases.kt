@@ -158,3 +158,33 @@ data class Case11Lean(
     var id: Long = 0,
     var name: String = "",
 )
+
+// Case 13 — entity-only table with literal defaults. Schema-sync should
+// propose CREATE TABLE with DEFAULT clauses derived from the Kotlin literals.
+@DbTable
+data class Case13KtDefaults(
+    @DbField(primaryKey = true, autoIncrement = true)
+    var id: Long = 0,
+    var label: String = "pending",
+    var qty: Int = 0,
+    var rate: Double = 1.5,
+)
+
+// Case 14 — entity and DB defaults agree. Status SYNCED, no "Default conflicts".
+@DbTable
+data class Case14DefaultSynced(
+    @DbField(primaryKey = true, autoIncrement = true)
+    var id: Long = 0,
+    var status: String = "active",
+    var threshold: Int = 100,
+)
+
+// Case 15 — entity and DB defaults disagree. Status SYNCED, but the
+// "Default conflicts" section in the diff pane surfaces both sides.
+@DbTable
+data class Case15DefaultMismatch(
+    @DbField(primaryKey = true, autoIncrement = true)
+    var id: Long = 0,
+    var label: String = "bar",
+    var qty: Int = 2,
+)

@@ -47,7 +47,11 @@ if [[ ! -d "$WORK_DIR" ]]; then
 fi
 
 cd "$WORK_DIR"
-exec java -jar "$JAR" \
+# --sun-misc-unsafe-memory-access=allow silences the JVM's "terminally
+# deprecated method in sun.misc.Unsafe" warnings printed by HotSpot directly
+# to FD 2 (bypassing System.err) when the bundled Kotlin compiler embeddable
+# loads. Available on JDK 23+; older JDKs ignore the flag harmlessly.
+exec java --sun-misc-unsafe-memory-access=allow -jar "$JAR" \
     --url "jdbc:sqlite:./demo.db" \
     --sources "./sources" \
     "$@"

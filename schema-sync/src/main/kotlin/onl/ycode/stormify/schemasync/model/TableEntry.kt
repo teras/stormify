@@ -11,6 +11,9 @@ data class TableEntry(
     val hasMissingDbFields: Boolean = false,
     /** True when the DB has columns the entity doesn't declare. */
     val hasMissingKotlinFields: Boolean = false,
+    /** True when at least one column carries an entity-vs-DB DEFAULT mismatch.
+     *  Independent of [status]: a SYNCED row may still flag this. */
+    val hasDefaultConflicts: Boolean = false,
     /** True when the DB object backing this entry is a VIEW (not a TABLE). */
     val isView: Boolean = false,
     /** Number of Kotlin entities mapped to this slot. >1 → multi-claim. */

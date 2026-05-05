@@ -21,6 +21,9 @@ data class ColumnRef(
     /** Total digits for NUMERIC/DECIMAL columns (Oracle's `NUMBER(p, s)` p);
      *  null when the database doesn't report it. */
     val precision: Int? = null,
+    /** Raw `COLUMN_DEF` from JDBC metadata (with obvious wrappers stripped). Null
+     *  when the column has no DEFAULT clause. */
+    val defaultValue: String? = null,
 ) {
     /** Stable identifier used in saved assignments and as map key. */
     val key: String = listOfNotNull(schema, table, name).joinToString(".")

@@ -5,6 +5,7 @@ import onl.ycode.stormify.schemasync.entity.KotlinEntity
 import onl.ycode.stormify.schemasync.entity.KotlinTypeMapper
 import onl.ycode.stormify.schemasync.model.NamingPolicy
 import org.jetbrains.kotlin.psi.KtAnnotated
+import org.jetbrains.kotlin.psi.KtCallExpression
 import org.jetbrains.kotlin.psi.KtClass
 import org.jetbrains.kotlin.psi.KtFile
 import org.jetbrains.kotlin.psi.KtParameter
@@ -153,7 +154,7 @@ object EntityScanner {
         val typeRef = p.typeReference ?: return null
         if (isTransient(p)) return null
         if (isCollection(typeRef)) return null
-        val initText = p.initializer?.text
+        val initText = p.initializer?.text ?: dbDelegateLiteral(p)
         return RawField(
             owner = p,
             kotlinName = name,
@@ -185,6 +186,17 @@ object EntityScanner {
 
     private fun isTransient(target: KtAnnotated): Boolean =
         findAnnotation(target, "Transient") != null
+
+    /** Extract the single literal argument from a `by db(<literal>)` delegate.
+     *  Returns null when the delegate is not `db(...)` or has anything other
+     *  than one positional argument. */
+    private fun dbDelegateLiteral(p: KtProperty): String? {
+        val call = p.delegate?.expression as? KtCallExpression ?: return null
+        if (call.calleeExpression?.text != "db") return null
+        val args = call.valueArguments
+        if (args.size != 1) return null
+        return args[0].getArgumentExpression()?.text
+    }
 
     private fun isCollection(typeRef: KtTypeReference): Boolean {
         val head = typeRef.text.substringBefore('<').trim().removePrefix("kotlin.collections.").substringAfterLast('.')

@@ -41,6 +41,10 @@ object EntityWriter {
             val explicitColumnName: Boolean = false,
             val primaryKey: Boolean = false,
             val autoIncrement: Boolean = false,
+            /** When non-null, the rendered initializer uses this verbatim
+             *  instead of [defaultExprFor] — typically a Kotlin literal
+             *  translated from the DB column DEFAULT. */
+            val defaultLiteral: String? = null,
         ) : Edit {
             /** View this edit as a [NewColumn] so [renderProperty] can format
              *  the inserted line identically to fresh-file generation. */
@@ -53,6 +57,7 @@ object EntityWriter {
                 autoIncrement = autoIncrement,
                 import = import,
                 explicitColumnName = explicitColumnName,
+                defaultLiteral = defaultLiteral,
             )
         }
 
@@ -98,6 +103,9 @@ object EntityWriter {
         /** True when [columnName] differs from what the naming policy would
          *  produce from [propName], so the generator must emit `name = "…"`. */
         val explicitColumnName: Boolean = false,
+        /** Initializer expression to emit verbatim. When null, [defaultExprFor]
+         *  produces a synthetic value based on the Kotlin type. */
+        val defaultLiteral: String? = null,
     )
 
     /**
@@ -176,7 +184,7 @@ object EntityWriter {
             if (parts.isNotEmpty()) append("@DbField(${parts.joinToString(", ")})\n    ")
         }
         val typeStr = c.kotlinType + if (c.nullable) "?" else ""
-        val default = defaultExprFor(c.kotlinType, c.nullable)
+        val default = c.defaultLiteral ?: defaultExprFor(c.kotlinType, c.nullable)
         val tail = if (trailingComma) "," else ""
         val initializer = if (byDb) "by db($default)" else "= $default"
         return "${annot}var ${safeKotlinIdentifier(c.propName)}: $typeStr $initializer$tail"

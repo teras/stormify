@@ -1,5 +1,7 @@
 package onl.ycode.stormify.schemasync.entity
 
+import onl.ycode.stormify.schemasync.db.normalizeDbDefault
+import onl.ycode.stormify.schemasync.db.normalizeKotlinLiteral
 import onl.ycode.stormify.schemasync.model.ColumnRef
 import onl.ycode.stormify.schemasync.model.NamingPolicy
 import onl.ycode.stormify.schemasync.model.TableStatus
@@ -106,14 +108,17 @@ object DiffEngine {
             when {
                 field != null && col != null -> {
                     val reason = mismatchReason(field, col)
-                    if (reason != null) ColumnDelta(name, ColumnDelta.Kind.TYPE_MISMATCH, field, col, reason)
-                    else ColumnDelta(name, ColumnDelta.Kind.SYNCED, field, col)
+                    val defaultMismatch = defaultMismatch(field, col)
+                    if (reason != null) ColumnDelta(name, ColumnDelta.Kind.TYPE_MISMATCH, field, col, reason, defaultMismatch)
+                    else ColumnDelta(name, ColumnDelta.Kind.SYNCED, field, col, null, defaultMismatch)
                 }
                 field != null -> ColumnDelta(name, ColumnDelta.Kind.ENTITY_ONLY, field, null)
                 else -> ColumnDelta(name, ColumnDelta.Kind.DB_ONLY, null, col)
             }
         }
-        val status = if (deltas.all { it.kind == ColumnDelta.Kind.SYNCED }) {
+        val structurallySynced = deltas.all { it.kind == ColumnDelta.Kind.SYNCED }
+        val anyDefaultMismatch = deltas.any { it.defaultMismatch != null }
+        val status = if (structurallySynced && !anyDefaultMismatch) {
             TableStatus.SYNCED
         } else {
             TableStatus.DIFF
@@ -172,6 +177,18 @@ object DiffEngine {
         return if (dbDigits > ktDigits)
             "capacity (${field.type} holds $ktDigits digits, column needs $dbDigits)"
         else null
+    }
+
+    /** Compares the entity-side Kotlin literal with the DB-side raw default
+     *  after normalization. Returns null when both are absent or compare
+     *  equal; otherwise returns the (entity, db) pair as the user should see
+     *  it on the diff line. */
+    private fun defaultMismatch(field: EntityField, col: ColumnRef): Pair<String?, String?>? {
+        val ent = normalizeKotlinLiteral(field.defaultLiteral)
+        val db = normalizeDbDefault(col.defaultValue)
+        if (ent == null && db == null) return null
+        if (ent != null && db != null && ent == db) return null
+        return field.defaultLiteral to col.defaultValue
     }
 
     private val NUMERIC_FAMILIES = setOf(TypeFamily.INTEGRAL, TypeFamily.DECIMAL)

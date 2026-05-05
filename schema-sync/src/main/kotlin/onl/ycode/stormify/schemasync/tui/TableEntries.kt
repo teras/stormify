@@ -18,6 +18,7 @@ fun buildTableEntries(diffs: List<TableDiff>, viewKeys: Set<String> = emptySet()
         hasTypeMismatch = d.columnDeltas.any { it.kind == ColumnDelta.Kind.TYPE_MISMATCH },
         hasMissingDbFields = d.columnDeltas.any { it.kind == ColumnDelta.Kind.ENTITY_ONLY },
         hasMissingKotlinFields = d.columnDeltas.any { it.kind == ColumnDelta.Kind.DB_ONLY },
+        hasDefaultConflicts = d.columnDeltas.any { it.defaultMismatch != null },
         isView = d.tableKey.substringAfterLast('.').lowercase() in viewKeys,
         entityCount = d.entityCount,
     )

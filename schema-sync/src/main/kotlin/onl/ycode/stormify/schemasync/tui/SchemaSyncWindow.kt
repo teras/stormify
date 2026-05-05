@@ -662,12 +662,14 @@ private enum class RowCategory(
     // *and* a missing DB field) — that is intentional: pick the union you
     // care about. `In sync` stands alone since SYNCED rules out all three.
     SYNCED(FilterGroup.COLUMN_STATUS, "In sync", { it.status == TableStatus.SYNCED }),
-    TYPE_CONFLICTS(FilterGroup.COLUMN_STATUS, "Type conflicts",
-        { it.status == TableStatus.DIFF && it.hasTypeMismatch }),
     MISSING_DB_FIELDS(FilterGroup.COLUMN_STATUS, "Missing DB fields",
         { it.status == TableStatus.DIFF && it.hasMissingDbFields }),
     MISSING_KOTLIN_FIELDS(FilterGroup.COLUMN_STATUS, "Missing Kotlin fields",
         { it.status == TableStatus.DIFF && it.hasMissingKotlinFields }),
+    TYPE_CONFLICTS(FilterGroup.COLUMN_STATUS, "Type conflicts",
+        { it.status == TableStatus.DIFF && it.hasTypeMismatch }),
+    DEFAULT_CONFLICTS(FilterGroup.COLUMN_STATUS, "Default conflicts",
+        { it.status == TableStatus.DIFF && it.hasDefaultConflicts }),
 
     // Table-scope: every slot is in **exactly one** of the three. `Both`
     // covers SYNCED and DIFF (slot has both sides); the other two cover the

@@ -12,6 +12,9 @@ dependencies {
     implementation("com.googlecode.lanterna:lanterna:3.1.2")
     implementation("org.apache.lucene:lucene-core:9.11.1")
     implementation("org.apache.lucene:lucene-analysis-common:9.11.1")
+    // SLF4J no-op binding: silences the "No SLF4J providers were found" warning
+    // emitted at startup by transitive libraries that depend on slf4j-api.
+    runtimeOnly("org.slf4j:slf4j-nop:2.0.16")
     implementation("com.akuleshov7:ktoml-core:0.7.0")
     implementation("com.akuleshov7:ktoml-file:0.7.0")
     implementation("org.jetbrains.kotlin:kotlin-compiler-embeddable:2.2.21")

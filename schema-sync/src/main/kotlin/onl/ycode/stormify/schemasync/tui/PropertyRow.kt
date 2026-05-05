@@ -27,7 +27,7 @@ class PropertyRowFormatter(deltas: List<ColumnDelta>) {
         maxOf("property".length, deltas.maxOfOrNull { it.name.length } ?: 0).coerceAtMost(32)
 
     fun render(delta: ColumnDelta, action: PropertyAction): String {
-        val sym = symbolFor(delta.kind)
+        val sym = symbolFor(delta)
         val name = delta.name.fit(nameWidth)
         val tick = if (action == PropertyAction.INSERT) Symbols.tick else " "
         return " $sym $name $tick "

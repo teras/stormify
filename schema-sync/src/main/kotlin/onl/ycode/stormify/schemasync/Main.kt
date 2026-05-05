@@ -1,9 +1,17 @@
 package onl.ycode.stormify.schemasync
 
+import com.googlecode.lanterna.gui2.MultiWindowTextGUI
+import com.googlecode.lanterna.gui2.dialogs.MessageDialog
+import com.googlecode.lanterna.gui2.dialogs.MessageDialogButton
+import com.googlecode.lanterna.input.KeyType
 import com.googlecode.lanterna.screen.Screen
 import com.googlecode.lanterna.screen.TerminalScreen
 import com.googlecode.lanterna.terminal.DefaultTerminalFactory
 import com.googlecode.lanterna.terminal.MouseCaptureMode
+import java.io.ByteArrayOutputStream
+import java.io.PrintStream
+import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicReference
 import onl.ycode.stormify.schemasync.classifier.ClassificationCache
 import onl.ycode.stormify.schemasync.classifier.SchemaClassifier
 import onl.ycode.stormify.schemasync.classifier.autoFillCache
@@ -46,6 +54,12 @@ Supported JDBC URLs (drivers bundled):
 """
 
 fun main(args: Array<String>) {
+    // Silence Lucene's Vector API capability check, which logs at WARNING on
+    // any JVM newer than the Lucene release predates (Java 23+ for 9.11.x).
+    // The runtime fallback is functionally fine for our classifier workload —
+    // we don't index millions of vectors, so the message is pure noise.
+    java.util.logging.Logger.getLogger("org.apache.lucene").level = java.util.logging.Level.SEVERE
+
     if (args.any { it == "-h" || it == "--help" }) {
         print(USAGE)
         return
@@ -80,6 +94,15 @@ fun main(args: Array<String>) {
 
     val sourceRoots = argValuesAll(args, "--sources").map(Path::of)
 
+    // Redirect stderr to a buffer for the whole TUI session. Warnings produced
+    // by the JVM (Unsafe deprecation), the Kotlin compiler embeddable used by
+    // PsiEnvironment, JDBC drivers, etc. would otherwise be drawn over by
+    // raw-mode screen refreshes and disappear before the user can read them.
+    // Drained into a modal after each introspection + scan cycle.
+    val stderrBuffer = ByteArrayOutputStream()
+    val originalErr = System.err
+    System.setErr(PrintStream(stderrBuffer, true, Charsets.UTF_8))
+
     val factory = DefaultTerminalFactory()
         .setMouseCaptureMode(MouseCaptureMode.CLICK_RELEASE_DRAG)
     val terminal = factory.createTerminal()
@@ -89,10 +112,11 @@ fun main(args: Array<String>) {
     try {
         var outcome: SchemaSyncOutcome
         do {
-            val intro = loadColumnsAndTables(connection)
+            val intro = loadColumnsAndTablesCancellable(screen, connection, stderrBuffer) ?: return
             val columnsByTable = groupByTable(intro.columns)
             val effectiveTableKeys = intro.tableKeys.ifEmpty { columnsByTable.keys.toList() }
             val entities = if (sourceRoots.isNotEmpty()) EntityScanner.scan(sourceRoots, state.current.namingPolicy) else emptyList()
+            drainStderrWarnings(screen, stderrBuffer)
             val diffs = DiffEngine.diff(entities, columnsByTable, effectiveTableKeys, state.current.namingPolicy)
             val diffsByTable = diffs.associateBy { it.tableKey }
             val tables = buildTableEntries(diffs, intro.viewKeys)
@@ -119,6 +143,11 @@ fun main(args: Array<String>) {
     } finally {
         screen.stopScreen()
         classifier.close()
+        System.setErr(originalErr)
+        // Surface anything that arrived after the last drain (shutdown errors,
+        // late-binding native cleanup, …) so the user sees it post-exit.
+        val tail = stderrBuffer.toString(Charsets.UTF_8)
+        if (tail.isNotEmpty()) originalErr.print(tail)
     }
 }
 
@@ -129,21 +158,94 @@ private data class IntrospectionResult(
     val dialect: Dialect,
 )
 
-private fun loadColumnsAndTables(connection: ConnectionConfig): IntrospectionResult =
-    DbIntrospector.connect(connection.url, connection.user, connection.password).use { jdbc ->
-        val intro = DbIntrospector(jdbc)
-        val tables = intro.listTables()
-        val keys = tables.map { it.key }
-        val views = tables.asSequence()
-            .filter { it.kind == DbIntrospector.TableId.Kind.VIEW }
-            .map { it.name.lowercase() }
-            .toSet()
-        val cols = intro.listColumns { done, total ->
-            if (total > 20) System.err.print("\rIntrospecting $done/$total tables...")
+/**
+ * Runs introspection on a worker thread while the calling thread keeps the
+ * Lanterna screen in raw mode and polls for ESC. On ESC, the JDBC connection
+ * is closed (which aborts the running bulk query in every supported driver),
+ * the worker is joined, and the function returns null so the main loop can
+ * exit cleanly.
+ */
+private data class IntrospectProgress(val label: String, val done: Int, val total: Int)
+
+private fun loadColumnsAndTablesCancellable(
+    screen: Screen,
+    connection: ConnectionConfig,
+    @Suppress("UNUSED_PARAMETER") stderrBuffer: ByteArrayOutputStream,
+): IntrospectionResult? {
+    val jdbc = DbIntrospector.connect(connection.url, connection.user, connection.password)
+    val intro = DbIntrospector(jdbc)
+    val progress = AtomicReference(IntrospectProgress("Connecting…", 0, 0))
+    val cancelled = AtomicBoolean(false)
+    val resultRef = AtomicReference<IntrospectionResult?>()
+    val errorRef = AtomicReference<Throwable?>()
+
+    val worker = Thread({
+        try {
+            val tables = intro.listTables()
+            val keys = tables.map { it.key }
+            val views = tables.asSequence()
+                .filter { it.kind == DbIntrospector.TableId.Kind.VIEW }
+                .map { it.name.lowercase() }
+                .toSet()
+            val cols = intro.listColumns { done, total ->
+                progress.set(IntrospectProgress("Introspecting tables", done, total))
+            }
+            resultRef.set(IntrospectionResult(cols, keys, views, Dialect.detect(jdbc)))
+        } catch (e: Throwable) {
+            if (!cancelled.get()) errorRef.set(e)
         }
-        if (keys.size > 20) System.err.println()
-        IntrospectionResult(cols, keys, views, Dialect.detect(jdbc))
+    }, "schema-sync-introspect").apply { isDaemon = true; start() }
+
+    try {
+        while (worker.isAlive) {
+            drawProgress(screen, progress.get())
+            val key = screen.pollInput()
+            if (key != null) {
+                val isCtrlC = key.character?.code == 'c'.code && key.isCtrlDown
+                if (key.keyType == KeyType.Escape || isCtrlC) {
+                    cancelled.set(true)
+                    runCatching { jdbc.close() }
+                    worker.join(2000)
+                    return null
+                }
+            }
+            Thread.sleep(40)
+        }
+        worker.join()
+    } finally {
+        runCatching { jdbc.close() }
     }
+    errorRef.get()?.let { throw it }
+    return resultRef.get()
+}
+
+/** Drains [stderrBuffer] into a modal dialog if non-empty. Caller passes the
+ *  buffer that's been intercepting stderr; this is invoked after each
+ *  introspection + entity-scan cycle so warnings from JVM/Kotlin/JDBC are
+ *  surfaced once instead of being painted over by the raw-mode TUI. */
+private fun drainStderrWarnings(screen: Screen, stderrBuffer: ByteArrayOutputStream) {
+    val warnings = stderrBuffer.toString(Charsets.UTF_8).trim()
+    if (warnings.isEmpty()) return
+    stderrBuffer.reset()
+    val gui = MultiWindowTextGUI(screen)
+    MessageDialog.showMessageDialog(gui, "Warnings", warnings, MessageDialogButton.OK)
+}
+
+/** Centred single-line status drawn on the raw-mode screen. No progress bar —
+ *  Oracle's two-pass query (columns then defaults) doesn't map cleanly to a
+ *  single fraction, and the bar would just stall and resume confusingly. */
+private fun drawProgress(screen: Screen, p: IntrospectProgress) {
+    screen.doResizeIfNecessary()
+    val size = screen.terminalSize
+    screen.clear()
+    val gfx = screen.newTextGraphics()
+    val fraction = if (p.total > 0) " ${p.done}/${p.total}" else ""
+    val line = "${p.label}$fraction  ${Symbols.dash}  ESC to cancel"
+    val x = ((size.columns - line.length) / 2).coerceAtLeast(0)
+    val y = (size.rows / 2).coerceAtLeast(0)
+    gfx.putString(x, y, line)
+    screen.refresh()
+}
 
 private fun argValue(args: Array<String>, name: String): String? {
     val idx = args.indexOfFirst { it == name || it.startsWith("$name=") }

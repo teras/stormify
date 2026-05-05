@@ -89,8 +89,9 @@ enum class Dialect(
     fun listColumnsViaDictionary(
         conn: Connection,
         tables: List<DbIntrospector.TableId>,
+        onProgress: ((Int, Int) -> Unit)? = null,
     ): List<ColumnRef>? = when (this) {
-        ORACLE -> oracleListColumns(conn, tables)
+        ORACLE -> oracleListColumns(conn, tables, onProgress)
         else -> null
     }
 

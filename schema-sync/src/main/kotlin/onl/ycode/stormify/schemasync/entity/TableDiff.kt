@@ -31,6 +31,11 @@ data class ColumnDelta(
     val dbColumn: ColumnRef?,
     /** When [kind] is [Kind.TYPE_MISMATCH], short reason text (e.g. "category", "nullable"). */
     val mismatchReason: String? = null,
+    /** When non-null, the entity-side and DB-side defaults disagree after
+     *  normalization. First component is the entity literal, second is the
+     *  raw DB default. Set independently of [kind] so a row can be otherwise
+     *  SYNCED but still surface a default divergence. */
+    val defaultMismatch: Pair<String?, String?>? = null,
 ) {
     enum class Kind { SYNCED, ENTITY_ONLY, DB_ONLY, TYPE_MISMATCH }
 }

@@ -192,8 +192,9 @@ class DiffPane(
         val entityOnly = diff.columnDeltas.filter { it.kind == ColumnDelta.Kind.ENTITY_ONLY }
         val dbOnly = diff.columnDeltas.filter { it.kind == ColumnDelta.Kind.DB_ONLY }
         val typeMismatch = diff.columnDeltas.filter { it.kind == ColumnDelta.Kind.TYPE_MISMATCH }
+        val defaultConflicts = diff.columnDeltas.filter { it.defaultMismatch != null }
 
-        if (entityOnly.isEmpty() && dbOnly.isEmpty() && typeMismatch.isEmpty()) {
+        if (entityOnly.isEmpty() && dbOnly.isEmpty() && typeMismatch.isEmpty() && defaultConflicts.isEmpty()) {
             out += DiffLine("(in sync ${Symbols.dash} entity matches DB)")
             return out
         }
@@ -254,6 +255,16 @@ class DiffPane(
                     "    entity: ${field.type}${if (field.nullable) "?" else ""}  (${field.name})",
                     TextColor.ANSI.GREEN,
                 )
+            }
+        }
+
+        if (defaultConflicts.isNotEmpty()) {
+            out += DiffLine("${Symbols.rule} Default conflicts ${Symbols.rule}")
+            for (d in defaultConflicts) {
+                val (ent, db) = d.defaultMismatch ?: continue
+                out += DiffLine("${Symbols.neq} ${d.name}", TextColor.ANSI.YELLOW)
+                out += DiffLine("    DB:     ${db ?: "(none)"}", TextColor.ANSI.RED)
+                out += DiffLine("    entity: ${ent ?: "(none)"}", TextColor.ANSI.GREEN)
             }
         }
 
