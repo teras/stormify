@@ -21,7 +21,7 @@ import com.googlecode.lanterna.input.KeyType
 import onl.ycode.stormify.schemasync.classifier.ClassificationCache
 import onl.ycode.stormify.schemasync.config.ConfigState
 import onl.ycode.stormify.schemasync.db.Dialect
-import onl.ycode.stormify.schemasync.db.JdbcCategoryMapper
+import onl.ycode.stormify.schemasync.db.TypeCategoryMapper
 import onl.ycode.stormify.schemasync.db.MigrationGenerator
 import onl.ycode.stormify.schemasync.db.dbDefaultToKotlinLiteral
 import onl.ycode.stormify.schemasync.entity.ColumnDelta
@@ -154,7 +154,7 @@ fun buildPendingChanges(
                                 defaultLiteral = dbDefaultToKotlinLiteral(col.defaultValue, simpleType),
                             )
                         } else {
-                            val choice = JdbcCategoryMapper.kotlinTypeChoice(col.jdbcType, isPk, effectiveDefaults)
+                            val choice = TypeCategoryMapper.kotlinTypeChoice(col.sqlType, isPk, effectiveDefaults)
                             val propName = policy.toKotlin(col.name)
                             EntityWriter.NewColumn(
                                 propName = propName,
@@ -190,7 +190,7 @@ fun buildPendingChanges(
                                 typeName = simpleType
                                 typeImport = fqn
                             } else {
-                                val choice = JdbcCategoryMapper.kotlinTypeChoice(col.jdbcType, primaryKey = false, effectiveDefaults)
+                                val choice = TypeCategoryMapper.kotlinTypeChoice(col.sqlType, primaryKey = false, effectiveDefaults)
                                 propName = policy.toKotlin(col.name)
                                 typeName = choice.kotlin
                                 typeImport = choice.import

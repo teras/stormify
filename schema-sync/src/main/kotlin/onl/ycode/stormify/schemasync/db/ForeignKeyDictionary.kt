@@ -1,7 +1,6 @@
 package onl.ycode.stormify.schemasync.db
 
-import java.sql.Connection
-import java.sql.ResultSet
+import onl.ycode.stormify.Stormify
 
 /**
  * Bulk foreign-key extraction via each dialect's catalog views. Replaces the
@@ -13,37 +12,38 @@ import java.sql.ResultSet
  * how the diff layer collapses identity.
  */
 
-internal fun oracleListForeignKeys(conn: Connection): List<FkEdge> {
-    val sql = """
-        SELECT c.TABLE_NAME, cc.COLUMN_NAME,
-               rc.TABLE_NAME AS REF_TABLE, rcc.COLUMN_NAME AS REF_COLUMN
-        FROM USER_CONSTRAINTS c
-        JOIN USER_CONS_COLUMNS cc
-          ON cc.CONSTRAINT_NAME = c.CONSTRAINT_NAME
-         AND cc.OWNER = c.OWNER
-        JOIN USER_CONSTRAINTS rc
-          ON rc.CONSTRAINT_NAME = c.R_CONSTRAINT_NAME
-         AND rc.OWNER = c.R_OWNER
-        JOIN USER_CONS_COLUMNS rcc
-          ON rcc.CONSTRAINT_NAME = rc.CONSTRAINT_NAME
-         AND rcc.OWNER = rc.OWNER
-         AND rcc.POSITION = cc.POSITION
-        WHERE c.CONSTRAINT_TYPE = 'R'
-        ORDER BY c.TABLE_NAME, cc.POSITION
+internal fun oracleListForeignKeys(stormify: Stormify): List<FkEdge> = readEdges(stormify) {
+    """
+    SELECT c.TABLE_NAME, cc.COLUMN_NAME,
+           rc.TABLE_NAME AS REF_TABLE, rcc.COLUMN_NAME AS REF_COLUMN
+    FROM USER_CONSTRAINTS c
+    JOIN USER_CONS_COLUMNS cc
+      ON cc.CONSTRAINT_NAME = c.CONSTRAINT_NAME
+     AND cc.OWNER = c.OWNER
+    JOIN USER_CONSTRAINTS rc
+      ON rc.CONSTRAINT_NAME = c.R_CONSTRAINT_NAME
+     AND rc.OWNER = c.R_OWNER
+    JOIN USER_CONS_COLUMNS rcc
+      ON rcc.CONSTRAINT_NAME = rc.CONSTRAINT_NAME
+     AND rcc.OWNER = rc.OWNER
+     AND rcc.POSITION = cc.POSITION
+    WHERE c.CONSTRAINT_TYPE = 'R'
+    ORDER BY c.TABLE_NAME, cc.POSITION
     """.trimIndent()
-    return readEdges(conn, sql) { rs ->
-        FkEdge(
-            schema = null,
-            table = rs.getString("TABLE_NAME").lowercase(),
-            column = rs.getString("COLUMN_NAME").lowercase(),
-            refTable = rs.getString("REF_TABLE").lowercase(),
-            refColumn = rs.getString("REF_COLUMN").lowercase(),
-        )
-    }
+}.map { row ->
+    FkEdge(
+        schema = null,
+        table = row.str("table_name")!!.lowercase(),
+        column = row.str("column_name")!!.lowercase(),
+        refTable = row.str("ref_table")!!.lowercase(),
+        refColumn = row.str("ref_column")!!.lowercase(),
+    )
 }
 
-internal fun postgresListForeignKeys(conn: Connection): List<FkEdge> {
-    val sql = """
+internal fun postgresListForeignKeys(stormify: Stormify): List<FkEdge> {
+    val defaultSchema = Dialect.POSTGRESQL.queryDefaultSchema(stormify)?.lowercase()
+    return readEdges(stormify) {
+        """
         SELECT tc.table_schema, tc.table_name, kcu.column_name,
                ccu.table_name AS ref_table, ccu.column_name AS ref_column
         FROM information_schema.table_constraints tc
@@ -56,42 +56,42 @@ internal fun postgresListForeignKeys(conn: Connection): List<FkEdge> {
         WHERE tc.constraint_type = 'FOREIGN KEY'
           AND tc.table_schema NOT IN ('pg_catalog', 'information_schema')
         ORDER BY tc.table_name, kcu.ordinal_position
-    """.trimIndent()
-    val defaultSchema = conn.schema?.lowercase()
-    return readEdges(conn, sql) { rs ->
-        val rawSchema = rs.getString("table_schema")
+        """.trimIndent()
+    }.map { row ->
+        val rawSchema = row.str("table_schema")
         val schema = if (rawSchema != null && rawSchema.equals(defaultSchema, ignoreCase = true)) null else rawSchema
         FkEdge(
             schema = schema,
-            table = rs.getString("table_name"),
-            column = rs.getString("column_name"),
-            refTable = rs.getString("ref_table"),
-            refColumn = rs.getString("ref_column"),
+            table = row.str("table_name")!!,
+            column = row.str("column_name")!!,
+            refTable = row.str("ref_table")!!,
+            refColumn = row.str("ref_column")!!,
         )
     }
 }
 
-internal fun mysqlListForeignKeys(conn: Connection): List<FkEdge> {
-    val sql = """
-        SELECT TABLE_NAME, COLUMN_NAME, REFERENCED_TABLE_NAME, REFERENCED_COLUMN_NAME
-        FROM information_schema.KEY_COLUMN_USAGE
-        WHERE TABLE_SCHEMA = DATABASE()
-          AND REFERENCED_TABLE_NAME IS NOT NULL
-        ORDER BY TABLE_NAME, ORDINAL_POSITION
+internal fun mysqlListForeignKeys(stormify: Stormify): List<FkEdge> = readEdges(stormify) {
+    """
+    SELECT TABLE_NAME, COLUMN_NAME, REFERENCED_TABLE_NAME, REFERENCED_COLUMN_NAME
+    FROM information_schema.KEY_COLUMN_USAGE
+    WHERE TABLE_SCHEMA = DATABASE()
+      AND REFERENCED_TABLE_NAME IS NOT NULL
+    ORDER BY TABLE_NAME, ORDINAL_POSITION
     """.trimIndent()
-    return readEdges(conn, sql) { rs ->
-        FkEdge(
-            schema = null,
-            table = rs.getString("TABLE_NAME"),
-            column = rs.getString("COLUMN_NAME"),
-            refTable = rs.getString("REFERENCED_TABLE_NAME"),
-            refColumn = rs.getString("REFERENCED_COLUMN_NAME"),
-        )
-    }
+}.map { row ->
+    FkEdge(
+        schema = null,
+        table = row.str("table_name")!!,
+        column = row.str("column_name")!!,
+        refTable = row.str("referenced_table_name")!!,
+        refColumn = row.str("referenced_column_name")!!,
+    )
 }
 
-internal fun mssqlListForeignKeys(conn: Connection): List<FkEdge> {
-    val sql = """
+internal fun mssqlListForeignKeys(stormify: Stormify): List<FkEdge> {
+    val defaultSchema = Dialect.MSSQL.queryDefaultSchema(stormify)?.lowercase() ?: "dbo"
+    return readEdges(stormify) {
+        """
         SELECT
           OBJECT_SCHEMA_NAME(fk.parent_object_id) AS table_schema,
           OBJECT_NAME(fk.parent_object_id) AS table_name,
@@ -105,37 +105,24 @@ internal fun mssqlListForeignKeys(conn: Connection): List<FkEdge> {
         JOIN sys.columns cr
           ON cr.object_id = fk.referenced_object_id AND cr.column_id = fkc.referenced_column_id
         ORDER BY table_name, fkc.constraint_column_id
-    """.trimIndent()
-    val defaultSchema = conn.schema?.lowercase() ?: "dbo"
-    return readEdges(conn, sql) { rs ->
-        val rawSchema = rs.getString("table_schema")
+        """.trimIndent()
+    }.map { row ->
+        val rawSchema = row.str("table_schema")
         val schema = if (rawSchema != null && rawSchema.equals(defaultSchema, ignoreCase = true)) null else rawSchema
         FkEdge(
             schema = schema,
-            table = rs.getString("table_name"),
-            column = rs.getString("column_name"),
-            refTable = rs.getString("ref_table"),
-            refColumn = rs.getString("ref_column"),
+            table = row.str("table_name")!!,
+            column = row.str("column_name")!!,
+            refTable = row.str("ref_table")!!,
+            refColumn = row.str("ref_column")!!,
         )
     }
 }
 
-private inline fun readEdges(
-    conn: Connection,
-    sql: String,
-    map: (ResultSet) -> FkEdge,
-): List<FkEdge> {
-    val out = mutableListOf<FkEdge>()
-    runCatching {
-        conn.prepareStatement(sql).use { ps ->
-            ps.executeQuery().use { rs ->
-                while (rs.next()) out += map(rs)
-            }
-        }
-    }.onFailure {
-        // Bulk path failed (driver quirk, missing privileges) — caller will
-        // fall back to per-table JDBC. Fail soft, never break introspection.
-        System.err.println("Bulk FK lookup failed (${it.message}); falling back to per-table.")
-    }
-    return out
-}
+private inline fun readEdges(stormify: Stormify, sql: () -> String): List<Row> =
+    runCatching { stormify.read<Row>(sql()) }
+        .onFailure {
+            // Bulk path failed (driver quirk, missing privileges) — caller falls
+            // back to per-table JDBC. Fail soft, never break introspection.
+            System.err.println("Bulk FK lookup failed (${it.message}); falling back to per-table.")
+        }.getOrDefault(emptyList())

@@ -1,15 +1,31 @@
 package onl.ycode.stormify.schemasync.db
 
+import onl.ycode.stormify.Stormify
 import onl.ycode.stormify.schemasync.model.ColumnRef
-import java.sql.Connection
-import java.sql.DriverManager
-import java.sql.ResultSet
+import java.io.FileDescriptor
+import java.io.FileOutputStream
+import java.io.PrintStream
 
-/** Reads the target schema via JDBC `DatabaseMetaData`. All dialect-specific
- *  branches are routed through [Dialect]; this class never compares dialects. */
-class DbIntrospector(private val conn: Connection) {
+/** Reads the target schema via [Stormify]. All dialect-specific branches
+ *  are routed through [Dialect]; this class never compares dialects.
+ *
+ *  When constructed via [connect], holds a reference to the underlying
+ *  [DriverManagerDataSource] so the TUI cancel path can abort an
+ *  in-flight introspection through [cancelInflight]. */
+class DbIntrospector internal constructor(
+    private val stormify: Stormify,
+    private val cancelHook: (() -> Unit)? = null,
+) {
 
-    private val dialect = Dialect.detect(conn)
+    constructor(stormify: Stormify) : this(stormify, cancelHook = null)
+
+    val dialect: Dialect = Dialect.detect(stormify)
+
+    /** Best-effort cancellation: closes any JDBC connections held by the
+     *  data source, raising on any in-flight statement so the worker
+     *  thread exits. No-op when the introspector was built from an
+     *  externally-supplied [Stormify]. */
+    fun cancelInflight() = cancelHook?.invoke() ?: Unit
 
     data class TableId(val schema: String?, val name: String, val kind: Kind = Kind.TABLE) {
         val key: String = listOfNotNull(schema, name).joinToString(".")
@@ -18,83 +34,26 @@ class DbIntrospector(private val conn: Connection) {
 
     /** All user tables AND views in the database. Views are surfaced too because
      *  many JPA / stormify entities are mapped to views rather than tables — the
-     *  diff would otherwise flag every view-mapped entity as `entity-only`. The
-     *  dialect's default schema is stripped so keys match entity table names. */
-    fun listTables(): List<TableId> {
-        dialect.listTablesViaDictionary(conn)?.let { return it }
-        val defaultSchema = dialect.defaultSchema(conn)
-        val out = mutableListOf<TableId>()
-        conn.metaData.getTables(null, defaultSchema, "%", arrayOf("TABLE", "VIEW")).use { rs ->
-            while (rs.next()) {
-                val name = rs.getString("TABLE_NAME") ?: continue
-                if (dialect.isSystemTable(name)) continue
-                val rawSchema = rs.getString("TABLE_SCHEM")
-                val schema = if (rawSchema != null && rawSchema.equals(defaultSchema, ignoreCase = true)) null else rawSchema
-                val kind = if (rs.getString("TABLE_TYPE") == "VIEW") TableId.Kind.VIEW else TableId.Kind.TABLE
-                out += TableId(schema, name, kind)
-            }
-        }
-        return out
+     *  diff would otherwise flag every view-mapped entity as `entity-only`. */
+    fun listTables(): List<TableId> = timed("listTables") {
+        dialect.listTablesViaDictionary(stormify)
+            ?: throw IllegalStateException("Dialect $dialect has no introspection support")
     }
 
-    /**
-     * All columns in user tables. Deterministic-type columns (Boolean, Date, UUID, …)
-     * carry `category = null`; classifier UI filters them. Single-roundtrip via
-     * one broad `getColumns(null,null,"%","%")` call with per-table fallback.
-     */
-    fun listColumns(onProgress: ((Int, Int) -> Unit)? = null): List<ColumnRef> {
+    /** All columns in user tables. Deterministic-type columns (Boolean, Date, UUID, …)
+     *  carry `category = null`; classifier UI filters them. */
+    fun listColumns(onProgress: ((Int, Int) -> Unit)? = null): List<ColumnRef> = timed("listColumns") {
         val tables = listTables()
         onProgress?.invoke(0, tables.size)
-        dialect.listColumnsViaDictionary(conn, tables, onProgress)?.let {
-            onProgress?.invoke(tables.size, tables.size)
-            return decorateWithFks(it, tables)
-        }
-        val defaultSchema = dialect.defaultSchema(conn)
-        val tableSet = tables.mapTo(HashSet()) { (it.schema ?: "") to it.name }
-        val results = mutableListOf<ColumnRef>()
-        val meta = conn.metaData
-        try {
-            val seenTables = HashSet<Pair<String, String>>()
-            meta.getColumns(null, defaultSchema, "%", "%").use { rs ->
-                while (rs.next()) {
-                    val rawSchema = rs.getString("TABLE_SCHEM")
-                    val schema = if (rawSchema != null && rawSchema.equals(defaultSchema, ignoreCase = true)) null else rawSchema
-                    val table = rs.getString("TABLE_NAME") ?: continue
-                    val key = (schema ?: "") to table
-                    if (key !in tableSet) continue
-                    if (seenTables.add(key)) onProgress?.invoke(seenTables.size, tables.size)
-                    results += rowToColumn(rs, schema, table)
-                }
-            }
-            onProgress?.invoke(tables.size, tables.size)
-            return decorateWithFks(results, tables)
-        } catch (broadFailure: Exception) {
-            System.err.println("Broad getColumns failed (${broadFailure.message}); falling back per-table.")
-            return decorateWithFks(columnsPerTable(meta, tables, onProgress), tables)
-        }
+        val cols = dialect.listColumnsViaDictionary(stormify, tables, onProgress)
+            ?: throw IllegalStateException("Dialect $dialect has no introspection support")
+        onProgress?.invoke(tables.size, tables.size)
+        decorateWithFks(cols, tables)
     }
 
-    /** Read all FK edges. Bulk dialect dictionary first; per-table JDBC
-     *  `getImportedKeys` only as fallback. */
-    private fun readFks(tables: List<TableId>): List<FkEdge> {
-        dialect.listForeignKeys(conn)?.takeIf { it.isNotEmpty() }?.let { return it }
-        val out = mutableListOf<FkEdge>()
-        val meta = conn.metaData
-        for (t in tables) {
-            try {
-                meta.getImportedKeys(null, t.schema, t.name).use { rs ->
-                    while (rs.next()) {
-                        val column = rs.getString("FKCOLUMN_NAME") ?: continue
-                        val refTable = rs.getString("PKTABLE_NAME") ?: continue
-                        val refColumn = rs.getString("PKCOLUMN_NAME") ?: continue
-                        out += FkEdge(t.schema, t.name, column, refTable, refColumn)
-                    }
-                }
-            } catch (_: Exception) {
-                // Some drivers don't support getImportedKeys reliably (e.g. pre-Oracle12); skip.
-            }
-        }
-        return out
+    /** Read all FK edges via the dialect's bulk catalog query. */
+    private fun readFks(@Suppress("UNUSED_PARAMETER") tables: List<TableId>): List<FkEdge> = timed("readFks") {
+        dialect.listForeignKeys(stormify) ?: emptyList()
     }
 
     private fun decorateWithFks(cols: List<ColumnRef>, tables: List<TableId>): List<ColumnRef> {
@@ -108,90 +67,38 @@ class DbIntrospector(private val conn: Connection) {
         }
     }
 
-    private fun columnsPerTable(
-        meta: java.sql.DatabaseMetaData,
-        tables: List<TableId>,
-        onProgress: ((Int, Int) -> Unit)?,
-    ): List<ColumnRef> {
-        val out = mutableListOf<ColumnRef>()
-        tables.forEachIndexed { i, t ->
-            onProgress?.invoke(i, tables.size)
-            meta.getColumns(null, t.schema, t.name, "%").use { rs ->
-                while (rs.next()) out += rowToColumn(rs, t.schema, t.name)
-            }
-        }
-        onProgress?.invoke(tables.size, tables.size)
-        return out
-    }
-
-    private fun rowToColumn(rs: ResultSet, schema: String?, table: String): ColumnRef {
-        val name = rs.getString("COLUMN_NAME")
-        val jdbcType = rs.getInt("DATA_TYPE")
-        val typeName = rs.getString("TYPE_NAME")
-        val size = rs.getInt("COLUMN_SIZE")
-        val scale = readScale(rs)
-        val nullable = rs.getInt("NULLABLE") != java.sql.DatabaseMetaData.columnNoNulls
-        val rawDefault = runCatching { rs.getString("COLUMN_DEF") }.getOrNull()
-        return ColumnRef(
-            schema = schema,
-            table = table,
-            name = name,
-            category = JdbcCategoryMapper.categoryFor(jdbcType),
-            dbType = formatDbType(typeName, size, scale),
-            jdbcType = jdbcType,
-            nullable = nullable,
-            family = JdbcCategoryMapper.familyFor(jdbcType, scale),
-            precision = size.takeIf { it > 0 },
-            defaultValue = rawDefault?.trim()?.takeIf { it.isNotEmpty() },
-        )
-    }
-
-    private fun readScale(rs: ResultSet): Int? {
-        val s = rs.getInt("DECIMAL_DIGITS")
-        return if (rs.wasNull()) null else s
-    }
-
-    private fun formatDbType(typeName: String, size: Int, scale: Int?): String {
-        val upper = typeName.uppercase()
-        return when {
-            scale != null && scale > 0 && upper in NUMERIC_TYPES -> "$typeName($size,$scale)"
-            size > 0 && upper in SIZED_TYPES -> "$typeName($size)"
-            else -> typeName
+    private inline fun <T> timed(label: String, block: () -> T): T {
+        if (!TIMING_ENABLED) return block()
+        val start = System.nanoTime()
+        try {
+            return block()
+        } finally {
+            val ms = (System.nanoTime() - start) / 1_000_000
+            timingOut.println("[schema-sync timing] ${dialect.name.lowercase()}.$label: ${ms} ms")
+            timingOut.flush()
         }
     }
 
     companion object {
-        private val NUMERIC_TYPES = setOf("DECIMAL", "NUMERIC", "NUMBER")
-        private val SIZED_TYPES = setOf(
-            "VARCHAR", "VARCHAR2", "NVARCHAR", "NVARCHAR2", "CHAR", "NCHAR",
-            "DECIMAL", "NUMERIC", "NUMBER",
-        )
+        /** Enable per-introspection-step timing logs by setting
+         *  `SCHEMA_SYNC_TIMING=1`. Output goes directly to the underlying
+         *  stderr file descriptor, bypassing the TUI's `System.err`
+         *  capture, so it shows in the terminal that launched the app. */
+        private val TIMING_ENABLED: Boolean =
+            System.getenv("SCHEMA_SYNC_TIMING")?.let { it == "1" || it.equals("true", ignoreCase = true) } == true
 
-        /** Drivers we ship in the fatJar; pre-loaded so SPI registration isn't
-         *  required (the fatJar's `DuplicatesStrategy.EXCLUDE` flattens
-         *  `META-INF/services/java.sql.Driver` to a single entry, dropping the
-         *  rest). Each entry is best-effort: a driver missing from the
-         *  classpath is silently skipped. */
-        private val BUNDLED_DRIVERS = listOf(
-            "org.sqlite.JDBC",
-            "org.postgresql.Driver",
-            "org.mariadb.jdbc.Driver",
-            "com.mysql.cj.jdbc.Driver",
-            "oracle.jdbc.OracleDriver",
-            "com.microsoft.sqlserver.jdbc.SQLServerDriver",
-        )
-
-        private val driversInitialized = run {
-            for (cls in BUNDLED_DRIVERS) {
-                runCatching { Class.forName(cls) }
-            }
-            true
+        private val timingOut: PrintStream by lazy {
+            PrintStream(FileOutputStream(FileDescriptor.err), true, Charsets.UTF_8)
         }
 
-        /** Convenience constructor: opens connection from [ConnectionConfig]-style coords. */
-        fun connect(url: String, user: String?, password: String?): Connection {
-            check(driversInitialized)
-            return DriverManager.getConnection(url, user, password)
+        /** Convenience constructor: builds a [DbIntrospector] over a
+         *  `DriverManager`-backed [Stormify] for the given coordinates. JDBC
+         *  driver discovery happens through the standard SPI mechanism — the
+         *  fatJar is built with merged `META-INF/services/java.sql.Driver`
+         *  entries so every shipped driver is registered automatically. */
+        fun connect(url: String, user: String?, password: String?): DbIntrospector {
+            val ds = DriverManagerDataSource(url, user, password)
+            return DbIntrospector(Stormify(ds), cancelHook = { ds.closeAll() })
         }
     }
 }

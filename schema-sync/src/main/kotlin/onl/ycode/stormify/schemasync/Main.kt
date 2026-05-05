@@ -172,8 +172,7 @@ private fun loadColumnsAndTablesCancellable(
     connection: ConnectionConfig,
     @Suppress("UNUSED_PARAMETER") stderrBuffer: ByteArrayOutputStream,
 ): IntrospectionResult? {
-    val jdbc = DbIntrospector.connect(connection.url, connection.user, connection.password)
-    val intro = DbIntrospector(jdbc)
+    val intro = DbIntrospector.connect(connection.url, connection.user, connection.password)
     val progress = AtomicReference(IntrospectProgress("Connecting…", 0, 0))
     val cancelled = AtomicBoolean(false)
     val resultRef = AtomicReference<IntrospectionResult?>()
@@ -190,7 +189,7 @@ private fun loadColumnsAndTablesCancellable(
             val cols = intro.listColumns { done, total ->
                 progress.set(IntrospectProgress("Introspecting tables", done, total))
             }
-            resultRef.set(IntrospectionResult(cols, keys, views, Dialect.detect(jdbc)))
+            resultRef.set(IntrospectionResult(cols, keys, views, intro.dialect))
         } catch (e: Throwable) {
             if (!cancelled.get()) errorRef.set(e)
         }
@@ -204,7 +203,7 @@ private fun loadColumnsAndTablesCancellable(
                 val isCtrlC = key.character?.code == 'c'.code && key.isCtrlDown
                 if (key.keyType == KeyType.Escape || isCtrlC) {
                     cancelled.set(true)
-                    runCatching { jdbc.close() }
+                    runCatching { intro.cancelInflight() }
                     worker.join(2000)
                     return null
                 }
@@ -213,7 +212,7 @@ private fun loadColumnsAndTablesCancellable(
         }
         worker.join()
     } finally {
-        runCatching { jdbc.close() }
+        runCatching { intro.cancelInflight() }
     }
     errorRef.get()?.let { throw it }
     return resultRef.get()

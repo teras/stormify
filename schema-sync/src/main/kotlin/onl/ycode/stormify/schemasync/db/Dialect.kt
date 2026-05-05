@@ -1,17 +1,19 @@
 package onl.ycode.stormify.schemasync.db
 
+import onl.ycode.stormify.SqlDialect
+import onl.ycode.stormify.Stormify
 import onl.ycode.stormify.schemasync.model.ColumnRef
-import java.sql.Connection
 
 /**
- * Database dialects supported by schema-sync. Detected from JDBC
- * `DatabaseMetaData.getDatabaseProductName()`. This is the **single place**
- * where dialect-specific behavior lives — callers should never branch on the
- * dialect identity directly.
+ * Database dialects supported by schema-sync. Detected from
+ * `stormify.sqlDialect`. This is the **single place** where dialect-specific
+ * behavior lives — callers should never branch on the dialect identity
+ * directly.
  *
  * Each constant carries its own quirks via constructor parameters and
- * overridable methods; the JDBC-metadata-friendly defaults handle most
- * dialects, while Oracle bypasses JDBC entirely via dictionary queries.
+ * overridable methods. Catalog introspection runs through dialect-specific
+ * dictionary queries (no JDBC `DatabaseMetaData`), so the same code path
+ * works on Kotlin/Native consumers when needed.
  */
 enum class Dialect(
     val tomlKey: String,
@@ -50,84 +52,81 @@ enum class Dialect(
     }
 
     /**
-     * True for dialect-internal bookkeeping tables that JDBC's `getTables`
+     * True for dialect-internal bookkeeping tables that the catalog views
      * may surface alongside user tables. Most dialects already scope us via
-     * `defaultSchema`; only SQLite leaks `sqlite_*` housekeeping tables.
+     * [queryDefaultSchema]; only SQLite leaks `sqlite_*` housekeeping tables.
      */
     fun isSystemTable(table: String): Boolean =
         this == SQLITE && table.startsWith("sqlite_")
 
     /**
-     * The schema that JDBC `getTables` / `getColumns` should be scoped to.
-     * For dialects with first-class schemas we trust `Connection.getSchema()`
-     * so URL parameters like `?currentSchema=…` are honoured, falling back
-     * to the conventional default. MySQL/MariaDB use catalogs (== databases)
-     * rather than schemas, so we leave the schema pattern null.
+     * Asks the database for the default schema/user this session sees.
+     * Mirrors what the JDBC driver historically returned through
+     * `Connection.getSchema()` / `metaData.getUserName()`, but expressed
+     * as a portable per-dialect SQL query so the same path works through
+     * a Stormify-backed consumer with no JDBC metadata access.
+     *
+     * Returns null for dialects with no schema concept (SQLite) or where
+     * the catalog queries already filter by `DATABASE()` server-side
+     * (MySQL/MariaDB).
      */
-    fun defaultSchema(conn: Connection): String? = when (this) {
-        POSTGRESQL -> conn.connectionSchemaOrNull() ?: "public"
-        MSSQL -> conn.connectionSchemaOrNull() ?: "dbo"
-        ORACLE -> conn.metaData.userName
-        else -> null
+    fun queryDefaultSchema(stormify: Stormify): String? = when (this) {
+        POSTGRESQL -> stormify.readOne<String>("SELECT current_schema()")
+        MSSQL -> stormify.readOne<String>("SELECT SCHEMA_NAME()")
+        ORACLE -> stormify.readOne<String>("SELECT USER FROM dual")
+        MYSQL, MARIADB, SQLITE, GENERIC -> null
     }
 
-    /**
-     * Returns a dialect-specific table list when the JDBC metadata path
-     * needs to be bypassed (Oracle PL/SQL incompatibility), otherwise null
-     * — the caller falls back to `DatabaseMetaData.getTables`.
-     */
-    fun listTablesViaDictionary(conn: Connection): List<DbIntrospector.TableId>? = when (this) {
-        ORACLE -> oracleListTables(conn)
-        else -> null
+    /** Catalog-driven table list. Returns null only for [GENERIC], which
+     *  schema-sync does not support beyond a clear error from the caller. */
+    fun listTablesViaDictionary(stormify: Stormify): List<DbIntrospector.TableId>? = when (this) {
+        ORACLE -> oracleListTables(stormify)
+        POSTGRESQL -> postgresListTables(stormify)
+        MYSQL, MARIADB -> mysqlListTables(stormify)
+        SQLITE -> sqliteListTables(stormify)
+        MSSQL -> mssqlListTables(stormify)
+        GENERIC -> null
     }
 
-    /**
-     * Returns a dialect-specific column list when the dialect has its own
-     * dictionary path (Oracle: USER_TAB_COLUMNS), otherwise null — the
-     * caller falls back to `DatabaseMetaData.getColumns`.
-     */
+    /** Catalog-driven column list, scoped to [tables]. Returns null only for
+     *  [GENERIC]. */
     fun listColumnsViaDictionary(
-        conn: Connection,
+        stormify: Stormify,
         tables: List<DbIntrospector.TableId>,
         onProgress: ((Int, Int) -> Unit)? = null,
     ): List<ColumnRef>? = when (this) {
-        ORACLE -> oracleListColumns(conn, tables, onProgress)
-        else -> null
+        ORACLE -> oracleListColumns(stormify, tables, onProgress)
+        POSTGRESQL -> postgresListColumns(stormify, tables, onProgress)
+        MYSQL, MARIADB -> mysqlListColumns(stormify, tables, onProgress)
+        SQLITE -> sqliteListColumns(stormify, tables, onProgress)
+        MSSQL -> mssqlListColumns(stormify, tables, onProgress)
+        GENERIC -> null
     }
 
-    /**
-     * Returns every foreign-key edge in the schema in **one** roundtrip
-     * via the dialect's catalog views. Replaces the per-table
-     * `getImportedKeys` loop, which is the dominant cost on large
-     * schemas. Returns null when no bulk dictionary path exists; the
-     * caller falls back to the per-table loop.
-     */
-    internal fun listForeignKeys(conn: Connection): List<FkEdge>? = when (this) {
-        ORACLE -> oracleListForeignKeys(conn)
-        POSTGRESQL -> postgresListForeignKeys(conn)
-        MYSQL, MARIADB -> mysqlListForeignKeys(conn)
-        MSSQL -> mssqlListForeignKeys(conn)
-        SQLITE, GENERIC -> null
+    /** Every foreign-key edge in the schema in **one** roundtrip via the
+     *  dialect's catalog views. Returns null only for [GENERIC]. */
+    internal fun listForeignKeys(stormify: Stormify): List<FkEdge>? = when (this) {
+        ORACLE -> oracleListForeignKeys(stormify)
+        POSTGRESQL -> postgresListForeignKeys(stormify)
+        MYSQL, MARIADB -> mysqlListForeignKeys(stormify)
+        MSSQL -> mssqlListForeignKeys(stormify)
+        SQLITE -> sqliteListForeignKeys(stormify)
+        GENERIC -> null
     }
 
     companion object {
-        fun detect(conn: Connection): Dialect {
-            val name = conn.metaData.databaseProductName.lowercase()
-            return when {
-                "postgres" in name -> POSTGRESQL
-                "mariadb" in name -> MARIADB
-                "mysql" in name -> MYSQL
-                "oracle" in name -> ORACLE
-                "microsoft" in name || "sql server" in name -> MSSQL
-                "sqlite" in name -> SQLITE
-                else -> GENERIC
-            }
+        /** Detects the dialect from `stormify.sqlDialect`. */
+        fun detect(stormify: Stormify): Dialect = when (stormify.sqlDialect) {
+            SqlDialect.POSTGRESQL -> POSTGRESQL
+            SqlDialect.MYSQL_OLD, SqlDialect.MYSQL_NEW -> MYSQL
+            SqlDialect.MARIA_DB_OLD, SqlDialect.MARIA_DB_NEW -> MARIADB
+            SqlDialect.ORACLE_OLD, SqlDialect.ORACLE_NEW -> ORACLE
+            SqlDialect.SQLITE -> SQLITE
+            SqlDialect.SQL_SERVER_OLD, SqlDialect.SQL_SERVER_NEW -> MSSQL
+            else -> GENERIC
         }
 
         fun fromKey(key: String?): Dialect? =
             key?.let { k -> entries.firstOrNull { it.tomlKey.equals(k, ignoreCase = true) } }
     }
 }
-
-private fun Connection.connectionSchemaOrNull(): String? =
-    runCatching { schema?.takeIf { it.isNotBlank() } }.getOrNull()
