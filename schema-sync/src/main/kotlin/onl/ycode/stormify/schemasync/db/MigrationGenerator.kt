@@ -9,8 +9,6 @@ import onl.ycode.stormify.schemasync.model.DefaultsProfile
 import onl.ycode.stormify.schemasync.model.SlotCategory
 import onl.ycode.stormify.schemasync.model.SlotProfile
 import onl.ycode.stormify.schemasync.model.TableStatus
-import java.nio.file.Files
-import java.nio.file.Path
 import java.time.LocalDate
 
 /**
@@ -26,8 +24,7 @@ import java.time.LocalDate
  */
 object MigrationGenerator {
 
-    /** Build the migration SQL text and stats; the [render] entry point used by both
-     *  the on-disk writer and the diff preview. */
+    /** [acceptColumn] gates which per-column SQL lines are emitted. */
     fun render(
         diffs: List<TableDiff>,
         profile: SlotProfile,
@@ -35,23 +32,10 @@ object MigrationGenerator {
         cache: ClassificationCache,
         dialect: Dialect = Dialect.GENERIC,
         entities: List<KotlinEntity> = emptyList(),
+        acceptColumn: (tableKey: String, columnName: String) -> Boolean = { _, _ -> true },
     ): RenderResult {
-        val (sb, stats) = buildSql(diffs, profile, defaults, cache, dialect, entities)
+        val (sb, stats) = buildSql(diffs, profile, defaults, cache, dialect, entities, acceptColumn)
         return RenderResult(sb.toString(), stats)
-    }
-
-    fun generate(
-        diffs: List<TableDiff>,
-        profile: SlotProfile,
-        defaults: DefaultsProfile,
-        cache: ClassificationCache,
-        output: Path,
-        dialect: Dialect = Dialect.GENERIC,
-        entities: List<KotlinEntity> = emptyList(),
-    ): Stats {
-        val rendered = render(diffs, profile, defaults, cache, dialect, entities)
-        Files.writeString(output, rendered.sql)
-        return rendered.stats
     }
 
     data class RenderResult(val sql: String, val stats: Stats)
@@ -65,8 +49,9 @@ object MigrationGenerator {
         cache: ClassificationCache,
         dialect: Dialect = Dialect.GENERIC,
         entities: List<KotlinEntity> = emptyList(),
+        acceptColumn: (columnName: String) -> Boolean = { true },
     ): List<String> = alterStatementsForInternal(
-        diff, profile, defaults.mergedFor(dialect.tomlKey), cache, dialect, entities,
+        diff, profile, defaults.mergedFor(dialect.tomlKey), cache, dialect, entities, acceptColumn,
     ).statements
 
     /** Public entry point for the live diff pane. Returns the full CREATE TABLE
@@ -78,8 +63,9 @@ object MigrationGenerator {
         cache: ClassificationCache,
         dialect: Dialect = Dialect.GENERIC,
         entities: List<KotlinEntity> = emptyList(),
+        acceptColumn: (columnName: String) -> Boolean = { true },
     ): List<String> = createTableStatementForInternal(
-        diff, profile, defaults.mergedFor(dialect.tomlKey), cache, dialect, entities,
+        diff, profile, defaults.mergedFor(dialect.tomlKey), cache, dialect, entities, acceptColumn,
     ).statements
 
     private data class AlterResult(val statements: List<String>, val unclassified: Int)
@@ -108,6 +94,7 @@ object MigrationGenerator {
         cache: ClassificationCache,
         dialect: Dialect,
         entities: List<KotlinEntity>,
+        acceptColumn: (columnName: String) -> Boolean,
     ): CreateResult {
         if (diff.status != TableStatus.ENTITY_ONLY) return CreateResult(emptyList(), 0, 0)
         if (diff.entities.isEmpty()) return CreateResult(emptyList(), 0, 0)
@@ -119,6 +106,7 @@ object MigrationGenerator {
             .asSequence()
             .flatMap { it.fields.asSequence() }
             .distinctBy { it.column.lowercase() }
+            .filter { acceptColumn(it.column) }
             .toList()
         val cols = unionFields.mapNotNull { field ->
             val ddl = ddlForField(field, profile, effectiveDefaults, cache, diff.tableKey)
@@ -150,6 +138,7 @@ object MigrationGenerator {
         cache: ClassificationCache,
         dialect: Dialect,
         entities: List<KotlinEntity>,
+        acceptColumn: (columnName: String) -> Boolean,
     ): AlterResult {
         if (diff.status != TableStatus.DIFF) return AlterResult(emptyList(), 0)
         val byName = classNameIndex(entities)
@@ -157,6 +146,7 @@ object MigrationGenerator {
         var unclassified = 0
         for (delta in diff.columnDeltas) {
             if (delta.kind != ColumnDelta.Kind.ENTITY_ONLY) continue
+            if (!acceptColumn(delta.name)) continue
             val field = delta.entityField ?: continue
             val ddl = ddlForField(field, profile, effectiveDefaults, cache, diff.tableKey)
             if (ddl == null) { unclassified++; continue }
@@ -180,12 +170,12 @@ object MigrationGenerator {
         cache: ClassificationCache,
         dialect: Dialect,
         entities: List<KotlinEntity>,
+        acceptColumn: (tableKey: String, columnName: String) -> Boolean,
     ): Pair<StringBuilder, Stats> {
         val effectiveDefaults = defaults.mergedFor(dialect.tomlKey)
         val sb = StringBuilder()
         var addedColumns = 0
         var createdTables = 0
-        var orphanColumns = 0
         var unclassifiedFields = 0
 
         sb.appendLine("-- schema-sync migration")
@@ -200,6 +190,7 @@ object MigrationGenerator {
                 TableStatus.DIFF -> {
                     val result = alterStatementsForInternal(
                         diff, profile, effectiveDefaults, cache, dialect, entities,
+                        { col -> acceptColumn(diff.tableKey, col) },
                     )
                     unclassifiedFields += result.unclassified
                     if (result.statements.isNotEmpty()) {
@@ -213,6 +204,7 @@ object MigrationGenerator {
                     val entity = diff.primary!!
                     val result = createTableStatementForInternal(
                         diff, profile, effectiveDefaults, cache, dialect, entities,
+                        { col -> acceptColumn(diff.tableKey, col) },
                     )
                     unclassifiedFields += result.unclassified
                     if (result.statements.isNotEmpty()) {
@@ -228,18 +220,16 @@ object MigrationGenerator {
                     }
                 }
                 TableStatus.DB_ONLY -> {
-                    // No SQL to emit for DB-only tables; informational comments
-                    // alone aren't useful in a migration file.
-                    orphanColumns += diff.dbColumns.size
+                    // No SQL emitted: DB-only tables are handled entity-side.
                 }
             }
         }
 
-        if (addedColumns == 0 && createdTables == 0 && unclassifiedFields == 0 && orphanColumns == 0) {
+        if (addedColumns == 0 && createdTables == 0 && unclassifiedFields == 0) {
             sb.appendLine("-- (everything is in sync, nothing to do)")
         }
 
-        return sb to Stats(addedColumns, createdTables, orphanColumns, unclassifiedFields)
+        return sb to Stats(addedColumns, createdTables, unclassifiedFields)
     }
 
     /** ALTER TABLE … ADD [COLUMN] … with dialect-correct syntax. */
@@ -404,7 +394,6 @@ object MigrationGenerator {
     data class Stats(
         val addedColumns: Int,
         val createdTables: Int,
-        val orphanColumns: Int,
         val unclassifiedFields: Int,
     )
 }

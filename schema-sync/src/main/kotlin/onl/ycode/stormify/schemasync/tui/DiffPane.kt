@@ -198,22 +198,26 @@ class DiffPane(
             return out
         }
 
-        if (entityOnly.isNotEmpty()) {
+        val isInsert: (String) -> Boolean = { col ->
+            actions.get(diff.tableKey, col) == PropertyAction.INSERT
+        }
+        val activeEntityOnly = entityOnly.filter { isInsert(it.name) }
+        if (activeEntityOnly.isNotEmpty()) {
             out += DiffLine("${Symbols.rule} DB needs ${Symbols.rule}")
-            // For ENTITY_ONLY tables the whole table is missing → CREATE TABLE.
-            // For DIFF tables only the listed columns are missing → ALTER TABLE.
             val sqlLines = if (diff.status == TableStatus.ENTITY_ONLY) {
                 MigrationGenerator.createTableStatementFor(
                     diff, state.current.slots, state.current.defaults, cache, dialect, entities,
+                    acceptColumn = isInsert,
                 )
             } else {
                 MigrationGenerator.alterStatementsFor(
                     diff, state.current.slots, state.current.defaults, cache, dialect, entities,
+                    acceptColumn = isInsert,
                 )
             }
             for (line in sqlLines) out += DiffLine("+$line", TextColor.ANSI.GREEN)
             if (sqlLines.isEmpty()) {
-                for (d in entityOnly) {
+                for (d in activeEntityOnly) {
                     val field = d.entityField ?: continue
                     out += DiffLine(
                         "+/* ${field.column} <unclassified ${field.type}> */",
@@ -225,9 +229,7 @@ class DiffPane(
         }
 
         if (dbOnly.isNotEmpty() || diff.status == TableStatus.DB_ONLY) {
-            // Delegate to ApplyView's renderEntitiesDiffLines so what we show
-            // here is exactly what F2's "Entities" tab would render. We build
-            // pending changes for just this table, then ask the same renderer.
+            // Reuse renderEntitiesDiffLines so the live preview is byte-identical to F2's Entities tab.
             val pending = buildPendingChanges(
                 entities = entities,
                 diffs = listOf(diff),
@@ -275,7 +277,7 @@ class DiffPane(
         }
         val field = delta.entityField ?: run { hideSlots(); return }
         val cat = field.category ?: run { hideSlots(); return }
-        val act = actions.get(diff.tableKey, delta.name, delta.kind)
+        val act = actions.get(diff.tableKey, delta.name)
         if (act != PropertyAction.INSERT) {
             hideSlots()
             return
@@ -334,6 +336,7 @@ class DiffPane(
         get() = if (targetsList.itemCount > 0) targetsList else slotsList
     val hasFocusableContent: Boolean
         get() = slotsList.itemCount > 0 || targetsList.itemCount > 0
+    val viewerFocusTarget: Interactable get() = diffViewer
 
     /** True when [target] is one of this pane's own focusable widgets — used by
      *  the window dispatcher to decide whether to mark the diff title focused.

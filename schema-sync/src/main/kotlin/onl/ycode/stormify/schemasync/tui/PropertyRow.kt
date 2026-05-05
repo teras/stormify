@@ -18,7 +18,7 @@ class PropertyRow(
     override fun run() = Unit
 
     override fun toString(): String =
-        formatter.render(delta, actions.get(tableKey, delta.name, delta.kind))
+        formatter.render(delta, actions.get(tableKey, delta.name))
 }
 
 /** Computes column widths once per table view, then renders rows in a single pass. */
@@ -27,9 +27,10 @@ class PropertyRowFormatter(deltas: List<ColumnDelta>) {
         maxOf("property".length, deltas.maxOfOrNull { it.name.length } ?: 0).coerceAtMost(32)
 
     fun render(delta: ColumnDelta, action: PropertyAction): String {
-        val sym = symbolFor(delta.kind, action)
+        val sym = symbolFor(delta.kind)
         val name = delta.name.fit(nameWidth)
-        return " $sym $name "
+        val tick = if (action == PropertyAction.INSERT) Symbols.tick else " "
+        return " $sym $name $tick "
     }
 
     /** Border title; this pane has a single column, so just the column name. */
@@ -38,5 +39,5 @@ class PropertyRowFormatter(deltas: List<ColumnDelta>) {
     /** No interior column separator — single-column list. */
     val crossColumns: List<Int> = emptyList()
 
-    val paneWidth: Int = 1 + 1 + 1 + nameWidth + 1
+    val paneWidth: Int = 1 + 1 + 1 + nameWidth + 1 + 1 + 1
 }

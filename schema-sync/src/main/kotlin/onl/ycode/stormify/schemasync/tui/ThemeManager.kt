@@ -22,6 +22,14 @@ internal object ThemeManager {
         LanternaThemes.getRegisteredTheme(names[idx])?.let { gui.theme = it }
     }
 
+    /** Advance one step (forward or backward) and apply to [gui]. Used by the
+     *  theme button on the top status row; F8 keyboard binding goes through
+     *  [handleKey] for the same effect. */
+    fun cycle(gui: WindowBasedTextGUI, forward: Boolean = true) {
+        idx = if (forward) (idx + 1) % names.size else (idx - 1 + names.size) % names.size
+        apply(gui)
+    }
+
     /** Returns true when the keystroke matched (caller should set hasBeenHandled). */
     fun handleKey(keyStroke: KeyStroke, gui: WindowBasedTextGUI): Boolean {
         if (keyStroke.keyType != KeyType.F8) return false

@@ -22,4 +22,6 @@ object Symbols {
     val rule: String get() = if (ascii) "---" else "───"
     /** Inline "not equal" marker before a type-conflict line. */
     val neq: String get() = if (ascii) "!=" else "≠"
+    /** Right-side row marker indicating "this row will be applied on F2". */
+    val tick: String get() = if (ascii) "v" else "✓"
 }

@@ -64,23 +64,10 @@ private fun newEntityHomeFromScanned(entities: List<KotlinEntity>): Pair<String,
     return pkg to dir
 }
 
-/** Best-effort package guess for a directory by looking at the first .kt file's package line. */
-private fun guessPackage(dir: Path): String {
-    if (!Files.isDirectory(dir)) return ""
-    Files.list(dir).use { stream ->
-        val sample = stream.filter { it.toString().endsWith(".kt") }.findFirst().orElse(null)
-            ?: return ""
-        Files.readAllLines(sample).firstOrNull { it.startsWith("package ") }
-            ?.removePrefix("package ")?.trim()?.let { return it }
-    }
-    return ""
-}
-
 fun buildPendingChanges(
     entities: List<KotlinEntity>,
     diffs: Collection<TableDiff>,
     actions: PropertyActions,
-    overrideEntitiesDir: Path? = null,
     policy: NamingPolicy = NamingPolicy.LOWER_CASE_WITH_UNDERSCORES,
     kotlinDefaults: KotlinDefaults = KotlinDefaults(),
 ): PendingChanges {
@@ -127,18 +114,15 @@ fun buildPendingChanges(
         name.endsWith("Id") && name.length > 2 && name[name.length - 3].isLowerCase() -> name.dropLast(2)
         else -> name
     }
-    val home: Pair<String, Path>? = when {
-        overrideEntitiesDir != null -> guessPackage(overrideEntitiesDir) to overrideEntitiesDir
-        else -> newEntityHomeFromScanned(entities)
-    }
+    val home: Pair<String, Path>? = newEntityHomeFromScanned(entities)
 
     for (diff in diffs) {
         when (diff.status) {
             onl.ycode.stormify.schemasync.model.TableStatus.DB_ONLY -> {
-                val anyInsert = diff.columnDeltas.any {
-                    actions.get(diff.tableKey, it.name, it.kind) == PropertyAction.INSERT
+                val activeColumns = diff.dbColumns.filter { col ->
+                    actions.get(diff.tableKey, col.name) == PropertyAction.INSERT
                 }
-                if (!anyInsert || home == null) continue
+                if (activeColumns.isEmpty() || home == null) continue
                 val (pkg, dir) = home
                 val classSimple = pascalCase(diff.tableKey.substringAfterLast('.'))
                 val conventionTable = policy.fromKotlin(classSimple.replaceFirstChar { it.lowercaseChar() })
@@ -151,7 +135,7 @@ fun buildPendingChanges(
                     tableNameOverride = tableNameOverride,
                     superType = newSuperType,
                     superTypeImport = newSuperImport,
-                    columns = diff.dbColumns.map { col ->
+                    columns = activeColumns.map { col ->
                         val isPk = col.name.equals("id", ignoreCase = true)
                         val fk = fkTarget(col.referencedTable)
                         if (fk != null) {
@@ -186,14 +170,10 @@ fun buildPendingChanges(
             }
             onl.ycode.stormify.schemasync.model.TableStatus.DIFF -> {
                 val primary = diff.primary ?: byTableKey[diff.tableKey] ?: continue
-                // For new DB columns: spread to every entity the user marked as a
-                // target (default `{primary}`). For @Transient marks: every entity
-                // that actually declares the field — leaving any of them pointing
-                // at a non-existent column would still break that entity.
                 val targetClassNames = actions.targetsFor(diff.tableKey, primary.className)
                 val insertTargets = diff.entities.filter { it.className in targetClassNames }
                 for (delta in diff.columnDeltas) {
-                    val act = actions.get(diff.tableKey, delta.name, delta.kind)
+                    val act = actions.get(diff.tableKey, delta.name)
                     when (delta.kind) {
                         ColumnDelta.Kind.DB_ONLY -> if (act == PropertyAction.INSERT) {
                             val col = delta.dbColumn ?: continue
@@ -227,19 +207,6 @@ fun buildPendingChanges(
                                         columnName = col.name,
                                         explicitColumnName = policy.fromKotlin(propName) != col.name,
                                     ),
-                                )
-                            }
-                        }
-                        ColumnDelta.Kind.ENTITY_ONLY -> if (act == PropertyAction.DELETE) {
-                            val field = delta.entityField ?: continue
-                            // Mark every entity that actually declares this field.
-                            for (target in diff.entities) {
-                                val source = target.sourcePath ?: continue
-                                if (target.fields.none { it.column.equals(field.column, ignoreCase = true) }) continue
-                                splices += PsiSplice(
-                                    label = "@Transient ${target.className}.${field.name}  (no DB column ${diff.tableKey}.${field.column})",
-                                    sourcePath = Path.of(source),
-                                    edit = EntityWriter.Edit.MarkTransient(target.className, field.name),
                                 )
                             }
                         }
@@ -375,8 +342,9 @@ fun runApplyConfirmation(
     diffs: Collection<TableDiff>,
     pending: PendingChanges,
     dialect: Dialect,
+    actions: PropertyActions,
     entities: List<KotlinEntity> = emptyList(),
-): Int {
+): Boolean {
     val style = EntityStyleDetector.detect(entities)
     if (pending.isEmpty && diffs.none {
             it.status == onl.ycode.stormify.schemasync.model.TableStatus.ENTITY_ONLY ||
@@ -388,7 +356,7 @@ fun runApplyConfirmation(
             "Nothing to do ${Symbols.dash} schema and entities are in sync.",
             MessageDialogButton.OK,
         )
-        return 0
+        return false
     }
 
     val projectDir = state.projectDir
@@ -403,7 +371,7 @@ fun runApplyConfirmation(
     val window = BasicWindow("Apply pending edits")
     window.setHints(listOf(Window.Hint.FULL_SCREEN, Window.Hint.NO_DECORATIONS))
 
-    var appliedCount = 0
+    var confirmed = false
     var activeIdx = 0
     val tabButtons = mutableListOf<Button>()
     val contentSlot = Panel(LinearLayout(Direction.VERTICAL).setSpacing(0))
@@ -433,6 +401,7 @@ fun runApplyConfirmation(
         cache,
         dialect,
         entities,
+        acceptColumn = { tableKey, col -> actions.get(tableKey, col) == PropertyAction.INSERT },
     )
     val sqlContent = DiffViewer(migrationRender.sql.lines().map { DiffLine(it) })
     val sqlPane = Panel(LinearLayout(Direction.VERTICAL).setSpacing(0)).apply {
@@ -492,24 +461,28 @@ fun runApplyConfirmation(
         } else pending
         val splicesApplied = applySplices(finalPending.splices, style)
         val createdFiles = finalPending.newEntities.mapNotNull { EntityWriter.createEntity(it, style) }
+        val hasSql = migrationRender.stats.addedColumns > 0 || migrationRender.stats.createdTables > 0
         val sqlPath = resolvePath(projectDir, sqlPathBox.text, "migration.sql")
-        Files.createDirectories(sqlPath.parent ?: projectDir)
-        Files.writeString(sqlPath, migrationRender.sql)
-        appliedCount = splicesApplied + createdFiles.size
+        if (hasSql) {
+            Files.createDirectories(sqlPath.parent ?: projectDir)
+            Files.writeString(sqlPath, migrationRender.sql)
+        }
+        confirmed = true
         val msg = buildString {
             appendLine("Applied $splicesApplied of ${finalPending.splices.size} code edits.")
             if (finalPending.newEntities.isNotEmpty()) {
                 appendLine("Created ${createdFiles.size} of ${finalPending.newEntities.size} new entity files.")
             }
             appendLine()
-            appendLine("Migration written to $sqlPath")
-            appendLine("  ${migrationRender.stats.addedColumns} ALTER TABLE ADD COLUMN")
-            appendLine("  ${migrationRender.stats.createdTables} CREATE TABLE")
-            if (migrationRender.stats.unclassifiedFields > 0) {
-                appendLine("  ${migrationRender.stats.unclassifiedFields} fields skipped (unclassified)")
-            }
-            if (migrationRender.stats.orphanColumns > 0) {
-                appendLine("  ${migrationRender.stats.orphanColumns} orphan DB columns (informational)")
+            if (hasSql) {
+                appendLine("Migration written to $sqlPath")
+                appendLine("  ${migrationRender.stats.addedColumns} ALTER TABLE ADD COLUMN")
+                appendLine("  ${migrationRender.stats.createdTables} CREATE TABLE")
+                if (migrationRender.stats.unclassifiedFields > 0) {
+                    appendLine("  ${migrationRender.stats.unclassifiedFields} fields skipped (unclassified)")
+                }
+            } else {
+                appendLine("No SQL migration to write.")
             }
         }
         MessageDialog.showMessageDialog(gui, "Apply", msg, MessageDialogButton.OK)
@@ -546,7 +519,7 @@ fun runApplyConfirmation(
     })
 
     gui.addWindowAndWait(window)
-    return appliedCount
+    return confirmed
 }
 
 private fun applySplices(splices: List<PsiSplice>, style: EntityStyle): Int {

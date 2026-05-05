@@ -25,9 +25,9 @@ import java.util.concurrent.atomic.AtomicBoolean
 /**
  * F3 Bulk classify — left pane lists every ENTITY_ONLY classifiable column,
  * right pane is a read-only display of slots for the active category with the
- * row's slot highlighted. Tab and ←/→ cycle the category; Type-ahead builds a
- * `contains` filter, Space toggles row selection, 1-9 applies the slot at that
- * index, +/- shifts the slot relatively.
+ * row's slot highlighted. Tab / Shift-Tab cycles the category; ←/→ shift the
+ * slot relatively; type-ahead builds a `contains` filter; Space toggles row
+ * selection; 1-9 applies the slot at that index.
  */
 fun runBulkClassifyView(
     gui: WindowBasedTextGUI,
@@ -44,9 +44,14 @@ fun runBulkClassifyView(
         SlotCategory.entries.associateWith { mutableSetOf<String>() }.toMutableMap()
     val rowsAll: List<ClassifyRow> = collectClassifiableRows(diffs)
 
-    val tabLabels: Map<SlotCategory, Label> = SlotCategory.entries.associateWith { Label("") }
-    val tabsRow = Panel(LinearLayout(Direction.HORIZONTAL).setSpacing(2)).apply {
-        SlotCategory.entries.forEach { addComponent(tabLabels.getValue(it)) }
+    var renderAllRef: () -> Unit = {}
+    var cycleCategoryToNonEmptyRef: (Int) -> Unit = {}
+    var fieldsBorderedRef: TitledBorder? = null
+    val tabButtons: Map<SlotCategory, ClickableLabel> = SlotCategory.entries.associateWith { c ->
+        ClickableLabel("") { activeCategory = c; renderAllRef() }
+    }
+    val tabsRow = Panel(LinearLayout(Direction.HORIZONTAL).setSpacing(1)).apply {
+        SlotCategory.entries.forEach { addComponent(tabButtons.getValue(it)) }
     }
     val filterLeft = Label("")
     val filterRight = Label("")
@@ -70,13 +75,8 @@ fun runBulkClassifyView(
         private val scrollbarMouse = ScrollbarMouse()
 
         override fun handleKeyStroke(keyStroke: KeyStroke): Interactable.Result {
-            if (keyStroke.keyType == KeyType.Tab
-                || keyStroke.keyType == KeyType.ArrowLeft
-                || keyStroke.keyType == KeyType.ArrowRight
-                || keyStroke.character == ' '
+            if (keyStroke.character == ' '
                 || (keyStroke.character?.let { it in '1'..'9' } == true)
-                || keyStroke.character == '+' || keyStroke.character == '='
-                || keyStroke.character == '-' || keyStroke.character == '_'
             ) return Interactable.Result.UNHANDLED
             keyStroke.asMouse?.let { m ->
                 val sz = size
@@ -106,6 +106,21 @@ fun runBulkClassifyView(
             }
             val before = selectedIndex
             val r = super.handleKeyStroke(keyStroke)
+            // Lanterna's ActionListBox returns MOVE_FOCUS_UP/DOWN at the list
+            // edges; intercept and cycle the category instead so navigation
+            // wraps without ever leaving the fields list.
+            if (keyStroke.keyType == KeyType.ArrowUp && r == Interactable.Result.MOVE_FOCUS_UP) {
+                cycleCategoryToNonEmptyRef(-1)
+                if (itemCount > 0) selectedIndex = itemCount - 1
+                onFieldsCursorChanged()
+                return Interactable.Result.HANDLED
+            }
+            if (keyStroke.keyType == KeyType.ArrowDown && r == Interactable.Result.MOVE_FOCUS_DOWN) {
+                cycleCategoryToNonEmptyRef(+1)
+                if (itemCount > 0) selectedIndex = 0
+                onFieldsCursorChanged()
+                return Interactable.Result.HANDLED
+            }
             if (selectedIndex != before) onFieldsCursorChanged()
             return r
         }
@@ -221,16 +236,12 @@ fun runBulkClassifyView(
     fun renderHeader() {
         SlotCategory.entries.forEach { c ->
             val n = rowsAll.count { it.category == c }
-            val label = tabLabels.getValue(c)
-            label.text = " ${c.name} $n "
-            if (c == activeCategory) {
-                label.foregroundColor = TextColor.ANSI.WHITE
-                label.backgroundColor = TextColor.ANSI.BLUE
-            } else {
-                label.foregroundColor = null
-                label.backgroundColor = null
-            }
+            val active = c == activeCategory
+            val open = if (active) "[" else " "
+            val close = if (active) "]" else " "
+            tabButtons.getValue(c).label = "$open ${c.name} $n $close"
         }
+        fieldsBorderedRef?.title = "${activeCategory.name} Fields"
         val sel = selected.getValue(activeCategory).size
         filterLeft.text = if (filter.isEmpty()) "Filter: (type to filter, Backspace / Ctrl+U to clear)"
                           else "Filter: $filter"
@@ -251,6 +262,7 @@ fun runBulkClassifyView(
         renderFieldsListItems()
         syncSlotsHighlight()
     }
+    renderAllRef = ::renderAll
 
     fun toggleCurrentSelection() {
         val key = visibleRows().getOrNull(fieldsList.selectedIndex)?.columnKey ?: return
@@ -267,6 +279,25 @@ fun runBulkClassifyView(
         renderAll()
         if (fieldsList.itemCount > 0) fieldsList.selectedIndex = 0
         syncSlotsHighlight()
+    }
+
+    /** Like [cycleCategory] but skips categories with no rows; used by the
+     *  ↑/↓ edge wrap so the user lands on actionable content. Falls back to a
+     *  plain cycle when every category is empty. */
+    fun cycleCategoryToNonEmpty(step: Int) {
+        val cats = SlotCategory.entries
+        val n = cats.size
+        val start = cats.indexOf(activeCategory)
+        for (i in 1..n) {
+            val candidate = cats[((start + step * i) % n + n) % n]
+            if (rowsAll.any { it.category == candidate }) {
+                activeCategory = candidate
+                renderAll()
+                if (fieldsList.itemCount > 0) fieldsList.selectedIndex = 0
+                syncSlotsHighlight()
+                return
+            }
+        }
     }
 
     fun shiftSlot(step: Int) {
@@ -291,6 +322,7 @@ fun runBulkClassifyView(
         syncSlotsHighlight()
     }
 
+    cycleCategoryToNonEmptyRef = ::cycleCategoryToNonEmpty
     onFieldsCursorChanged = { syncSlotsHighlight() }
 
     val slotsMaxCount = maxOf(
@@ -304,6 +336,7 @@ fun runBulkClassifyView(
     val fieldsBordered = fieldsList.withTitledBorder("Fields").apply {
         layoutData = LinearLayout.createLayoutData(LinearLayout.Alignment.Fill, LinearLayout.GrowPolicy.CanGrow)
     }
+    fieldsBorderedRef = fieldsBordered
     val workspace = Panel(LinearLayout(Direction.HORIZONTAL).setSpacing(0)).apply {
         addComponent(fieldsBordered)
         addComponent(slotsBordered)
@@ -316,7 +349,7 @@ fun runBulkClassifyView(
     root.addComponent(workspace)
     root.addComponent(EmptySpace(TerminalSize(1, 1)))
     root.addComponent(Label(
-        "Type to filter · Tab/←→ category · Space select · 0 clear · 1-9 apply · -/+ shift · Esc back",
+        "Type to filter · Tab/Shift-Tab category · ←→ shift slot · Space select · 0 clear · 1-9 apply · Esc back",
     ))
 
     window.component = root
@@ -326,6 +359,17 @@ fun runBulkClassifyView(
     syncSlotsHighlight()
 
     window.addWindowListener(object : WindowListenerAdapter() {
+        // Intercept category / slot keys at the window level so they work
+        // identically whether focus is on the fields list or on a tab button.
+        override fun onInput(basePane: Window, keyStroke: KeyStroke, deliverEvent: AtomicBoolean) {
+            when (keyStroke.keyType) {
+                KeyType.Tab -> { cycleCategory(+1); deliverEvent.set(false) }
+                KeyType.ReverseTab -> { cycleCategory(-1); deliverEvent.set(false) }
+                KeyType.ArrowLeft -> { shiftSlot(-1); deliverEvent.set(false) }
+                KeyType.ArrowRight -> { shiftSlot(+1); deliverEvent.set(false) }
+                else -> {}
+            }
+        }
         override fun onUnhandledInput(basePane: Window, keyStroke: KeyStroke, hasBeenHandled: AtomicBoolean) {
             when {
                 keyStroke.keyType == KeyType.F1 || keyStroke.character == '?' -> {
@@ -348,15 +392,6 @@ fun runBulkClassifyView(
                     if (filter.isNotEmpty()) { filter = ""; renderAll() }
                     hasBeenHandled.set(true)
                 }
-                keyStroke.keyType == KeyType.Tab -> {
-                    cycleCategory(+1); hasBeenHandled.set(true)
-                }
-                keyStroke.keyType == KeyType.ArrowLeft -> {
-                    cycleCategory(-1); hasBeenHandled.set(true)
-                }
-                keyStroke.keyType == KeyType.ArrowRight -> {
-                    cycleCategory(+1); hasBeenHandled.set(true)
-                }
                 keyStroke.character == ' ' -> {
                     toggleCurrentSelection(); hasBeenHandled.set(true)
                 }
@@ -378,13 +413,7 @@ fun runBulkClassifyView(
                     }
                     hasBeenHandled.set(true)
                 }
-                keyStroke.character == '=' || keyStroke.character == '+' -> {
-                    shiftSlot(+1); hasBeenHandled.set(true)
-                }
-                keyStroke.character == '-' || keyStroke.character == '_' -> {
-                    shiftSlot(-1); hasBeenHandled.set(true)
-                }
-                keyStroke.character?.let { it.isLetterOrDigit() || it == '_' || it == '.' || it == '-' || it == '!' || it == '*' || it == ':' } == true -> {
+                keyStroke.character?.let { it.isLetterOrDigit() || it == '_' || it == '.' || it == '!' || it == '*' || it == ':' } == true -> {
                     filter += keyStroke.character.toString()
                     renderAll()
                     hasBeenHandled.set(true)

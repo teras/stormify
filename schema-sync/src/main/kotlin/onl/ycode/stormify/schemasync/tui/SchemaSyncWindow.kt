@@ -59,26 +59,51 @@ fun runSchemaSync(
     val root = Panel(LinearLayout(Direction.VERTICAL).setSpacing(0))
 
     val statusLabel = Label("")
-    val pendingLabel = Label("")
-    fun pendingCount(): Int =
-        buildPendingChanges(entities, diffsByTable.values, propertyActions, policy = configState.current.namingPolicy, kotlinDefaults = configState.current.kotlin).total
+    fun pendingCount(): Int = diffsByTable.values.sumOf { diff ->
+        diff.columnDeltas.count {
+            propertyActions.get(diff.tableKey, it.name) != PropertyAction.NONE
+        }
+    }
     var visibleCount = 0
+    val configButton = plainButton("Config (F7)") { runConfigView(gui, configState, dialect) }
+    val themeButton = plainButton("Theme: ${ThemeManager.current()} (F8)") {}
     fun refreshStatus() {
+        val pc = pendingCount()
         statusLabel.text =
-            "${tables.size} tables · $visibleCount visible · " +
-                "${dialect.tomlKey} · F2 apply · F3 classify · F7 config · F8 theme [${ThemeManager.current()}]"
-        pendingLabel.text = "${pendingCount()} pending code edit${if (pendingCount() == 1) "" else "s"}"
+            "${tables.size} tables · $visibleCount visible · ${dialect.tomlKey} · " +
+                "$pc pending change${if (pc == 1) "" else "s"}"
+        themeButton.label = "Theme: ${ThemeManager.current()} (F8)"
+    }
+    themeButton.addListener {
+        ThemeManager.cycle(gui)
+        refreshStatus()
+        gui.screen.refresh()
     }
     refreshStatus()
-    root.addComponent(statusLabel)
-    root.addComponent(pendingLabel)
+    val statusRow = Panel(LinearLayout(Direction.HORIZONTAL).setSpacing(1)).apply {
+        layoutData = LinearLayout.createLayoutData(LinearLayout.Alignment.Fill, LinearLayout.GrowPolicy.None)
+    }
+    statusRow.addComponent(statusLabel)
+    statusRow.addComponent(EmptySpace(TerminalSize(1, 1)).apply {
+        layoutData = LinearLayout.createLayoutData(LinearLayout.Alignment.Fill, LinearLayout.GrowPolicy.CanGrow)
+    })
+    statusRow.addComponent(configButton)
+    statusRow.addComponent(themeButton)
+    root.addComponent(statusRow)
 
     val filterRow = Panel(LinearLayout(Direction.HORIZONTAL))
     filterRow.addComponent(Label("Filter (/) — prefix @ for column: "))
     root.addComponent(filterRow)
     root.addComponent(EmptySpace(TerminalSize(1, 1)))
 
-    val tableFormatter = RowFormatter(tables)
+    fun hasPendingFor(tableKey: String): Boolean {
+        val diff = diffsByTable[tableKey] ?: return false
+        return diff.columnDeltas.any {
+            propertyActions.get(tableKey, it.name) != PropertyAction.NONE
+        }
+    }
+
+    val tableFormatter = RowFormatter(tables) { entry -> hasPendingFor(entry.table) }
 
     val allTableRows = tables.map { TableRowItem(it, tableFormatter) }
     var currentFilter = ""
@@ -139,12 +164,65 @@ fun runSchemaSync(
     filterRow.addComponent(categoryButton)
 
     tablesList.layoutData = LinearLayout.createLayoutData(LinearLayout.Alignment.Fill, LinearLayout.GrowPolicy.CanGrow)
-    val tablesBordered = tablesList.withTitledBorder(tableFormatter.titleText, tableFormatter.crossColumns)
 
     val globalPropsFormatter = PropertyRowFormatter(diffsByTable.values.flatMap { it.columnDeltas })
     val propsList = SelectionAwareListBox(globalPropsFormatter.crossColumns)
     propsList.layoutData = LinearLayout.createLayoutData(LinearLayout.Alignment.Fill, LinearLayout.GrowPolicy.CanGrow)
-    val propsBordered = propsList.withTitledBorder(globalPropsFormatter.titleText)
+
+    var currentTableKey: String? = null
+
+    fun bulkSetTables(action: PropertyAction) {
+        for (i in 0 until tablesList.itemCount) {
+            val key = (tablesList.getItemAt(i) as? TableRowItem)?.entry?.table ?: continue
+            val diff = diffsByTable[key] ?: continue
+            for (delta in diff.columnDeltas) {
+                val ok = action == PropertyAction.NONE ||
+                    PropertyAction.isTogglable(delta.kind)
+                if (ok) propertyActions.set(key, delta.name, action)
+            }
+        }
+        tablesList.invalidate()
+        propsList.invalidate()
+    }
+
+    fun bulkSetProps(action: PropertyAction) {
+        val key = currentTableKey ?: return
+        for (i in 0 until propsList.itemCount) {
+            val row = propsList.getItemAt(i) as? PropertyRow ?: continue
+            val ok = action == PropertyAction.NONE ||
+                PropertyAction.isTogglable(row.delta.kind)
+            if (ok) propertyActions.set(key, row.delta.name, action)
+        }
+        tablesList.invalidate()
+        propsList.invalidate()
+    }
+
+    // Forward-reference holder: diffPane and refreshStatus are declared later.
+    var bulkPostAction: () -> Unit = {}
+
+    val tablesAllBtn = plainButton("All") { bulkSetTables(PropertyAction.INSERT); bulkPostAction() }
+    val tablesNoneBtn = plainButton("None") { bulkSetTables(PropertyAction.NONE); bulkPostAction() }
+    val tablesInnerBordered = tablesList.withTitledBorder(tableFormatter.titleText, tableFormatter.crossColumns)
+    val tablesButtons = Panel(LinearLayout(Direction.HORIZONTAL).setSpacing(1)).apply {
+        addComponent(tablesAllBtn)
+        addComponent(tablesNoneBtn)
+    }
+    val tablesBordered = Panel(LinearLayout(Direction.VERTICAL).setSpacing(0)).apply {
+        addComponent(tablesInnerBordered.apply { layoutData = LinearLayout.createLayoutData(LinearLayout.Alignment.Fill, LinearLayout.GrowPolicy.CanGrow) })
+        addComponent(tablesButtons)
+    }
+
+    val propsAllBtn = plainButton("All") { bulkSetProps(PropertyAction.INSERT); bulkPostAction() }
+    val propsNoneBtn = plainButton("None") { bulkSetProps(PropertyAction.NONE); bulkPostAction() }
+    val propsInnerBordered = propsList.withTitledBorder(globalPropsFormatter.titleText)
+    val propsButtons = Panel(LinearLayout(Direction.HORIZONTAL).setSpacing(1)).apply {
+        addComponent(propsAllBtn)
+        addComponent(propsNoneBtn)
+    }
+    val propsBordered = Panel(LinearLayout(Direction.VERTICAL).setSpacing(0)).apply {
+        addComponent(propsInnerBordered.apply { layoutData = LinearLayout.createLayoutData(LinearLayout.Alignment.Fill, LinearLayout.GrowPolicy.CanGrow) })
+        addComponent(propsButtons)
+    }
 
     val diffPane = DiffPane(
         configState, classifier, cache, propertyActions,
@@ -153,23 +231,72 @@ fun runSchemaSync(
         entities = entities,
     )
     val diffBordered = diffPane.borderedComponent
+    bulkPostAction = { diffPane.refresh(); refreshStatus() }
 
-    tablesBordered.preferredSize = TerminalSize(tableFormatter.leftPaneWidth + 2, 8)
-    tablesBordered.layoutData = LinearLayout.createLayoutData(LinearLayout.Alignment.Fill)
-    propsBordered.preferredSize = TerminalSize(globalPropsFormatter.paneWidth + 2, 8)
-    propsBordered.layoutData = LinearLayout.createLayoutData(LinearLayout.Alignment.Fill)
-    diffBordered.layoutData =
-        LinearLayout.createLayoutData(LinearLayout.Alignment.Fill, LinearLayout.GrowPolicy.CanGrow)
+    var outcome = Outcome.CANCEL
 
-    val mainRow = Panel(LinearLayout(Direction.HORIZONTAL).setSpacing(0)).apply {
+    fun runF2Apply() {
+        val pending = buildPendingChanges(entities, diffsByTable.values, propertyActions, policy = configState.current.namingPolicy, kotlinDefaults = configState.current.kotlin)
+        val confirmed = runApplyConfirmation(gui, configState, cache, diffsByTable.values, pending, dialect, propertyActions, entities)
+        if (confirmed) {
+            outcome = Outcome.RESCAN
+            window.close()
+        }
+    }
+    fun runF3Classify() {
+        val visibleKeys = (0 until tablesList.itemCount)
+            .mapNotNull { (tablesList.getItemAt(it) as? TableRowItem)?.entry?.table }
+            .toSet()
+        val activeDiffs = diffsByTable.values
+            .filter { it.tableKey in visibleKeys }
+            .mapNotNull { diff ->
+                val active = diff.columnDeltas.filter {
+                    propertyActions.get(diff.tableKey, it.name) == PropertyAction.INSERT
+                }
+                if (active.isEmpty()) null else diff.copy(columnDeltas = active)
+            }
+        runBulkClassifyView(gui, configState, cache, activeDiffs)
+        diffPane.refresh()
+    }
+
+    fun applyLeftDisplay(table: Int, entity: Int) {
+        if (tableFormatter.displayTableWidth == table && tableFormatter.displayEntityWidth == entity) return
+        tableFormatter.displayTableWidth = table
+        tableFormatter.displayEntityWidth = entity
+        tablesList.setSeparatorColumns(tableFormatter.crossColumns)
+        tablesInnerBordered.title = markFocused(tableFormatter.titleText, window.focusedInteractable === tablesList)
+        tablesInnerBordered.crossColumns = tableFormatter.crossColumns
+        tablesList.invalidate()
+    }
+
+    val applyBtn = plainButton("Apply (F2)") { runF2Apply() }
+    val classifyBtn = plainButton("Classify (F3)") { runF3Classify() }
+    val diffButtons = Panel(LinearLayout(Direction.HORIZONTAL).setSpacing(1)).apply {
+        addComponent(applyBtn)
+        addComponent(classifyBtn)
+    }
+    val diffColumn = Panel(LinearLayout(Direction.VERTICAL).setSpacing(0)).apply {
+        addComponent(diffBordered.apply {
+            layoutData = LinearLayout.createLayoutData(LinearLayout.Alignment.Fill, LinearLayout.GrowPolicy.CanGrow)
+        })
+        addComponent(diffButtons)
+    }
+
+    val priorityLayout = PriorityShrinkLayout(
+        tablePref = { tableFormatter.tableWidth },
+        entityPref = { tableFormatter.entityWidth },
+        midPref = { globalPropsFormatter.paneWidth + 2 },
+        leftOuterWidth = { t, e -> tableFormatter.outerWidthFor(t, e) },
+        onLeftDisplayChange = { t, e -> applyLeftDisplay(t, e) },
+    )
+
+    val mainRow = Panel(priorityLayout).apply {
         addComponent(tablesBordered)
         addComponent(propsBordered)
-        addComponent(diffBordered)
+        addComponent(diffColumn)
         layoutData = LinearLayout.createLayoutData(LinearLayout.Alignment.Fill, LinearLayout.GrowPolicy.CanGrow)
     }
     root.addComponent(mainRow)
-
-    var currentTableKey: String? = null
 
     fun selectedDelta(): ColumnDelta? {
         val idx = propsList.selectedIndex
@@ -194,22 +321,29 @@ fun runSchemaSync(
             diffPane.showFor(null, null)
             return
         }
-        diff.columnDeltas.forEach { delta ->
+        // Mirror the entity diff: entity-side rows in declaration order first,
+        // then DB-only rows in column order — same top-down sequence the user
+        // reads in the file diff.
+        val primaryFields = diff.primary?.fields.orEmpty()
+        val entityRank: (ColumnDelta) -> Int = { d ->
+            d.entityField?.let { f -> primaryFields.indexOf(f).takeIf { it >= 0 } } ?: -1
+        }
+        val dbRank: (ColumnDelta) -> Int = { d ->
+            d.dbColumn?.let { c -> diff.dbColumns.indexOf(c) } ?: -1
+        }
+        val ordered = diff.columnDeltas.withIndex()
+            .sortedWith(compareBy(
+                { if (it.value.entityField != null) 0 else 1 },
+                { entityRank(it.value).takeIf { idx -> idx >= 0 } ?: dbRank(it.value) },
+                { it.index },
+            ))
+            .map { it.value }
+        ordered.forEach { delta ->
             propsList.addItem(PropertyRow(tableKey, delta, propertyActions, globalPropsFormatter))
         }
-        // Land on the first row that needs attention so the user can act on it
-        // immediately. Priority: missing DB field (entity-only), then missing
-        // entity property (db-only), then type mismatch, else the first row.
-        if (diff.columnDeltas.isNotEmpty()) {
-            val priorities = listOf(
-                ColumnDelta.Kind.ENTITY_ONLY,
-                ColumnDelta.Kind.DB_ONLY,
-                ColumnDelta.Kind.TYPE_MISMATCH,
-            )
-            propsList.selectedIndex = priorities
-                .firstNotNullOfOrNull { kind ->
-                    diff.columnDeltas.indexOfFirst { it.kind == kind }.takeIf { it >= 0 }
-                } ?: 0
+        if (ordered.isNotEmpty()) {
+            val firstActionable = ordered.indexOfFirst { it.kind != ColumnDelta.Kind.SYNCED }
+            propsList.selectedIndex = firstActionable.takeIf { it >= 0 } ?: 0
         }
         refreshDiffForSelection()
     }
@@ -220,6 +354,25 @@ fun runSchemaSync(
     tablesList.onSelectionChanged = {
         selectedTableKey()?.let { loadPropsFor(it) }
     }
+    tablesList.onSpace = {
+        val key = selectedTableKey()
+        val diff = key?.let(diffsByTable::get)
+        if (diff != null) {
+            val anyMarked = diff.columnDeltas.any {
+                propertyActions.get(key, it.name) != PropertyAction.NONE
+            }
+            val target = if (anyMarked) PropertyAction.NONE else PropertyAction.INSERT
+            for (delta in diff.columnDeltas) {
+                if (target == PropertyAction.NONE || PropertyAction.isTogglable(delta.kind)) {
+                    propertyActions.set(key, delta.name, target)
+                }
+            }
+            tablesList.invalidate()
+            propsList.invalidate()
+            diffPane.refresh()
+            refreshStatus()
+        }
+    }
     propsList.onSelectionChanged = {
         refreshDiffForSelection()
     }
@@ -229,6 +382,7 @@ fun runSchemaSync(
         if (delta != null && key != null) {
             propertyActions.cycle(key, delta.name, delta.kind)
             propsList.invalidate()
+            tablesList.invalidate()
             diffPane.refresh()
             refreshStatus()
         }
@@ -239,6 +393,7 @@ fun runSchemaSync(
         if (delta != null && key != null) {
             propertyActions.set(key, delta.name, PropertyAction.NONE)
             propsList.invalidate()
+            tablesList.invalidate()
             diffPane.refresh()
             refreshStatus()
         }
@@ -256,8 +411,6 @@ fun runSchemaSync(
     }
 
     selectedTableKey()?.let { loadPropsFor(it) }
-
-    var outcome = Outcome.CANCEL
 
     // Diff pane is focusable only when its slot picker is active; otherwise
     // focusing it would land on an empty list and look like "focus lost".
@@ -279,8 +432,8 @@ fun runSchemaSync(
      *  diff-pane child (slots vs targets). */
     fun applyFocusMarkers() {
         val f = window.focusedInteractable
-        tablesBordered.title = markFocused(tableFormatter.titleText, f === tablesList)
-        propsBordered.title = markFocused(globalPropsFormatter.titleText, f === propsList)
+        tablesInnerBordered.title = markFocused(tableFormatter.titleText, f === tablesList)
+        propsInnerBordered.title = markFocused(globalPropsFormatter.titleText, f === propsList)
         diffPane.paneFocused = f != null && diffPane.ownsFocus(f)
     }
 
@@ -292,6 +445,34 @@ fun runSchemaSync(
         if (next !in panes.indices) return true
         panes[next].takeFocus()
         return true
+    }
+
+    // diff focus target resolves to slotsList vs targetsList at runtime; the
+    // others are stable but use thunks for uniformity.
+    val focusOrder: List<() -> Interactable?> = listOf(
+        { tablesList },
+        { propsList },
+        { diffPane.viewerFocusTarget },
+        { if (diffPane.hasFocusableContent) diffPane.focusTarget else null },
+        { filterBox },
+        { categoryButton },
+        { tablesAllBtn },
+        { tablesNoneBtn },
+        { propsAllBtn },
+        { propsNoneBtn },
+        { applyBtn },
+        { classifyBtn },
+        { configButton },
+        { themeButton },
+    )
+
+    fun moveFocus(delta: Int) {
+        val resolved = focusOrder.mapNotNull { it() }
+        if (resolved.isEmpty()) return
+        val current = window.focusedInteractable
+        val idx = if (current == null) -1 else resolved.indexOfFirst { it === current }
+        val nextIdx = if (idx < 0) (if (delta > 0) 0 else resolved.lastIndex) else (idx + delta).mod(resolved.size)
+        resolved[nextIdx].takeFocus()
     }
 
     fun focusInRightPane(): Boolean =
@@ -314,6 +495,11 @@ fun runSchemaSync(
         // refresh per input via the GUI thread; by the time it runs, focus has
         // settled wherever Lanterna routed it.
         override fun onInput(basePane: Window, keyStroke: KeyStroke, deliverEvent: AtomicBoolean) {
+            when (keyStroke.keyType) {
+                KeyType.Tab -> { moveFocus(+1); deliverEvent.set(false) }
+                KeyType.ReverseTab -> { moveFocus(-1); deliverEvent.set(false) }
+                else -> {}
+            }
             gui.guiThread.invokeLater { applyFocusMarkers() }
         }
         override fun onUnhandledInput(basePane: Window, keyStroke: KeyStroke, hasBeenHandled: AtomicBoolean) {
@@ -346,19 +532,11 @@ fun runSchemaSync(
                     hasBeenHandled.set(true)
                 }
                 keyStroke.keyType == KeyType.F2 -> {
-                    val pending = buildPendingChanges(entities, diffsByTable.values, propertyActions, policy = configState.current.namingPolicy, kotlinDefaults = configState.current.kotlin)
-                    val applied = runApplyConfirmation(
-                        gui, configState, cache, diffsByTable.values, pending, dialect, entities,
-                    )
-                    if (applied > 0) {
-                        outcome = Outcome.RESCAN
-                        window.close()
-                    }
+                    runF2Apply()
                     hasBeenHandled.set(true)
                 }
                 keyStroke.keyType == KeyType.F3 -> {
-                    runBulkClassifyView(gui, configState, cache, diffsByTable.values)
-                    diffPane.refresh()
+                    runF3Classify()
                     hasBeenHandled.set(true)
                 }
                 keyStroke.keyType == KeyType.F7 -> {
@@ -684,6 +862,11 @@ internal class SelectionAwareListBox(
     private val asciiRenderer = AsciiListBoxRenderer(separatorColumns)
     val scrollbarMouse = ScrollbarMouse()
 
+    // Lanterna emits no native double-click; we detect it from CLICK_DOWN.
+    private var lastClickRow: Int = -1
+    private var lastClickAt: Long = 0
+    private val doubleClickWindowMs: Long = 400
+
     init {
         renderer = asciiRenderer
         setListItemRenderer(PersistentSelectionItemRenderer())
@@ -712,6 +895,20 @@ internal class SelectionAwareListBox(
         val before = selectedIndex
         val r = super.handleKeyStroke(keyStroke)
         if (selectedIndex != before) onSelectionChanged?.invoke()
+        keyStroke.asMouse?.let { m ->
+            if (m.actionType == com.googlecode.lanterna.input.MouseActionType.CLICK_DOWN && onSpace != null) {
+                val now = System.currentTimeMillis()
+                val row = selectedIndex
+                if (row >= 0 && row == lastClickRow && now - lastClickAt <= doubleClickWindowMs) {
+                    onSpace?.invoke()
+                    lastClickRow = -1
+                    lastClickAt = 0
+                } else {
+                    lastClickRow = row
+                    lastClickAt = now
+                }
+            }
+        }
         return when (r) {
             Interactable.Result.MOVE_FOCUS_UP,
             Interactable.Result.MOVE_FOCUS_DOWN -> Interactable.Result.HANDLED

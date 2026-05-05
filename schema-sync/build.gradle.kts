@@ -36,27 +36,6 @@ tasks.named<JavaExec>("run") {
     standardInput = System.`in`
 }
 
-tasks.register<JavaExec>("introspectorDemo") {
-    group = "verification"
-    description = "Connects to a JDBC URL and dumps the columns it would classify"
-    classpath = sourceSets.main.get().runtimeClasspath
-    mainClass = "onl.ycode.stormify.schemasync.db.IntrospectorDemoKt"
-}
-
-tasks.register<JavaExec>("writerDemo") {
-    group = "verification"
-    description = "Applies a single PSI splice edit to a Kotlin source file"
-    classpath = sourceSets.main.get().runtimeClasspath
-    mainClass = "onl.ycode.stormify.schemasync.entity.source.WriterDemoKt"
-}
-
-tasks.register<JavaExec>("scannerDemo") {
-    group = "verification"
-    description = "Walks Kotlin sources via PSI and prints discovered entities"
-    classpath = sourceSets.main.get().runtimeClasspath
-    mainClass = "onl.ycode.stormify.schemasync.entity.source.ScannerDemoKt"
-}
-
 tasks.register<Jar>("fatJar") {
     archiveClassifier.set("all")
     manifest {

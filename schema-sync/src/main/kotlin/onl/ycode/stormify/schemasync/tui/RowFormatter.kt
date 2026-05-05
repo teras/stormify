@@ -3,23 +3,82 @@ package onl.ycode.stormify.schemasync.tui
 import onl.ycode.stormify.schemasync.model.TableEntry
 import onl.ycode.stormify.schemasync.model.TableStatus
 
-class RowFormatter(entries: List<TableEntry>) {
-    private val tableWidth: Int = maxOf("table".length, entries.maxOf { it.table.length })
-    private val entityWidth: Int = maxOf("entity".length, entries.maxOf { entityDisplay(it).length })
+/**
+ * Renders table-list rows for the left pane. The pane shows up to two
+ * sub-columns (Table and Entity) inside a single bordered widget. The
+ * layout drives column visibility by setting [displayTableWidth] and
+ * [displayEntityWidth]: each may shrink continuously down to the MIN
+ * sliver size (2 cells) before being set to 0 (dropped). All title /
+ * separator / pane-width derived properties read these two fields, so a
+ * single layout call can re-shape the pane without touching renderer
+ * internals.
+ */
+class RowFormatter(
+    entries: List<TableEntry>,
+    var hasPending: (TableEntry) -> Boolean = { false },
+) {
 
-    fun renderRow(entry: TableEntry): String =
-        " ${badge(entry.status)} ${entry.table.fit(tableWidth)} ${Symbols.vbar} ${entityDisplay(entry).fit(entityWidth)} "
+    /** Preferred raw width of the Table sub-column (longest table name vs header). */
+    val tableWidth: Int = maxOf("table".length, entries.maxOf { it.table.length })
+    /** Preferred raw width of the Entity sub-column (longest display name vs header). */
+    val entityWidth: Int = maxOf("entity".length, entries.maxOf { entityDisplay(it).length })
 
-    /** Border title doubling as `Table │ Entity` column header. */
-    val titleText: String = columnHeaderTitle(listOf(
-        "Table" to (tableWidth - 4).coerceAtLeast(1),
-        "Entity" to 1,
-    ))
+    /**
+     * Active rendered widths, set by the layout each pass. A value of 0
+     * means "drop this sub-column entirely". Any value ≥ MIN is rendered
+     * as content (truncated with an ellipsis if shorter than preferred).
+     */
+    var displayTableWidth: Int = tableWidth
+    var displayEntityWidth: Int = entityWidth
 
-    /** Column index where the row separator (`│`) sits. */
-    val crossColumns: List<Int> = listOf(1 + 1 + 1 + tableWidth + 1)
+    fun renderRow(entry: TableEntry): String {
+        val tw = displayTableWidth
+        val ew = displayEntityWidth
+        val tick = if (hasPending(entry)) Symbols.tick else " "
+        return when {
+            tw == 0 && ew == 0 -> ""
+            tw == 0 -> " ${badge(entry.status)} ${entityDisplay(entry).fit(ew)} $tick "
+            ew == 0 -> " ${badge(entry.status)} ${entry.table.fit(tw)} $tick "
+            else -> " ${badge(entry.status)} ${entry.table.fit(tw)} ${Symbols.vbar} ${entityDisplay(entry).fit(ew)} $tick "
+        }
+    }
 
-    val leftPaneWidth: Int = 1 + 1 + 1 + tableWidth + 3 + entityWidth + 1
+    /** Border title; reflects which sub-columns are currently visible. */
+    val titleText: String get() {
+        val tw = displayTableWidth
+        val ew = displayEntityWidth
+        return when {
+            tw == 0 && ew == 0 -> ""
+            tw == 0 -> "Entity"
+            ew == 0 -> "Table"
+            else -> columnHeaderTitle(listOf(
+                "Table" to (tw - 4).coerceAtLeast(1),
+                "Entity" to 1,
+            ))
+        }
+    }
+
+    /** Inner-coordinate columns where the row separator (`│`) sits. */
+    val crossColumns: List<Int> get() {
+        val tw = displayTableWidth
+        val ew = displayEntityWidth
+        return if (tw > 0 && ew > 0) listOf(1 + 1 + 1 + tw + 1) else emptyList()
+    }
+
+    /** Inner pane width (without the surrounding border) for the active widths. */
+    val paneInnerWidth: Int get() = innerWidthFor(displayTableWidth, displayEntityWidth)
+
+    /** Inner pane width for arbitrary (table, entity) sub-widths. */
+    fun innerWidthFor(tw: Int, ew: Int): Int = when {
+        tw == 0 && ew == 0 -> 0                              // sliver: bordered = 2
+        tw == 0 -> 1 + 1 + 1 + ew + 1 + 1 + 1                // " ▶ entity ✓ "
+        ew == 0 -> 1 + 1 + 1 + tw + 1 + 1 + 1                // " ▶ table ✓ "
+        else -> 1 + 1 + 1 + tw + 3 + ew + 1 + 1 + 1          // " ▶ table │ entity ✓ "
+    }
+
+    /** Bordered (outer) pane width for arbitrary (table, entity) sub-widths. */
+    fun outerWidthFor(tw: Int, ew: Int): Int =
+        if (tw == 0 && ew == 0) 2 else innerWidthFor(tw, ew) + 2
 
     /** 1-cell status badge (unicode glyph, ASCII fallback in `--ascii` mode). */
     private fun badge(status: TableStatus): String = if (Symbols.ascii) {
@@ -58,20 +117,5 @@ internal fun pascalCase(snake: String): String =
     snake.split('_').filter { it.isNotEmpty() }
         .joinToString("") { it.replaceFirstChar { c -> c.uppercaseChar() } }
 
-/** snake_case → camelCase. */
-internal fun camelCase(snake: String): String {
-    val parts = snake.split('_').filter { it.isNotEmpty() }
-    if (parts.size == 1) return parts[0]
-    return parts[0] + parts.drop(1).joinToString("") { it.replaceFirstChar { c -> c.uppercaseChar() } }
-}
-
-/** PascalCase → snake_case (matches stormify's LOWER_CASE_WITH_UNDERSCORES). */
-internal fun snakeCase(pascal: String): String = buildString {
-    for ((i, c) in pascal.withIndex()) {
-        if (c.isUpperCase() && i > 0) append('_')
-        append(c.lowercaseChar())
-    }
-}
-
 internal fun String.fit(n: Int): String =
-    if (length > n) take(n - Symbols.ellipsis.length) + Symbols.ellipsis else padEnd(n)
+    if (length > n) take((n - Symbols.ellipsis.length).coerceAtLeast(0)) + Symbols.ellipsis.take(n) else padEnd(n)

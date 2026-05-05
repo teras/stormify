@@ -5,19 +5,18 @@ import onl.ycode.stormify.schemasync.entity.EntityStyle
 import org.jetbrains.kotlin.psi.KtClass
 import org.jetbrains.kotlin.psi.KtClassBody
 import org.jetbrains.kotlin.psi.KtFile
-import org.jetbrains.kotlin.psi.KtParameter
-import org.jetbrains.kotlin.psi.KtProperty
 import java.nio.file.Files
 import java.nio.file.Path
 
 /**
- * Targeted text splices on Kotlin source files. Two operations are supported:
+ * Targeted text splices on Kotlin source files. Two edit kinds are supported:
  *
- *  - [addProperty]: insert `var name: Type = default` into a class body, just
- *    before the closing brace. Indentation is inferred from the previous
- *    declaration. Existing formatting/comments/blank lines are preserved.
- *  - [markTransient]: prepend `@Transient` (with a `kotlin.jvm.Transient` import
- *    if missing) to a property declaration.
+ *  - [Edit.AddProperty]: insert `var name: Type = default` into a class body
+ *    (or primary constructor, depending on [EntityStyle.constructorStyle]).
+ *    Indentation is inferred from the previous declaration; existing
+ *    formatting/comments/blank lines are preserved.
+ *  - [Edit.AddSupertype]: insert `: SuperType` into a class header that does
+ *    not already declare a supertype.
  *
  * Operations work on the source string directly using PSI byte offsets, so the
  * output differs from the original only in the spliced region.
@@ -56,12 +55,6 @@ object EntityWriter {
                 explicitColumnName = explicitColumnName,
             )
         }
-
-        /** Annotate an existing property with `@Transient` (kotlin.jvm.Transient). */
-        data class MarkTransient(
-            override val className: String,
-            val propertyName: String,
-        ) : Edit
 
         /** Add a supertype to an existing class declaration (e.g. `: ByDb()`). */
         data class AddSupertype(
@@ -174,12 +167,6 @@ object EntityWriter {
         return sb.toString()
     }
 
-    /** Public entry point so the diff pane can render exactly the same property
-     *  line the new-entity writer would produce, instead of duplicating the
-     *  formatting. */
-    fun renderPropertyLine(c: NewColumn, byDb: Boolean = false): String =
-        renderProperty(c, trailingComma = false, byDb = byDb)
-
     private fun renderProperty(c: NewColumn, trailingComma: Boolean, byDb: Boolean = false): String {
         val annot = buildString {
             val parts = mutableListOf<String>()
@@ -220,14 +207,10 @@ object EntityWriter {
         }
         val existingImports = ktFile.importDirectives.mapNotNull { it.importedFqName?.asString() }.toMutableSet()
         val needed = mutableListOf<String>()
-        if (edits.any { it is Edit.MarkTransient } && "kotlin.jvm.Transient" !in existingImports) {
-            needed += "kotlin.jvm.Transient"; existingImports += "kotlin.jvm.Transient"
-        }
         for (edit in edits) {
             val imp = when (edit) {
                 is Edit.AddProperty -> edit.import
                 is Edit.AddSupertype -> edit.import
-                else -> null
             } ?: continue
             if (imp !in existingImports) { needed += imp; existingImports += imp }
         }
@@ -235,8 +218,9 @@ object EntityWriter {
         return text
     }
 
-    /** Plan a batch of edits. AddProperty edits are grouped per class and
-     *  routed to either the constructor or the body according to [style]. */
+    /** Adds for the same insertion site are merged into a single multi-line
+     *  splice; independent splices at the same offset would be applied in
+     *  reverse — the last one inserted ends up first in the text. */
     private fun planAll(ktFile: KtFile, edits: List<Edit>, style: EntityStyle): List<Splice> {
         val out = mutableListOf<Splice>()
         val addByClass: Map<String, List<Edit.AddProperty>> = edits
@@ -246,23 +230,21 @@ object EntityWriter {
             val klass = findClass(ktFile, className) ?: continue
             val ctorAdds = adds.filter { goesInConstructor(it, style) }
             val bodyAdds = adds - ctorAdds.toSet()
-            ctorAdds.forEach { planAddPropertyToConstructor(klass, it)?.let(out::add) }
+            if (ctorAdds.isNotEmpty()) {
+                planAddPropertiesToConstructor(klass, ctorAdds)?.let(out::add)
+            }
             if (bodyAdds.isNotEmpty()) {
                 if (klass.body == null) {
                     out += planAddPropertiesToEmptyBody(klass, bodyAdds, style)
                 } else {
-                    bodyAdds.forEach { planAddProperty(klass, it, style)?.let(out::add) }
+                    planAddProperties(klass, bodyAdds, style)?.let(out::add)
                 }
             }
         }
         for (edit in edits) {
-            when (edit) {
-                is Edit.MarkTransient -> plan(ktFile, edit)?.let(out::add)
-                is Edit.AddSupertype -> {
-                    val klass = findClass(ktFile, edit.className) ?: continue
-                    planAddSupertype(klass, edit)?.let(out::add)
-                }
-                else -> {}
+            if (edit is Edit.AddSupertype) {
+                val klass = findClass(ktFile, edit.className) ?: continue
+                planAddSupertype(klass, edit)?.let(out::add)
             }
         }
         return out
@@ -292,9 +274,7 @@ object EntityWriter {
         ConstructorStyle.ID_ONLY -> false
     }
 
-    /** Splice a new `var name: Type = default` parameter into the primary
-     *  constructor's value-parameter list, just before the closing `)`. */
-    private fun planAddPropertyToConstructor(klass: KtClass, edit: Edit.AddProperty): Splice? {
+    private fun planAddPropertiesToConstructor(klass: KtClass, adds: List<Edit.AddProperty>): Splice? {
         val ctor = klass.primaryConstructor ?: return null
         val list = ctor.valueParameterList ?: return null
         val text = klass.containingKtFile.text
@@ -308,36 +288,30 @@ object EntityWriter {
             while (i > 0 && text[i - 1] != '\n') i--
             text.substring(i, first.textRange.startOffset)
         } else "    "
-        // Insert just before the line containing the rParen so we keep its alignment.
         var insertAt = rParenAbs
         while (insertAt > 0 && text[insertAt - 1] == ' ') insertAt--
         if (insertAt > 0 && text[insertAt - 1] == '\n') insertAt--
-        val rendered = renderProperty(edit.toNewColumn(), trailingComma = true)
-        return Splice(insertAt + 1, "$indent$rendered\n")
+        val block = adds.joinToString("") { add ->
+            "$indent${renderProperty(add.toNewColumn(), trailingComma = true)}\n"
+        }
+        return Splice(insertAt + 1, block)
     }
 
     private data class Splice(val offset: Int, val insertion: String)
 
-    private fun plan(ktFile: KtFile, edit: Edit): Splice? {
-        val klass = findClass(ktFile, edit.className) ?: return null
-        return when (edit) {
-            is Edit.AddProperty -> planAddProperty(klass, edit, EntityStyle.DEFAULT)
-            is Edit.MarkTransient -> planMarkTransient(klass, edit)
-            is Edit.AddSupertype -> planAddSupertype(klass, edit)
-        }
-    }
-
-    private fun planAddProperty(klass: KtClass, edit: Edit.AddProperty, style: EntityStyle): Splice? {
-        val body = klass.body ?: return planAddPropertiesToEmptyBody(klass, listOf(edit), style)
+    private fun planAddProperties(klass: KtClass, adds: List<Edit.AddProperty>, style: EntityStyle): Splice? {
+        val body = klass.body ?: return planAddPropertiesToEmptyBody(klass, adds, style)
         val closingBrace = body.rBrace ?: return null
         val indent = inferIndent(body) ?: "    "
         val prefix = if (style.bodyBlankLine) "\n" else ""
-        val line = "${prefix}${indent}${renderProperty(edit.toNewColumn(), trailingComma = false)}\n"
+        val block = adds.joinToString("") { add ->
+            "$prefix$indent${renderProperty(add.toNewColumn(), trailingComma = false)}\n"
+        }
         val braceOffset = closingBrace.textRange.startOffset
         val text = klass.containingKtFile.text
         var insertAt = braceOffset
         while (insertAt > 0 && text[insertAt - 1] == ' ') insertAt--
-        return Splice(insertAt, line)
+        return Splice(insertAt, block)
     }
 
     /** A single splice that wraps every queued [edits] in one `{ … }` body. */
@@ -348,35 +322,6 @@ object EntityWriter {
             "    ${renderProperty(it.toNewColumn(), trailingComma = false)}"
         }
         return Splice(end, " {\n$lines\n}")
-    }
-
-    private fun planMarkTransient(klass: KtClass, edit: Edit.MarkTransient): Splice? {
-        // Property either in primary constructor or class body.
-        val ctorParam = klass.primaryConstructor?.valueParameters
-            ?.firstOrNull { it.name == edit.propertyName && it.hasValOrVar() }
-        if (ctorParam != null) return planAnnotateParameter(ctorParam)
-        val prop = klass.declarations.filterIsInstance<KtProperty>()
-            .firstOrNull { it.name == edit.propertyName }
-        if (prop != null) return planAnnotateProperty(prop)
-        return null
-    }
-
-    private fun planAnnotateParameter(param: KtParameter): Splice? {
-        if (param.annotationEntries.any { it.shortName?.asString() == "Transient" }) return null
-        // Insert `@Transient ` before the parameter (or before val/var keyword).
-        val offset = param.textRange.startOffset
-        return Splice(offset, "@Transient ")
-    }
-
-    private fun planAnnotateProperty(prop: KtProperty): Splice? {
-        if (prop.annotationEntries.any { it.shortName?.asString() == "Transient" }) return null
-        val text = prop.containingKtFile.text
-        val offset = prop.textRange.startOffset
-        // Find the leading indentation on this line.
-        var lineStart = offset
-        while (lineStart > 0 && text[lineStart - 1] != '\n') lineStart--
-        val indent = text.substring(lineStart, offset)
-        return Splice(offset, "@Transient\n$indent")
     }
 
     private fun inferIndent(body: KtClassBody): String? {

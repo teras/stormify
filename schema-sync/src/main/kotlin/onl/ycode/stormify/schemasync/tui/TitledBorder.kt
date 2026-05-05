@@ -24,7 +24,7 @@ import com.googlecode.lanterna.gui2.TextGUIGraphics
  */
 class TitledBorder(
     initialTitle: String,
-    private val crossColumns: List<Int> = emptyList(),
+    initialCrossColumns: List<Int> = emptyList(),
 ) : AbstractBorder() {
 
     /** Mutable so callers can update the title at runtime; setting triggers a redraw. */
@@ -34,6 +34,10 @@ class TitledBorder(
             decoratedTitle = if (value.isEmpty()) "" else " $value "
             invalidate()
         }
+
+    /** Mutable so the layout can tell the border where the inner columns moved. */
+    var crossColumns: List<Int> = initialCrossColumns
+        set(value) { field = value; invalidate() }
 
     private var decoratedTitle: String = if (initialTitle.isEmpty()) "" else " $initialTitle "
 
