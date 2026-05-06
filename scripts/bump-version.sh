@@ -141,6 +141,14 @@ else
     echo "Note: examples/ submodule is not initialized — skipped."
 fi
 
+# 9. Top-level tests/ aggregator pins the stormify Gradle plugin version in
+# build.gradle.kts (plugins block) and settings.gradle.kts (pluginManagement).
+# Per-scenario subprojects reference the plugin id without a version, so they
+# inherit from the aggregator and need no rewrite.
+find tests -maxdepth 2 -type f -name "*.gradle.kts" \
+    ! -path "*/build/*" ! -path "*/.gradle/*" \
+    -exec sed -i -E "s|(id\\(\"onl\\.ycode\\.stormify\"\\) version \")$OLD_E(\")|\\1$NEW\\2|g" {} +
+
 echo
 echo "Scanning for leftover references to $OLD…"
 # Intentional exclusions (files that legitimately reference older versions):
@@ -168,3 +176,43 @@ fi
 echo
 echo "Done. Review with:  git diff"
 echo "Then commit core repo and (cd examples && git commit ...) for the submodule."
+
+# Submodule pointer guard.
+#
+# bump-version.sh modifies files inside examples/ (the submodule's working
+# tree) but cannot itself commit them — that has to happen *inside* the
+# submodule, with its own branch checked out. If the user forgets that
+# step, the parent repo will commit the version bump with an unchanged
+# submodule pointer, and CI (test-examples) will check out the old
+# submodule SHA and fail to resolve the new plugin version.
+#
+# This block makes the trap loud: any leftover dirty state in examples/
+# at the end of the bump triggers a banner with the exact remediation
+# sequence. Exits with non-zero so a wrapper script / CI lint can detect
+# the unfinished state programmatically.
+if [[ -d examples/.git || -f examples/.git ]]; then
+    examples_dirty="$(git -C examples status --porcelain 2>/dev/null || true)"
+    if [[ -n "$examples_dirty" ]]; then
+        echo
+        echo "########################################################################"
+        echo "# DO NOT commit the parent repo yet — examples/ has uncommitted changes."
+        echo "#"
+        echo "# The bump rewrote files inside the submodule but the submodule's HEAD"
+        echo "# SHA is unchanged. If you commit the parent now, CI will check out"
+        echo "# the old submodule pointer and fail with"
+        echo "#   'Plugin onl.ycode.stormify version $OLD was not found'."
+        echo "#"
+        echo "# Required next steps:"
+        echo "#"
+        echo "#   cd examples"
+        echo "#   git checkout main          # leave detached HEAD if applicable"
+        echo "#   git commit -am 'align all examples to stormify $NEW'"
+        echo "#   git push"
+        echo "#   cd .."
+        echo "#   git add examples           # now the submodule pointer changes"
+        echo "#   git commit -am 'release $NEW'"
+        echo "#   git push --follow-tags"
+        echo "########################################################################"
+        exit 2
+    fi
+fi

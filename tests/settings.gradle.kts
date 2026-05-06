@@ -8,7 +8,7 @@ pluginManagement {
     plugins {
         kotlin("multiplatform") version "2.2.21"
         id("com.android.library") version "8.7.3"
-        id("onl.ycode.stormify") version "2.5.0"
+        id("onl.ycode.stormify") version "2.5.1"
     }
 }
 

@@ -18,9 +18,9 @@ Designed for developers seeking a simple yet powerful ORM, Stormify excels in pr
 <p align="center">
   <a href="https://stormify.org"><img src="https://img.shields.io/badge/Website-stormify.org-4a82c2?style=for-the-badge&logoColor=white" alt="Website"></a>
   &nbsp;
-  <a href="https://stormify.org/docs/2.5.0/"><img src="https://img.shields.io/badge/Docs-Read%20the%20docs-2563eb?style=for-the-badge&logoColor=white" alt="Docs"></a>
+  <a href="https://stormify.org/docs/2.5.1/"><img src="https://img.shields.io/badge/Docs-Read%20the%20docs-2563eb?style=for-the-badge&logoColor=white" alt="Docs"></a>
   &nbsp;
-  <a href="https://stormify.org/docs/2.5.0/api-stormify/"><img src="https://img.shields.io/badge/API-Reference-555?style=for-the-badge&logoColor=white" alt="API"></a>
+  <a href="https://stormify.org/docs/2.5.1/api-stormify/"><img src="https://img.shields.io/badge/API-Reference-555?style=for-the-badge&logoColor=white" alt="API"></a>
 </p>
 
 ## Features
@@ -54,7 +54,7 @@ Designed for developers seeking a simple yet powerful ORM, Stormify excels in pr
 
 ```kotlin
 plugins {
-    id("onl.ycode.stormify") version "2.5.0"
+    id("onl.ycode.stormify") version "2.5.1"
 }
 ```
 
@@ -64,7 +64,7 @@ plugins {
 <dependency>
     <groupId>onl.ycode</groupId>
     <artifactId>stormify-jvm</artifactId>
-    <version>2.5.0</version>
+    <version>2.5.1</version>
 </dependency>
 ```
 
@@ -180,12 +180,12 @@ val user = stormify.findById<User>(1)
 
 ## Examples
 
-Runnable example projects live in a separate repository: [stormify-examples](https://github.com/teras/stormify-examples/tree/2.5.0). They cover JVM (Kotlin & Java — both [Maven](https://github.com/teras/stormify-examples/tree/2.5.0/java-pom) and [Gradle with type-safe paths](https://github.com/teras/stormify-examples/tree/2.5.0/java-gradle)), Android, iOS, Kotlin/Native (Linux, Windows, macOS), and Kotlin Multiplatform.
+Runnable example projects live in a separate repository: [stormify-examples](https://github.com/teras/stormify-examples/tree/2.5.1). They cover JVM (Kotlin & Java — both [Maven](https://github.com/teras/stormify-examples/tree/2.5.1/java-pom) and [Gradle with type-safe paths](https://github.com/teras/stormify-examples/tree/2.5.1/java-gradle)), Android, iOS, Kotlin/Native (Linux, Windows, macOS), and Kotlin Multiplatform.
 
 Clone them standalone:
 
 ```bash
-git clone -b 2.5.0 https://github.com/teras/stormify-examples.git
+git clone -b 2.5.1 https://github.com/teras/stormify-examples.git
 ```
 
 Or pull them directly inside this repo as a submodule:
@@ -198,7 +198,7 @@ Each subfolder is a self-contained project with its own `README.md` explaining h
 
 ## How Stormify stacks up
 
-A quick side-by-side against common Kotlin and Java ORMs. See the [full comparison](https://stormify.org/docs/2.5.0/Comparison/) for reflection behaviour, compile-time metadata, narrative context, and when to pick each.
+A quick side-by-side against common Kotlin and Java ORMs. See the [full comparison](https://stormify.org/docs/2.5.1/Comparison/) for reflection behaviour, compile-time metadata, narrative context, and when to pick each.
 
 |  | Stormify | Exposed | Ktorm | Komapper | SQLDelight | Hibernate |
 |---|---|---|---|---|---|---|
@@ -213,7 +213,7 @@ A quick side-by-side against common Kotlin and Java ORMs. See the [full comparis
 
 ## Documentation
 
-Full documentation is available at [stormify.org/docs](https://stormify.org/docs/2.5.0/).
+Full documentation is available at [stormify.org/docs](https://stormify.org/docs/2.5.1/).
 
 ## Contributing
 
