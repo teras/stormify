@@ -300,6 +300,28 @@ object TestDDL {
 
     fun selectExpr(expr: String) = if (isOracle) "SELECT $expr FROM dual" else "SELECT $expr"
 
+    /** True when the current dialect supports `CREATE SEQUENCE` and `NEXT VALUE FOR` semantics
+     *  exposed via [SqlDialect.sequenceDialect]. SQLite, MySQL, MariaDB-old return null. */
+    fun supportsSequences(): Boolean = dialect.sequenceDialect("x", 1) != null
+
+    fun createSequence(name: String) {
+        when {
+            isMssql -> stormify.executeUpdate("CREATE SEQUENCE $name AS BIGINT START WITH 1 INCREMENT BY 1")
+            else -> stormify.executeUpdate("CREATE SEQUENCE $name")
+        }
+    }
+
+    fun dropSequence(name: String) {
+        when {
+            isOracle -> try {
+                stormify.executeUpdate("DROP SEQUENCE $name")
+            } catch (_: Exception) { /* ORA-02289: sequence does not exist — ignore */ }
+            else -> try {
+                stormify.executeUpdate("DROP SEQUENCE IF EXISTS $name")
+            } catch (_: Exception) { /* belt-and-braces */ }
+        }
+    }
+
     fun dropTable(name: String) {
         when {
             isOracle -> try {

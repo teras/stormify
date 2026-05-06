@@ -106,7 +106,6 @@ class TableInfo<T : Any> internal constructor(
     }
 
     // ID operations (cached lists — avoid allocation on every call)
-    internal val idNames = idProps.map { it.name }
     internal val idDbNames = idProps.map { it.dbName }
     internal val idTypes = idProps.map { it.type }
     internal val idSequences = idProps.map { it.sequence ?: "" }

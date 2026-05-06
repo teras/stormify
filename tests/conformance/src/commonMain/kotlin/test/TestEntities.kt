@@ -153,6 +153,70 @@ data class UpperPolicyEntity(
     var lastName: String? = null
 )
 
+// --- PK mapping (sequence / auto-increment / manual paths) ---
+
+@DbTable(name = "pk_simple")
+data class PkSimple(
+    @DbField(primaryKey = true, primarySequence = "pk_simple_seq") var id: Long? = null,
+    var name: String? = null
+)
+
+@DbTable(name = "pk_digit_camel")
+data class PkDigitCamel(
+    @DbField(primaryKey = true, primarySequence = "pk_digit_camel_seq") var t01Id: Long? = null,
+    var name: String? = null
+)
+
+@DbTable(name = "pk_renamed")
+data class PkRenamed(
+    @DbField(primaryKey = true, primarySequence = "pk_renamed_seq", name = "totally_different")
+    var customPk: Long? = null,
+    var name: String? = null
+)
+
+// Used with NamingPolicy.UPPER_CASE_WITH_UNDERSCORES — both table and columns derived by policy.
+data class PkUpperPolicy(
+    @DbField(primaryKey = true, primarySequence = "PK_UPPER_POLICY_SEQ") var userId: Long? = null,
+    var name: String? = null
+)
+
+// Used with NamingPolicy.CAMEL_CASE — identity transform; column stays `userId`.
+data class PkCamelPolicy(
+    @DbField(primaryKey = true, primarySequence = "pkCamelPolicySeq") var userId: Long? = null,
+    var name: String? = null
+)
+
+@DbTable(name = "pk_simple_ai")
+data class PkSimpleAI(
+    @DbField(primaryKey = true, autoIncrement = true) var id: Long = 0,
+    var name: String? = null
+)
+
+@DbTable(name = "pk_digit_camel_ai")
+data class PkDigitCamelAI(
+    @DbField(primaryKey = true, autoIncrement = true) var t01Id: Long = 0,
+    var name: String? = null
+)
+
+@DbTable(name = "pk_renamed_ai")
+data class PkRenamedAI(
+    @DbField(primaryKey = true, autoIncrement = true, name = "totally_different")
+    var customPk: Long = 0,
+    var name: String? = null
+)
+
+@DbTable(name = "pk_manual_camel")
+data class PkManualCamel(
+    @DbField(primaryKey = true) var t01Id: Long = 0,
+    var name: String? = null
+)
+
+@DbTable(name = "pk_manual_renamed")
+data class PkManualRenamed(
+    @DbField(primaryKey = true, name = "totally_different") var customPk: Long = 0,
+    var name: String? = null
+)
+
 // --- Inheritance ---
 
 open class BaseEntity(

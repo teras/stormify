@@ -343,7 +343,7 @@ class Stormify(val dataSource: DataSource, vararg registrars: EntityRegistrar) {
         }
         @Suppress("UNCHECKED_CAST")
         val info = resolveTableInfo(value::class) as TableInfo<Any>
-        return if (info.idNames.size == 1) info.getIdValues(value)[0] else
+        return if (info.idDbNames.size == 1) info.getIdValues(value)[0] else
             throw SQLException("Multiple primary keys found in ${info.tableName}")
     }
 
@@ -651,7 +651,7 @@ class Stormify(val dataSource: DataSource, vararg registrars: EntityRegistrar) {
 
         return ConnectionMaker(conn).useWithException("Unable to batch create") { maker ->
             val info = resolveTableInfo(itemList[0]::class) as TableInfo<T>
-            val hasSinglePk = info.idNames.size == 1
+            val hasSinglePk = info.idDbNames.size == 1
 
             // Identify items needing IDs (single PK)
             val isAutoIncrement = hasSinglePk && info.primaryKeys[0].isAutoIncrement
@@ -672,7 +672,7 @@ class Stormify(val dataSource: DataSource, vararg registrars: EntityRegistrar) {
             if (needsId.isNotEmpty() && sequence.isNotBlank()) {
                 val seqs = getNextSequences(maker.connection, sequence, needsId.size)
                 for (i in needsId.indices)
-                    info.setField(itemList[needsId[i]], info.idNames[0], seqs[i], this)
+                    info.setField(itemList[needsId[i]], info.idDbNames[0], seqs[i], this)
                 needsId.clear()
             }
 
