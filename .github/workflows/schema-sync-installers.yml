@@ -1,0 +1,70 @@
+name: Build schema-sync installers
+
+# Manually triggered. Builds the schema-sync stand-alone app for each host
+# OS. jpackage cannot cross-compile, so each runner produces installers
+# only for its own platform:
+#   - ubuntu-latest  → AppImage  (universal Linux, glibc 2.31+)
+#   - windows-latest → ZIP       (unsigned; user runs schema-sync.exe)
+#   - macos-latest   → DMG       (signed + notarized when secrets present)
+#
+# Outputs are uploaded as workflow artifacts; download manually from the run.
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            task: linuxAppImage
+            artifact-name: schema-sync-linux
+            installer-glob: schema-sync/build/installers/*.AppImage
+          - os: windows-latest
+            task: windowsZip
+            artifact-name: schema-sync-windows
+            installer-glob: schema-sync/build/installers/*.zip
+          - os: macos-latest
+            task: macDmg
+            artifact-name: schema-sync-macos
+            installer-glob: schema-sync/build/installers/*.dmg
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      # Gradle drives toolchain provisioning (foojay-resolver pulls JDK 17
+      # automatically); we only need a JDK to launch Gradle itself.
+      - name: Set up JDK 17 (Gradle runner)
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Install AppImage runtime (Linux only)
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          # appimagetool needs FUSE 2 to self-mount during build, and the
+          # produced AppImage needs FUSE on the user's machine to run.
+          sudo apt-get update
+          sudo apt-get install -y libfuse2
+
+      - name: Build installer
+        env:
+          # macOS signing/notarization (mirrored from Jubler workflow).
+          # If absent on a Linux/Windows runner this is a harmless no-op.
+          MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
+          MACOS_CERTIFICATE_PWD: ${{ secrets.MACOS_CERTIFICATE_PWD }}
+          APPLE_NOTARY_JSON: ${{ secrets.APPLE_NOTARY_JSON }}
+        run: gradle :schema-sync:${{ matrix.task }} --no-daemon
+
+      - name: Upload installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact-name }}
+          path: ${{ matrix.installer-glob }}
+          if-no-files-found: error
