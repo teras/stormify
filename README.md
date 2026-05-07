@@ -70,9 +70,9 @@ plugins {
 
 Supported native databases: **PostgreSQL, MariaDB/MySQL, Oracle, MSSQL, SQLite**. On iOS, only SQLite is available.
 
-See [Installation](docs/src/Installation.md) for configuration options and native runtime libraries.
+See [Installation](https://stormify.org/docs/2.5.1/Installation/) for configuration options and native runtime libraries.
 
-> **Upgrading from V1?** See the [V1 to V2 migration guide](docs/src/Migration_V1_to_V2.md).
+> **Upgrading from V1?** See the [V1 to V2 migration guide](https://stormify.org/docs/2.5.1/Migration_V1_to_V2/).
 
 ## Basic Usage
 
@@ -194,7 +194,7 @@ Or pull them directly inside this repo as a submodule:
 git submodule update --init --recursive
 ```
 
-Each subfolder is a self-contained project with its own `README.md` explaining how to build and run it. See the [Examples overview](docs/src/Examples.md) for a short description of each.
+Each subfolder is a self-contained project with its own `README.md` explaining how to build and run it. See the [Examples overview](https://stormify.org/docs/2.5.1/Examples/) for a short description of each.
 
 ## How Stormify stacks up
 
@@ -217,7 +217,7 @@ Full documentation is available at [stormify.org/docs](https://stormify.org/docs
 
 ## Contributing
 
-Contributions are welcome! Please check the [Contributing](docs/src/Contributing.md) guide for instructions on how to get involved, report issues, or submit pull requests.
+Contributions are welcome! Please check the [Contributing](https://stormify.org/docs/2.5.1/Contributing/) guide for instructions on how to get involved, report issues, or submit pull requests.
 
 ## License
 
