@@ -1,16 +1,24 @@
 name: Build schema-sync installers
 
-# Manually triggered. Builds the schema-sync stand-alone app for each host
-# OS. jpackage cannot cross-compile, so each runner produces installers
-# only for its own platform:
+# Triggered either manually or on `v*` tag pushes. Builds the schema-sync
+# stand-alone app for each host OS. jpackage cannot cross-compile, so each
+# runner produces installers only for its own platform:
 #   - ubuntu-latest  → AppImage  (universal Linux, glibc 2.31+)
 #   - windows-latest → ZIP       (unsigned; user runs schema-sync.exe)
-#   - macos-latest   → DMG       (signed + notarized when secrets present)
+#   - macos-latest   → tar.gz    (signed + notarized .app + CLI wrapper)
 #
-# Outputs are uploaded as workflow artifacts; download manually from the run.
+# Outputs are always uploaded as workflow artifacts. When the run was
+# triggered by a `v*` tag push, a follow-up `release` job collects all
+# three artifacts and attaches them atomically to a single GitHub Release
+# named after the tag (creating it if it does not exist).
 
 on:
   workflow_dispatch:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write  # required by softprops/action-gh-release
 
 jobs:
   build:
@@ -27,20 +35,26 @@ jobs:
             artifact-name: schema-sync-windows
             installer-glob: schema-sync/build/installers/*.zip
           - os: macos-latest
-            task: macDmg
+            task: macTar
             artifact-name: schema-sync-macos
-            installer-glob: schema-sync/build/installers/*.dmg
+            installer-glob: schema-sync/build/installers/*.tar.gz
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
 
-      # Gradle drives toolchain provisioning (foojay-resolver pulls JDK 17
-      # automatically); we only need a JDK to launch Gradle itself.
-      - name: Set up JDK 17 (Gradle runner)
+      # Provision every JDK the build needs up front: 8 for the published
+      # libraries (kdbc/logger/stormify/annproc), 11 for schema-sync + the
+      # bundled runtime image, 17 for jpackage and the Gradle daemon. Zulu
+      # is the only distribution that ships JDK 8 for macOS aarch64 — the
+      # other modern JDKs come from Temurin via the same setup-java call.
+      - name: Set up JDKs 8, 11, 17
         uses: actions/setup-java@v4
         with:
-          distribution: temurin
-          java-version: '17'
+          distribution: zulu
+          java-version: |
+            8
+            11
+            17
 
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
@@ -55,16 +69,43 @@ jobs:
 
       - name: Build installer
         env:
-          # macOS signing/notarization (mirrored from Jubler workflow).
-          # If absent on a Linux/Windows runner this is a harmless no-op.
-          MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
-          MACOS_CERTIFICATE_PWD: ${{ secrets.MACOS_CERTIFICATE_PWD }}
-          APPLE_NOTARY_JSON: ${{ secrets.APPLE_NOTARY_JSON }}
+          # macOS signing/notarization. Absent on Linux/Windows runners
+          # (no-op) or when the user has not configured the secrets
+          # (unsigned tarball, useful for local dev).
+          APPLE_CERTIFICATE_P12: ${{ secrets.APPLE_CERTIFICATE_P12 }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_NOTARY_KEY_JSON: ${{ secrets.APPLE_NOTARY_KEY_JSON }}
         run: gradle :schema-sync:${{ matrix.task }} --no-daemon
 
-      - name: Upload installer
+      - name: Upload installer (workflow artifact)
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.artifact-name }}
           path: ${{ matrix.installer-glob }}
           if-no-files-found: error
+
+  # Tag-triggered runs: collect all three platform artifacts and attach
+  # them in one shot to the GitHub Release. Skipped for workflow_dispatch
+  # runs — the workflow artifacts above are enough for ad-hoc downloads.
+  release:
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download all installer artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: List collected files
+        run: ls -lh artifacts
+
+      - name: Create / update GitHub Release with installers
+        uses: softprops/action-gh-release@v2
+        with:
+          # Draft so you can hand-edit the title / changelog notes before
+          # publishing. Click "Edit draft" → adjust → Publish in the UI.
+          draft: true
+          files: artifacts/*
+          fail_on_unmatched_files: true

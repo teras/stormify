@@ -3,6 +3,9 @@ import java.io.File
 import java.net.URI
 import java.util.Base64
 import java.util.UUID
+import java.util.zip.ZipEntry
+import java.util.zip.ZipFile
+import java.util.zip.ZipOutputStream
 import javax.inject.Inject
 import org.gradle.process.ExecOperations
 
@@ -124,7 +127,7 @@ tasks.register<Jar>("fatJar") {
 // Self-contained installers
 // ===========================================================================
 // Pipeline:
-//   fatJar → jlinkRuntime → appImage → {linuxAppImage | windowsZip | macDmg}
+//   fatJar → jlinkRuntime → appImage → {linuxAppImage | windowsZip | macTar}
 //
 // jlink picks the smallest possible JRE for our fatJar's modules; jpackage
 // produces a platform-agnostic app-image directory; per-OS post-processing
@@ -233,20 +236,28 @@ abstract class AppImageTask : DefaultTask() {
         val jarName = mainJar.get().asFile.name
         mainJar.get().asFile.copyTo(staged.resolve(jarName), overwrite = true)
 
+        // schema-sync is a TUI (Lanterna) app, so the Windows launcher must
+        // be a console binary rather than the default jpackage windowed
+        // launcher — without --win-console it detaches from the parent
+        // terminal and the user sees no output.
+        val perOs = if (osName.contains("windows")) listOf("--win-console") else emptyList()
+
         execOps.exec {
             commandLine(
-                "$home/bin/jpackage$ext",
-                "--type", "app-image",
-                "--name", appName.get(),
-                "--app-version", appVersion.get(),
-                "--input", staged.absolutePath,
-                "--main-jar", jarName,
-                "--main-class", mainClass.get(),
-                "--dest", out.absolutePath,
-                "--runtime-image", runtimeImage.get().asFile.absolutePath,
-                "--description", "Stormify Schema Sync",
-                "--vendor", "ycode.onl",
-                "--copyright", "Copyright 2024-2026 Panayotis Katsaloulis",
+                listOf(
+                    "$home/bin/jpackage$ext",
+                    "--type", "app-image",
+                    "--name", appName.get(),
+                    "--app-version", appVersion.get(),
+                    "--input", staged.absolutePath,
+                    "--main-jar", jarName,
+                    "--main-class", mainClass.get(),
+                    "--dest", out.absolutePath,
+                    "--runtime-image", runtimeImage.get().asFile.absolutePath,
+                    "--description", "Stormify Schema Sync",
+                    "--vendor", "ycode.onl",
+                    "--copyright", "Copyright 2024-2026 Panayotis Katsaloulis",
+                ) + perOs
             )
         }
     }
@@ -385,16 +396,21 @@ tasks.register<Zip>("windowsZip") {
     from(appImageDir)
 }
 
-// --- macOS: signed + notarized DMG ----------------------------------------
-// jpackage produces .app bundle; we codesign with Developer ID + entitlements,
-// wrap in DMG, codesign DMG, submit to notarytool, staple. All signing is
-// optional — if MACOS_CERTIFICATE / APPLE_NOTARY_JSON env vars are absent,
-// produces unsigned DMG (good for local dev, rejected by Gatekeeper).
-abstract class MacDmgTask : DefaultTask() {
+// --- macOS: signed + notarized tar.gz with CLI wrapper -------------------
+// schema-sync is a CLI/TUI tool; a .app bundle and a .dmg installer are
+// awkward for that use case. Instead we produce a tarball containing the
+// signed/notarized .app (so codesign + Gatekeeper still work) plus a
+// sibling `schema-sync` shell wrapper that invokes the bundle's launcher.
+// User flow: `tar xzf schema-sync-...-macos.tar.gz && ./schema-sync ...`.
+//
+// Notarization submission still uses a ZIP (Apple Notary requires .zip /
+// .pkg / .dmg as transport); the ticket is stapled to the .app bundle so
+// the final tarball can be moved or copied without losing the ticket.
+abstract class MacTarTask : DefaultTask() {
     @get:InputDirectory abstract val appImage: DirectoryProperty
     @get:OutputFile abstract val outputFile: RegularFileProperty
     @get:Input abstract val appName: Property<String>
-    @get:Input abstract val appVersion: Property<String>
+    @get:InputFile abstract val entitlementsFile: RegularFileProperty
     @get:Inject abstract val execOps: ExecOperations
 
     @TaskAction
@@ -402,55 +418,172 @@ abstract class MacDmgTask : DefaultTask() {
         val appBundle = appImage.get().asFile.resolve("${appName.get()}.app")
         require(appBundle.isDirectory) { "expected jpackage .app at $appBundle" }
 
-        val cert = System.getenv("MACOS_CERTIFICATE")
-        val certPwd = System.getenv("MACOS_CERTIFICATE_PWD")
-        val notaryJson = System.getenv("APPLE_NOTARY_JSON")
+        val cert = System.getenv("APPLE_CERTIFICATE_P12")
+        val certPwd = System.getenv("APPLE_CERTIFICATE_PASSWORD")
+        val notaryJson = System.getenv("APPLE_NOTARY_KEY_JSON")
         val signingEnabled = !cert.isNullOrBlank() && !certPwd.isNullOrBlank()
         val identity = if (signingEnabled) setupKeychain(cert!!, certPwd!!) else null
 
         if (identity != null) {
-            logger.lifecycle("signing app bundle with identity $identity")
-            execOps.exec {
-                commandLine(
-                    "codesign", "--force", "--deep",
-                    "--sign", identity,
-                    "--timestamp",
-                    "--options", "runtime",
-                    appBundle.absolutePath,
-                )
-            }
-            execOps.exec {
-                commandLine("codesign", "--verify", "--deep", "--strict", "--verbose=2", appBundle.absolutePath)
-            }
+            signBundle(appBundle, identity, entitlementsFile.get().asFile)
         } else {
-            logger.lifecycle("MACOS_CERTIFICATE not set — producing unsigned DMG")
+            logger.lifecycle("APPLE_CERTIFICATE_P12 not set — producing unsigned tarball")
+        }
+
+        if (!notaryJson.isNullOrBlank() && identity != null) {
+            val notaryZip = temporaryDir.resolve("for-notary.zip").also { it.delete() }
+            execOps.exec {
+                workingDir = appBundle.parentFile
+                // ditto preserves resource forks and xattrs that the
+                // notary service expects; plain `zip` would strip them.
+                commandLine("ditto", "-c", "-k", "--keepParent", appBundle.name, notaryZip.absolutePath)
+            }
+            notarizeAndStaple(notaryZip, appBundle, notaryJson)
+        } else {
+            logger.lifecycle("APPLE_NOTARY_KEY_JSON not set — skipping notarization")
         }
 
         val out = outputFile.get().asFile
         out.parentFile.mkdirs()
         out.delete()
 
+        // Stage the .app + a wrapper script that invokes its launcher.
+        val stage = temporaryDir.resolve("tarball-stage").apply {
+            deleteRecursively(); mkdirs()
+        }
+        execOps.exec { commandLine("cp", "-a", appBundle.absolutePath, stage.absolutePath) }
+        val name = appName.get()
+        val wrapper = stage.resolve(name)
+        wrapper.writeText(
+            """
+            |#!/bin/bash
+            |DIR="${'$'}( cd "${'$'}( dirname "${'$'}{BASH_SOURCE[0]}" )" && pwd )"
+            |exec "${'$'}DIR/$name.app/Contents/MacOS/$name" "${'$'}@"
+            |
+            """.trimMargin()
+        )
+        wrapper.setExecutable(true)
+
+        execOps.exec {
+            workingDir = stage
+            commandLine("tar", "-czf", out.absolutePath, ".")
+        }
+    }
+
+    // Inner-out signing: sign every nested Mach-O first, then the bundle
+    // last. Apple Notary Service rejects packages whose inner binaries are
+    // unsigned or were signed without the hardened runtime. We detect
+    // Mach-O by reading the first four magic bytes rather than filename
+    // suffix — jpackage's bundled JRE ships extension-less Mach-O like
+    // Contents/Home/lib/jspawnhelper that an extension filter misses.
+    private fun signBundle(appBundle: File, identity: String, entitlements: File) {
+        val innerBinaries = appBundle.walkTopDown()
+            .filter { it.isFile && isMachO(it) }
+            .toList()
+        logger.lifecycle("signing ${innerBinaries.size} inner Mach-O binaries")
+        for (bin in innerBinaries) {
+            signFile(bin, identity, entitlements)
+        }
+
+        signNativeLibsInsideJars(appBundle, identity, entitlements)
+
+        logger.lifecycle("signing .app bundle")
+        signFile(appBundle, identity, entitlements)
+        execOps.exec {
+            commandLine("codesign", "--verify", "--deep", "--strict", appBundle.absolutePath)
+        }
+    }
+
+    private fun signFile(target: File, identity: String, entitlements: File) {
         execOps.exec {
             commandLine(
-                "hdiutil", "create",
-                "-volname", appName.get(),
-                "-srcfolder", appBundle.absolutePath,
-                "-ov", "-format", "UDZO",
-                out.absolutePath,
+                "codesign", "--force",
+                "--sign", identity,
+                "--timestamp",
+                "--options", "runtime",
+                "--entitlements", entitlements.absolutePath,
+                target.absolutePath,
             )
         }
+    }
 
-        if (identity != null) {
-            execOps.exec {
-                commandLine("codesign", "--force", "--sign", identity, "--timestamp", out.absolutePath)
+    // Apple Notary recursively inspects JARs for embedded Mach-O binaries
+    // (extracted at runtime by JNI loaders, e.g. sqlite-jdbc) and rejects
+    // packages whose inner-jar libs are unsigned. We stream the JAR
+    // through ZipInputStream → ZipOutputStream, replacing each Mach-O
+    // entry's bytes with its signed version. Pure Java rather than shelling
+    // out to unzip/zip — far faster on JARs with thousands of class
+    // entries (kotlin-compiler-embeddable is ~70 MB on its own).
+    private fun signNativeLibsInsideJars(appBundle: File, identity: String, entitlements: File) {
+        val jars = appBundle.walkTopDown()
+            .filter { it.isFile && it.name.endsWith(".jar") }
+            .toList()
+        for (jar in jars) {
+            val hasCandidate = ZipFile(jar).use { zf ->
+                zf.entries().asSequence().any { e ->
+                    !e.isDirectory && (
+                        e.name.endsWith(".dylib") ||
+                            e.name.endsWith(".jnilib") ||
+                            e.name.endsWith(".so")
+                        )
+                }
             }
-        }
+            if (!hasCandidate) continue
 
-        if (!notaryJson.isNullOrBlank()) {
-            notarize(out, notaryJson)
-        } else {
-            logger.lifecycle("APPLE_NOTARY_JSON not set — skipping notarization")
+            logger.lifecycle("re-signing native libs inside ${jar.relativeTo(appBundle)}")
+            signJarInPlace(jar, identity, entitlements)
         }
+    }
+
+    private fun signJarInPlace(jar: File, identity: String, entitlements: File) {
+        val tmpJar = File("${jar.absolutePath}.signing.tmp")
+        val tmpLib = File.createTempFile("jar-native-", "")
+        try {
+            ZipFile(jar).use { zin ->
+                ZipOutputStream(tmpJar.outputStream().buffered()).use { zout ->
+                    for (entry in zin.entries()) {
+                        val name = entry.name
+                        val isCandidate = !entry.isDirectory && (
+                            name.endsWith(".dylib") || name.endsWith(".jnilib") || name.endsWith(".so")
+                            )
+                        zout.putNextEntry(ZipEntry(name).apply { time = entry.time })
+                        if (isCandidate) {
+                            tmpLib.outputStream().use { out ->
+                                zin.getInputStream(entry).use { it.copyTo(out) }
+                            }
+                            if (isMachO(tmpLib)) {
+                                signFile(tmpLib, identity, entitlements)
+                            }
+                            tmpLib.inputStream().use { it.copyTo(zout) }
+                        } else if (!entry.isDirectory) {
+                            zin.getInputStream(entry).use { it.copyTo(zout) }
+                        }
+                        zout.closeEntry()
+                    }
+                }
+            }
+            jar.delete()
+            check(tmpJar.renameTo(jar)) { "could not replace $jar with signed version" }
+        } finally {
+            tmpLib.delete()
+            if (tmpJar.exists()) tmpJar.delete()
+        }
+    }
+
+    private fun isMachO(file: File): Boolean {
+        if (file.length() < 4) return false
+        val magic = file.inputStream().use { input ->
+            val b = ByteArray(4)
+            if (input.read(b) != 4) return false
+            ((b[0].toInt() and 0xFF) shl 24) or
+                ((b[1].toInt() and 0xFF) shl 16) or
+                ((b[2].toInt() and 0xFF) shl 8) or
+                (b[3].toInt() and 0xFF)
+        }
+        // 32-/64-bit Mach-O in both byte orders, plus universal "fat" archive.
+        return magic == 0xFEEDFACE.toInt() || magic == 0xFEEDFACF.toInt() ||
+            magic == 0xCEFAEDFE.toInt() || magic == 0xCFFAEDFE.toInt() ||
+            magic == 0xCAFEBABE.toInt()
     }
 
     private fun setupKeychain(certB64: String, pwd: String): String {
@@ -462,7 +595,9 @@ abstract class MacDmgTask : DefaultTask() {
         execOps.exec { commandLine("security", "create-keychain", "-p", keychainPwd, keychain) }
         execOps.exec { commandLine("security", "default-keychain", "-s", keychain) }
         execOps.exec { commandLine("security", "unlock-keychain", "-p", keychainPwd, keychain) }
-        execOps.exec { commandLine("security", "set-keychain-settings", "-t", "3600", "-u", keychain) }
+        // No `set-keychain-settings`: the freshly-created keychain has no
+        // auto-lock timeout by default, which is what we want for an
+        // ephemeral CI keychain that lives only for the build's duration.
         execOps.exec {
             commandLine("security", "import", pfx.absolutePath, "-k", keychain, "-P", pwd, "-T", "/usr/bin/codesign")
         }
@@ -475,13 +610,24 @@ abstract class MacDmgTask : DefaultTask() {
             commandLine("security", "find-identity", "-v", "-p", "codesigning", keychain)
             standardOutput = baos
         }
-        val identityLine = baos.toString(Charsets.UTF_8).lines().firstOrNull { it.contains("Developer ID Application") }
-            ?: error("no Developer ID Application identity found in keychain")
-        return Regex("([A-F0-9]{40})").find(identityLine)?.value
-            ?: error("could not parse identity hash from: $identityLine")
+        val findIdentityOut = baos.toString(Charsets.UTF_8)
+        // Pick the first Developer ID Application identity. The CI keychain
+        // is freshly created and only ever holds the one cert we imported,
+        // so there is nothing to disambiguate; this matches the pattern
+        // used by Jubler / swoop / mapgrow workflows in the same account.
+        val match = findIdentityOut.lines().firstOrNull { it.contains("Developer ID Application") }
+        if (match == null) {
+            logger.error("security find-identity output:\n$findIdentityOut")
+            error(
+                "no Developer ID Application identity in keychain — DMG signing requires" +
+                " a 'Developer ID Application' cert (not 'Apple Distribution' / 'Apple Development')."
+            )
+        }
+        return Regex("([A-F0-9]{40})").find(match)?.value
+            ?: error("could not parse identity hash from: $match")
     }
 
-    private fun notarize(dmg: File, notaryJson: String) {
+    private fun notarizeAndStaple(submitArtifact: File, stapleTarget: File, notaryJson: String) {
         val parsed = Regex("\"(issuer_id|key_id|private_key)\"\\s*:\\s*\"([^\"]+)\"")
             .findAll(notaryJson).associate { it.groupValues[1] to it.groupValues[2] }
         val issuer = parsed["issuer_id"] ?: error("notary JSON missing issuer_id")
@@ -491,30 +637,63 @@ abstract class MacDmgTask : DefaultTask() {
         val keyFile = temporaryDir.resolve("AuthKey_$keyId.p8")
         keyFile.writeText("-----BEGIN PRIVATE KEY-----\n$privateKey\n-----END PRIVATE KEY-----\n")
 
+        // notarytool exits 0 even when the package is rejected — only the
+        // status field tells us whether stapling will succeed. Use JSON
+        // output so the parse is stable across Xcode releases.
+        val submitOut = ByteArrayOutputStream()
         execOps.exec {
             commandLine(
-                "xcrun", "notarytool", "submit", dmg.absolutePath,
+                "xcrun", "notarytool", "submit", submitArtifact.absolutePath,
                 "--key", keyFile.absolutePath,
                 "--key-id", keyId,
                 "--issuer", issuer,
                 "--wait",
+                "--output-format", "json",
             )
+            standardOutput = submitOut
         }
-        execOps.exec { commandLine("xcrun", "stapler", "staple", dmg.absolutePath) }
+        val output = submitOut.toString(Charsets.UTF_8)
+        logger.lifecycle(output)
+
+        // The two fields we need are simple strings at the top level; a
+        // strict-JSON regex avoids pulling kotlinx.serialization in.
+        val idRegex = Regex("\"id\"\\s*:\\s*\"([^\"]+)\"")
+        val statusRegex = Regex("\"status\"\\s*:\\s*\"([^\"]+)\"")
+        val submissionId = idRegex.find(output)?.groupValues?.get(1)
+        val status = statusRegex.find(output)?.groupValues?.get(1)
+
+        if (status != "Accepted") {
+            if (submissionId != null) {
+                logger.error("Notary status=$status; fetching log for submission $submissionId")
+                execOps.exec {
+                    commandLine(
+                        "xcrun", "notarytool", "log", submissionId,
+                        "--key", keyFile.absolutePath,
+                        "--key-id", keyId,
+                        "--issuer", issuer,
+                    )
+                    isIgnoreExitValue = true
+                }
+            }
+            keyFile.delete()
+            error("Notary did not accept the package (status=$status). See log above for issues.")
+        }
+
+        execOps.exec { commandLine("xcrun", "stapler", "staple", stapleTarget.absolutePath) }
         keyFile.delete()
     }
 }
 
-tasks.register<MacDmgTask>("macDmg") {
+tasks.register<MacTarTask>("macTar") {
     group = "distribution"
-    description = "Build a macOS DMG (optionally signed + notarized) from the jpackage app-image."
+    description = "Build a macOS .tar.gz with a CLI wrapper around the signed + notarized .app."
     onlyIf { System.getProperty("os.name").lowercase().contains("mac") }
     dependsOn(appImageTask)
     appImage.set(appImageDir)
     appName.set("schema-sync")
-    appVersion.set(rootProject.version.toString().substringBefore("-SNAPSHOT"))
+    entitlementsFile.set(layout.projectDirectory.file("build-support/macos-entitlements.plist"))
     val ver = rootProject.version.toString().substringBefore("-SNAPSHOT")
-    outputFile.set(installersDir.map { it.file("schema-sync-$ver-macos.dmg") })
+    outputFile.set(installersDir.map { it.file("schema-sync-$ver-macos.tar.gz") })
 }
 
 // Convenience: builds whichever installer matches the current host OS.
@@ -525,7 +704,7 @@ tasks.register("installer") {
     when {
         osName.contains("linux") -> dependsOn("linuxAppImage")
         osName.contains("windows") -> dependsOn("windowsZip")
-        osName.contains("mac") -> dependsOn("macDmg")
+        osName.contains("mac") -> dependsOn("macTar")
         else -> doFirst { error("Unsupported OS: $osName") }
     }
 }
