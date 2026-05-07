@@ -24,6 +24,10 @@ import kotlinx.datetime.toLocalDateTime
 // numeric encoding portable across machines and platforms.
 private val ANCHOR_ZONE: ZoneOffset = ZoneOffset.UTC
 
+// EPOCH_DATE was added in Java 9. Hand-rolled here so the
+// jvmTarget = 1.8 contract survives at runtime on a Java 8 JVM.
+private val EPOCH_DATE: java.time.LocalDate = java.time.LocalDate.of(1970, 1, 1)
+
 /**
  * Platform hook for registering direct `java.sql.* ↔ java.time.*` converters.
  *
@@ -161,7 +165,7 @@ internal object JavaTypeConverters {
             { it.toLocalDate() }
         )
         direct(registry, java.time.LocalTime::class, java.time.LocalDateTime::class) { (it as java.time.LocalDateTime).toLocalTime() }
-        direct(registry, java.time.LocalDateTime::class, java.time.LocalTime::class) { (it as java.time.LocalTime).atDate(java.time.LocalDate.EPOCH) }
+        direct(registry, java.time.LocalDateTime::class, java.time.LocalTime::class) { (it as java.time.LocalTime).atDate(EPOCH_DATE) }
 
         // java.sql ↔ java.time direct pairs are registered per-platform:
         // JVM desktop can use the JDK 8 bridge methods (toLocalDate(),
@@ -220,7 +224,7 @@ internal object JavaTypeConverters {
             // DST era — same LocalTime produced different Longs before/after a DST
             // transition. The direct LocalTime ↔ java.sql.Time converters registered
             // below short-circuit this path for that specific pair.
-            java.time.LocalTime::class to { (it as java.time.LocalTime).atDate(java.time.LocalDate.EPOCH).toInstant(ZoneOffset.UTC).toEpochMilli() },
+            java.time.LocalTime::class to { (it as java.time.LocalTime).atDate(EPOCH_DATE).toInstant(ZoneOffset.UTC).toEpochMilli() },
         )
         val kotlinxFromMillis: List<Pair<KClass<*>, (Long) -> Any>> = listOf(
             kotlinx.datetime.LocalDate::class to { m: Long ->
@@ -274,7 +278,7 @@ internal object JavaTypeConverters {
         // line inside registerKotlinxTimeTargets for the rationale).
         if (destClass != java.time.LocalTime::class) converters[java.time.LocalTime::class] = {
             toNative(
-                (it as java.time.LocalTime).atDate(java.time.LocalDate.EPOCH).toInstant(ZoneOffset.UTC)
+                (it as java.time.LocalTime).atDate(EPOCH_DATE).toInstant(ZoneOffset.UTC)
                     .toEpochMilli()
             )
         }

@@ -13,7 +13,7 @@ kotlin {
     jvm()
     androidTarget()
     linuxX64()
-    jvmToolchain(17)
+    jvmToolchain(11)
 
     sourceSets {
         val commonMain by getting
@@ -28,7 +28,7 @@ android {
     compileSdk = 34
     defaultConfig { minSdk = 21 }
     compileOptions {
-        sourceCompatibility = JavaVersion.VERSION_17
-        targetCompatibility = JavaVersion.VERSION_17
+        sourceCompatibility = JavaVersion.VERSION_11
+        targetCompatibility = JavaVersion.VERSION_11
     }
 }

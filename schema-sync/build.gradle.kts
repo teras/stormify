@@ -59,7 +59,7 @@ application {
 }
 
 kotlin {
-    jvmToolchain(17)
+    jvmToolchain(11)
 }
 
 tasks.named<JavaExec>("run") {
@@ -138,19 +138,33 @@ val jlinkRuntimeDir = layout.buildDirectory.dir("jlink-runtime")
 val appImageDir = layout.buildDirectory.dir("app-image")
 
 val javaToolchains = extensions.getByType<JavaToolchainService>()
-val packagingLauncher = javaToolchains.launcherFor {
+// jpackage was added in JDK 14 — JDK 11 cannot package, so the packaging
+// tool runs from a JDK 17 toolchain regardless of the schema-sync bytecode
+// target. The shipped runtime image, however, is built with JDK 11 jlink
+// so end users get a smaller, JDK 11-class runtime.
+val jdk17PackagingLauncher = javaToolchains.launcherFor {
     languageVersion.set(JavaLanguageVersion.of(17))
 }
+val jdk11RuntimeLauncher = javaToolchains.launcherFor {
+    languageVersion.set(JavaLanguageVersion.of(11))
+}
 
+// jdeps in JDK 11 NPEs on multi-release fatJars (known bug); we run jdeps
+// from the JDK 17 toolchain instead. Module names are stable across
+// versions so the resulting list is valid input for JDK 11 jlink, as long
+// as the deps don't reference modules introduced after JDK 11 (none of
+// schema-sync's deps do).
 abstract class JlinkRuntimeTask : DefaultTask() {
     @get:InputFile abstract val fatJar: RegularFileProperty
     @get:OutputDirectory abstract val outputDir: DirectoryProperty
-    @get:Internal abstract val launcher: Property<JavaLauncher>
+    @get:Internal abstract val jlinkLauncher: Property<JavaLauncher>
+    @get:Internal abstract val jdepsLauncher: Property<JavaLauncher>
     @get:Inject abstract val execOps: ExecOperations
 
     @TaskAction
     fun action() {
-        val home = launcher.get().metadata.installationPath.asFile.absolutePath
+        val jlinkHome = jlinkLauncher.get().metadata.installationPath.asFile.absolutePath
+        val jdepsHome = jdepsLauncher.get().metadata.installationPath.asFile.absolutePath
         val ext = if (System.getProperty("os.name").lowercase().contains("windows")) ".exe" else ""
         val out = outputDir.get().asFile
         out.deleteRecursively()
@@ -159,10 +173,10 @@ abstract class JlinkRuntimeTask : DefaultTask() {
         val baos = ByteArrayOutputStream()
         execOps.exec {
             commandLine(
-                "$home/bin/jdeps$ext",
+                "$jdepsHome/bin/jdeps$ext",
                 "--print-module-deps",
                 "--ignore-missing-deps",
-                "--multi-release", "17",
+                "--multi-release", "11",
                 jarFile.absolutePath,
             )
             standardOutput = baos
@@ -172,8 +186,8 @@ abstract class JlinkRuntimeTask : DefaultTask() {
 
         execOps.exec {
             commandLine(
-                "$home/bin/jlink$ext",
-                "--module-path", "$home/jmods",
+                "$jlinkHome/bin/jlink$ext",
+                "--module-path", "$jlinkHome/jmods",
                 "--add-modules", modules,
                 "--strip-debug",
                 "--no-header-files",
@@ -187,11 +201,12 @@ abstract class JlinkRuntimeTask : DefaultTask() {
 
 val jlinkRuntime = tasks.register<JlinkRuntimeTask>("jlinkRuntime") {
     group = "distribution"
-    description = "Build a stripped JRE sized for the schema-sync fatJar's modules."
+    description = "Build a stripped JDK 11 runtime image sized for the schema-sync fatJar's modules."
     val fatJarTask = tasks.named<Jar>("fatJar")
     fatJar.set(fatJarTask.flatMap { it.archiveFile })
     outputDir.set(jlinkRuntimeDir)
-    launcher.set(packagingLauncher)
+    jlinkLauncher.set(jdk11RuntimeLauncher)
+    jdepsLauncher.set(jdk17PackagingLauncher)
 }
 
 abstract class AppImageTask : DefaultTask() {
@@ -248,7 +263,7 @@ val appImageTask = tasks.register<AppImageTask>("appImage") {
     appName.set("schema-sync")
     appVersion.set(rootProject.version.toString().substringBefore("-SNAPSHOT"))
     mainClass.set("onl.ycode.stormify.schemasync.MainKt")
-    launcher.set(packagingLauncher)
+    launcher.set(jdk17PackagingLauncher)
 }
 
 // --- Linux: AppImage ------------------------------------------------------

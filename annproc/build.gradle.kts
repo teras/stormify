@@ -22,7 +22,7 @@ kotlin {
     compilerOptions {
         jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_1_8)
     }
-    jvmToolchain(11)
+    jvmToolchain(8)
 }
 
 mavenPublishing {

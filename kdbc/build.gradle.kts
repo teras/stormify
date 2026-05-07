@@ -94,7 +94,7 @@ kotlin {
             }
         }
     }
-    jvmToolchain(11)
+    jvmToolchain(8)
 
     sourceSets {
         val commonMain by getting {

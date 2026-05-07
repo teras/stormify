@@ -24,7 +24,7 @@ import java.util.*;
  * (getter methods) of other classes that extend a specific base type FillableTable.
  */
 @SupportedAnnotationTypes("*")
-@SupportedSourceVersion(SourceVersion.RELEASE_11)
+@SupportedSourceVersion(SourceVersion.RELEASE_8)
 public class JavaTableProcessor extends AbstractProcessor {
     private static final String BASE_TYPE = "onl.ycode.stormify.AutoTable";
 
