@@ -20,3 +20,7 @@ CREATE DATABASE stormify_enc_iso7
 CREATE DATABASE stormify_enc_utf8
     ENCODING 'UTF8'       LC_COLLATE 'C' LC_CTYPE 'C' TEMPLATE template0
     OWNER stormify;
+
+-- Sandbox database for the schema-sync demo runner so it does not pile
+-- mockup tables on top of the conformance suite's `stormify_test`.
+CREATE DATABASE stormify_demo OWNER stormify;

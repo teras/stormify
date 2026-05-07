@@ -24,12 +24,28 @@ set -euo pipefail
 
 print_usage() {
     {
-        echo "usage: $0 <variant>"
+        echo "usage: $0 [--appimage] <variant>"
         echo "  entity-style: ctor-all | ctor-pk | body | body-spaced"
         echo "  mockup db:    sqlite | postgresql | postgresql9 | mysql | mysql5 |"
         echo "                mariadb | oracle | oracle11 | mssql"
+        echo
+        echo "  --appimage     Run the self-contained Linux AppImage from"
+        echo "                 build/installers/ instead of the fatJar via"
+        echo "                 system 'java'. Build it first with:"
+        echo "                   gradle :schema-sync:linuxAppImage"
     } >&2
 }
+
+USE_APPIMAGE=0
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --appimage) USE_APPIMAGE=1; shift ;;
+        -h|--help)  print_usage; exit 0 ;;
+        --)         shift; break ;;
+        -*)         print_usage; exit 64 ;;
+        *)          break ;;
+    esac
+done
 
 if [[ $# -lt 1 ]]; then
     print_usage
@@ -48,28 +64,48 @@ SCHEMA_SYNC_DIR="$(dirname "$SCRIPT_DIR")"
 REPO_ROOT="$(dirname "$SCHEMA_SYNC_DIR")"
 
 JAR="$SCHEMA_SYNC_DIR/build/libs/schema-sync-all.jar"
+INSTALLERS_DIR="$SCHEMA_SYNC_DIR/build/installers"
 
-# Mockup connection coordinates per database. Mirrors testing/test.sh so
-# the same docker containers can host both the conformance suite and the
-# mockup fixture without colliding (mockup uses its own object names).
+# Mockup connection coordinates per database. Targets the dedicated
+# `stormify_demo` database (or `stormify_demo` schema/user on Oracle) so the
+# mockup fixture stays isolated from the conformance suite's `stormify_test`
+# — `gradle test` no longer leaves leftovers visible to the demo, and
+# wiping the demo data is a single DROP DATABASE / DROP USER away.
 mockup_url() {
     case "$1" in
         sqlite)      echo "jdbc:sqlite:$WORK_DIR/demo.db" ;;
-        postgresql)  echo "jdbc:postgresql://localhost:15432/stormify_test" ;;
-        postgresql9) echo "jdbc:postgresql://localhost:15431/stormify_test" ;;
-        mysql)       echo "jdbc:mysql://localhost:13306/stormify_test" ;;
-        mysql5)      echo "jdbc:mysql://localhost:13305/stormify_test" ;;
-        mariadb)     echo "jdbc:mariadb://localhost:13307/stormify_test" ;;
+        postgresql)  echo "jdbc:postgresql://localhost:15432/stormify_demo" ;;
+        postgresql9) echo "jdbc:postgresql://localhost:15431/stormify_demo" ;;
+        mysql)       echo "jdbc:mysql://localhost:13306/stormify_demo" ;;
+        mysql5)      echo "jdbc:mysql://localhost:13305/stormify_demo" ;;
+        mariadb)     echo "jdbc:mariadb://localhost:13307/stormify_demo" ;;
         oracle)      echo "jdbc:oracle:thin:@localhost:11521/XEPDB1" ;;
         oracle11)    echo "jdbc:oracle:thin:@localhost:11524:XE" ;;
-        mssql)       echo "jdbc:sqlserver://localhost:11433;databaseName=stormify_test;encrypt=false" ;;
+        mssql)       echo "jdbc:sqlserver://localhost:11433;databaseName=stormify_demo;encrypt=false" ;;
         *) echo "Unknown database: $1" >&2; return 1 ;;
     esac
 }
-mockup_user()     { case "$1" in sqlite) echo "";; mssql) echo "sa";; *) echo "stormify";; esac; }
+# On Oracle, `stormify_demo` is a separate APP user (= schema) instead of a
+# separate database — XE has no per-database isolation. Everything else
+# reuses the regular `stormify` user with access to the demo DB.
+mockup_user() {
+    case "$1" in
+        sqlite) echo "" ;;
+        mssql) echo "sa" ;;
+        oracle|oracle11) echo "stormify_demo" ;;
+        *) echo "stormify" ;;
+    esac
+}
 mockup_password() { case "$1" in sqlite) echo "";; *) echo "Stormify1!";; esac; }
 
-if [[ ! -f "$JAR" ]]; then
+if [[ "$USE_APPIMAGE" == "1" ]]; then
+    APPIMAGE="$(ls "$INSTALLERS_DIR"/schema-sync-*-x86_64.AppImage 2>/dev/null | head -1 || true)"
+    if [[ -z "$APPIMAGE" ]]; then
+        echo "AppImage not found under $INSTALLERS_DIR." >&2
+        echo "Build it first with: gradle :schema-sync:linuxAppImage" >&2
+        exit 1
+    fi
+elif [[ ! -f "$JAR" ]]; then
     echo "Building schema-sync fatJar..."
     (cd "$REPO_ROOT" && gradle :schema-sync:fatJar -q)
 fi
@@ -129,11 +165,16 @@ case "$VARIANT" in
 esac
 
 cd "$WORK_DIR"
+RUN_ARGS=(--url "$URL" --sources "./sources")
+[[ -n "$USER" ]] && RUN_ARGS+=(--user "$USER")
+[[ -n "$PASSWORD" ]] && RUN_ARGS+=(--password "$PASSWORD")
+if [[ "$USE_APPIMAGE" == "1" ]]; then
+    # The AppImage bundles its own JDK 17 runtime, so the
+    # --sun-misc-unsafe-memory-access flag (a JDK 23+ knob) is irrelevant.
+    exec "$APPIMAGE" "${RUN_ARGS[@]}" "$@"
+fi
 # --sun-misc-unsafe-memory-access=allow silences the JVM's "terminally
 # deprecated method in sun.misc.Unsafe" warnings printed by HotSpot directly
 # to FD 2 (bypassing System.err) when the bundled Kotlin compiler embeddable
 # loads. Available on JDK 23+; older JDKs ignore the flag harmlessly.
-RUN_ARGS=(--url "$URL" --sources "./sources")
-[[ -n "$USER" ]] && RUN_ARGS+=(--user "$USER")
-[[ -n "$PASSWORD" ]] && RUN_ARGS+=(--password "$PASSWORD")
 exec java --sun-misc-unsafe-memory-access=allow -jar "$JAR" "${RUN_ARGS[@]}" "$@"
