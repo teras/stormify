@@ -2,6 +2,13 @@
 
 Stormify release history.
 
+## [2.5.1] — 2026-05-07
+
+### Fixed
+- Entity creation when the primary key property name requires
+  camelCase ↔ snake_case mapping (e.g. `userId` ↔ `user_id`).
+  The generated INSERT no longer mis-resolves the id column.
+
 ## [2.5.0] — 2026-05-01
 
 ### Added
@@ -180,6 +187,7 @@ Initial public release on Maven Central.
 - JPA annotation compatibility (`@Id`, `@Table`, `@Column`, …).
 - JVM / JDBC-only, reflection-based entity discovery.
 
+[2.5.1]: https://github.com/teras/stormify/compare/v2.5.0...v2.5.1
 [2.5.0]: https://github.com/teras/stormify/compare/v2.1.1...v2.5.0
 [2.1.1]: https://github.com/teras/stormify/compare/v2.1.0...v2.1.1
 [2.1.0]: https://github.com/teras/stormify/compare/v2.0.0...v2.1.0
