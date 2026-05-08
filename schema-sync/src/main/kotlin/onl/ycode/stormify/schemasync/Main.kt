@@ -44,6 +44,24 @@ Options:
   --ascii                Render the TUI using only ASCII characters.
   -h, --help             Show this help and exit.
 
+Headless / CI mode (no TUI; activated by either --export-* flag):
+  --export-sql <file>    Write SQL migration to <file>.
+  --export-kt <file>     Write a unified-diff patch (apply with `git apply`)
+                         covering Kotlin splices and brand-new entity files.
+                         Requires at least one --sources <dir>.
+  --categories <list>    Comma-separated category tokens. Tokens:
+                           tables, views,
+                           in-sync, missing-db, missing-kt,
+                           type-conflicts, default-conflicts,
+                           both, db-only, entity-only,
+                           single, multi.
+                         Or `all` to select every token.
+                         Default: every token except in-sync.
+  --filter-entity <glob> Glob (case-insensitive, `*`/`?`) matching tableKey
+                         or class name. Repeatable; matches any (OR).
+  --filter-property <glob>
+                         Glob matching column name. Repeatable; matches any.
+
 Supported JDBC URLs (drivers bundled):
   jdbc:sqlite:<path>
   jdbc:postgresql://<host>[:<port>]/<db>
@@ -107,6 +125,13 @@ fun main(args: Array<String>) {
             System.err.println("No DB connection configured. Pass --url <jdbc-url> (see --help).")
             return
         }
+
+    // Headless / CI mode: any --export-* flag short-circuits the TUI bring-up
+    // and runs introspect → diff → write directly. jul/stderr are not
+    // redirected here so warnings stream to the calling shell as usual.
+    if (hasHeadlessFlag(args)) {
+        kotlin.system.exitProcess(runHeadless(args, state))
+    }
 
     val sourceRoots = argValuesAll(args, "--sources").map(Path::of)
 
@@ -282,27 +307,3 @@ private fun drawProgress(screen: Screen, p: IntrospectProgress) {
     screen.refresh()
 }
 
-private fun argValue(args: Array<String>, name: String): String? {
-    val idx = args.indexOfFirst { it == name || it.startsWith("$name=") }
-    if (idx < 0) return null
-    val arg = args[idx]
-    if (arg.contains('=')) return arg.substringAfter('=')
-    val next = args.getOrNull(idx + 1) ?: return null
-    // Don't swallow another flag as this flag's value.
-    if (next.startsWith("--") || next.startsWith("-")) return null
-    return next
-}
-
-private fun argValuesAll(args: Array<String>, name: String): List<String> {
-    val out = mutableListOf<String>()
-    var i = 0
-    while (i < args.size) {
-        val a = args[i]
-        when {
-            a == name && i + 1 < args.size -> { out += args[i + 1]; i += 2; continue }
-            a.startsWith("$name=") -> { out += a.substringAfter('='); i += 1; continue }
-            else -> i += 1
-        }
-    }
-    return out
-}

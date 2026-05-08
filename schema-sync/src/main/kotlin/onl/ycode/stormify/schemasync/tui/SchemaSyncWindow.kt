@@ -642,46 +642,49 @@ private fun confirmQuit(
  * that pure OR semantics produce: the user can now ask for "DIFF tables only"
  * by leaving Views unchecked while keeping the DIFF status options checked.
  */
-private enum class FilterGroup(val label: String) {
+internal enum class FilterGroup(val label: String) {
     CARDINALITY("Cardinality"),
     KIND("Object kind"),
     TABLE_PRESENCE("Table presence"),
     COLUMN_STATUS("Column status");
 }
 
-private enum class RowCategory(
+internal enum class RowCategory(
     val group: FilterGroup,
     val label: String,
+    val token: String,
     val accept: (onl.ycode.stormify.schemasync.model.TableEntry) -> Boolean,
 ) {
-    TABLES(FilterGroup.KIND, "Tables", { !it.isView }),
-    VIEWS(FilterGroup.KIND, "Views", { it.isView }),
+    TABLES(FilterGroup.KIND, "Tables", "tables", { !it.isView }),
+    VIEWS(FilterGroup.KIND, "Views", "views", { it.isView }),
 
     // Column-scope: gated on `status` so they only describe the state inside
     // slots that have both an entity and a DB table. The three DIFF
     // subdivisions can overlap (a single DIFF row may have a type mismatch
     // *and* a missing DB field) — that is intentional: pick the union you
     // care about. `In sync` stands alone since SYNCED rules out all three.
-    SYNCED(FilterGroup.COLUMN_STATUS, "In sync", { it.status == TableStatus.SYNCED }),
-    MISSING_DB_FIELDS(FilterGroup.COLUMN_STATUS, "Missing DB fields",
+    SYNCED(FilterGroup.COLUMN_STATUS, "In sync", "in-sync", { it.status == TableStatus.SYNCED }),
+    MISSING_DB_FIELDS(FilterGroup.COLUMN_STATUS, "Missing DB fields", "missing-db",
         { it.status == TableStatus.DIFF && it.hasMissingDbFields }),
-    MISSING_KOTLIN_FIELDS(FilterGroup.COLUMN_STATUS, "Missing Kotlin fields",
+    MISSING_KOTLIN_FIELDS(FilterGroup.COLUMN_STATUS, "Missing Kotlin fields", "missing-kt",
         { it.status == TableStatus.DIFF && it.hasMissingKotlinFields }),
-    TYPE_CONFLICTS(FilterGroup.COLUMN_STATUS, "Type conflicts",
+    TYPE_CONFLICTS(FilterGroup.COLUMN_STATUS, "Type conflicts", "type-conflicts",
         { it.status == TableStatus.DIFF && it.hasTypeMismatch }),
-    DEFAULT_CONFLICTS(FilterGroup.COLUMN_STATUS, "Default conflicts",
+    DEFAULT_CONFLICTS(FilterGroup.COLUMN_STATUS, "Default conflicts", "default-conflicts",
         { it.status == TableStatus.DIFF && it.hasDefaultConflicts }),
 
     // Table-scope: every slot is in **exactly one** of the three. `Both`
     // covers SYNCED and DIFF (slot has both sides); the other two cover the
     // whole-table absences. Mutually exclusive and exhaustive.
-    BOTH_PRESENT(FilterGroup.TABLE_PRESENCE, "Both",
+    BOTH_PRESENT(FilterGroup.TABLE_PRESENCE, "Both", "both",
         { it.status == TableStatus.SYNCED || it.status == TableStatus.DIFF }),
-    DB_ONLY(FilterGroup.TABLE_PRESENCE, "DB-only tables", { it.status == TableStatus.DB_ONLY }),
-    ENTITY_ONLY(FilterGroup.TABLE_PRESENCE, "Entity-only tables", { it.status == TableStatus.ENTITY_ONLY }),
+    DB_ONLY(FilterGroup.TABLE_PRESENCE, "DB-only tables", "db-only",
+        { it.status == TableStatus.DB_ONLY }),
+    ENTITY_ONLY(FilterGroup.TABLE_PRESENCE, "Entity-only tables", "entity-only",
+        { it.status == TableStatus.ENTITY_ONLY }),
 
-    SINGLE_ENTITY(FilterGroup.CARDINALITY, "Single entity", { it.entityCount <= 1 }),
-    MULTI_ENTITY(FilterGroup.CARDINALITY, "Multi-entity", { it.entityCount > 1 });
+    SINGLE_ENTITY(FilterGroup.CARDINALITY, "Single entity", "single", { it.entityCount <= 1 }),
+    MULTI_ENTITY(FilterGroup.CARDINALITY, "Multi-entity", "multi", { it.entityCount > 1 });
 
     override fun toString(): String = label
 }
@@ -689,7 +692,7 @@ private enum class RowCategory(
 /** Mutable selection set backing the filter popup. Default = every option in
  *  every group except `In sync` — surfaces every row that needs attention while
  *  still satisfying the AND-across-groups rule. */
-private class CategoryFilter(initial: Set<RowCategory>) {
+internal class CategoryFilter(initial: Set<RowCategory>) {
     private val selected: MutableSet<RowCategory> = initial.toMutableSet()
 
     fun snapshot(): Set<RowCategory> = selected.toSet()

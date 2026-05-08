@@ -32,6 +32,8 @@ dependencies {
     implementation("net.java.dev.jna:jna-platform:5.14.0")
     implementation("org.apache.lucene:lucene-core:9.11.1")
     implementation("org.apache.lucene:lucene-analysis-common:9.11.1")
+    // Unified diff producer for the headless --export-kt mode.
+    implementation("io.github.java-diff-utils:java-diff-utils:4.12")
     // SLF4J no-op binding: silences the "No SLF4J providers were found" warning
     // emitted at startup by transitive libraries that depend on slf4j-api.
     runtimeOnly("org.slf4j:slf4j-nop:2.0.16")
@@ -48,6 +50,7 @@ dependencies {
 
     testImplementation(kotlin("test"))
     testImplementation("org.junit.jupiter:junit-jupiter:5.10.2")
+    testImplementation("org.junit.jupiter:junit-jupiter-params:5.10.2")
     testRuntimeOnly("org.junit.platform:junit-platform-launcher")
 }
 
