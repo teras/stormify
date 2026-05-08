@@ -49,6 +49,7 @@ typedef int (*fn_dpiStmt_bindByPos)(dpiStmt *, unsigned int, dpiVar *);
 typedef int (*fn_dpiStmt_getBindCount)(dpiStmt *, uint32_t *);
 typedef int (*fn_dpiStmt_define)(dpiStmt *, uint32_t, dpiVar *);
 typedef int (*fn_dpiStmt_getFetchArraySize)(dpiStmt *, uint32_t *);
+typedef int (*fn_dpiStmt_setFetchArraySize)(dpiStmt *, uint32_t);
 typedef int (*fn_dpiStmt_close)(dpiStmt *, const char *, unsigned int);
 typedef int (*fn_dpiStmt_release)(dpiStmt *);
 typedef int (*fn_dpiVar_release)(dpiVar *);
@@ -88,6 +89,7 @@ static fn_dpiStmt_bindByPos              p_stmt_bindByPos;
 static fn_dpiStmt_getBindCount           p_stmt_getBindCount;
 static fn_dpiStmt_define                 p_stmt_define;
 static fn_dpiStmt_getFetchArraySize      p_stmt_getFetchArraySize;
+static fn_dpiStmt_setFetchArraySize      p_stmt_setFetchArraySize;
 static fn_dpiStmt_close                  p_stmt_close;
 static fn_dpiStmt_release                p_stmt_release;
 static fn_dpiVar_release                 p_var_release;
@@ -140,6 +142,7 @@ static void ora_load_impl(void) {
     ORA_LOAD(p_stmt_getBindCount,       "dpiStmt_getBindCount");
     ORA_LOAD(p_stmt_define,             "dpiStmt_define");
     ORA_LOAD(p_stmt_getFetchArraySize,  "dpiStmt_getFetchArraySize");
+    ORA_LOAD(p_stmt_setFetchArraySize,  "dpiStmt_setFetchArraySize");
     ORA_LOAD(p_stmt_close,              "dpiStmt_close");
     ORA_LOAD(p_stmt_release,            "dpiStmt_release");
     ORA_LOAD(p_var_release,             "dpiVar_release");
@@ -807,6 +810,19 @@ static void *ora_execute_query(kdbc_stmt *stmt, int *out_col_count,
     ora_stmt_data *sd = (ora_stmt_data *)stmt->native;
     unsigned int mode = stmt->conn->autocommit ?
         DPI_MODE_EXEC_COMMIT_ON_SUCCESS : DPI_MODE_EXEC_DEFAULT;
+
+    /* When the caller asked for streaming via kdbc_set_fetch_size, tell
+     * ODPI-C to round-trip that many rows per fetch instead of the default
+     * 100 (DPI_DEFAULT_FETCH_ARRAY_SIZE). MUST happen before execute, since
+     * the array-size determines the size of the column buffers ODPI-C
+     * allocates internally. fetch_size == 0 means "leave default" — keeps
+     * the non-cursor / eager-style read path identical to before. Errors
+     * from setFetchArraySize are non-fatal: a too-large size on a wide row
+     * is rejected by ODPI-C, in which case we silently fall back to the
+     * default rather than fail the query. */
+    if (stmt->fetch_size > 0) {
+        (void)p_stmt_setFetchArraySize(sd->stmt, (uint32_t)stmt->fetch_size);
+    }
 
     unsigned int numQueryCols = 0;
     if (p_stmt_execute(sd->stmt, mode, &numQueryCols) != DPI_SUCCESS) {

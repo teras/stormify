@@ -77,6 +77,13 @@ class Stormify(val dataSource: DataSource, vararg registrars: EntityRegistrar) {
 
         /** Classloader-leak cleanup hook — on JVM, invoked by `StormifyLifecycle.clear()`. */
         internal fun clearDefault() { _defaultInstance.value = null }
+
+        /** Modest fetch-size hint used by `read<T>` on Oracle JDBC to bypass the
+         *  driver's default of 10 rows per round-trip. Picked from the documented
+         *  Oracle "sweet spot" range (100-1000); 100 is the conservative end —
+         *  enough to collapse the round-trip count by an order of magnitude
+         *  without ballooning the OCI prefetch buffer on wide rows. */
+        private const val ORACLE_BATCH_PREFETCH = 100
     }
 
     /** Sets this instance as [defaultInstance] and returns it. */
@@ -178,6 +185,28 @@ class Stormify(val dataSource: DataSource, vararg registrars: EntityRegistrar) {
      */
     @Volatile
     var unmatchedColumnPolicy: UnmatchedColumnPolicy = UnmatchedColumnPolicy.IGNORE
+
+    /**
+     * Rows per round-trip during [readCursor] iteration (and the streaming paths
+     * that flow through it). `0` falls back to driver defaults.
+     *
+     * The default of `100` is a conservative balance — it cuts round-trips well
+     * over the JDBC default of 10 without preallocating large client buffers
+     * on drivers that batch into fixed-size column slots (Oracle JDBC and ODPI-C
+     * `setFetchArraySize`, MariaDB native `STMT_ATTR_PREFETCH_ROWS`). On these
+     * drivers, memory cost scales as `cursorFetchSize × max-declared-column-size`
+     * — for a wide table with `VARCHAR2(4000) × 50` columns at `cursorFetchSize=1000`,
+     * that's ~200 MB per query. PostgreSQL JVM allocates by actual row size and
+     * is far less sensitive; PostgreSQL native, MySQL/MariaDB JVM, MSSQL native,
+     * and SQLite stream row-by-row regardless of this value (it acts only as a
+     * streaming on/off gate there).
+     *
+     * **Tune up** (e.g. `1000` or higher) for narrow rows on high-latency links,
+     * especially on PostgreSQL JVM. **Tune down** (e.g. `10`–`50`) for very wide
+     * rows on Oracle or MariaDB native. The instance-wide setting can be
+     * overridden per call via [readCursor]'s `fetchSize` parameter.
+     */
+    var cursorFetchSize: Int = 100
 
     /** The logger used by this Stormify instance. Defaults to a logger named "Stormify". */
     @Volatile
@@ -302,21 +331,46 @@ class Stormify(val dataSource: DataSource, vararg registrars: EntityRegistrar) {
         batchItems: List<*>? = null,
         batchParamOf: ((Any?) -> List<Any?>)? = null,
         generatedKeys: Boolean = false,
+        fetchSize: Int = 0,
         code: (Statement) -> T
     ): T {
         val prepared = prepareSql(givenQuery, givenParams)
         val errorMsg = if (prepared.params.isEmpty()) "" else " with values ${prepared.params}"
         return ConnectionMaker(conn).useWithException("Unable to execute query '${prepared.sql}'$errorMsg") { maker ->
-            maker.connection.initStatement(prepared.sql, generatedKeys, null).use { stmt ->
-                if (batchItems != null && batchParamOf != null) {
-                    for (item in batchItems) {
-                        bindAndLog(stmt, prepared.sql, batchParamOf(item))
-                        stmt.addBatch()
+            // PG JDBC binds server-side cursors to transaction lifetime: with
+            // autoCommit=true, setFetchSize is silently downgraded to a full
+            // client-side buffer. Flip it only on a connection we borrowed —
+            // user-owned ones already control their own autocommit state.
+            val toggleAutoCommit = fetchSize > 0
+                    && maker.shouldClose
+                    && sqlDialect == SqlDialect.POSTGRESQL
+                    && maker.connection !is NativeKdbcConnection
+                    && maker.connection.getAutoCommit()
+            if (toggleAutoCommit) maker.connection.setAutoCommit(false)
+            try {
+                maker.connection.initStatement(prepared.sql, generatedKeys, null).use { stmt ->
+                    if (fetchSize > 0) {
+                        // MySQL Connector/J needs Int.MIN_VALUE as the row-by-row
+                        // streaming switch; MariaDB Connector/J rejects negatives.
+                        // Native drivers activate cursor mode on any positive value.
+                        val effective = if (maker.connection !is NativeKdbcConnection && sqlDialect.isMysqlOnly)
+                            Int.MIN_VALUE else fetchSize
+                        stmt.setFetchSize(effective)
                     }
-                } else {
-                    bindAndLog(stmt, prepared.sql, prepared.params)
+                    if (batchItems != null && batchParamOf != null) {
+                        for (item in batchItems) {
+                            bindAndLog(stmt, prepared.sql, batchParamOf(item))
+                            stmt.addBatch()
+                        }
+                    } else {
+                        bindAndLog(stmt, prepared.sql, prepared.params)
+                    }
+                    code(stmt)
                 }
-                code(stmt)
+            } finally {
+                // setAutoCommit(true) on a non-auto-commit connection commits per
+                // the JDBC contract — no separate commit() round-trip needed.
+                if (toggleAutoCommit) runCatching { maker.connection.setAutoCommit(true) }
             }
         }
     }
@@ -386,6 +440,12 @@ class Stormify(val dataSource: DataSource, vararg registrars: EntityRegistrar) {
     /**
      * Executes a SELECT query and processes results row-by-row via [consumer]. Returns row count.
      *
+     * @param fetchSize wire-protocol batch size hint passed to the underlying driver via
+     *  `Statement.setFetchSize`. Defaults to [cursorFetchSize] (the instance-wide default).
+     *  Set to `0` to opt out of streaming for a single call (drivers fall back to their own
+     *  default, typically eager). Larger values cut round-trips on high-latency links;
+     *  smaller values cap per-batch memory. Independent of the in-process FK-batching size
+     *  used by `forEachStreaming` (see `SiblingGroup.DEFAULT_BATCH_SIZE`).
      * @param customFields optional per-column interceptors. Any column whose label matches a
      * key (case-insensitively) is passed to the associated lambda instead of being mapped onto the
      * entity, allowing sidecar aggregates (e.g. `COUNT(*) OVER () AS __total`) to be captured in
@@ -396,9 +456,10 @@ class Stormify(val dataSource: DataSource, vararg registrars: EntityRegistrar) {
     inline fun <reified T : Any> readCursor(
         query: String,
         vararg params: Any?,
+        fetchSize: Int = cursorFetchSize,
         customFields: Map<String, (Any?) -> Unit>? = null,
         noinline consumer: (T) -> Unit
-    ) = readCursor(null, T::class, query, *params, customFields = customFields, consumer = consumer)
+    ) = readCursor(null, T::class, query, *params, fetchSize = fetchSize, customFields = customFields, consumer = consumer)
 
     @PublishedApi
     internal fun <T : Any> readCursor(
@@ -406,9 +467,10 @@ class Stormify(val dataSource: DataSource, vararg registrars: EntityRegistrar) {
         baseClass: KClass<T>,
         query: String,
         vararg params: Any?,
+        fetchSize: Int = cursorFetchSize,
         customFields: Map<String, (Any?) -> Unit>? = null,
         consumer: (T) -> Unit
-    ) = performQuery(conn, query, params.toList(), code = { statement ->
+    ) = performQuery(conn, query, params.toList(), fetchSize = fetchSize, code = { statement ->
         val isMap = Map::class == baseClass
         val info = if (TypeConversion.isKnownScalar(baseClass) || isMap) null else resolveTableInfo(baseClass)
         val normalizedCustomFields = customFields?.mapKeys { it.key.lowercase() }
@@ -459,7 +521,11 @@ class Stormify(val dataSource: DataSource, vararg registrars: EntityRegistrar) {
         customFields: Map<String, (Any?) -> Unit>? = null
     ): List<T> =
         with(mutableListOf<T>()) {
-            readCursor(conn, baseClass, query, *params, customFields = customFields) { add(it) }
+            // Oracle JDBC's defaultRowPrefetch=10 turns a bulk read into a
+            // round-trip storm; other drivers return the whole result in one
+            // round-trip without a hint.
+            val hint = if (sqlDialect.isOracleVariant) ORACLE_BATCH_PREFETCH else 0
+            readCursor(conn, baseClass, query, *params, fetchSize = hint, customFields = customFields) { add(it) }
             return this
         }
 
@@ -471,7 +537,8 @@ class Stormify(val dataSource: DataSource, vararg registrars: EntityRegistrar) {
     @PublishedApi
     internal fun <T : Any> readOne(conn: Connection?, baseClass: KClass<T>, query: String, vararg params: Any?): T? {
         val result = Reference<T?>()
-        readCursor(conn, baseClass, query, *params) {
+        // Eager — at most one row expected. See read() comment for rationale.
+        readCursor(conn, baseClass, query, *params, fetchSize = 0) {
             if (result.item != null)
                 throw SQLException("Multiple results found for query '$query'")
             result.item = it
@@ -619,7 +686,8 @@ class Stormify(val dataSource: DataSource, vararg registrars: EntityRegistrar) {
     private fun getNextSequences(conn: Connection?, sequence: String, count: Int): List<NativeBigInteger> {
         val sql = sqlDialect.sequenceDialect(sequence, count) ?: return emptyList()
         val result = mutableListOf<NativeBigInteger>()
-        readCursor(conn, NativeBigInteger::class, sql) { result.add(it) }
+        // Sequence calls return at most a few rows — eager.
+        readCursor(conn, NativeBigInteger::class, sql, fetchSize = 0) { result.add(it) }
         if (result.isNotEmpty())
             _dbLog("Sequence $sequence incremented by ${result.size} to ${result.last()}")
         return result

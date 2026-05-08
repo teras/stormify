@@ -87,6 +87,10 @@ typedef void       (*fn_PQfreeCancel)(PGcancel *);
 typedef int        (*fn_PQsetClientEncoding)(PGconn *, const char *);
 typedef PGTransactionStatusType (*fn_PQtransactionStatus)(const PGconn *);
 typedef char      *(*fn_PQresultErrorField)(const PGresult *, int);
+typedef int        (*fn_PQsendQueryPrepared)(PGconn *, const char *, int,
+                                              const char *const *, const int *, const int *, int);
+typedef int        (*fn_PQsetSingleRowMode)(PGconn *);
+typedef PGresult  *(*fn_PQgetResult)(PGconn *);
 
 /* PG_DIAG_* selectors from libpq-fe.h. Re-declared here so we don't depend
  * on the application-side header for the field selector constants. */
@@ -126,6 +130,9 @@ static fn_PQfreeCancel         p_freeCancel;
 static fn_PQsetClientEncoding  p_setClientEncoding;
 static fn_PQtransactionStatus  p_transactionStatus;
 static fn_PQresultErrorField   p_resultErrorField;
+static fn_PQsendQueryPrepared  p_sendQueryPrepared;
+static fn_PQsetSingleRowMode   p_setSingleRowMode;
+static fn_PQgetResult          p_getResult;
 
 /* ========================================================================
  * Driver-specific structures
@@ -140,6 +147,14 @@ typedef struct {
     Oid      *col_types;
     /* String conversion buffer per result set */
     char      conv_buf[64];
+    /* Streaming via PQsetSingleRowMode: `res` holds the current row, each
+     * pg_rs_next replaces it via PQgetResult. */
+    int       streaming;
+    /* Borrowed from the connection (owned elsewhere). Non-NULL iff the query
+     * was dispatched via PQsendQueryPrepared, which is the case whenever
+     * fetch_size > 0. libpq requires PQgetResult to be drained until NULL
+     * after any async send — pg_rs_close uses `pg != NULL` as the gate. */
+    PGconn   *pg;
 } pg_result_set;
 
 /* Per-parameter binary buffer */
@@ -208,6 +223,11 @@ static void pg_load_impl(void) {
     PG_LOAD(setClientEncoding);
     PG_LOAD(transactionStatus);
     PG_LOAD(resultErrorField);
+    /* Streaming trio. PQsetSingleRowMode requires libpq 9.2+, the floor
+     * also enforced at connect against the server version. */
+    PG_LOAD(sendQueryPrepared);
+    PG_LOAD(setSingleRowMode);
+    PG_LOAD(getResult);
 
     pg_load_ok = 1;
 }
@@ -241,6 +261,22 @@ static void *pg_connect(const char *url, const char *user, const char *password,
     }
     if (p_status(conn) != CONNECTION_OK) {
         snprintf(err, err_size, "PostgreSQL: %s", p_errorMessage(conn));
+        p_finish(conn);
+        return NULL;
+    }
+    /* Minimum supported server: PostgreSQL 9.2 (2012). This is also the
+     * floor for PQsetSingleRowMode, our row-streaming primitive — anything
+     * older would silently fall back to buffered reads, which is exactly
+     * the kind of "looks fine, dies under load" surprise we'd rather catch
+     * at connect time than mid-iteration. PQserverVersion encodes as
+     * MMmmpp (e.g. 90200 == 9.2.0, 170000 == 17.0). 0 means the version
+     * couldn't be determined — refuse on the safe side. */
+    int srv_ver = p_serverVersion(conn);
+    if (srv_ver < 90200) {
+        snprintf(err, err_size,
+                 "PostgreSQL: server version %d.%d.%d is below the minimum supported (9.2). "
+                 "Upgrade the server or use a different kdbc release.",
+                 srv_ver / 10000, (srv_ver / 100) % 100, srv_ver % 100);
         p_finish(conn);
         return NULL;
     }
@@ -782,30 +818,76 @@ static int pg_execute_update(kdbc_stmt *stmt) {
     }
 }
 
+/* Drain any remaining PGresults from a streaming query. libpq requires the
+ * caller to keep calling PQgetResult until it returns NULL, otherwise the
+ * connection is left in a state that breaks the next query. Each non-NULL
+ * result is freed. Safe to call when no streaming is in progress (becomes
+ * a no-op). */
+static void pg_drain_results(PGconn *pg) {
+    if (!pg) return;
+    PGresult *r;
+    while ((r = p_getResult(pg)) != NULL) p_clear(r);
+}
+
 static void *pg_execute_query(kdbc_stmt *stmt, int *out_col_count,
                               char *err, size_t err_size) {
     pg_stmt_data *sd = (pg_stmt_data *)stmt->native;
     if (pg_ensure_prepared(stmt, err, err_size) != KDBC_OK) return NULL;
     pg_exec_args args = pg_build_args(sd);
 
-    /* Request binary result format */
-    PGresult *res = p_execPrepared(sd->pg, sd->stmt_name,
-                                    sd->param_count,
-                                    args.values, args.lengths, args.formats,
-                                    1 /* binary result */);
-    pg_free_args(&args);
-
-    if (!res) {
-        snprintf(err, err_size, "PostgreSQL: %s", p_errorMessage(sd->pg));
-        return NULL;
+    /* fetch_size > 0 opts into streaming via the async + single-row-mode
+     * combo. Server version 9.2+ is enforced at connect. */
+    int streaming = (stmt->fetch_size > 0);
+    PGresult *res = NULL;
+    if (streaming) {
+        /* Each row arrives as its own PGRES_SINGLE_TUPLE; bounds memory at
+         * one row at a time (libpq has no native cursor batching here). */
+        if (!p_sendQueryPrepared(sd->pg, sd->stmt_name, sd->param_count,
+                                 args.values, args.lengths, args.formats,
+                                 1 /* binary result */)) {
+            pg_free_args(&args);
+            snprintf(err, err_size, "PostgreSQL: %s", p_errorMessage(sd->pg));
+            return NULL;
+        }
+        if (!p_setSingleRowMode(sd->pg)) {
+            /* Non-fatal — fall back to fetching everything. The send is
+             * already queued so we still have to drain it; PQgetResult
+             * will return one big PGRES_TUPLES_OK with all rows. */
+            streaming = 0;
+        }
+        res = p_getResult(sd->pg);
+        pg_free_args(&args);
+        if (!res) {
+            snprintf(err, err_size, "PostgreSQL: %s", p_errorMessage(sd->pg));
+            return NULL;
+        }
+    } else {
+        /* Sync (eager) path: PQexecPrepared blocks until the full result is
+         * client-side. Lower latency for small result sets and matches the
+         * pre-streaming behaviour exactly when fetch_size is 0. */
+        res = p_execPrepared(sd->pg, sd->stmt_name, sd->param_count,
+                             args.values, args.lengths, args.formats,
+                             1 /* binary result */);
+        pg_free_args(&args);
+        if (!res) {
+            snprintf(err, err_size, "PostgreSQL: %s", p_errorMessage(sd->pg));
+            return NULL;
+        }
     }
 
     int status = p_resultStatus(res);
-    if (status != PGRES_TUPLES_OK) {
+    int is_single_tuple = (status == PGRES_SINGLE_TUPLE);
+    int is_tuples_ok    = (status == PGRES_TUPLES_OK);
+    /* Drain on any error/cleanup path that used PQsendQueryPrepared — not
+     * just when single-row mode is active. The closing NULL marker libpq
+     * queues after every async send must be consumed regardless. */
+    int async_path = (stmt->fetch_size > 0);
+    if (!is_single_tuple && !is_tuples_ok) {
         const char *sqlst = p_resultErrorField(res, PG_DIAG_SQLSTATE);
         STMT_ERR_V(stmt, sqlst, 0,
                    "PostgreSQL: %s", p_resultErrorMessage(res));
         p_clear(res);
+        if (async_path) pg_drain_results(sd->pg);
         return NULL;
     }
 
@@ -814,13 +896,18 @@ static void *pg_execute_query(kdbc_stmt *stmt, int *out_col_count,
     if (!prs) {
         snprintf(err, err_size, "Out of memory");
         p_clear(res);
+        if (async_path) pg_drain_results(sd->pg);
         return NULL;
     }
 
     prs->res = res;
-    prs->row_count = p_ntuples(res);
-    prs->col_count = ncols;
+    /* A SINGLE_TUPLE result holds one row at index 0; pg_rs_next bumps
+     * current_row from -1 to 0 on the first call. */
+    prs->row_count   = is_single_tuple ? 1 : p_ntuples(res);
+    prs->col_count   = ncols;
     prs->current_row = -1;
+    prs->streaming   = streaming;
+    prs->pg          = (stmt->fetch_size > 0) ? sd->pg : NULL;
 
     /* Cache column type OIDs for efficient binary decoding */
     prs->col_types = (Oid *)calloc(ncols, sizeof(Oid));
@@ -852,8 +939,44 @@ static int pg_get_generated_key(kdbc_stmt *stmt, int64_t *out_key) {
 
 static int pg_rs_next(kdbc_result *rs) {
     pg_result_set *prs = (pg_result_set *)rs->native;
-    prs->current_row++;
-    return (prs->current_row < prs->row_count) ? 1 : 0;
+    if (!prs->streaming) {
+        prs->current_row++;
+        return (prs->current_row < prs->row_count) ? 1 : 0;
+    }
+    /* Streaming: each row is its own PGresult. The very first call after
+     * pg_execute_query advances over the SINGLE_TUPLE the executor already
+     * fetched — we have a row at current_row=0 with prs->res holding it.
+     * Subsequent calls discard the previous PGresult and ask libpq for the
+     * next one. PGRES_SINGLE_TUPLE → another row; PGRES_TUPLES_OK → end of
+     * stream (the closing empty result libpq always sends after
+     * single-row mode); anything else → fatal, drain and stop. */
+    if (prs->current_row < 0) {
+        prs->current_row = 0;
+        return prs->row_count > 0 ? 1 : 0;
+    }
+    if (prs->res) {
+        p_clear(prs->res);
+        prs->res = NULL;
+    }
+    PGresult *next = p_getResult(prs->pg);
+    if (!next) {
+        prs->row_count = 0;
+        return 0;
+    }
+    int status = p_resultStatus(next);
+    if (status == PGRES_SINGLE_TUPLE) {
+        prs->res = next;
+        prs->current_row = 0;
+        prs->row_count = 1;
+        return 1;
+    }
+    /* Closing result (PGRES_TUPLES_OK with 0 rows) or an error. Either way
+     * the stream is done — clear and drain the rest so the connection is
+     * usable for the next query. */
+    p_clear(next);
+    pg_drain_results(prs->pg);
+    prs->row_count = 0;
+    return 0;
 }
 
 static const char *pg_rs_col_name(void *native_rs, int col) {
@@ -1305,6 +1428,12 @@ static void pg_rs_close(void *native_rs) {
     pg_result_set *prs = (pg_result_set *)native_rs;
     if (prs) {
         if (prs->res) p_clear(prs->res);
+        /* Drain whenever the dispatch used PQsendQueryPrepared (covers
+         * early-close mid-stream, eager fallback that still has the closing
+         * marker queued, and the idempotent re-drain of a fully-consumed
+         * stream). Skipping it leaves libpq in async state and wedges the
+         * next query with "another command is already in progress". */
+        if (prs->pg) pg_drain_results(prs->pg);
         free(prs->col_types);
         free(prs);
     }

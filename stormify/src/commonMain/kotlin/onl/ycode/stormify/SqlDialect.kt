@@ -451,3 +451,13 @@ enum class SqlDialect(
         }
     }
 }
+
+/** Returns `true` only for genuine MySQL (not MariaDB). MySQL Connector/J accepts
+ *  `setFetchSize(Integer.MIN_VALUE)` as a row-by-row streaming switch; MariaDB
+ *  Connector/J rejects negative fetch sizes outright with a SQL syntax error. */
+internal val SqlDialect.isMysqlOnly: Boolean
+    get() = this == SqlDialect.MYSQL_OLD || this == SqlDialect.MYSQL_NEW
+
+/** Returns `true` for any Oracle variant. */
+internal val SqlDialect.isOracleVariant: Boolean
+    get() = this == SqlDialect.ORACLE_OLD || this == SqlDialect.ORACLE_NEW

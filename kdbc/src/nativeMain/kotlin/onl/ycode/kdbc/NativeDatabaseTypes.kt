@@ -151,7 +151,7 @@ class NativeKdbcDataSource internal constructor(
 private class NativeConnection(
     private val handle: CPointer<kdbc_conn>,
     private val kind: KdbcDriverKind
-) : Connection {
+) : NativeKdbcConnection {
     // kotlin.concurrent.Volatile (multiplatform) ensures that [cancel], which is
     // explicitly designed to be called from a thread other than the one using the
     // connection, observes a close() that happened on the owning thread. Without
@@ -240,6 +240,11 @@ private class NativeConnection(
             throw kdbcConnException(handle, "setAutoCommit failed: ${connError(handle, "setAutoCommit failed")}")
     }
 
+    override fun getAutoCommit(): Boolean {
+        ensureOpen()
+        return kdbc_get_autocommit(handle) != 0
+    }
+
     override fun cancel() {
         // Best-effort async cancel. Safe to call from a different thread while another
         // thread is blocked inside a kdbc call on the same handle — this is the whole
@@ -313,6 +318,13 @@ private open class NativeStatement(
         // The C API returns total affected rows for the whole batch; we return a single-element
         // array for JDBC-compatibility (stormify uses the sum, not per-row counts).
         return intArrayOf(total)
+    }
+
+    override fun setFetchSize(rows: Int) {
+        ensureOpen()
+        // Negatives clamp to 0 (eager) so an over/underflow never accidentally
+        // enables streaming via the driver's positive-value gate.
+        kdbc_set_fetch_size(handle, if (rows < 0) 0 else rows)
     }
 
     override fun close() {

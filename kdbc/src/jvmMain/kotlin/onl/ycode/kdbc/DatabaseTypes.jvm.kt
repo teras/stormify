@@ -75,21 +75,31 @@ private class JdbcStatement(
 ) : Statement {
     private var preparedStatement: PreparedStatement? = null
     private var directStatement: java.sql.Statement? = null
+    // Captured before the first statement is realised, applied to whichever
+    // one ends up running. Null = "no hint set"; MIN_VALUE is a valid hint
+    // (MySQL streaming switch).
+    private var pendingFetchSize: Int? = null
 
     private fun ensurePrepared(): PreparedStatement {
-        if (preparedStatement == null)
-            preparedStatement = if (returnGeneratedKeys)
+        if (preparedStatement == null) {
+            val ps = if (returnGeneratedKeys)
                 jdbc.prepareStatement(sql, RETURN_GENERATED_KEYS)
             else if (!columnNames.isNullOrEmpty())
                 jdbc.prepareStatement(sql, columnNames)
             else
                 jdbc.prepareStatement(sql)
+            pendingFetchSize?.let { ps.fetchSize = it }
+            preparedStatement = ps
+        }
         return preparedStatement!!
     }
 
     private fun ensureDirect(): java.sql.Statement {
-        if (directStatement == null)
-            directStatement = jdbc.createStatement()
+        if (directStatement == null) {
+            val s = jdbc.createStatement()
+            pendingFetchSize?.let { s.fetchSize = it }
+            directStatement = s
+        }
         return directStatement!!
     }
 
@@ -134,6 +144,13 @@ private class JdbcStatement(
 
     override fun addBatch() = ensurePrepared().addBatch()
     override fun executeBatch(): IntArray = ensurePrepared().executeBatch()
+
+    override fun setFetchSize(rows: Int) {
+        if (rows < 0 && rows != Integer.MIN_VALUE) return
+        pendingFetchSize = rows
+        preparedStatement?.fetchSize = rows
+        directStatement?.fetchSize = rows
+    }
 
     override fun close() {
         preparedStatement?.close()
@@ -292,6 +309,7 @@ private class JdbcConnection(private val jdbc: java.sql.Connection) : Connection
     override fun setAutoCommit(autoCommit: Boolean) {
         jdbc.autoCommit = autoCommit
     }
+    override fun getAutoCommit(): Boolean = jdbc.autoCommit
 
     override fun close() = jdbc.close()
 }

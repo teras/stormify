@@ -29,6 +29,15 @@ interface Statement : AutoCloseable {
 
     /** Executes all batched statements and returns an array of update counts, one per batch entry. */
     fun executeBatch(): IntArray
+
+    /**
+     * Hint to the driver about how many rows to fetch per round-trip while
+     * iterating a [ResultSet]. JDBC pass-through on JVM. On native, positive
+     * values activate the driver's streaming path (single-row mode on PG,
+     * server-side cursors on MariaDB, prefetch-array sizing on Oracle). `0`
+     * leaves the driver default. Default no-op.
+     */
+    fun setFetchSize(rows: Int): Unit = Unit
 }
 
 /** A statement for calling stored procedures, with support for OUT and INOUT parameters. */
@@ -74,6 +83,13 @@ interface Connection : AutoCloseable {
 
     /** Enables or disables auto-commit mode. When disabled, changes must be explicitly committed. */
     fun setAutoCommit(autoCommit: Boolean)
+
+    /**
+     * Reports the connection's current auto-commit state. Default `true` matches the
+     * JDBC convention so callers don't need to special-case unknown drivers; native
+     * implementations override with the real value tracked by their `kdbc_conn` struct.
+     */
+    fun getAutoCommit(): Boolean = true
 
     /**
      * Best-effort asynchronous cancellation of any statement currently executing on this
@@ -144,6 +160,14 @@ interface DatabaseMetaData {
     /** The minor version number of the database. */
     val databaseMinorVersion: Int
 }
+
+/**
+ * Marker for connections backed by the Kotlin/Native `libkdbc.a` wrapper. Used by
+ * higher-level code (stormify) to bypass JDBC-specific workarounds — e.g. PG cursor
+ * activation, MySQL `Integer.MIN_VALUE` fetch-size — that don't apply to native
+ * drivers. JVM JDBC and Android SQLiteDatabase connections do not implement this.
+ */
+interface NativeKdbcConnection : Connection
 
 /** A named savepoint within a transaction, used for partial rollbacks. */
 interface Savepoint {

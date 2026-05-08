@@ -46,6 +46,7 @@ typedef unsigned long(*fn_mysql_stmt_param_count)(MYSQL_STMT *);
 typedef my_bool      (*fn_mysql_stmt_bind_param)(MYSQL_STMT *, MY_BIND *);
 typedef my_bool      (*fn_mysql_stmt_bind_result)(MYSQL_STMT *, MY_BIND *);
 typedef int          (*fn_mysql_stmt_store_result)(MYSQL_STMT *);
+typedef my_bool      (*fn_mysql_stmt_attr_set)(MYSQL_STMT *, enum enum_stmt_attr_type, const void *);
 typedef MYSQL_RES   *(*fn_mysql_stmt_result_metadata)(MYSQL_STMT *);
 typedef my_bool      (*fn_mysql_stmt_close)(MYSQL_STMT *);
 typedef unsigned int (*fn_mysql_stmt_errno)(MYSQL_STMT *);
@@ -90,6 +91,7 @@ static fn_mysql_stmt_param_count      p_stmt_param_count;
 static fn_mysql_stmt_bind_param       p_stmt_bind_param;
 static fn_mysql_stmt_bind_result      p_stmt_bind_result;
 static fn_mysql_stmt_store_result     p_stmt_store_result;
+static fn_mysql_stmt_attr_set         p_stmt_attr_set;
 static fn_mysql_stmt_result_metadata  p_stmt_result_metadata;
 static fn_mysql_stmt_close            p_stmt_close;
 static fn_mysql_stmt_errno            p_stmt_errno;
@@ -167,6 +169,7 @@ static void my_load_impl(void) {
     MY_LOAD(stmt_bind_param);
     MY_LOAD(stmt_bind_result);
     MY_LOAD(stmt_store_result);
+    MY_LOAD(stmt_attr_set);
     MY_LOAD(stmt_result_metadata);
     MY_LOAD(stmt_close);
     MY_LOAD(stmt_errno);
@@ -324,6 +327,20 @@ static void *my_connect(const char *url, const char *user, const char *password,
                                    0x00020000UL /* CLIENT_MULTI_RESULTS */);
     if (!result) {
         snprintf(err, err_size, "MariaDB: %s", p_error(mysql));
+        p_close(mysql);
+        return NULL;
+    }
+
+    /* Floor for STMT_ATTR_CURSOR_TYPE = CURSOR_TYPE_READ_ONLY, the streaming
+     * primitive. Refuse upfront so the cross-driver promise "streaming works
+     * on every supported config" doesn't silently degrade on cursor reads.
+     * Version layout: major*10000 + minor*100 + patch. */
+    unsigned long srv_ver = p_get_server_version(mysql);
+    if (srv_ver < 50000) {
+        snprintf(err, err_size,
+                 "MariaDB/MySQL: server version %lu.%lu.%lu is below the minimum supported "
+                 "(MySQL 5.0). Upgrade the server or use a different kdbc release.",
+                 srv_ver / 10000, (srv_ver / 100) % 100, srv_ver % 100);
         p_close(mysql);
         return NULL;
     }
@@ -795,6 +812,25 @@ static void *my_execute_query(kdbc_stmt *stmt, int *out_col_count,
         }
     }
 
+    /* Streaming switch: must run before mysql_stmt_execute. CURSOR_TYPE_READ_ONLY
+     * + PREFETCH_ROWS asks the server to keep the rows and feed them in
+     * batches; once active, mysql_stmt_store_result MUST NOT run (it would
+     * leave the connection in MYSQL_STATUS_USE_RESULT). attr_set can refuse
+     * per-statement (multi-result CALLs, max_prepared_stmt_count), so we
+     * fall back to the eager store_result path on failure. */
+    int cursor_active = 0;
+    if (stmt->fetch_size > 0) {
+        unsigned long cursor_type = CURSOR_TYPE_READ_ONLY;
+        unsigned long prefetch    = (unsigned long)stmt->fetch_size;
+        if (p_stmt_attr_set(sd->stmt, STMT_ATTR_CURSOR_TYPE, &cursor_type) == 0) {
+            cursor_active = 1;
+            /* PREFETCH_ROWS is a hint about server-side row buffering and
+             * a failure here is non-fatal — cursor still works, just at
+             * the server's default prefetch (typically 1 row per fetch). */
+            (void)p_stmt_attr_set(sd->stmt, STMT_ATTR_PREFETCH_ROWS, &prefetch);
+        }
+    }
+
     if (p_stmt_execute(sd->stmt)) {
         snprintf(err, err_size, "MariaDB execute: %s", p_stmt_error(sd->stmt));
         return NULL;
@@ -914,7 +950,11 @@ static void *my_execute_query(kdbc_stmt *stmt, int *out_col_count,
         return NULL;
     }
 
-    p_stmt_store_result(sd->stmt);
+    /* store_result pulls everything client-side; skip when the cursor is
+     * active — it would clash with MYSQL_STATUS_USE_RESULT. */
+    if (!cursor_active) {
+        p_stmt_store_result(sd->stmt);
+    }
 
     *out_col_count = ncols;
     return mrs;

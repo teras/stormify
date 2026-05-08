@@ -43,6 +43,7 @@ class AndroidPagedListTest : PagedListTest() {
     override fun testSqlFacetNumericRange() {}
 }
 @RunWith(RobolectricTestRunner::class) class AndroidProcedureTest : ProcedureTest()
+@RunWith(RobolectricTestRunner::class) class AndroidCursorStreamingTest : CursorStreamingTest()
 
 // jvmBasedTest classes — shared JVM/Android, need Robolectric on Android.
 @RunWith(RobolectricTestRunner::class) class AndroidJavaTemporalConversionTest : JavaTemporalConversionTest()

@@ -192,6 +192,14 @@ int kdbc_set_autocommit(kdbc_conn *conn, int enabled) {
     return rc;
 }
 
+int kdbc_get_autocommit(kdbc_conn *conn) {
+    /* Default to 1 (autocommit on) for NULL conns or callers querying before
+     * set — mirrors JDBC's default and the value we initialise the struct with
+     * in kdbc_connect. Cheap inline read of the cached state on the kdbc_conn
+     * struct, no driver round-trip. */
+    return conn ? conn->autocommit : 1;
+}
+
 int kdbc_commit(kdbc_conn *conn) {
     if (!conn) return KDBC_ERROR;
     conn->error[0] = '\0';

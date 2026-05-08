@@ -451,6 +451,18 @@ kdbc_result *kdbc_execute_query(kdbc_conn *conn, const char *sql);
 int kdbc_set_autocommit(kdbc_conn *conn, int enabled);
 
 /**
+ * @brief Read the current auto-commit state.
+ *
+ * Returns the cached autocommit flag from the connection struct (1 = on,
+ * 0 = off). NULL connections return 1 to match the JDBC default. No driver
+ * round-trip — purely a struct read.
+ *
+ * @param conn  A connection (or NULL).
+ * @return  1 when autocommit is on, 0 when off.
+ */
+int kdbc_get_autocommit(kdbc_conn *conn);
+
+/**
  * @brief Commit the current transaction.
  * @param conn  An open connection.
  * @return ::KDBC_OK or ::KDBC_ERROR.

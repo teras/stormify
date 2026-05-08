@@ -119,6 +119,8 @@ private class AndroidConnection(private val db: SQLiteDatabase) : Connection {
         db.execSQL("RELEASE SAVEPOINT ${savepoint.savepointName}")
     }
 
+    override fun getAutoCommit(): Boolean = !inTx
+
     override fun setAutoCommit(autoCommit: Boolean) {
         if (!autoCommit && !inTx) {
             db.beginTransaction()
