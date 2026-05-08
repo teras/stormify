@@ -737,6 +737,12 @@ private fun showCategoryPicker(
     val snapshot = filter.snapshot()
     val groupLists: Map<FilterGroup, CheckBoxList<RowCategory>> = FilterGroup.entries.associateWith { group ->
         CheckBoxList<RowCategory>().apply {
+            // Apply our custom renderer to every group, not just column
+            // status, so the "focused list's cursor row is the bright blue
+            // one" rule is consistent across the popup. Lanterna's default
+            // does the opposite (bright when unfocused, faded when focused),
+            // which makes it hard to tell which list you're navigating.
+            setListItemRenderer(InertWhenDisabledCheckBoxRenderer())
             RowCategory.entries.filter { it.group == group }
                 .forEach { addItem(it, it in snapshot) }
         }

@@ -54,11 +54,27 @@ Supported JDBC URLs (drivers bundled):
 """
 
 fun main(args: Array<String>) {
-    // Silence Lucene's Vector API capability check, which logs at WARNING on
-    // any JVM newer than the Lucene release predates (Java 23+ for 9.11.x).
-    // The runtime fallback is functionally fine for our classifier workload —
-    // we don't index millions of vectors, so the message is pure noise.
-    java.util.logging.Logger.getLogger("org.apache.lucene").level = java.util.logging.Level.SEVERE
+    // Driver tunings that need to be in place before the JDBC class loader
+    // initialises a Driver instance (Oracle reads its defaultRowPrefetch
+    // when the OracleDriver class loads, not per-connection). Bumping from
+    // the JDBC default of 10 to 1000 brings introspection over the data
+    // dictionary down from minutes to seconds on remote schemas — and
+    // matches the cursorFetchSize stormify hands to setFetchSize, so the
+    // server-side and client-side batch sizes line up. setProperty only
+    // takes effect if the property isn't already set, so a caller-supplied
+    // -D override at the JVM command line still wins.
+    if (System.getProperty("oracle.jdbc.defaultRowPrefetch") == null)
+        System.setProperty("oracle.jdbc.defaultRowPrefetch", "1000")
+
+    // Nuke java.util.logging entirely. Lucene's static-initialiser warnings
+    // (Vector API capability check, HotspotVMOptions probe) emit at WARNING
+    // through jul before our log-level filters can take effect on the
+    // already-attached default ConsoleHandler. The TUI hijacks the screen
+    // anyway, so any jul output would just paint over the rendered frame
+    // and trigger the "Warnings" modal. Reset the LogManager to drop all
+    // handlers, then raise the root level so nothing is emitted.
+    java.util.logging.LogManager.getLogManager().reset()
+    java.util.logging.Logger.getLogger("").level = java.util.logging.Level.OFF
 
     if (args.any { it == "-h" || it == "--help" }) {
         print(USAGE)
@@ -101,36 +117,60 @@ fun main(args: Array<String>) {
     // Drained into a modal after each introspection + scan cycle.
     val stderrBuffer = ByteArrayOutputStream()
     val originalErr = System.err
+
+    // Last-resort drains. Even if the JVM dies from a native-lib mismatch,
+    // a SIGSEGV in Lanterna/JNI, or a System.exit() while stderr is still
+    // redirected to our buffer, the user must see the diagnostics.
+    fun flushBufferedErr() {
+        System.setErr(originalErr)
+        val tail = stderrBuffer.toString(Charsets.UTF_8)
+        stderrBuffer.reset()
+        if (tail.isNotEmpty()) originalErr.print(tail)
+    }
+    Runtime.getRuntime().addShutdownHook(Thread { flushBufferedErr() })
+    Thread.setDefaultUncaughtExceptionHandler { _, e ->
+        flushBufferedErr()
+        e.printStackTrace(originalErr)
+    }
     System.setErr(PrintStream(stderrBuffer, true, Charsets.UTF_8))
 
-    val factory = DefaultTerminalFactory()
-        .setMouseCaptureMode(MouseCaptureMode.CLICK_RELEASE_DRAG)
-    val terminal = factory.createTerminal()
-    val screen: Screen = TerminalScreen(terminal)
-    screen.startScreen()
-    val classifier = SchemaClassifier()
+    var screen: Screen? = null
+    var classifier: SchemaClassifier? = null
     try {
+        // Always stream-based ANSI: never let Lanterna fall back to its AWT
+        // SwingTerminalFrame. On Windows that fallback would also be triggered
+        // when WinConsole (JNA) refuses to share a console with java.exe, and
+        // popping a Swing window for a CLI tool is never what we want. conhost
+        // (Win10 1809+), Windows Terminal, and every Unix terminal speak ANSI
+        // escapes natively, so the TUI renders into the parent console.
+        val factory = DefaultTerminalFactory()
+            .setMouseCaptureMode(MouseCaptureMode.CLICK_RELEASE_DRAG)
+            .setForceTextTerminal(true)
+        val terminal = factory.createTerminal()
+        val createdScreen = TerminalScreen(terminal).also { screen = it }
+        createdScreen.startScreen()
+        val createdClassifier = SchemaClassifier().also { classifier = it }
         var outcome: SchemaSyncOutcome
         do {
-            val intro = loadColumnsAndTablesCancellable(screen, connection, stderrBuffer) ?: return
+            val intro = loadColumnsAndTablesCancellable(createdScreen, connection, stderrBuffer) ?: return
             val columnsByTable = groupByTable(intro.columns)
             val effectiveTableKeys = intro.tableKeys.ifEmpty { columnsByTable.keys.toList() }
             val entities = if (sourceRoots.isNotEmpty()) EntityScanner.scan(sourceRoots, state.current.namingPolicy) else emptyList()
-            drainStderrWarnings(screen, stderrBuffer)
+            drainStderrWarnings(createdScreen, stderrBuffer)
             val diffs = DiffEngine.diff(entities, columnsByTable, effectiveTableKeys, state.current.namingPolicy)
             val diffsByTable = diffs.associateBy { it.tableKey }
             val tables = buildTableEntries(diffs, intro.viewKeys)
             val dialect = intro.dialect
 
-            classifier.trainFromSync(diffs, state.current.slots)
+            createdClassifier.trainFromSync(diffs, state.current.slots)
             val cache = ClassificationCache().also {
-                autoFillCache(it, classifier, diffs, state.current.slots)
+                autoFillCache(it, createdClassifier, diffs, state.current.slots)
             }
 
             outcome = runSchemaSync(
-                screen = screen,
+                screen = createdScreen,
                 configState = state,
-                classifier = classifier,
+                classifier = createdClassifier,
                 cache = cache,
                 columnsToClassify = intro.columns.filter { it.category != null },
                 tables = tables,
@@ -141,13 +181,9 @@ fun main(args: Array<String>) {
             )
         } while (outcome == SchemaSyncOutcome.RESCAN)
     } finally {
-        screen.stopScreen()
-        classifier.close()
-        System.setErr(originalErr)
-        // Surface anything that arrived after the last drain (shutdown errors,
-        // late-binding native cleanup, …) so the user sees it post-exit.
-        val tail = stderrBuffer.toString(Charsets.UTF_8)
-        if (tail.isNotEmpty()) originalErr.print(tail)
+        runCatching { screen?.stopScreen() }
+        runCatching { classifier?.close() }
+        flushBufferedErr()
     }
 }
 

@@ -37,7 +37,7 @@ internal fun sqliteListColumns(
     val tableSet = tables.mapTo(HashSet()) { it.name }
     val out = mutableListOf<ColumnRef>()
     val seen = HashSet<String>()
-    stormify.read<Row>(
+    stormify.readCursor<Row>(
         """
         SELECT m.name AS table_name, p.name AS column_name, p.type AS column_type,
                p."notnull" AS not_null, p.dflt_value AS default_value
@@ -46,9 +46,9 @@ internal fun sqliteListColumns(
           AND m.name NOT LIKE 'sqlite_%'
         ORDER BY m.name, p.cid
         """.trimIndent(),
-    ).forEach { row ->
-        val table = row.str("table_name") ?: return@forEach
-        if (table !in tableSet) return@forEach
+    ) { row ->
+        val table = row.str("table_name") ?: return@readCursor
+        if (table !in tableSet) return@readCursor
         if (seen.add(table)) onProgress?.invoke(seen.size.coerceAtMost(tables.size), tables.size)
         val name = row.str("column_name")!!
         val rawType = row.str("column_type")?.trim().orEmpty()

@@ -22,6 +22,14 @@ repositories {
 dependencies {
     implementation(project(":stormify"))
     implementation("com.googlecode.lanterna:lanterna:3.1.2")
+    // 3.1.2 lacks a Windows-console terminal — its DefaultTerminalFactory
+    // does Class.forName("com.googlecode.lanterna.terminal.WindowsTerminal")
+    // which always misses, leaving stty.exe (Cygwin) or javaw as the only
+    // options. 3.2.0-alpha1 added a JNA-backed terminal but broke other APIs
+    // we use. We backport the 3.2 win32 sources under the package path 3.1.2
+    // looks up so a plain `java.exe` console run renders the TUI natively.
+    implementation("net.java.dev.jna:jna:5.14.0")
+    implementation("net.java.dev.jna:jna-platform:5.14.0")
     implementation("org.apache.lucene:lucene-core:9.11.1")
     implementation("org.apache.lucene:lucene-analysis-common:9.11.1")
     // SLF4J no-op binding: silences the "No SLF4J providers were found" warning

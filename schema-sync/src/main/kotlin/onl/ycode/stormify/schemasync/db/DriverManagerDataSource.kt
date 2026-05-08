@@ -4,6 +4,7 @@ import java.io.PrintWriter
 import java.sql.Connection
 import java.sql.DriverManager
 import java.util.Collections
+import java.util.concurrent.Executors
 import java.util.logging.Logger
 import javax.sql.DataSource
 
@@ -40,12 +41,19 @@ internal class DriverManagerDataSource(
         return TrackedConnection(c) { live.remove(c) }
     }
 
-    /** Best-effort: close every live connection so any in-flight statement
-     *  on it raises and the worker thread exits. Safe to call from a
-     *  thread other than the one running the queries. */
+    /** Best-effort cancel: aborts every live connection so any in-flight
+     *  statement raises and the worker thread exits. Uses
+     *  [Connection.abort] (JDBC 4.1) which the spec mandates as
+     *  thread-safe and non-blocking — Oracle's driver in particular
+     *  ignores [Connection.close] from a foreign thread while a socket
+     *  read is in flight, but honours `abort` by sending an OOB break to
+     *  the server. Falls back to `close` for drivers that reject `abort`. */
     fun closeAll() {
         synchronized(live) {
-            for (c in live.toList()) runCatching { c.close() }
+            for (c in live.toList()) {
+                runCatching { c.abort(ABORT_EXECUTOR) }
+                    .recoverCatching { c.close() }
+            }
             live.clear()
         }
     }
@@ -57,6 +65,12 @@ internal class DriverManagerDataSource(
     override fun getParentLogger(): Logger = Logger.getLogger("global")
     override fun <T : Any?> unwrap(iface: Class<T>?): T = throw UnsupportedOperationException()
     override fun isWrapperFor(iface: Class<*>?): Boolean = false
+
+    private companion object {
+        private val ABORT_EXECUTOR = Executors.newCachedThreadPool { r ->
+            Thread(r, "schema-sync-abort").apply { isDaemon = true }
+        }
+    }
 }
 
 /** Connection wrapper that removes itself from the tracker on close. */

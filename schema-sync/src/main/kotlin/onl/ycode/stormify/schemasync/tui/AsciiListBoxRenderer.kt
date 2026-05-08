@@ -110,7 +110,23 @@ class PersistentSelectionItemRenderer
  * user's prior selection is preserved for when Both is re-checked.
  */
 class InertWhenDisabledCheckBoxRenderer<V>
-    : AbstractListBox.ListItemRenderer<V, CheckBoxList<V>>() {
+    : CheckBoxList.CheckBoxListItemRenderer<V>() {
+
+    // Match Lanterna's default getLabel format ("[x] text") so the list's
+    // preferred-size calculation reserves room for the brackets too. The
+    // base class AbstractListBox.ListItemRenderer.getLabel returns just
+    // item.toString(), which would size the list 4 chars short of what
+    // drawItem actually paints — manifesting as truncated trailing chars
+    // ("Missing Kotlin fie" instead of "Missing Kotlin fields").
+    override fun getLabel(listBox: CheckBoxList<V>, index: Int, item: V): String {
+        val checked = listBox.isChecked(index) ?: false
+        val text = item?.toString() ?: "<null>"
+        return if (listBox.isEnabled) {
+            "[${if (checked) "x" else " "}] $text"
+        } else {
+            "    $text" // four leading spaces match the bracketed-row width
+        }
+    }
 
     override fun drawItem(
         graphics: TextGUIGraphics,
@@ -121,11 +137,19 @@ class InertWhenDisabledCheckBoxRenderer<V>
         focused: Boolean,
     ) {
         val theme = listBox.theme.getDefinition(CheckBoxList::class.java)
+        // Intentionally swapped vs. Lanterna's CheckBoxListItemRenderer
+        // default: the cursor row gets the brightest style (theme.selected)
+        // when the list has keyboard focus, and theme.active (faded) when
+        // it doesn't. Lanterna's default does the opposite on the theory
+        // that a focused list shows its cursor via the hardware caret, but
+        // in practice the caret is a single blinking column on the bracket
+        // and easy to miss — users expect "the row I'm on right now is the
+        // highlighted one". Non-cursor rows always render normally so a
+        // focused list isn't flattened to insensitive.
         val itemStyle = when {
             !listBox.isEnabled -> theme.insensitive
             selected && focused -> theme.selected
             selected -> theme.active
-            focused -> theme.insensitive
             else -> theme.normal
         }
         graphics.applyThemeStyle(itemStyle)

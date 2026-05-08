@@ -19,9 +19,9 @@ class RowFormatter(
 ) {
 
     /** Preferred raw width of the Table sub-column (longest table name vs header). */
-    val tableWidth: Int = maxOf("table".length, entries.maxOf { it.table.length })
+    val tableWidth: Int = maxOf("table".length, entries.maxOfOrNull { it.table.length } ?: 0)
     /** Preferred raw width of the Entity sub-column (longest display name vs header). */
-    val entityWidth: Int = maxOf("entity".length, entries.maxOf { entityDisplay(it).length })
+    val entityWidth: Int = maxOf("entity".length, entries.maxOfOrNull { entityDisplay(it).length } ?: 0)
 
     /**
      * Active rendered widths, set by the layout each pass. A value of 0

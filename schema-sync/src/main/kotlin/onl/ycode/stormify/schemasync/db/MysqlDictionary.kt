@@ -34,7 +34,7 @@ internal fun mysqlListColumns(
     val tableSet = tables.mapTo(HashSet()) { it.name }
     val out = mutableListOf<ColumnRef>()
     val seen = HashSet<String>()
-    stormify.read<Row>(
+    stormify.readCursor<Row>(
         """
         SELECT table_name, column_name, data_type, column_type,
                character_maximum_length, numeric_precision, numeric_scale,
@@ -43,9 +43,9 @@ internal fun mysqlListColumns(
         WHERE table_schema = DATABASE()
         ORDER BY table_name, ordinal_position
         """.trimIndent(),
-    ).forEach { row ->
-        val table = row.str("table_name") ?: return@forEach
-        if (table !in tableSet) return@forEach
+    ) { row ->
+        val table = row.str("table_name") ?: return@readCursor
+        if (table !in tableSet) return@readCursor
         if (seen.add(table)) onProgress?.invoke(seen.size.coerceAtMost(tables.size), tables.size)
         out += mysqlRowToColumn(row, table)
     }

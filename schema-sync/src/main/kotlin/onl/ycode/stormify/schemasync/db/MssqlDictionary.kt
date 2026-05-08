@@ -55,7 +55,7 @@ internal fun mssqlListColumns(
     val tableSet = tables.mapTo(HashSet()) { it.name }
     val out = mutableListOf<ColumnRef>()
     val seen = HashSet<String>()
-    stormify.read<Row>(
+    stormify.readCursor<Row>(
         """
         SELECT table_name, column_name, data_type,
                character_maximum_length, numeric_precision, numeric_scale,
@@ -65,16 +65,16 @@ internal fun mssqlListColumns(
         ORDER BY table_name, ordinal_position
         """.trimIndent(),
         schema,
-    ).forEach { row ->
-        val table = row.str("table_name") ?: return@forEach
-        if (table !in tableSet) return@forEach
+    ) { row ->
+        val table = row.str("table_name") ?: return@readCursor
+        if (table !in tableSet) return@readCursor
         if (seen.add(table)) onProgress?.invoke(seen.size.coerceAtMost(tables.size), tables.size)
         out += mssqlRowToColumn(row, table)
     }
     // Synonyms: resolve each synonym to its base object and emit the
     // base's columns under the synonym's name. base_object_name is the
     // bracketed `[schema].[table]` form; PARSENAME extracts segments.
-    stormify.read<Row>(
+    stormify.readCursor<Row>(
         """
         SELECT s.name AS synonym_name,
                c.name AS column_name,
@@ -93,9 +93,9 @@ internal fun mssqlListColumns(
         ORDER BY s.name, c.column_id
         """.trimIndent(),
         schema,
-    ).forEach { row ->
-        val table = row.str("synonym_name") ?: return@forEach
-        if (table !in tableSet) return@forEach
+    ) { row ->
+        val table = row.str("synonym_name") ?: return@readCursor
+        if (table !in tableSet) return@readCursor
         if (seen.add(table)) onProgress?.invoke(seen.size.coerceAtMost(tables.size), tables.size)
         out += mssqlSynonymRowToColumn(row, table)
     }
