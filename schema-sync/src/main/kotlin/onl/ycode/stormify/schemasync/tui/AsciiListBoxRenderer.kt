@@ -137,19 +137,19 @@ class InertWhenDisabledCheckBoxRenderer<V>
         focused: Boolean,
     ) {
         val theme = listBox.theme.getDefinition(CheckBoxList::class.java)
-        // Intentionally swapped vs. Lanterna's CheckBoxListItemRenderer
-        // default: the cursor row gets the brightest style (theme.selected)
-        // when the list has keyboard focus, and theme.active (faded) when
-        // it doesn't. Lanterna's default does the opposite on the theory
-        // that a focused list shows its cursor via the hardware caret, but
-        // in practice the caret is a single blinking column on the bracket
-        // and easy to miss — users expect "the row I'm on right now is the
-        // highlighted one". Non-cursor rows always render normally so a
-        // focused list isn't flattened to insensitive.
+        // CheckBoxList's theme inverts the AbstractListBox conventions: here
+        // `active` is the bright blue background and `selected` renders with
+        // no visible background (Lanterna's default expects the hardware
+        // caret to indicate the focused-list cursor and uses `selected` only
+        // for the "where you were" persistent indicator on unfocused lists).
+        // The blinking i-beam alone is too easy to miss when the popup has
+        // four stacked lists, so we paint the focused-list cursor with the
+        // bright `active` style. Unfocused lists show no row highlight at
+        // all — the cursor only matters for the list that currently
+        // receives keystrokes.
         val itemStyle = when {
             !listBox.isEnabled -> theme.insensitive
-            selected && focused -> theme.selected
-            selected -> theme.active
+            selected && focused -> theme.active
             else -> theme.normal
         }
         graphics.applyThemeStyle(itemStyle)

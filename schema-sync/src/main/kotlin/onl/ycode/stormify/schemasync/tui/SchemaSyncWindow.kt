@@ -49,7 +49,7 @@ fun runSchemaSync(
     dialect: Dialect = Dialect.GENERIC,
     title: String = "Stormify Schema Sync",
 ): SchemaSyncOutcome {
-    val gui = MultiWindowTextGUI(screen, DefaultWindowManager(), EmptySpace(TextColor.ANSI.DEFAULT))
+    val gui = ModalAwareTextGUI(screen, DefaultWindowManager(), EmptySpace(TextColor.ANSI.DEFAULT))
     ThemeManager.apply(gui)
     val window = BasicWindow(title)
     window.setHints(listOf(Window.Hint.FULL_SCREEN, Window.Hint.NO_DECORATIONS))
@@ -593,6 +593,7 @@ private fun confirmQuit(
     dialog.setHints(listOf(
         com.googlecode.lanterna.gui2.Window.Hint.CENTERED,
         com.googlecode.lanterna.gui2.Window.Hint.NO_DECORATIONS,
+        com.googlecode.lanterna.gui2.Window.Hint.MODAL,
     ))
 
     val msg = "$pending property action${if (pending == 1) "" else "s"} you marked will be lost."
