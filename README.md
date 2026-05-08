@@ -11,7 +11,7 @@
   <img src="https://img.shields.io/badge/Platforms-JVM%20%7C%20Native%20%7C%20Android%20%7C%20iOS-4c8cbf?style=flat-square" alt="Platforms">
 </p>
 
-Stormify is a flexible ORM library for Kotlin Multiplatform that simplifies database interactions with minimal configuration. It operates and performs CRUD operations on plain Kotlin classes without requiring extensive annotations or XML setups, as long as field names match database columns.
+Stormify is a **free and open source** ORM library for Kotlin Multiplatform, released under the Apache 2.0 License. It simplifies database interactions with minimal configuration, operating on plain Kotlin classes without requiring extensive annotations or XML setups, as long as field names match database columns.
 
 Designed for developers seeking a simple yet powerful ORM, Stormify excels in projects that favor convention over configuration, allowing for minimal setup and clean, straightforward code.
 

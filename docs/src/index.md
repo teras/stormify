@@ -1,8 +1,9 @@
 # Stormify
 
-Stormify is an ORM library for Kotlin Multiplatform. Plain Kotlin data classes
-become database entities by convention — no DSL, no XML, no annotations needed
-until the schema forces your hand. Raw SQL sits alongside the ORM without
+Stormify is a **free and open source** ORM library for Kotlin Multiplatform,
+released under the Apache 2.0 License. Plain Kotlin data classes become database
+entities by convention — no DSL, no XML, no annotations needed until the schema
+forces your hand. Raw SQL sits alongside the ORM without
 entity registration. Paged queries with filters, sorting, FK traversal, and
 facets are part of the core rather than a plugin, lazy-loaded references
 resolve on first access, and the suspend-based API ties coroutine cancellation

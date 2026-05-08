@@ -4,8 +4,41 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Stormify — Kotlin Multiplatform ORM</title>
-<meta name="description" content="A flexible Kotlin Multiplatform ORM. Plain classes, no XML, no reflection mandatory. JVM, Android, iOS, native Linux/Windows/macOS — same API everywhere.">
+<meta name="description" content="An open source flexible Kotlin Multiplatform ORM. Plain classes, no XML, no reflection mandatory. JVM, Android, iOS, native Linux/Windows/macOS — same API everywhere.">
+<link rel="canonical" href="https://stormify.org/">
 <link rel="icon" href="assets/images/logo.png">
+
+<!-- Open Graph -->
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://stormify.org/">
+<meta property="og:title" content="Stormify — Open Source Kotlin Multiplatform ORM">
+<meta property="og:description" content="A Kotlin Multiplatform ORM, without the ceremony. Plain classes, convention over configuration, same API on JVM, Android, iOS, and native Linux/Windows/macOS.">
+<meta property="og:image" content="https://stormify.org/assets/images/og-card.jpg">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="Stormify — A Kotlin Multiplatform ORM, without the ceremony.">
+
+<!-- Twitter Card -->
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Stormify — Open Source Kotlin Multiplatform ORM">
+<meta name="twitter:description" content="A Kotlin Multiplatform ORM, without the ceremony. Plain classes, convention over configuration, same API on JVM, Android, iOS, and native Linux/Windows/macOS.">
+<meta name="twitter:image" content="https://stormify.org/assets/images/og-card.jpg">
+
+<!-- Structured data -->
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "SoftwareSourceCode",
+  "name": "Stormify",
+  "description": "A flexible Kotlin Multiplatform ORM. Plain classes, convention over configuration, same API across JVM, Android, iOS, and native Linux/Windows/macOS.",
+  "url": "https://stormify.org/",
+  "codeRepository": "https://github.com/teras/stormify",
+  "programmingLanguage": "Kotlin",
+  "license": "https://www.apache.org/licenses/LICENSE-2.0",
+  "author": { "@type": "Person", "name": "Panayotis Katsaloulis" }
+}
+</script>
+
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 <style>
@@ -467,7 +500,7 @@
       <h1 class="tagline">A Kotlin Multiplatform ORM, <span class="accent">without the ceremony.</span></h1>
       <p class="lede">
         Plain Kotlin classes, convention over configuration. CRUD, transactions, lazy refs,
-        paged queries — same API across JVM, Android, iOS, and native Linux/Windows/macOS.
+        paged queries — same API across JVM, Android, iOS, and native Linux/Windows/macOS. Open source.
       </p>
       <div class="cta-row">
         <a href="docs/{{DOCS_VERSION}}/" class="btn primary">
@@ -599,11 +632,6 @@ stormify.<span class="fn">transaction</span> {
         <span class="ficon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 8h14v11H5zM8 5v3M16 5v3"/></svg></span>
         <h3>Nested transactions</h3>
         <p>Savepoint-backed rollback/commit at any depth.</p>
-      </div>
-      <div class="feature">
-        <span class="ficon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 5h16M4 10h16M4 15h10M4 20h10"/></svg></span>
-        <h3>Bulk operations</h3>
-        <p>Batched <code>create</code>/<code>update</code>/<code>delete</code> for high-throughput loads.</p>
       </div>
       <div class="feature">
         <span class="ficon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 4l16 16M20 4L4 20"/></svg></span>
@@ -961,7 +989,7 @@ order.items.<span class="fn">forEach</span> { <span class="fn">println</span>(it
           slot for new fields; per-category slots and a per-dialect defaults
           profile keep the generated DDL consistent across the project.
         </p>
-        <a href="docs/{{DOCS_VERSION}}/Schema_Sync/"><img src="assets/images/schema-sync-1.png" alt="schema-sync TUI" style="width: 100%; border-radius: var(--radius-sm); border: 1px solid var(--border);"></a>
+        <a href="docs/{{DOCS_VERSION}}/Schema_Sync/"><img src="assets/images/schema-sync-1.png" alt="schema-sync TUI" loading="lazy" decoding="async" style="width: 100%; border-radius: var(--radius-sm); border: 1px solid var(--border);"></a>
       </div>
       <div class="usage-card">
         <h4>Headless mode for CI</h4>

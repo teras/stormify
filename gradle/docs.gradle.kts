@@ -14,9 +14,13 @@
 // createDocs     — local build: Dokka + Doxygen + MkDocs + static assets → docs/build/
 // publishDocs    — deploy /docs/<projectVersion>/ as preview. Automatically removes
 //                  any other preview folder (any /docs/<X>/ with a .devel-marker).
-//                  Released folders have no marker and are never touched.
-// releaseDocs    — strip .devel-marker from /docs/<projectVersion>/ (makes it immutable)
-//                  and update the landing page at stormify.org/ to point to it.
+//                  Injects `<meta name="robots" content="noindex,nofollow">` so previews
+//                  are not indexed by search engines. Released folders have no marker
+//                  and are never touched.
+// releaseDocs    — strip .devel-marker from /docs/<projectVersion>/ (makes it immutable),
+//                  remove the noindex meta from every page, update the landing page at
+//                  stormify.org/ to point to it, and write a fresh /sitemap.xml that
+//                  points to the released version.
 //
 // ─── Workflow ───────────────────────────────────────────────────────────────
 // Publish a preview:
@@ -153,6 +157,17 @@ tasks.register("publishDocs") {
         """.trimIndent()
         val rc = ProcessBuilder("sh", "-c", rewrite).inheritIO().start().waitFor()
         if (rc != 0) throw GradleException("URL rewrite failed (exit $rc)")
+        // Inject `<meta name="robots" content="noindex,nofollow">` into every preview HTML so
+        // search engines do not index in-progress documentation. The `releaseDocs` task removes
+        // this tag server-side once the version is promoted from preview to released.
+        val noindex = """
+            find docs/build/docs -type f -name '*.html' -exec sed -i \
+              -e '/<meta name="robots"/d' \
+              -e 's|<head>|<head><meta name="robots" content="noindex,nofollow">|' \
+              {} +
+        """.trimIndent()
+        val noindexRc = ProcessBuilder("sh", "-c", noindex).inheritIO().start().waitFor()
+        if (noindexRc != 0) throw GradleException("noindex injection failed (exit $noindexRc)")
         // Remove any previous preview folder on the server (any /docs/<X>/ that carries
         // .devel-marker and is not the current version). Released folders have no marker
         // and are left alone.
@@ -212,6 +227,11 @@ tasks.register("releaseDocs") {
             fi
             rm -f "$ver/.devel-marker"
             echo "✓ Released /docs/$ver/ (marker removed)"
+            # Strip the noindex meta from every HTML in the released folder so search engines
+            # can index it now that it is the canonical version.
+            find "$ver" -type f -name '*.html' -exec sed -i \
+                's|<meta name="robots" content="noindex,nofollow">||g' {} +
+            echo "✓ noindex meta stripped from /docs/$ver/"
             cat > index.html <<'HTML'
 <!doctype html>
 <html lang="en">
@@ -248,7 +268,28 @@ HTML
                 if (content.contains("{{DOCS_VERSION}}"))
                     f.writeText(content.replace("{{DOCS_VERSION}}", ver))
             }
-        // 3. Rsync landing to web root (exclude /docs so version folders are untouched)
+        // 3. Generate a sitemap index pointing to the current released docs sitemap.
+        //    MkDocs Material emits per-version sitemaps at /docs/<ver>/sitemap.xml(.gz);
+        //    this index lets search engines find the landing page and the canonical version
+        //    without any per-version edits to robots.txt.
+        val today = java.time.LocalDate.now().toString()
+        val sitemap = """
+            <?xml version="1.0" encoding="UTF-8"?>
+            <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+              <url>
+                <loc>https://stormify.org/</loc>
+                <lastmod>$today</lastmod>
+                <priority>1.0</priority>
+              </url>
+              <url>
+                <loc>https://stormify.org/docs/$ver/</loc>
+                <lastmod>$today</lastmod>
+                <priority>0.9</priority>
+              </url>
+            </urlset>
+        """.trimIndent() + "\n"
+        file("$landingDir/sitemap.xml").writeText(sitemap)
+        // 4. Rsync landing to web root (exclude /docs so version folders are untouched)
         val exitCode = ProcessBuilder(
             "rsync", "-ravz", "-e", "ssh -p ${deploy.sshPort}",
             "--exclude=/docs",
@@ -257,6 +298,7 @@ HTML
         if (exitCode != 0)
             throw GradleException("Landing rsync failed with exit code $exitCode")
         println("✓ Landing updated: https://stormify.org/ → /docs/$ver/")
+        println("✓ Sitemap published: https://stormify.org/sitemap.xml (→ /docs/$ver/)")
     }
 }
 
