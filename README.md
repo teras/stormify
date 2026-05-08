@@ -41,6 +41,7 @@ Designed for developers seeking a simple yet powerful ORM, Stormify excels in pr
 - **Paginated Views**: `PagedList<T>` for UI grids (ZK/Compose/Swing) and `PagedQuery<T>` for stateless REST endpoints — filters, sorting, FK traversal, aggregations, facet counts, and streaming iteration over very large result sets.
 - **Stored Procedures**: Call stored procedures with input, output, and bidirectional parameters.
 - **Support for Composite Keys**: Handle tables with composite primary keys effortlessly.
+- **Schema Sync Tool**: Companion CLI that diffs a live database against your Kotlin entities and emits a SQL migration plus a `git apply`-ready patch — interactively as a TUI, or headless for CI hooks.
 
 ## Requirements
 
@@ -195,6 +196,47 @@ git submodule update --init --recursive
 ```
 
 Each subfolder is a self-contained project with its own `README.md` explaining how to build and run it. See the [Examples overview](https://stormify.org/docs/2.5.1/Examples/) for a short description of each.
+
+## Schema Sync
+
+Stormify ships with a companion CLI, **schema-sync**, that reconciles a live
+database with the Kotlin entity sources in your project. Point it at a JDBC
+URL and one or more source roots; it introspects every table and view, pairs
+each with its matching entity, and stages two kinds of change:
+
+- additive SQL migrations (`CREATE TABLE` / `ALTER TABLE … ADD`) for fields
+  the entities have but the database doesn't, and
+- **live in-place edits to your `.kt` entity files**, plus brand-new entity
+  files for tables that don't have one yet.
+
+In the interactive flow, those Kotlin edits aren't dumb text patches —
+schema-sync embeds the full Kotlin compiler and rewrites entity classes
+through PSI, so existing imports, formatting, comments, constructor style,
+and `by db()` delegate conventions in the file are preserved. New properties
+are spliced into the right class body with the correct supertype, naming
+policy, and FK references resolved to your existing entities.
+
+<p align="center">
+  <img src="docs/src/screenshots/schema-sync-1.png" alt="schema-sync TUI · table list, entity pane, property pane, diff preview" width="720">
+</p>
+
+The interactive TUI is a four-pane workspace — tables, entities, properties,
+and a live diff that previews exactly what will be written. An n-gram
+classifier trained on your already-synced columns suggests the right type
+slot for new fields; per-category slots, per-dialect defaults, naming policy,
+and Kotlin-side preferences all live in `.schema-sync.toml` and travel with
+the repo. A bulk-classify view assigns slots across hundreds of columns at
+once; a tabbed apply view shows the patched source of every affected entity
+file alongside the migration SQL before anything hits disk; a configuration
+window edits everything in the TOML without leaving the tool. Themes,
+keyboard-only navigation, and a built-in help dialog round it off.
+
+A headless mode also exists for pre-commit hooks and CI gates — same engine,
+same output, but the Kotlin edits land as a `git apply`-ready patch instead
+of touching files directly, so CI can fail cleanly when the schema drifts.
+
+See the [Schema Sync guide](https://stormify.org/docs/2.5.1/Schema_Sync/) for
+the full feature tour, configuration reference, and per-dialect notes.
 
 ## How Stormify stacks up
 

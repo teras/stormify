@@ -47,6 +47,9 @@ toolchain supports.
   very large result sets.
 - **Stored procedures**: input, output, and bidirectional parameters.
 - **Composite primary keys**: multi-column keys are first-class.
+- **[Schema Sync](Schema_Sync.md)** companion CLI: diffs a live database
+  against your Kotlin entities and emits a SQL migration plus a
+  `git apply`-ready patch — interactively as a TUI, or headless for CI hooks.
 
 ## Quick Start
 
@@ -217,6 +220,8 @@ calls use savepoints automatically.
   filtering, sorting, facets.
 - **[KDBC Overview](KDBC_Overview.md)** — the native database layer Stormify
   builds on.
+- **[Schema Sync](Schema_Sync.md)** — companion CLI that reconciles a live
+  database with your Kotlin entities, in TUI and headless modes.
 - **[Examples](Examples.md)** — runnable sample projects across every platform.
 - **[Migrating from v1 to v2](Migration_V1_to_V2.md)** — upgrading from Stormify 1.x.
 

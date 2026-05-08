@@ -637,6 +637,11 @@ stormify.<span class="fn">transaction</span> {
         <h3>Compile-time metadata</h3>
         <p>KSP-generated entity info on native, Android, iOS — no runtime reflection.</p>
       </div>
+      <div class="feature">
+        <span class="ficon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 4h6v6H4zM14 4h6v6h-6zM4 14h6v6H4zM14 14h6v6h-6z"/></svg></span>
+        <h3>Schema sync CLI</h3>
+        <p>Diff DB ↔ entities; emit a SQL migration and a <code>git apply</code> patch. TUI or headless.</p>
+      </div>
     </div>
   </div>
 </section>
@@ -929,6 +934,50 @@ order.items.<span class="fn">forEach</span> { <span class="fn">println</span>(it
         <tr><td><a href="https://github.com/teras/stormify-examples/tree/main/kotlin-rest" target="_blank" rel="noopener"><strong>kotlin-rest</strong></a></td><td>Ktor REST API with paged queries (ships with a <a href="https://github.com/teras/stormify-examples/tree/main/frontend-react" target="_blank" rel="noopener">React frontend</a>)</td><td><code>gradle runDebugExecutableLinuxX64</code></td></tr>
       </tbody>
     </table>
+  </div>
+</section>
+
+<section class="block">
+  <div class="container">
+    <div class="section-head">
+      <div>
+        <a class="tag" href="docs/{{DOCS_VERSION}}/Schema_Sync/">Schema Sync</a>
+        <h2>Reconcile your database and your Kotlin classes — both ways.</h2>
+        <p class="section-lede">
+          A companion CLI that diffs a live database against your entity sources
+          and emits two reviewable artefacts: a SQL migration and a
+          <code>git apply</code>-ready Kotlin patch. Interactive TUI for the day-to-day,
+          headless flags for CI gates and pre-commit hooks. SQLite, PostgreSQL,
+          MySQL, MariaDB, Oracle, and MS SQL Server drivers ship in the box.
+        </p>
+      </div>
+    </div>
+    <div class="usage-grid">
+      <div class="usage-card">
+        <h4>Interactive TUI</h4>
+        <p style="margin: 0 0 12px 0; color: var(--fg-dim); font-size: 14px;">
+          Four-pane layout — tables, entities, properties, live diff. An n-gram
+          classifier trained on your already-synced columns suggests the right
+          slot for new fields; per-category slots and a per-dialect defaults
+          profile keep the generated DDL consistent across the project.
+        </p>
+        <a href="docs/{{DOCS_VERSION}}/Schema_Sync/"><img src="assets/images/schema-sync-1.png" alt="schema-sync TUI" style="width: 100%; border-radius: var(--radius-sm); border: 1px solid var(--border);"></a>
+      </div>
+      <div class="usage-card">
+        <h4>Headless mode for CI</h4>
+<pre><span class="com"># diff DB against sources, emit both artefacts</span>
+schema-sync \
+    --url <span class="str">"jdbc:postgresql://db.local/app"</span> \
+    --user <span class="str">"$DB_USER"</span> --password <span class="str">"$DB_PASS"</span> \
+    --sources src/main/kotlin \
+    --export-sql build/migration.sql \
+    --export-kt  build/entities.patch
+
+<span class="com"># review, then apply</span>
+git apply build/entities.patch
+psql app &lt; build/migration.sql</pre>
+      </div>
+    </div>
   </div>
 </section>
 

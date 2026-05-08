@@ -68,6 +68,7 @@ nav:
     - PagedQuery: PagedQuery.md
   - Examples: Examples.md
   - Comparison: Comparison.md
+  - Schema Sync: Schema_Sync.md
   - KDBC:
     - Overview: KDBC_Overview.md
     - C Guide: KDBC_C_Guide.md
