@@ -78,12 +78,6 @@ class Stormify(val dataSource: DataSource, vararg registrars: EntityRegistrar) {
         /** Classloader-leak cleanup hook — on JVM, invoked by `StormifyLifecycle.clear()`. */
         internal fun clearDefault() { _defaultInstance.value = null }
 
-        /** Modest fetch-size hint used by `read<T>` on Oracle JDBC to bypass the
-         *  driver's default of 10 rows per round-trip. Picked from the documented
-         *  Oracle "sweet spot" range (100-1000); 100 is the conservative end —
-         *  enough to collapse the round-trip count by an order of magnitude
-         *  without ballooning the OCI prefetch buffer on wide rows. */
-        private const val ORACLE_BATCH_PREFETCH = 100
     }
 
     /** Sets this instance as [defaultInstance] and returns it. */
@@ -187,26 +181,27 @@ class Stormify(val dataSource: DataSource, vararg registrars: EntityRegistrar) {
     var unmatchedColumnPolicy: UnmatchedColumnPolicy = UnmatchedColumnPolicy.IGNORE
 
     /**
-     * Rows per round-trip during [readCursor] iteration (and the streaming paths
-     * that flow through it). `0` falls back to driver defaults.
+     * How many rows the driver buffers per round-trip during streaming
+     * reads. Used by [readCursor] on every dialect, and additionally by
+     * the eager [read] path on Oracle, whose driver default would
+     * otherwise turn a bulk read into a round-trip storm.
      *
-     * The default of `100` is a conservative balance — it cuts round-trips well
-     * over the JDBC default of 10 without preallocating large client buffers
-     * on drivers that batch into fixed-size column slots (Oracle JDBC and ODPI-C
-     * `setFetchArraySize`, MariaDB native `STMT_ATTR_PREFETCH_ROWS`). On these
-     * drivers, memory cost scales as `cursorFetchSize × max-declared-column-size`
-     * — for a wide table with `VARCHAR2(4000) × 50` columns at `cursorFetchSize=1000`,
-     * that's ~200 MB per query. PostgreSQL JVM allocates by actual row size and
-     * is far less sensitive; PostgreSQL native, MySQL/MariaDB JVM, MSSQL native,
-     * and SQLite stream row-by-row regardless of this value (it acts only as a
-     * streaming on/off gate there).
+     * On PostgreSQL and MySQL the value doubles as the streaming
+     * activation gate — `0` keeps the driver in eager full-buffer mode,
+     * positive values open a server-side cursor. On Oracle and the native
+     * drivers the value is purely a throughput knob: larger means fewer
+     * round-trips at the cost of a larger pre-allocated buffer.
      *
-     * **Tune up** (e.g. `1000` or higher) for narrow rows on high-latency links,
-     * especially on PostgreSQL JVM. **Tune down** (e.g. `10`–`50`) for very wide
-     * rows on Oracle or MariaDB native. The instance-wide setting can be
-     * overridden per call via [readCursor]'s `fetchSize` parameter.
+     * The default `256` is a balanced choice: within roughly 10 % of
+     * arbitrarily large fetch sizes on every driver, and well clear of
+     * the memory-pressure point on wide schemas. **Tune up**
+     * (e.g. `1000`) for narrow rows on high-latency links; **tune down**
+     * (e.g. `64`) for VARCHAR2(4000)-heavy Oracle schemas where the
+     * pre-allocated buffer dominates memory. Override per call via
+     * [readCursor]'s `fetchSize` parameter.
      */
-    var cursorFetchSize: Int = 100
+    @Volatile
+    var cursorFetchSize: Int = 256
 
     /** The logger used by this Stormify instance. Defaults to a logger named "Stormify". */
     @Volatile
@@ -521,10 +516,10 @@ class Stormify(val dataSource: DataSource, vararg registrars: EntityRegistrar) {
         customFields: Map<String, (Any?) -> Unit>? = null
     ): List<T> =
         with(mutableListOf<T>()) {
-            // Oracle JDBC's defaultRowPrefetch=10 turns a bulk read into a
-            // round-trip storm; other drivers return the whole result in one
-            // round-trip without a hint.
-            val hint = if (sqlDialect.isOracleVariant) ORACLE_BATCH_PREFETCH else 0
+            // Only Oracle needs a fetch-size hint; other drivers buffer the eager
+            // result fine without one (and a positive hint would needlessly open a
+            // server-side cursor on PostgreSQL).
+            val hint = if (sqlDialect.isOracleVariant) cursorFetchSize else 0
             readCursor(conn, baseClass, query, *params, fetchSize = hint, customFields = customFields) { add(it) }
             return this
         }
