@@ -42,7 +42,7 @@ JVM-only V1. This guide covers all breaking changes and how to update your code.
     <dependency>
         <groupId>onl.ycode</groupId>
         <artifactId>stormify-jvm</artifactId>
-        <version>2.5.1</version>
+        <version>2.5.2</version>
     </dependency>
     ```
 
@@ -59,7 +59,7 @@ JVM-only V1. This guide covers all breaking changes and how to update your code.
 
     ```kotlin
     plugins {
-        id("onl.ycode.stormify") version "2.5.1"
+        id("onl.ycode.stormify") version "2.5.2"
     }
     ```
 
@@ -324,7 +324,7 @@ The following V1 APIs no longer exist in V2:
 
 ## Quick Migration Checklist
 
-1. **Update dependencies**: `onl.ycode.stormify:db` → `id("onl.ycode.stormify") version "2.5.1"` (Gradle) or `onl.ycode:stormify-jvm` (Maven)
+1. **Update dependencies**: `onl.ycode.stormify:db` → `id("onl.ycode.stormify") version "2.5.2"` (Gradle) or `onl.ycode:stormify-jvm` (Maven)
 2. **Replace singleton**: `StormifyManager.stormify()` → `Stormify(dataSource)` constructor
 3. **Hold the instance**: pass `Stormify` to services instead of calling static methods
 4. **Update transactions**: `stormify().transaction(() -> …)` → `stormify.transaction { … }`

@@ -18,7 +18,7 @@ processor, the runtime dependency, and the generated sources.
 
 ```kotlin
 plugins {
-    id("onl.ycode.stormify") version "2.5.1"
+    id("onl.ycode.stormify") version "2.5.2"
 }
 ```
 
@@ -57,7 +57,7 @@ val stormify = Stormify(dataSource)
 <dependency>
     <groupId>onl.ycode</groupId>
     <artifactId>stormify-jvm</artifactId>
-    <version>2.5.1</version>
+    <version>2.5.2</version>
 </dependency>
 ```
 

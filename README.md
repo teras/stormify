@@ -18,9 +18,9 @@ Designed for developers seeking a simple yet powerful ORM, Stormify excels in pr
 <p align="center">
   <a href="https://stormify.org"><img src="https://img.shields.io/badge/Website-stormify.org-4a82c2?style=for-the-badge&logoColor=white" alt="Website"></a>
   &nbsp;
-  <a href="https://stormify.org/docs/2.5.1/"><img src="https://img.shields.io/badge/Docs-Read%20the%20docs-2563eb?style=for-the-badge&logoColor=white" alt="Docs"></a>
+  <a href="https://stormify.org/docs/2.5.2/"><img src="https://img.shields.io/badge/Docs-Read%20the%20docs-2563eb?style=for-the-badge&logoColor=white" alt="Docs"></a>
   &nbsp;
-  <a href="https://stormify.org/docs/2.5.1/api-stormify/"><img src="https://img.shields.io/badge/API-Reference-555?style=for-the-badge&logoColor=white" alt="API"></a>
+  <a href="https://stormify.org/docs/2.5.2/api-stormify/"><img src="https://img.shields.io/badge/API-Reference-555?style=for-the-badge&logoColor=white" alt="API"></a>
 </p>
 
 ## Features
@@ -55,7 +55,7 @@ Designed for developers seeking a simple yet powerful ORM, Stormify excels in pr
 
 ```kotlin
 plugins {
-    id("onl.ycode.stormify") version "2.5.1"
+    id("onl.ycode.stormify") version "2.5.2"
 }
 ```
 
@@ -65,15 +65,15 @@ plugins {
 <dependency>
     <groupId>onl.ycode</groupId>
     <artifactId>stormify-jvm</artifactId>
-    <version>2.5.1</version>
+    <version>2.5.2</version>
 </dependency>
 ```
 
 Supported native databases: **PostgreSQL, MariaDB/MySQL, Oracle, MSSQL, SQLite**. On iOS, only SQLite is available.
 
-See [Installation](https://stormify.org/docs/2.5.1/Installation/) for configuration options and native runtime libraries.
+See [Installation](https://stormify.org/docs/2.5.2/Installation/) for configuration options and native runtime libraries.
 
-> **Upgrading from V1?** See the [V1 to V2 migration guide](https://stormify.org/docs/2.5.1/Migration_V1_to_V2/).
+> **Upgrading from V1?** See the [V1 to V2 migration guide](https://stormify.org/docs/2.5.2/Migration_V1_to_V2/).
 
 ## Basic Usage
 
@@ -181,12 +181,12 @@ val user = stormify.findById<User>(1)
 
 ## Examples
 
-Runnable example projects live in a separate repository: [stormify-examples](https://github.com/teras/stormify-examples/tree/2.5.1). They cover JVM (Kotlin & Java — both [Maven](https://github.com/teras/stormify-examples/tree/2.5.1/java-pom) and [Gradle with type-safe paths](https://github.com/teras/stormify-examples/tree/2.5.1/java-gradle)), Android, iOS, Kotlin/Native (Linux, Windows, macOS), and Kotlin Multiplatform.
+Runnable example projects live in a separate repository: [stormify-examples](https://github.com/teras/stormify-examples/tree/2.5.2). They cover JVM (Kotlin & Java — both [Maven](https://github.com/teras/stormify-examples/tree/2.5.2/java-pom) and [Gradle with type-safe paths](https://github.com/teras/stormify-examples/tree/2.5.2/java-gradle)), Android, iOS, Kotlin/Native (Linux, Windows, macOS), and Kotlin Multiplatform.
 
 Clone them standalone:
 
 ```bash
-git clone -b 2.5.1 https://github.com/teras/stormify-examples.git
+git clone -b 2.5.2 https://github.com/teras/stormify-examples.git
 ```
 
 Or pull them directly inside this repo as a submodule:
@@ -195,7 +195,7 @@ Or pull them directly inside this repo as a submodule:
 git submodule update --init --recursive
 ```
 
-Each subfolder is a self-contained project with its own `README.md` explaining how to build and run it. See the [Examples overview](https://stormify.org/docs/2.5.1/Examples/) for a short description of each.
+Each subfolder is a self-contained project with its own `README.md` explaining how to build and run it. See the [Examples overview](https://stormify.org/docs/2.5.2/Examples/) for a short description of each.
 
 ## Schema Sync
 
@@ -235,12 +235,12 @@ A headless mode also exists for pre-commit hooks and CI gates — same engine,
 same output, but the Kotlin edits land as a `git apply`-ready patch instead
 of touching files directly, so CI can fail cleanly when the schema drifts.
 
-See the [Schema Sync guide](https://stormify.org/docs/2.5.1/Schema_Sync/) for
+See the [Schema Sync guide](https://stormify.org/docs/2.5.2/Schema_Sync/) for
 the full feature tour, configuration reference, and per-dialect notes.
 
 ## How Stormify stacks up
 
-A quick side-by-side against common Kotlin and Java ORMs. See the [full comparison](https://stormify.org/docs/2.5.1/Comparison/) for reflection behaviour, compile-time metadata, narrative context, and when to pick each.
+A quick side-by-side against common Kotlin and Java ORMs. See the [full comparison](https://stormify.org/docs/2.5.2/Comparison/) for reflection behaviour, compile-time metadata, narrative context, and when to pick each.
 
 |  | Stormify | Exposed | Ktorm | Komapper | SQLDelight | Hibernate |
 |---|---|---|---|---|---|---|
@@ -255,11 +255,11 @@ A quick side-by-side against common Kotlin and Java ORMs. See the [full comparis
 
 ## Documentation
 
-Full documentation is available at [stormify.org/docs](https://stormify.org/docs/2.5.1/).
+Full documentation is available at [stormify.org/docs](https://stormify.org/docs/2.5.2/).
 
 ## Contributing
 
-Contributions are welcome! Please check the [Contributing](https://stormify.org/docs/2.5.1/Contributing/) guide for instructions on how to get involved, report issues, or submit pull requests.
+Contributions are welcome! Please check the [Contributing](https://stormify.org/docs/2.5.2/Contributing/) guide for instructions on how to get involved, report issues, or submit pull requests.
 
 ## License
 
