@@ -139,7 +139,12 @@ $(LIB_SHARED): $(OBJECTS)
 
 $(BUILDDIR)/%.o: %.c
 	@mkdir -p $(dir $@)
-	$(CC) $(CFLAGS) -c -o $@ $<
+	$(CC) $(CFLAGS) -MMD -MP -c -o $@ $<
+
+# Pull in auto-generated header dependencies (-MMD writes %.d alongside %.o).
+# Without this a header touch (e.g. struct kdbc_conn layout in kdbc_internal.h)
+# silently leaves stale .o files behind, mismatching vtable offsets at link time.
+-include $(OBJECTS:.o=.d)
 
 test: $(TEST_BIN)
 	./$(TEST_BIN)
@@ -152,7 +157,7 @@ docs:
 	doxygen Doxyfile
 
 clean:
-	rm -f $(OBJECTS) $(LIB_STATIC) $(LIB_SHARED) $(TEST_BIN)
+	rm -f $(OBJECTS) $(OBJECTS:.o=.d) $(LIB_STATIC) $(LIB_SHARED) $(TEST_BIN)
 ifneq ($(BUILDDIR),.)
 	rm -rf $(BUILDDIR)
 endif

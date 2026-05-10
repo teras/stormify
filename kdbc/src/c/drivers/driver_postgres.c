@@ -13,6 +13,17 @@
 #include <postgres_ext.h>
 #include <pthread.h>
 
+/* libpq < 14 lacks pipeline-mode enum constants; pin them to the documented
+ * values so compilation works against older system headers. The runtime
+ * dlsym() of PQenterPipelineMode/etc. is the actual gate that decides whether
+ * pipeline mode is used at all. */
+#ifndef PGRES_PIPELINE_SYNC
+#define PGRES_PIPELINE_SYNC    10
+#endif
+#ifndef PGRES_PIPELINE_ABORTED
+#define PGRES_PIPELINE_ABORTED 11
+#endif
+
 /* PostgreSQL type OIDs - stable catalog values, not in libpq headers */
 #define PG_BOOL_OID        16
 #define PG_INT2_OID        21
@@ -87,8 +98,16 @@ typedef void       (*fn_PQfreeCancel)(PGcancel *);
 typedef int        (*fn_PQsetClientEncoding)(PGconn *, const char *);
 typedef PGTransactionStatusType (*fn_PQtransactionStatus)(const PGconn *);
 typedef char      *(*fn_PQresultErrorField)(const PGresult *, int);
+/* Pipeline mode (libpq 14+). Loaded best-effort: missing => batch falls back to per-row loop. */
+typedef int        (*fn_PQenterPipelineMode)(PGconn *);
+typedef int        (*fn_PQexitPipelineMode)(PGconn *);
+typedef int        (*fn_PQpipelineSync)(PGconn *);
+typedef int        (*fn_PQpipelineStatus)(const PGconn *);
 typedef int        (*fn_PQsendQueryPrepared)(PGconn *, const char *, int,
                                               const char *const *, const int *, const int *, int);
+typedef int        (*fn_PQsendQueryParams)(PGconn *, const char *, int,
+                                            const Oid *, const char *const *,
+                                            const int *, const int *, int);
 typedef int        (*fn_PQsetSingleRowMode)(PGconn *);
 typedef PGresult  *(*fn_PQgetResult)(PGconn *);
 
@@ -131,8 +150,15 @@ static fn_PQsetClientEncoding  p_setClientEncoding;
 static fn_PQtransactionStatus  p_transactionStatus;
 static fn_PQresultErrorField   p_resultErrorField;
 static fn_PQsendQueryPrepared  p_sendQueryPrepared;
+static fn_PQsendQueryParams    p_sendQueryParams;
 static fn_PQsetSingleRowMode   p_setSingleRowMode;
 static fn_PQgetResult          p_getResult;
+
+/* Pipeline mode optionals — non-NULL iff libpq >= 14. */
+static fn_PQenterPipelineMode  p_enterPipelineMode;
+static fn_PQexitPipelineMode   p_exitPipelineMode;
+static fn_PQpipelineSync       p_pipelineSync;
+static fn_PQpipelineStatus     p_pipelineStatus;
 
 /* ========================================================================
  * Driver-specific structures
@@ -226,8 +252,17 @@ static void pg_load_impl(void) {
     /* Streaming trio. PQsetSingleRowMode requires libpq 9.2+, the floor
      * also enforced at connect against the server version. */
     PG_LOAD(sendQueryPrepared);
+    PG_LOAD(sendQueryParams);
     PG_LOAD(setSingleRowMode);
     PG_LOAD(getResult);
+
+    /* Pipeline mode (libpq 14+). Optional — failure to resolve is non-fatal,
+     * the batch path detects NULL function pointers and falls back to the
+     * per-row loop in kdbc_execute_batch. */
+    p_enterPipelineMode = (fn_PQenterPipelineMode)kdbc_dl_sym(lib_handle, "PQenterPipelineMode");
+    p_exitPipelineMode  = (fn_PQexitPipelineMode) kdbc_dl_sym(lib_handle, "PQexitPipelineMode");
+    p_pipelineSync      = (fn_PQpipelineSync)     kdbc_dl_sym(lib_handle, "PQpipelineSync");
+    p_pipelineStatus    = (fn_PQpipelineStatus)   kdbc_dl_sym(lib_handle, "PQpipelineStatus");
 
     pg_load_ok = 1;
 }
@@ -293,6 +328,20 @@ static void *pg_connect(const char *url, const char *user, const char *password,
         p_finish(conn);
         return NULL;
     }
+    /* Pre-PARSE the BEGIN statement once per connection so the deferred-BEGIN
+     * hot path can bundle it inside pipeline mode via PQsendQueryPrepared
+     * (Bind+Execute only, ~10 wire bytes, no per-iter Parse cost on the
+     * server). pgjdbc does the equivalent — its wire trace shows BEGIN as a
+     * named prepared statement (S_5). The PG server accepts Parse for BEGIN
+     * even though the SQL `PREPARE name AS BEGIN` form is rejected.
+     * Failure here is non-fatal: the bundled path is the only consumer and
+     * the surrounding error handling collapses to the existing SQL fallback. */
+    PGresult *r = p_prepare(conn, "_kdbc_tx_begin", "BEGIN", 0, NULL);
+    if (r) p_clear(r);
+    /* COMMIT / ROLLBACK intentionally NOT pre-prepared. Empirically, sending
+     * them via PQexecPrepared adds more libpq Bind+Execute overhead than the
+     * single-token simple-query PQexec they replace — measured as a tx_rollback
+     * regression in the 5-run sweep. Solo PQexec wins for trivial commands. */
     return conn;
 }
 
@@ -342,10 +391,12 @@ static int pg_exec_simple(kdbc_conn *conn, const char *sql) {
 }
 
 static int pg_set_autocommit(kdbc_conn *conn, int enabled) {
+    /* Not reached in normal operation: the deferred-BEGIN opt-in (vt->begin_tx
+     * below) makes kdbc_core handle setAutoCommit entirely via conn->begin_pending,
+     * never delegating here. Kept as a defensive fallback for any path that
+     * dispatches to vt->set_autocommit directly. */
     PGconn *pg = (PGconn *)conn->native;
     if (enabled && !conn->autocommit) {
-        /* Only COMMIT if a transaction is actually open.
-         * After commit()/rollback() PG is already idle. */
         if (p_transactionStatus(pg) != PQTRANS_IDLE)
             return pg_exec_simple(conn, "COMMIT");
     } else if (!enabled && conn->autocommit) {
@@ -355,11 +406,26 @@ static int pg_set_autocommit(kdbc_conn *conn, int enabled) {
 }
 
 static int pg_commit(kdbc_conn *conn) {
+    /* Simple-query PQexec is measurably faster than PQexecPrepared on a
+     * trivial single-token command like COMMIT — extended-query Bind+Execute
+     * adds more libpq client-side overhead than the parse it skips. The
+     * pre-prepared name (_kdbc_tx_commit) is wired up at connect for use only
+     * when bundled inside pipeline mode, where the saving comes from packing
+     * BEGIN + DML in one TCP write — not relevant for solo COMMIT. */
     return pg_exec_simple(conn, "COMMIT");
 }
 
 static int pg_rollback(kdbc_conn *conn) {
     return pg_exec_simple(conn, "ROLLBACK");
+}
+
+/* Solo-BEGIN fallback used by kdbc_core's kdbc_flush_pending_begin when a
+ * non-hot path (raw exec_direct, query_direct, batch fallback) needs the
+ * deferred BEGIN to land before its statement. The hot execute paths
+ * (pg_execute_update / pg_execute_batch) bypass this helper and bundle the
+ * BEGIN into their existing pipeline-mode write for one fewer round-trip. */
+static int pg_begin_tx(kdbc_conn *conn) {
+    return pg_exec_simple(conn, "BEGIN");
 }
 
 /* ========================================================================
@@ -759,47 +825,34 @@ static void pg_free_args(pg_exec_args *a) {
  * Execution
  * ======================================================================== */
 
-static int pg_execute_update(kdbc_stmt *stmt) {
-    pg_stmt_data *sd = (pg_stmt_data *)stmt->native;
-    if (pg_ensure_prepared(stmt, stmt->error, KDBC_ERR_SIZE) != KDBC_OK)
-        return KDBC_ERROR;
-    pg_exec_args args = pg_build_args(sd);
+/* Forward decls — used by pg_execute_update / pg_execute_batch when a
+ * deferred BEGIN is pending and pipeline mode is available. Bodies below. */
+static int pg_pipelined_begin_then_update(kdbc_stmt *stmt);
+static int pg_pipeline_available(void);
+static void pg_drain_results(PGconn *pg);
 
-    /* Always request text results for RETURNING clause — this gives a
-     * universal text representation of the generated key regardless of type
-     * (integer, UUID, VARCHAR, etc.), matching the Oracle RETURNING INTO
-     * approach. PQcmdTuples also requires text format for non-RETURNING. */
-    PGresult *res = p_execPrepared(sd->pg, sd->stmt_name,
-                                    sd->param_count,
-                                    args.values, args.lengths, args.formats,
-                                    0 /* text result */);
-    pg_free_args(&args);
-
-    if (!res) {
-        STMT_ERR(stmt, "PostgreSQL: %s", p_errorMessage(sd->pg));
-        return KDBC_ERROR;
-    }
-
+/* Extract row count (or generated key from a RETURNING clause) from a single
+ * PGresult produced by an INSERT/UPDATE/DELETE execute. Frees the result.
+ * Returns rows on success or KDBC_ERROR with stmt->error populated. */
+static int pg_consume_update_result(kdbc_stmt *stmt, PGresult *res) {
     int status = p_resultStatus(res);
     if (status == PGRES_TUPLES_OK) {
         /* RETURNING clause — extract generated key from text result */
-        if (p_ntuples(res) > 0 && p_nfields(res) > 0) {
-            if (!p_getisnull(res, 0, 0)) {
-                const char *txt = p_getvalue(res, 0, 0);
-                int tlen = p_getlength(res, 0, 0);
-                /* Always keep text form for non-numeric PKs (UUID, etc.) */
-                free(stmt->generated_key_str);
-                stmt->generated_key_str = (char *)malloc((size_t)tlen + 1);
-                if (stmt->generated_key_str) {
-                    memcpy(stmt->generated_key_str, txt, tlen);
-                    stmt->generated_key_str[tlen] = '\0';
-                }
-                /* Also parse as int64 for numeric PKs */
-                long long k = 0;
-                sscanf(txt, "%lld", &k);
-                stmt->generated_key = k;
-                stmt->has_generated_key = 1;
+        if (p_ntuples(res) > 0 && p_nfields(res) > 0 && !p_getisnull(res, 0, 0)) {
+            const char *txt = p_getvalue(res, 0, 0);
+            int tlen = p_getlength(res, 0, 0);
+            /* Always keep text form for non-numeric PKs (UUID, etc.) */
+            free(stmt->generated_key_str);
+            stmt->generated_key_str = (char *)malloc((size_t)tlen + 1);
+            if (stmt->generated_key_str) {
+                memcpy(stmt->generated_key_str, txt, tlen);
+                stmt->generated_key_str[tlen] = '\0';
             }
+            /* Also parse as int64 for numeric PKs */
+            long long k = 0;
+            sscanf(txt, "%lld", &k);
+            stmt->generated_key = k;
+            stmt->has_generated_key = 1;
         }
         int rows = p_ntuples(res);
         p_clear(res);
@@ -818,6 +871,309 @@ static int pg_execute_update(kdbc_stmt *stmt) {
     }
 }
 
+static int pg_execute_update(kdbc_stmt *stmt) {
+    pg_stmt_data *sd = (pg_stmt_data *)stmt->native;
+    if (pg_ensure_prepared(stmt, stmt->error, KDBC_ERR_SIZE) != KDBC_OK)
+        return KDBC_ERROR;
+
+    /* Pipeline-bundle BEGIN with the user statement when there's a deferred
+     * BEGIN pending and pipeline mode is available — saves the dedicated BEGIN
+     * round-trip. Falls through to solo flush + sync execute on libpq < 14. */
+    if (stmt->conn->begin_pending && pg_pipeline_available())
+        return pg_pipelined_begin_then_update(stmt);
+    if (kdbc_flush_pending_begin(stmt->conn) != KDBC_OK)
+        return KDBC_ERROR;
+
+    pg_exec_args args = pg_build_args(sd);
+    /* Always request text results for RETURNING clause — this gives a
+     * universal text representation of the generated key regardless of type
+     * (integer, UUID, VARCHAR, etc.), matching the Oracle RETURNING INTO
+     * approach. PQcmdTuples also requires text format for non-RETURNING. */
+    PGresult *res = p_execPrepared(sd->pg, sd->stmt_name,
+                                    sd->param_count,
+                                    args.values, args.lengths, args.formats,
+                                    0 /* text result */);
+    pg_free_args(&args);
+
+    if (!res) {
+        STMT_ERR(stmt, "PostgreSQL: %s", p_errorMessage(sd->pg));
+        return KDBC_ERROR;
+    }
+    return pg_consume_update_result(stmt, res);
+}
+
+/* Pipelined "BEGIN; <user prepared exec>" with one PQpipelineSync.
+ * Wire shape:  [Parse/Bind/Exec BEGIN][Bind/Exec user_stmt][Sync] → one TCP
+ * write, one round-trip, two responses.  Replaces the eager-BEGIN path that
+ * cost an extra RT.  Always exits pipeline mode before returning, regardless
+ * of success/failure, and clears conn->begin_pending so the caller doesn't
+ * retry the BEGIN. */
+static int pg_pipelined_begin_then_update(kdbc_stmt *stmt) {
+    pg_stmt_data *sd = (pg_stmt_data *)stmt->native;
+    pg_drain_results(sd->pg);
+
+    if (!p_enterPipelineMode(sd->pg)) {
+        STMT_ERR(stmt, "PostgreSQL: PQenterPipelineMode failed: %s",
+                 p_errorMessage(sd->pg));
+        return KDBC_ERROR;
+    }
+
+    int sent_ok = 1;
+    /* BEGIN is pre-PARSEd at connect time as `_kdbc_tx_begin` (see
+     * pg_connect), so we send a parameterless Bind+Execute — no per-iter
+     * Parse work, no SQL text on the wire, matching pgjdbc's behaviour. */
+    if (!p_sendQueryPrepared(sd->pg, "_kdbc_tx_begin", 0, NULL, NULL, NULL, 0)) {
+        STMT_ERR(stmt, "PostgreSQL: PQsendQueryPrepared BEGIN failed: %s",
+                 p_errorMessage(sd->pg));
+        sent_ok = 0;
+    }
+
+    pg_exec_args args = pg_build_args(sd);
+    if (sent_ok && !p_sendQueryPrepared(sd->pg, sd->stmt_name, sd->param_count,
+                                        args.values, args.lengths, args.formats,
+                                        0 /* text result */)) {
+        STMT_ERR(stmt, "PostgreSQL: PQsendQueryPrepared failed: %s",
+                 p_errorMessage(sd->pg));
+        sent_ok = 0;
+    }
+    pg_free_args(&args);
+
+    if (!p_pipelineSync(sd->pg)) {
+        STMT_ERR(stmt, "PostgreSQL: PQpipelineSync failed: %s",
+                 p_errorMessage(sd->pg));
+        sent_ok = 0;
+    }
+
+    /* Drain: BEGIN result, then user result, then PGRES_PIPELINE_SYNC.
+     * NULL between query results is the per-query terminator. */
+    PGresult *user_res = NULL;
+    int errored = !sent_ok;
+    char err_msg[KDBC_ERR_SIZE]; err_msg[0] = '\0';
+    char err_state[8]; err_state[0] = '\0';
+    int seen_begin_done = 0;
+    int safety = 32;
+    while (safety-- > 0) {
+        PGresult *r = p_getResult(sd->pg);
+        if (!r) continue;  /* per-query terminator */
+        int s = p_resultStatus(r);
+        if (s == PGRES_PIPELINE_SYNC) {
+            p_clear(r);
+            break;
+        }
+        if (s == PGRES_PIPELINE_ABORTED) {
+            errored = 1;
+            p_clear(r);
+            continue;
+        }
+        if (s == PGRES_FATAL_ERROR || s == PGRES_NONFATAL_ERROR) {
+            errored = 1;
+            if (!err_msg[0]) {
+                const char *m = p_resultErrorMessage(r);
+                if (m) snprintf(err_msg, sizeof(err_msg), "%s", m);
+                const char *st = p_resultErrorField(r, PG_DIAG_SQLSTATE);
+                if (st) snprintf(err_state, sizeof(err_state), "%s", st);
+            }
+            p_clear(r);
+            continue;
+        }
+        if (!seen_begin_done) {
+            /* BEGIN result — discard, move on to user result. */
+            seen_begin_done = 1;
+            p_clear(r);
+            continue;
+        }
+        /* First non-BEGIN, non-error result is the user statement's. */
+        if (user_res) p_clear(r);   /* defensive, shouldn't happen */
+        else user_res = r;
+    }
+
+    if (!p_exitPipelineMode(sd->pg) && !errored) {
+        STMT_ERR(stmt, "PostgreSQL: PQexitPipelineMode failed: %s",
+                 p_errorMessage(sd->pg));
+        errored = 1;
+    }
+
+    /* Whether the bundle succeeded or not, BEGIN is now committed-or-aborted
+     * server-side, so the deferred flag must clear. On error the surrounding
+     * Stormify transaction will roll back via the normal error path. */
+    stmt->conn->begin_pending = 0;
+
+    if (errored) {
+        if (user_res) p_clear(user_res);
+        if (err_msg[0])
+            STMT_ERR_V(stmt, err_state, 0, "PostgreSQL (begin+exec pipeline): %s", err_msg);
+        else if (!stmt->error[0])
+            STMT_ERR(stmt, "PostgreSQL: begin+exec pipeline failed");
+        return KDBC_ERROR;
+    }
+
+    if (!user_res) {
+        STMT_ERR(stmt, "PostgreSQL: pipelined exec missing user result");
+        return KDBC_ERROR;
+    }
+    return pg_consume_update_result(stmt, user_res);
+}
+
+/* ========================================================================
+ * Pipelined batch execution (libpq 14+)
+ * ======================================================================== */
+
+/*
+ * Returns 1 if pipeline mode is available on this libpq build, 0 otherwise.
+ * All four pipeline functions must be present together — there is no useful
+ * subset.
+ */
+static int pg_pipeline_available(void) {
+    return p_enterPipelineMode && p_exitPipelineMode &&
+           p_pipelineSync && p_pipelineStatus;
+}
+
+/*
+ * Pipelined batch execute: feeds every row to libpq in pipeline mode under a
+ * single PQpipelineSync, then drains all per-row results plus the trailing
+ * PGRES_PIPELINE_SYNC marker. Avoids one server round-trip per row, which is
+ * the dominant cost on the legacy per-row sync loop.
+ *
+ * Falls back to KDBC_ERROR (which the core treats as "batch failed") only on
+ * actual driver errors. If pipeline mode is unavailable on this libpq, the
+ * vt->execute_batch slot is left NULL during register so the core's per-row
+ * loop runs instead — see kdbc_register_postgres.
+ */
+static int pg_execute_batch(kdbc_stmt *stmt) {
+    /* Older libpq (pre-14) lacks pipeline functions — fall back to per-row sync.
+     * The fallback path through kdbc_execute_batch_per_row already flushes any
+     * deferred BEGIN solo before the loop. */
+    if (!pg_pipeline_available())
+        return kdbc_execute_batch_per_row(stmt);
+
+    pg_stmt_data *sd = (pg_stmt_data *)stmt->native;
+    int n = stmt->batch_count;
+    int begin_in_pipeline = stmt->conn->begin_pending;
+
+    /* Server-side prepare must exist before we send a single Bind/Execute. */
+    if (pg_ensure_prepared(stmt, stmt->error, KDBC_ERR_SIZE) != KDBC_OK) {
+        free_batches(stmt);
+        return KDBC_ERROR;
+    }
+    /* Drain any leftover from a prior streaming query before entering pipeline. */
+    pg_drain_results(sd->pg);
+
+    if (!p_enterPipelineMode(sd->pg)) {
+        STMT_ERR(stmt, "PostgreSQL: PQenterPipelineMode failed: %s",
+                 p_errorMessage(sd->pg));
+        free_batches(stmt);
+        return KDBC_ERROR;
+    }
+
+    int sent_ok = 1;
+    /* Bundle BEGIN as the first item in the pipeline if a deferred BEGIN is
+     * pending. Uses the connection-cached prepared name so the BEGIN goes
+     * out as a tiny Bind+Execute, avoiding per-iter Parse cost. */
+    if (begin_in_pipeline) {
+        if (!p_sendQueryPrepared(sd->pg, "_kdbc_tx_begin", 0, NULL, NULL, NULL, 0)) {
+            STMT_ERR(stmt, "PostgreSQL: PQsendQueryPrepared BEGIN failed: %s",
+                     p_errorMessage(sd->pg));
+            sent_ok = 0;
+        }
+    }
+    for (int b = 0; b < n && sent_ok; b++) {
+        if (kdbc_apply_batch_row(stmt, b) != KDBC_OK) { sent_ok = 0; break; }
+        pg_exec_args args = pg_build_args(sd);
+        int ok = p_sendQueryPrepared(sd->pg, sd->stmt_name, sd->param_count,
+                                     args.values, args.lengths, args.formats,
+                                     0 /* text result */);
+        pg_free_args(&args);
+        if (!ok) {
+            STMT_ERR(stmt, "PostgreSQL: PQsendQueryPrepared failed at row %d: %s",
+                     b, p_errorMessage(sd->pg));
+            sent_ok = 0;
+            break;
+        }
+    }
+
+    /*
+     * Sync barrier — required even on the error path so libpq drains its
+     * outgoing queue. Without it the connection sits in a half-committed
+     * pipeline state that the next operation would refuse.
+     */
+    if (!p_pipelineSync(sd->pg)) {
+        STMT_ERR(stmt, "PostgreSQL: PQpipelineSync failed: %s",
+                 p_errorMessage(sd->pg));
+        sent_ok = 0;
+    }
+
+    /*
+     * Drain results. libpq emits, per dispatched query: one or more PGresults
+     * (typically one PGRES_COMMAND_OK), then a NULL terminator. After the
+     * last query a PGRES_PIPELINE_SYNC closes the sync barrier. On error any
+     * later command in the pipeline arrives as PGRES_PIPELINE_ABORTED — we
+     * count those as zero-row updates and propagate the first real error.
+     */
+    int total = 0;
+    int errored = !sent_ok;
+    char err_msg[KDBC_ERR_SIZE];
+    char err_state[8];
+    err_msg[0] = '\0';
+    err_state[0] = '\0';
+
+    /* Hard cap — at most batch_count + a few extra results before we expect
+     * PGRES_PIPELINE_SYNC. Acts as a safety net if libpq hangs on a broken
+     * connection (PQgetResult would otherwise block forever). */
+    int safety = (n + 1) * 4 + 16;
+    while (safety-- > 0) {
+        PGresult *r = p_getResult(sd->pg);
+        if (!r) {
+            /* End of one query's results — keep draining. */
+            continue;
+        }
+        int s = p_resultStatus(r);
+        if (s == PGRES_PIPELINE_SYNC) {
+            p_clear(r);
+            break;
+        }
+        if (s == PGRES_COMMAND_OK) {
+            const char *ct = p_cmdTuples(r);
+            total += ct ? atoi(ct) : 0;
+        } else if (s == PGRES_PIPELINE_ABORTED) {
+            /* Command after a previous error — counted as zero affected rows. */
+            errored = 1;
+        } else if (s == PGRES_FATAL_ERROR || s == PGRES_NONFATAL_ERROR) {
+            errored = 1;
+            if (!err_msg[0]) {
+                const char *m = p_resultErrorMessage(r);
+                if (m) snprintf(err_msg, sizeof(err_msg), "%s", m);
+                const char *st = p_resultErrorField(r, PG_DIAG_SQLSTATE);
+                if (st) snprintf(err_state, sizeof(err_state), "%s", st);
+            }
+        }
+        p_clear(r);
+    }
+
+    /* Always exit pipeline mode, regardless of success. */
+    if (!p_exitPipelineMode(sd->pg) && !errored) {
+        STMT_ERR(stmt, "PostgreSQL: PQexitPipelineMode failed: %s",
+                 p_errorMessage(sd->pg));
+        errored = 1;
+    }
+
+    /* If BEGIN was bundled in the pipeline its result is now consumed —
+     * either it landed (server is in tx) or the pipeline aborted (errored).
+     * In both cases the deferred flag must clear so we don't re-send BEGIN.
+     * BEGIN's PGRES_COMMAND_OK adds 0 to `total` (PQcmdTuples returns
+     * "BEGIN" → atoi → 0), so no row-count adjustment is needed. */
+    if (begin_in_pipeline) stmt->conn->begin_pending = 0;
+
+    free_batches(stmt);
+    if (errored) {
+        if (err_msg[0])
+            STMT_ERR_V(stmt, err_state, 0, "PostgreSQL (pipelined batch): %s", err_msg);
+        else if (!stmt->error[0])
+            STMT_ERR(stmt, "PostgreSQL: pipelined batch failed");
+        return KDBC_ERROR;
+    }
+    return total;
+}
+
 /* Drain any remaining PGresults from a streaming query. libpq requires the
  * caller to keep calling PQgetResult until it returns NULL, otherwise the
  * connection is left in a state that breaks the next query. Each non-NULL
@@ -833,6 +1189,14 @@ static void *pg_execute_query(kdbc_stmt *stmt, int *out_col_count,
                               char *err, size_t err_size) {
     pg_stmt_data *sd = (pg_stmt_data *)stmt->native;
     if (pg_ensure_prepared(stmt, err, err_size) != KDBC_OK) return NULL;
+    /* Reads are rare inside an explicit transaction in practice — a SELECT
+     * wrapped by setAutoCommit(false)/commit() is the unusual case. We pay
+     * one solo-BEGIN round-trip rather than complicating the streaming
+     * machinery with mid-pipeline result handling. */
+    if (kdbc_flush_pending_begin(stmt->conn) != KDBC_OK) {
+        snprintf(err, err_size, "%s", stmt->conn->error);
+        return NULL;
+    }
     pg_exec_args args = pg_build_args(sd);
 
     /* fetch_size > 0 opts into streaming via the async + single-row-mode
@@ -1536,6 +1900,7 @@ static const kdbc_driver_vtable postgres_vtable = {
     .set_autocommit     = pg_set_autocommit,
     .commit             = pg_commit,
     .rollback           = pg_rollback,
+    .begin_tx           = pg_begin_tx,
     .get_product_name   = pg_get_product_name,
     .get_product_version = pg_get_product_version,
     .get_major_version  = pg_get_major_version,
@@ -1555,6 +1920,9 @@ static const kdbc_driver_vtable postgres_vtable = {
     .execute_update     = pg_execute_update,
     .execute_query      = pg_execute_query,
     .get_generated_key  = pg_get_generated_key,
+    /* pg_execute_batch internally checks pg_pipeline_available() and falls back to
+     * the per-row helper from kdbc_core when libpq lacks pipeline functions. */
+    .execute_batch      = pg_execute_batch,
     .rs_next            = pg_rs_next,
     .rs_col_name        = pg_rs_col_name,
     .rs_col_label       = NULL,

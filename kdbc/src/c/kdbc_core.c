@@ -187,6 +187,17 @@ int kdbc_cancel(kdbc_conn *conn) {
 int kdbc_set_autocommit(kdbc_conn *conn, int enabled) {
     if (!conn) return KDBC_ERROR;
     conn->error[0] = '\0';
+    if (conn->vt->begin_tx) {
+        /* Deferred-BEGIN driver. Server-side autocommit is never toggled by us:
+         * the driver runs in always-on autocommit mode, and explicit BEGIN /
+         * COMMIT / ROLLBACK are sent on demand. setAutoCommit(false) just sets
+         * the pending flag; setAutoCommit(true) clears it. The driver's
+         * vt->set_autocommit hook is intentionally not called in this path. */
+        if (!enabled) conn->begin_pending = 1;
+        else conn->begin_pending = 0;
+        conn->autocommit = enabled;
+        return KDBC_OK;
+    }
     int rc = conn->vt->set_autocommit(conn, enabled);
     if (rc == KDBC_OK) conn->autocommit = enabled;
     return rc;
@@ -203,18 +214,42 @@ int kdbc_get_autocommit(kdbc_conn *conn) {
 int kdbc_commit(kdbc_conn *conn) {
     if (!conn) return KDBC_ERROR;
     conn->error[0] = '\0';
+    if (conn->begin_pending) {
+        /* setAutoCommit(false) was followed by commit() with no statement in
+         * between — we never sent BEGIN, so there is nothing to commit. */
+        conn->begin_pending = 0;
+        return KDBC_OK;
+    }
     return conn->vt->commit(conn);
 }
 
 int kdbc_rollback(kdbc_conn *conn) {
     if (!conn) return KDBC_ERROR;
     conn->error[0] = '\0';
+    if (conn->begin_pending) {
+        conn->begin_pending = 0;
+        return KDBC_OK;
+    }
     return conn->vt->rollback(conn);
+}
+
+int kdbc_flush_pending_begin(kdbc_conn *conn) {
+    if (!conn || !conn->begin_pending) return KDBC_OK;
+    if (!conn->vt->begin_tx) {
+        /* Driver did not opt in but somehow the flag got set — defensive
+         * no-op so callers in shared paths stay simple. */
+        conn->begin_pending = 0;
+        return KDBC_OK;
+    }
+    int rc = conn->vt->begin_tx(conn);
+    if (rc == KDBC_OK) conn->begin_pending = 0;
+    return rc;
 }
 
 /* Execute administrative SQL (savepoints, DDL, etc.)
  * Uses exec_direct if driver supports it, falls back to prepare+execute. */
 static int exec_simple_sql(kdbc_conn *conn, const char *sql) {
+    if (kdbc_flush_pending_begin(conn) != KDBC_OK) return KDBC_ERROR;
     if (conn->vt->exec_direct)
         return conn->vt->exec_direct(conn, sql);
     kdbc_stmt *stmt = kdbc_prepare(conn, sql);
@@ -231,6 +266,7 @@ static int exec_simple_sql(kdbc_conn *conn, const char *sql) {
 int kdbc_execute_update(kdbc_conn *conn, const char *sql) {
     if (!conn || !sql) return KDBC_ERROR;
     conn->error[0] = '\0';
+    if (kdbc_flush_pending_begin(conn) != KDBC_OK) return KDBC_ERROR;
     /* Use exec_direct if available, otherwise prepare+execute */
     if (conn->vt->exec_direct)
         return conn->vt->exec_direct(conn, sql);
@@ -244,6 +280,7 @@ int kdbc_execute_update(kdbc_conn *conn, const char *sql) {
 kdbc_result *kdbc_execute_query(kdbc_conn *conn, const char *sql) {
     if (!conn || !sql) return NULL;
     conn->error[0] = '\0';
+    if (kdbc_flush_pending_begin(conn) != KDBC_OK) return NULL;
 
     /* Use direct query if driver supports it */
     if (conn->vt->query_direct) {
@@ -468,7 +505,10 @@ kdbc_stmt *kdbc_prepare_returning(kdbc_conn *conn, const char *sql,
     return prepare_impl(conn, sql, col_names, n_cols, 1);
 }
 
-static void free_batches(kdbc_stmt *stmt) {
+/* Non-static so drivers that implement vt->execute_batch (e.g. Postgres pipeline
+ * mode) can free the batch storage themselves on both success and failure paths.
+ * Declared in kdbc_internal.h. */
+void free_batches(kdbc_stmt *stmt) {
     if (!stmt->batches) return;
     for (int b = 0; b < stmt->batch_count; b++) {
         for (int i = 0; i < stmt->param_count; i++)
@@ -817,69 +857,81 @@ int kdbc_add_batch(kdbc_stmt *stmt) {
  * Execute all batched parameter sets sequentially.
  * Rebinds parameters for each batch entry and calls execute_update.
  */
-int kdbc_execute_batch(kdbc_stmt *stmt) {
-    if (!stmt || !stmt->conn) return KDBC_ERROR;
-    if (stmt->batch_count == 0) return 0;
+int kdbc_apply_batch_row(kdbc_stmt *stmt, int batch_idx) {
+    if (!stmt || !stmt->conn || batch_idx < 0 || batch_idx >= stmt->batch_count)
+        return KDBC_ERROR;
+    kdbc_param *snap = stmt->batches[batch_idx];
+    for (int i = 0; i < stmt->param_count; i++) {
+        int idx = i + 1;
+        kdbc_param *p = &snap[i];
+        switch (p->type) {
+            case KDBC_TYPE_NULL:
+                stmt->conn->vt->bind_null(stmt, idx);
+                break;
+            case KDBC_TYPE_INT:
+                stmt->conn->vt->bind_int(stmt, idx, (int)p->val.i64);
+                break;
+            case KDBC_TYPE_LONG:
+                stmt->conn->vt->bind_long(stmt, idx, p->val.i64);
+                break;
+            case KDBC_TYPE_DOUBLE:
+                stmt->conn->vt->bind_double(stmt, idx, p->val.dbl);
+                break;
+            case KDBC_TYPE_STRING:
+                stmt->conn->vt->bind_string(stmt, idx, p->val.str.ptr);
+                break;
+            case KDBC_TYPE_BLOB:
+                stmt->conn->vt->bind_blob(stmt, idx, p->val.blob.ptr, p->val.blob.len);
+                break;
+            case KDBC_TYPE_BOOL:
+                stmt->conn->vt->bind_bool(stmt, idx, (int)p->val.i64);
+                break;
+            case KDBC_TYPE_DATE:
+                stmt->conn->vt->bind_date(stmt, idx,
+                                          p->val.ts.year,
+                                          p->val.ts.month,
+                                          p->val.ts.day);
+                break;
+            case KDBC_TYPE_TIME:
+                stmt->conn->vt->bind_time(stmt, idx,
+                                          p->val.ts.hour,
+                                          p->val.ts.minute,
+                                          p->val.ts.second,
+                                          p->val.ts.usec);
+                break;
+            case KDBC_TYPE_TIMESTAMP:
+                stmt->conn->vt->bind_timestamp(stmt, idx,
+                                               p->val.ts.year,
+                                               p->val.ts.month,
+                                               p->val.ts.day,
+                                               p->val.ts.hour,
+                                               p->val.ts.minute,
+                                               p->val.ts.second,
+                                               p->val.ts.usec);
+                break;
+            default:
+                STMT_ERR(stmt, "Unsupported param type %d in batch rebind at idx %d",
+                         (int)p->type, idx);
+                return KDBC_ERROR;
+        }
+    }
+    return KDBC_OK;
+}
 
+int kdbc_execute_batch_per_row(kdbc_stmt *stmt) {
+    if (!stmt || !stmt->conn) return KDBC_ERROR;
+    /* Flush any pending BEGIN once up front so the loop body stays a tight
+     * execute_update per row. Drivers that opt into deferred-BEGIN therefore
+     * don't need to re-check the flag inside their per-row execute. */
+    if (kdbc_flush_pending_begin(stmt->conn) != KDBC_OK) {
+        free_batches(stmt);
+        return KDBC_ERROR;
+    }
     int total = 0;
     for (int b = 0; b < stmt->batch_count; b++) {
-        /* Restore parameters from snapshot */
-        kdbc_param *snap = stmt->batches[b];
-        for (int i = 0; i < stmt->param_count; i++) {
-            int idx = i + 1;
-            kdbc_param *p = &snap[i];
-            switch (p->type) {
-                case KDBC_TYPE_NULL:
-                    stmt->conn->vt->bind_null(stmt, idx);
-                    break;
-                case KDBC_TYPE_INT:
-                    stmt->conn->vt->bind_int(stmt, idx, (int)p->val.i64);
-                    break;
-                case KDBC_TYPE_LONG:
-                    stmt->conn->vt->bind_long(stmt, idx, p->val.i64);
-                    break;
-                case KDBC_TYPE_DOUBLE:
-                    stmt->conn->vt->bind_double(stmt, idx, p->val.dbl);
-                    break;
-                case KDBC_TYPE_STRING:
-                    stmt->conn->vt->bind_string(stmt, idx, p->val.str.ptr);
-                    break;
-                case KDBC_TYPE_BLOB:
-                    stmt->conn->vt->bind_blob(stmt, idx, p->val.blob.ptr, p->val.blob.len);
-                    break;
-                case KDBC_TYPE_BOOL:
-                    stmt->conn->vt->bind_bool(stmt, idx, (int)p->val.i64);
-                    break;
-                case KDBC_TYPE_DATE:
-                    stmt->conn->vt->bind_date(stmt, idx,
-                                              p->val.ts.year,
-                                              p->val.ts.month,
-                                              p->val.ts.day);
-                    break;
-                case KDBC_TYPE_TIME:
-                    stmt->conn->vt->bind_time(stmt, idx,
-                                              p->val.ts.hour,
-                                              p->val.ts.minute,
-                                              p->val.ts.second,
-                                              p->val.ts.usec);
-                    break;
-                case KDBC_TYPE_TIMESTAMP:
-                    stmt->conn->vt->bind_timestamp(stmt, idx,
-                                                   p->val.ts.year,
-                                                   p->val.ts.month,
-                                                   p->val.ts.day,
-                                                   p->val.ts.hour,
-                                                   p->val.ts.minute,
-                                                   p->val.ts.second,
-                                                   p->val.ts.usec);
-                    break;
-                default:
-                    /* Fail loudly — old code silently `break`d which masked missing cases. */
-                    STMT_ERR(stmt, "Unsupported param type %d in batch rebind at idx %d",
-                             (int)p->type, idx);
-                    free_batches(stmt);
-                    return KDBC_ERROR;
-            }
+        if (kdbc_apply_batch_row(stmt, b) != KDBC_OK) {
+            free_batches(stmt);
+            return KDBC_ERROR;
         }
         int rc = stmt->conn->vt->execute_update(stmt);
         if (rc < 0) {
@@ -888,9 +940,26 @@ int kdbc_execute_batch(kdbc_stmt *stmt) {
         }
         total += rc;
     }
-
     free_batches(stmt);
     return total;
+}
+
+int kdbc_execute_batch(kdbc_stmt *stmt) {
+    if (!stmt || !stmt->conn) return KDBC_ERROR;
+    if (stmt->batch_count == 0) return 0;
+
+    /*
+     * Driver fast path: if the driver installs execute_batch it owns the whole batch.
+     * Drivers like Postgres (libpq pipeline mode), Oracle ODPI-C (dpiStmt_executeMany),
+     * and MariaDB (STMT_ATTR_ARRAY_SIZE) can dispatch all rows in a single round-trip,
+     * dramatically faster than the per-row fallback. The driver hook is responsible for
+     * freeing the batch storage on both success and failure (typically by invoking
+     * kdbc_execute_batch_per_row when its fast path is unavailable at runtime).
+     */
+    if (stmt->conn->vt->execute_batch)
+        return stmt->conn->vt->execute_batch(stmt);
+
+    return kdbc_execute_batch_per_row(stmt);
 }
 
 /* ========================================================================

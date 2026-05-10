@@ -9,6 +9,9 @@ extra:
 
 markdown_extensions:
   - admonition
+  - attr_list
+  - md_in_html
+  - tables
   - pymdownx.details
   - pymdownx.highlight:
       anchor_linenums: true
@@ -67,7 +70,9 @@ nav:
     - PagedList: PagedList.md
     - PagedQuery: PagedQuery.md
   - Examples: Examples.md
-  - Comparison: Comparison.md
+  - Comparison:
+    - Overview: Comparison.md
+    - Benchmarks: Benchmarks.md
   - Schema Sync: Schema_Sync.md
   - KDBC:
     - Overview: KDBC_Overview.md

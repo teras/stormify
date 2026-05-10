@@ -40,6 +40,7 @@ typedef int (*fn_dpiConn_newVar)(dpiConn *, unsigned int, unsigned int,
 typedef int (*fn_dpiConn_getServerVersion)(dpiConn *, const char **,
                                            unsigned int *, dpiVersionInfo *);
 typedef int (*fn_dpiStmt_execute)(dpiStmt *, unsigned int, unsigned int *);
+typedef int (*fn_dpiStmt_executeMany)(dpiStmt *, unsigned int, uint32_t);
 typedef int (*fn_dpiStmt_getRowCount)(dpiStmt *, unsigned long long *);
 typedef int (*fn_dpiStmt_getNumQueryColumns)(dpiStmt *, unsigned int *);
 typedef int (*fn_dpiStmt_getQueryInfo)(dpiStmt *, unsigned int, dpiQueryInfo *);
@@ -80,6 +81,7 @@ static fn_dpiConn_prepareStmt            p_conn_prepareStmt;
 static fn_dpiConn_newVar                 p_conn_newVar;
 static fn_dpiConn_getServerVersion       p_conn_getServerVersion;
 static fn_dpiStmt_execute                p_stmt_execute;
+static fn_dpiStmt_executeMany            p_stmt_executeMany;
 static fn_dpiStmt_getRowCount            p_stmt_getRowCount;
 static fn_dpiStmt_getNumQueryColumns     p_stmt_getNumQueryColumns;
 static fn_dpiStmt_getQueryInfo           p_stmt_getQueryInfo;
@@ -133,6 +135,7 @@ static void ora_load_impl(void) {
     ORA_LOAD(p_conn_newVar,             "dpiConn_newVar");
     ORA_LOAD(p_conn_getServerVersion,   "dpiConn_getServerVersion");
     ORA_LOAD(p_stmt_execute,            "dpiStmt_execute");
+    ORA_LOAD(p_stmt_executeMany,        "dpiStmt_executeMany");
     ORA_LOAD(p_stmt_getRowCount,        "dpiStmt_getRowCount");
     ORA_LOAD(p_stmt_getNumQueryColumns, "dpiStmt_getNumQueryColumns");
     ORA_LOAD(p_stmt_getQueryInfo,       "dpiStmt_getQueryInfo");
@@ -242,6 +245,12 @@ static void *ora_connect(const char *url, const char *user, const char *password
     }
     common.encoding  = "UTF-8";
     common.nencoding = "UTF-8";
+    /* Enable OCI's per-session statement cache. ODPI-C's default is 20; we lift it
+     * to 64 to match the kdbc-level prepared-statement cache size. The two caches
+     * compose: the kdbc cache reuses the dpiStmt object client-side, and the OCI
+     * cache reuses the parsed plan server-side when ODPI-C internally performs
+     * prepare/execute cycles. */
+    common.stmtCacheSize = 64;
 
     if (p_conn_create(g_ora_ctx,
                       user, user ? (unsigned int)strlen(user) : 0,
@@ -796,6 +805,218 @@ static int ora_execute_update(kdbc_stmt *stmt) {
     return (int)rowCount;
 }
 
+/*
+ * Pick the Oracle column types for a given kdbc parameter type. The width
+ * argument is filled with the per-element byte size (only meaningful for
+ * variable-length types like VARCHAR/BYTES/BLOB).
+ */
+static int ora_oratype_for(kdbc_type type,
+                           unsigned int *outOraType,
+                           unsigned int *outNatType) {
+    switch (type) {
+        case KDBC_TYPE_NULL:
+        case KDBC_TYPE_STRING:
+            *outOraType = DPI_ORACLE_TYPE_VARCHAR;
+            *outNatType = DPI_NATIVE_TYPE_BYTES;
+            return KDBC_OK;
+        case KDBC_TYPE_INT:
+        case KDBC_TYPE_LONG:
+        case KDBC_TYPE_BOOL:
+            *outOraType = DPI_ORACLE_TYPE_NUMBER;
+            *outNatType = DPI_NATIVE_TYPE_INT64;
+            return KDBC_OK;
+        case KDBC_TYPE_DOUBLE:
+            *outOraType = DPI_ORACLE_TYPE_NATIVE_DOUBLE;
+            *outNatType = DPI_NATIVE_TYPE_DOUBLE;
+            return KDBC_OK;
+        case KDBC_TYPE_BLOB:
+            *outOraType = DPI_ORACLE_TYPE_RAW;
+            *outNatType = DPI_NATIVE_TYPE_BYTES;
+            return KDBC_OK;
+        case KDBC_TYPE_TIMESTAMP:
+        case KDBC_TYPE_DATE:
+        case KDBC_TYPE_TIME:
+            *outOraType = DPI_ORACLE_TYPE_TIMESTAMP;
+            *outNatType = DPI_NATIVE_TYPE_TIMESTAMP;
+            return KDBC_OK;
+    }
+    return KDBC_ERROR;
+}
+
+/*
+ * Pipelined batch executor for Oracle via ODPI-C's dpiStmt_executeMany. Replaces
+ * the generic per-row loop with a single OCI array-bound dispatch — bundles all
+ * batch rows into one wire round-trip the way the Java OJDBC driver does in
+ * Connection.setExecuteBatch(). Critical for INSERT-heavy workloads where the
+ * default per-row mode is bottlenecked by SQL*Net latency.
+ *
+ * Strategy: free the per-slot single-element vars left by the normal bind path,
+ * allocate fresh array-bound vars sized to batch_count, walk the snapshot and
+ * write each row's value into dpiData[row]/dpiVar_setFromBytes(var, row, ...),
+ * then dpiStmt_executeMany. Releases batch-bound vars at the end so the next
+ * normal execute_update call recreates single-element vars on first bind.
+ */
+static int ora_execute_batch(kdbc_stmt *stmt) {
+    if (!p_stmt_executeMany) return kdbc_execute_batch_per_row(stmt);
+
+    int n = stmt->batch_count;
+    if (n == 0) return 0;
+    int param_count = stmt->param_count;
+    if (param_count <= 0) return kdbc_execute_batch_per_row(stmt);
+
+    ora_stmt_data *sd = (ora_stmt_data *)stmt->native;
+
+    /* Release any single-row vars left by ora_bind_* during the snapshot pass.
+     * They're sized maxArraySize=1 so they cannot host a multi-row execute. */
+    for (int i = 0; i < param_count; i++) {
+        if (sd->vars[i]) { p_var_release(sd->vars[i]); sd->vars[i] = NULL; }
+    }
+
+    dpiData **batch_data = (dpiData **)calloc((size_t)param_count, sizeof(dpiData *));
+    if (!batch_data) {
+        STMT_ERR(stmt, "Oracle batch: out of memory");
+        free_batches(stmt);
+        return KDBC_ERROR;
+    }
+
+    /*
+     * Per-slot type detection is taken from the first row's snapshot. All rows
+     * in a batch are expected to bind the same type at the same slot — the
+     * Stormify-side caller (batch insert of homogeneous entities) guarantees
+     * this. Mixed-type batches would need per-slot dynamic dispatch.
+     *
+     * For variable-length types (VARCHAR/RAW) we scan all rows to pick the
+     * largest element width so dpiConn_newVar's fixed slot size can hold every
+     * value. We track widths in a local array parallel to batch_data.
+     */
+    int rc = KDBC_OK;
+    for (int i = 0; i < param_count && rc == KDBC_OK; i++) {
+        kdbc_param *first = &stmt->batches[0][i];
+        unsigned int oraType = 0, natType = 0;
+
+        /* If first row's slot is NULL, scan rows to find an actual type to size by. */
+        kdbc_type bindType = first->type;
+        if (bindType == KDBC_TYPE_NULL) {
+            for (int b = 0; b < n; b++) {
+                kdbc_type t = stmt->batches[b][i].type;
+                if (t != KDBC_TYPE_NULL) { bindType = t; break; }
+            }
+        }
+        if (ora_oratype_for(bindType, &oraType, &natType) != KDBC_OK) {
+            STMT_ERR(stmt, "Oracle batch: unsupported param type at slot %d", i + 1);
+            rc = KDBC_ERROR;
+            break;
+        }
+
+        unsigned int slotSize = 1;
+        if (natType == DPI_NATIVE_TYPE_BYTES) {
+            for (int b = 0; b < n; b++) {
+                kdbc_param *p = &stmt->batches[b][i];
+                if (p->type == KDBC_TYPE_STRING && p->val.str.len > slotSize)
+                    slotSize = p->val.str.len;
+                else if (p->type == KDBC_TYPE_BLOB && p->val.blob.len > slotSize)
+                    slotSize = (unsigned int)p->val.blob.len;
+            }
+        }
+
+        if (p_conn_newVar(sd->oc->conn, oraType, natType, (uint32_t)n,
+                          slotSize, 0, 0, NULL, &sd->vars[i], &batch_data[i]) != DPI_SUCCESS) {
+            ORA_STMT_ERR(stmt, "Oracle batch: newVar");
+            rc = KDBC_ERROR;
+            break;
+        }
+        if (p_stmt_bindByPos(sd->stmt, (unsigned int)(i + 1), sd->vars[i]) != DPI_SUCCESS) {
+            ORA_STMT_ERR(stmt, "Oracle batch: bindByPos");
+            rc = KDBC_ERROR;
+            break;
+        }
+    }
+
+    /* Populate per-row data. setFromBytes dispatches into the var's internal
+     * memory at element index `row`; numerics write directly into dpiData. */
+    for (int b = 0; b < n && rc == KDBC_OK; b++) {
+        for (int i = 0; i < param_count && rc == KDBC_OK; i++) {
+            kdbc_param *p = &stmt->batches[b][i];
+            dpiData *d = &batch_data[i][b];
+
+            if (p->type == KDBC_TYPE_NULL) {
+                d->isNull = 1;
+                continue;
+            }
+            d->isNull = 0;
+            switch (p->type) {
+                case KDBC_TYPE_INT:
+                case KDBC_TYPE_LONG:
+                case KDBC_TYPE_BOOL:
+                    d->value.asInt64 = p->val.i64;
+                    break;
+                case KDBC_TYPE_DOUBLE:
+                    d->value.asDouble = p->val.dbl;
+                    break;
+                case KDBC_TYPE_STRING:
+                    if (p_var_setFromBytes(sd->vars[i], (uint32_t)b,
+                                           p->val.str.ptr,
+                                           p->val.str.len) != DPI_SUCCESS) {
+                        ORA_STMT_ERR(stmt, "Oracle batch: setFromBytes string");
+                        rc = KDBC_ERROR;
+                    }
+                    break;
+                case KDBC_TYPE_BLOB:
+                    if (p_var_setFromBytes(sd->vars[i], (uint32_t)b,
+                                           (const char *)p->val.blob.ptr,
+                                           (unsigned int)p->val.blob.len) != DPI_SUCCESS) {
+                        ORA_STMT_ERR(stmt, "Oracle batch: setFromBytes blob");
+                        rc = KDBC_ERROR;
+                    }
+                    break;
+                default:
+                    /* DATE/TIME/TIMESTAMP within a batch are uncommon for INSERT-heavy
+                     * workloads; fall back to the per-row path for those rather than
+                     * implementing the dpiTimestamp packing here. We use a sentinel
+                     * value (-2) so the caller can distinguish "fall back" from
+                     * "hard error". */
+                    rc = -2;
+                    break;
+            }
+        }
+    }
+
+    /* If we hit an unsupported type mid-batch, fall back to the per-row loop
+     * (it has the full type table). The vars we allocated are released first
+     * so they don't conflict with the per-row path's single-element vars. */
+    if (rc == -2) {
+        for (int i = 0; i < param_count; i++) {
+            if (sd->vars[i]) { p_var_release(sd->vars[i]); sd->vars[i] = NULL; }
+        }
+        free(batch_data);
+        return kdbc_execute_batch_per_row(stmt);
+    }
+
+    if (rc == KDBC_OK) {
+        unsigned int mode = stmt->conn->autocommit ?
+            DPI_MODE_EXEC_COMMIT_ON_SUCCESS : DPI_MODE_EXEC_DEFAULT;
+        if (p_stmt_executeMany(sd->stmt, mode, (uint32_t)n) != DPI_SUCCESS) {
+            ORA_STMT_ERR(stmt, "Oracle executeMany");
+            rc = KDBC_ERROR;
+        }
+    }
+
+    /* Always release the array-bound vars before returning — the next call
+     * cycle (normal bind + execute_update) starts fresh with single-element
+     * vars in ora_create_and_bind_var. */
+    for (int i = 0; i < param_count; i++) {
+        if (sd->vars[i]) { p_var_release(sd->vars[i]); sd->vars[i] = NULL; }
+    }
+    free(batch_data);
+    free_batches(stmt);
+
+    if (rc != KDBC_OK) return KDBC_ERROR;
+    /* For INSERT/UPDATE/DELETE, each iteration affects ≥0 rows; the total is
+     * not directly available without dpiStmt_getRowCounts. For our use case
+     * (homogeneous-batch insert), report the number of rows we sent. */
+    return n;
+}
+
 typedef struct {
     ora_stmt_data *sd;
     int            col_count;
@@ -1288,6 +1509,7 @@ static const kdbc_driver_vtable oracle_vtable = {
     .execute_update     = ora_execute_update,
     .execute_query      = ora_execute_query,
     .get_generated_key  = ora_get_gen_key,
+    .execute_batch      = ora_execute_batch,
     .rs_next            = ora_rs_next,
     .rs_col_name        = ora_rs_col_name,
     .rs_col_label       = NULL,

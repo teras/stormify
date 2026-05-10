@@ -156,10 +156,22 @@ public class SuspendStormify internal constructor(
                         conn.commit()
                         result
                     } catch (e: Throwable) {
-                        if (cancelled.load() == 0) runCatching { conn.rollback() }
-                        // If cancelled, the driver decides what (if anything) is safe to
-                        // run post-cancel — defaults to a no-op and relies on pool eviction.
-                        else runCatching { conn.cleanupAfterCancel() }
+                        // Distinguish "user threw to roll back" from "connection broke":
+                        // if rollback succeeds cleanly (and we weren't cancelled), the
+                        // connection is still healthy — signal that to the pool via
+                        // HealthyConnectionException so it isn't evicted on every throw.
+                        // On any rollback failure, or when an async cancel fired, we let
+                        // the original exception propagate so the pool evicts the entry.
+                        var rollbackOk = false
+                        if (cancelled.load() == 0) {
+                            rollbackOk = runCatching { conn.rollback() }.isSuccess
+                        } else {
+                            // If cancelled, the driver decides what (if anything) is safe
+                            // to run post-cancel — defaults to a no-op and relies on pool
+                            // eviction.
+                            runCatching { conn.cleanupAfterCancel() }
+                        }
+                        if (rollbackOk) throw HealthyConnectionException(e)
                         throw e
                     } finally {
                         if (cancelled.load() == 0) runCatching { conn.setAutoCommit(true) }

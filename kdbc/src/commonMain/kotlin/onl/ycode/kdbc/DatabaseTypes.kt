@@ -31,6 +31,14 @@ interface Statement : AutoCloseable {
     fun executeBatch(): IntArray
 
     /**
+     * Clears bound parameters and any pending batch entries so that this statement can be reused
+     * without re-preparing the SQL. Used by ORM-level prepared-statement caches that wish to keep
+     * the underlying server-side prepare across calls. Must be safe to call on a freshly opened
+     * statement (no-op). Default falls back to no-op so legacy implementations remain valid.
+     */
+    fun reset(): Unit = Unit
+
+    /**
      * Hint to the driver about how many rows to fetch per round-trip while
      * iterating a [ResultSet]. JDBC pass-through on JVM. On native, positive
      * values activate the driver's streaming path (single-row mode on PG,
@@ -65,6 +73,23 @@ interface Connection : AutoCloseable {
 
     /** Creates a prepared statement for the given SQL. Set [returnGeneratedKeys] to retrieve auto-generated keys after execution. */
     fun initStatement(sql: String, returnGeneratedKeys: Boolean, columnNames: Array<String>?): Statement
+
+    /**
+     * Acquires a prepared statement for [sql], reusing one from the connection's internal
+     * cache if available. The returned statement reports `close()` as a "release" — the
+     * underlying handle is reset and returned to the cache for the next call. Callers must
+     * use the standard `.use { }` pattern; the connection itself owns the real lifetime
+     * and physically closes all cached statements on [Connection.close].
+     *
+     * Use this for cacheable, parameterised statements where the same SQL string is likely
+     * to be re-executed (typical CRUD / find / list paths). For statements that need
+     * generated-key retrieval or explicit column-name returns, call [initStatement]
+     * directly so they bypass the cache.
+     *
+     * The default falls back to [initStatement] (no caching) for [Connection]
+     * implementations that have not opted into the cache.
+     */
+    fun acquirePreparedStatement(sql: String): Statement = initStatement(sql, false, null)
 
     /** Creates a callable statement for invoking stored procedures. */
     fun prepareCall(sql: String): CallableStatement

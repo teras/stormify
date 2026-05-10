@@ -391,6 +391,12 @@ static int my_exec_direct(kdbc_conn *conn, const char *sql) {
  * ======================================================================== */
 
 static int my_set_autocommit(kdbc_conn *conn, int enabled) {
+    /* Not reached in normal operation: the deferred-BEGIN opt-in (vt->begin_tx
+     * below) makes kdbc_core handle setAutoCommit entirely via conn->begin_pending,
+     * never delegating here. The MariaDB connection stays in server-side
+     * autocommit=1 the entire time; explicit START TRANSACTION / COMMIT /
+     * ROLLBACK frame each transaction. Kept as a defensive fallback for any
+     * code path that bypasses the core helpers. */
     MYSQL *mysql = (MYSQL *)conn->native;
     if (p_autocommit(mysql, enabled ? 1 : 0)) {
         CONN_ERR_V(conn, p_sqlstate(mysql), (int)p_errno_(mysql),
@@ -398,6 +404,19 @@ static int my_set_autocommit(kdbc_conn *conn, int enabled) {
         return KDBC_ERROR;
     }
     return KDBC_OK;
+}
+
+/* Opt-in to deferred-BEGIN: kdbc_set_autocommit(false) flips conn->begin_pending
+ * instead of round-tripping `SET autocommit=0`; the next execute path calls
+ * kdbc_flush_pending_begin which delegates here. We send `START TRANSACTION`
+ * (not `SET autocommit=0`) because we want the server to keep autocommit=1 on
+ * — saves the eventual `SET autocommit=1` round-trip when the user calls
+ * setAutoCommit(true) at the end of the transaction. libmariadb has no
+ * pipelining (mysql_real_query is request/response), so this is a solo wire
+ * round-trip; the saving comes from eliminating the pair of SET autocommit
+ * round-trips, not from bundling. */
+static int my_begin_tx(kdbc_conn *conn) {
+    return my_exec_direct(conn, "START TRANSACTION");
 }
 
 static int my_commit_tx(kdbc_conn *conn) {
@@ -767,6 +786,13 @@ static int my_rs_get_time(kdbc_result *rs, int col,
 static int my_execute_update(kdbc_stmt *stmt) {
     my_stmt_data *sd = (my_stmt_data *)stmt->native;
 
+    /* Land any deferred BEGIN before the user's DML — START TRANSACTION
+     * goes solo (libmariadb has no pipelining). */
+    if (kdbc_flush_pending_begin(stmt->conn) != KDBC_OK) {
+        snprintf(stmt->error, KDBC_ERR_SIZE, "%s", stmt->conn->error);
+        return KDBC_ERROR;
+    }
+
     /* Direct-exec path: DDL that MySQL doesn't accept via PS protocol. */
     if (sd->direct_sql) {
         if (p_query(sd->mysql, sd->direct_sql)) {
@@ -804,6 +830,11 @@ static int my_execute_update(kdbc_stmt *stmt) {
 static void *my_execute_query(kdbc_stmt *stmt, int *out_col_count,
                               char *err, size_t err_size) {
     my_stmt_data *sd = (my_stmt_data *)stmt->native;
+
+    if (kdbc_flush_pending_begin(stmt->conn) != KDBC_OK) {
+        snprintf(err, err_size, "%s", stmt->conn->error);
+        return NULL;
+    }
 
     if (sd->param_count > 0) {
         if (p_stmt_bind_param(sd->stmt, sd->bind_params)) {
@@ -1470,6 +1501,7 @@ static const kdbc_driver_vtable mariadb_vtable = {
     .set_autocommit     = my_set_autocommit,
     .commit             = my_commit_tx,
     .rollback           = my_rollback_tx,
+    .begin_tx           = my_begin_tx,
     .get_product_name   = my_get_product_name,
     .get_product_version = my_get_product_version,
     .get_major_version  = my_get_major_version,
@@ -1489,6 +1521,7 @@ static const kdbc_driver_vtable mariadb_vtable = {
     .execute_update     = my_execute_update,
     .execute_query      = my_execute_query,
     .get_generated_key  = my_get_gen_key,
+    .execute_batch      = NULL,
     .rs_next            = my_rs_next,
     .rs_col_name        = my_rs_col_name,
     .rs_col_label       = NULL,

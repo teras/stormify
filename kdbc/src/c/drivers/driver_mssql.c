@@ -73,6 +73,18 @@ typedef RETCODE      (*fn_dbdatecrack)(DBPROCESS *, DBDATEREC *, DBDATETIME *);
 typedef RETCODE      (*fn_dbanydatecrack)(DBPROCESS *, DBDATEREC2 *, int, const void *);
 typedef int          (*fn_dbtds)(DBPROCESS *);
 
+/* Bulk-copy (bcp_*) — TDS-native bulk INSERT path. Bypasses sp_executesql
+ * entirely: bcp streams rows directly into a target table. Available since the
+ * earliest FreeTDS db-lib releases. Loaded best-effort; absence falls the
+ * batch path back to the sp_executesql per-row sender. */
+typedef RETCODE      (*fn_bcp_init)(DBPROCESS *, const char *, const char *,
+                                    const char *, int);
+typedef RETCODE      (*fn_bcp_bind)(DBPROCESS *, BYTE *, int, DBINT, BYTE *,
+                                    int, int, int);
+typedef RETCODE      (*fn_bcp_sendrow)(DBPROCESS *);
+typedef DBINT        (*fn_bcp_batch)(DBPROCESS *);
+typedef DBINT        (*fn_bcp_done)(DBPROCESS *);
+
 /* ========================================================================
  * Loaded function pointers
  * ======================================================================== */
@@ -116,6 +128,13 @@ static fn_dbsetopt      p_dbsetopt;
 static fn_dbdatecrack   p_dbdatecrack;
 static fn_dbanydatecrack p_dbanydatecrack;
 static fn_dbtds         p_dbtds;
+
+/* bcp_* — optional. NULL if FreeTDS was built without bulk-copy support. */
+static fn_bcp_init      p_bcp_init;
+static fn_bcp_bind      p_bcp_bind;
+static fn_bcp_sendrow   p_bcp_sendrow;
+static fn_bcp_batch     p_bcp_batch;
+static fn_bcp_done      p_bcp_done;
 
 /* Thread-local buffer where message handlers stash the last server error
  * along with its numeric `msgno` (used as the kdbc errcode). FreeTDS db-lib
@@ -224,6 +243,15 @@ static int tds_load(void) {
     /* dbanydatecrack is optional (added in later FreeTDS for DATETIMEOFFSET). */
     p_dbanydatecrack = kdbc_dl_sym(lib_handle, "dbanydatecrack");
     DB_LOAD(p_dbtds,         "dbtds");
+
+    /* bcp_* — best-effort. FreeTDS builds with bulk-copy support are universal in
+     * practice but the symbols are loaded optionally so we degrade gracefully on
+     * stripped builds. tds_bcp_available() gates the batch fast path. */
+    p_bcp_init    = kdbc_dl_sym(lib_handle, "bcp_init");
+    p_bcp_bind    = kdbc_dl_sym(lib_handle, "bcp_bind");
+    p_bcp_sendrow = kdbc_dl_sym(lib_handle, "bcp_sendrow");
+    p_bcp_batch   = kdbc_dl_sym(lib_handle, "bcp_batch");
+    p_bcp_done    = kdbc_dl_sym(lib_handle, "bcp_done");
 
     if (p_dbinit() == FAIL) {
         kdbc_dl_close(lib_handle);
@@ -499,6 +527,21 @@ typedef struct {
     char      *sql;           /* SQL with ? placeholders (possibly with OUTPUT INSERTED) */
     int        param_count;
     tds_param *params;
+    /*
+     * Server-side prepared-statement handle returned by sp_prepare. Filled lazily
+     * on first execute (because parameter types — needed for the @params declaration
+     * — are not known until the first bind cycle completes). 0 means "not prepared
+     * yet". Released with sp_unprepare on stmt close.
+     *
+     * With this handle, subsequent executes call sp_execute @h, @p0, @p1, ...
+     * which sends ~100 bytes of params per call instead of the ~400 bytes of
+     * full SQL + @params declaration sent by the legacy sp_executesql path.
+     */
+    int        prepared_handle;
+    /* Cached, normalized SQL text used by sp_prepare. Owned. */
+    char      *prepared_sql;
+    /* Cached @params declaration string used by sp_prepare. Owned. */
+    char      *prepared_params_decl;
 } tds_stmt_data;
 
 static void tds_param_reset(tds_param *p) {
@@ -586,11 +629,19 @@ static void *tds_prepare_fn(kdbc_conn *conn, const char *native_sql,
     return sd;
 }
 
+static void tds_send_sp_unprepare(tds_stmt_data *sd);
+
 static void tds_stmt_close_fn(void *native_stmt, void *native_conn) {
     (void)native_conn;
     tds_stmt_data *sd = (tds_stmt_data *)native_stmt;
     if (!sd) return;
+    /* Best-effort: tell the server to drop the prepared plan. Errors swallowed
+     * because the connection may already be broken (in which case the server
+     * has already cleaned up). */
+    if (sd->prepared_handle != 0 && sd->tc) tds_send_sp_unprepare(sd);
     free(sd->sql);
+    free(sd->prepared_sql);
+    free(sd->prepared_params_decl);
     if (sd->params) {
         for (int i = 0; i < sd->param_count; i++) free(sd->params[i].bytes);
         free(sd->params);
@@ -752,19 +803,26 @@ static int tds_bind_time(kdbc_stmt *stmt, int idx,
  * ======================================================================== */
 
 /* Translate SQL with `?` placeholders into `@p1`, `@p2`, ... form so that
- * sp_executesql's inner statement references the named parameters. Uses the
- * shared sql_scan_char state machine so it respects single-quoted strings
- * (including escaped `''`), double-quoted identifiers (with QUOTED_IDENTIFIER
- * ON), `-- line comments`, and C-style block comments.
+ * sp_executesql / sp_execute's inner statement references the named parameters.
+ * Uses the shared sql_scan_char state machine so it respects single-quoted
+ * strings (including escaped `''`), double-quoted identifiers, `-- line
+ * comments`, and C-style block comments.
  *
- * NULL params are inlined as literal `NULL` rather than declared in the
- * @params list: sp_executesql requires a concrete type for each declared
- * parameter, but we cannot know the column's actual type from the Kotlin-side
- * bind_null call. Inlining `NULL` lets MSSQL resolve the type from context
- * (column, expression operand, etc.), avoiding spurious implicit-cast errors
- * like "Implicit conversion from nvarchar to varbinary(max) is not allowed". */
-static char *tds_translate_placeholders(const char *sql, tds_param *params,
-                                        int param_count) {
+ * Two modes (selected by [inline_nulls]):
+ *
+ *  - inline_nulls=1 (legacy sp_executesql path): NULL bindings are inlined as
+ *    literal `NULL` instead of being declared in the @params list. This lets
+ *    MSSQL resolve the type from context — useful when sp_executesql can't
+ *    figure out implicit conversions (the documented NVARCHAR→VARBINARY case).
+ *
+ *  - inline_nulls=0 (sp_prepare path): every `?` becomes an explicit @pN. The
+ *    @params declaration covers every slot with a concrete type, so NULL
+ *    values are passed via dbrpcparam with datalen=-1 and the server uses the
+ *    declared type. Required because sp_prepare bakes the SQL once — we cannot
+ *    rewrite `?` per execute based on which slot happens to be NULL this time.
+ */
+static char *tds_translate_placeholders_ex(const char *sql, tds_param *params,
+                                           int param_count, int inline_nulls) {
     size_t src_len = strlen(sql);
     size_t cap = src_len * 6 + 16;
     char *dst = (char *)malloc(cap);
@@ -789,7 +847,7 @@ static char *tds_translate_placeholders(const char *sql, tds_param *params,
             }
             if (live && *q == '?') {
                 param_idx++;
-                if (param_idx <= param_count && params[param_idx - 1].is_null) {
+                if (inline_nulls && param_idx <= param_count && params[param_idx - 1].is_null) {
                     memcpy(dst + di, "NULL", 4);
                     di += 4;
                 } else {
@@ -804,6 +862,12 @@ static char *tds_translate_placeholders(const char *sql, tds_param *params,
     }
     dst[di] = '\0';
     return dst;
+}
+
+/* Backwards-compatible wrapper around the original sp_executesql translator. */
+static char *tds_translate_placeholders(const char *sql, tds_param *params,
+                                        int param_count) {
+    return tds_translate_placeholders_ex(sql, params, param_count, 1 /* inline NULLs */);
 }
 
 /* Build the @params declaration string like "@p1 INT, @p2 NVARCHAR(4000)".
@@ -833,6 +897,309 @@ static char *tds_build_params_decl(tds_stmt_data *sd) {
     return decl;
 }
 
+/* Build a @params declaration that covers EVERY parameter slot (no skipping
+ * NULLs). Used by the sp_prepare path where the SQL is baked once and every
+ * placeholder must have a declared type. Slots that are NULL on first execute
+ * default to NVARCHAR(MAX); callers can avoid the documented VARBINARY/NULL
+ * coercion failure by binding ByteArray(0) instead of null. */
+static char *tds_build_params_decl_all(tds_stmt_data *sd) {
+    size_t cap = (size_t)sd->param_count * 48 + 16;
+    char *decl = (char *)malloc(cap);
+    if (!decl) return NULL;
+    size_t di = 0;
+    for (int i = 0; i < sd->param_count; i++) {
+        if (i > 0) { decl[di++] = ','; decl[di++] = ' '; }
+        const char *t = sd->params[i].decl_type ? sd->params[i].decl_type : "NVARCHAR(MAX)";
+        int n = snprintf(decl + di, cap - di, "@p%d %s", i + 1, t);
+        di += n;
+        if (di + 64 >= cap) {
+            cap *= 2;
+            char *new_decl = realloc(decl, cap);
+            if (!new_decl) { free(decl); return NULL; }
+            decl = new_decl;
+        }
+    }
+    decl[di] = '\0';
+    return decl;
+}
+
+/*
+ * Build (or rebuild, if param types changed) the cached SQL and @params
+ * declaration used by sp_prepare. Called on first execute (sd->prepared_handle
+ * == 0) or when [tds_unprepare] has reset the cache.
+ *
+ * The cached strings are owned by sd and freed in tds_stmt_close_fn or by a
+ * subsequent re-prepare.
+ */
+static int tds_build_prepared_strings(tds_stmt_data *sd) {
+    free(sd->prepared_sql);
+    free(sd->prepared_params_decl);
+    sd->prepared_sql = tds_translate_placeholders_ex(sd->sql, sd->params,
+                                                     sd->param_count, 0 /* no NULL inline */);
+    sd->prepared_params_decl = tds_build_params_decl_all(sd);
+    if (!sd->prepared_sql || !sd->prepared_params_decl) {
+        free(sd->prepared_sql);    sd->prepared_sql = NULL;
+        free(sd->prepared_params_decl); sd->prepared_params_decl = NULL;
+        return KDBC_ERROR;
+    }
+    return KDBC_OK;
+}
+
+/*
+ * Issue sp_prepare on the server, parsing back the OUT @handle. Cache the
+ * resulting handle on sd. Subsequent executes go through sp_execute with the
+ * cached handle, sending only the param values (not the SQL text) over the
+ * wire — matches what mssql-jdbc does by default and what the other four
+ * kdbc drivers (PG/MariaDB/Oracle/SQLite) have always done via their native
+ * prepare/execute split.
+ */
+static int tds_send_sp_prepare(tds_stmt_data *sd, char *err, size_t err_size) {
+    DBPROCESS *dbproc = sd->tc->dbproc;
+    g_last_msg[0] = '\0'; g_last_msgno = 0;
+
+    if (tds_build_prepared_strings(sd) != KDBC_OK) {
+        snprintf(err, err_size, "MSSQL: failed to build prepare SQL");
+        return KDBC_ERROR;
+    }
+
+    if (p_dbrpcinit(dbproc, "sp_prepare", 0) == FAIL) {
+        snprintf(err, err_size, "MSSQL dbrpcinit sp_prepare: %s",
+                 g_last_msg[0] ? g_last_msg : "failed");
+        return KDBC_ERROR;
+    }
+
+    /* Arg 1: @handle INT OUTPUT — server fills in the handle. */
+    int handle = 0;
+    if (p_dbrpcparam(dbproc, "@handle", DBRPCRETURN, SYBINT4, -1, sizeof(handle),
+                     (BYTE *)&handle) == FAIL) {
+        snprintf(err, err_size, "MSSQL dbrpcparam @handle: %s",
+                 g_last_msg[0] ? g_last_msg : "failed");
+        return KDBC_ERROR;
+    }
+
+    /* Arg 2: @params declaration. */
+    {
+        int dlen = (int)strlen(sd->prepared_params_decl);
+        const char *buf = dlen > 0 ? sd->prepared_params_decl : " ";
+        if (dlen == 0) dlen = 1;
+        if (p_dbrpcparam(dbproc, "@params", 0, SYBVARCHAR, -1, dlen,
+                         (BYTE *)buf) == FAIL) {
+            snprintf(err, err_size, "MSSQL dbrpcparam @params: %s",
+                     g_last_msg[0] ? g_last_msg : "failed");
+            return KDBC_ERROR;
+        }
+    }
+
+    /* Arg 3: @stmt — the prepared SQL. */
+    {
+        int slen = (int)strlen(sd->prepared_sql);
+        int type = (slen <= 4000) ? SYBVARCHAR : SYBNTEXT;
+        if (p_dbrpcparam(dbproc, "@stmt", 0, type, -1, slen,
+                         (BYTE *)sd->prepared_sql) == FAIL) {
+            snprintf(err, err_size, "MSSQL dbrpcparam @stmt: %s",
+                     g_last_msg[0] ? g_last_msg : "failed");
+            return KDBC_ERROR;
+        }
+    }
+
+    if (p_dbrpcsend(dbproc) == FAIL) {
+        snprintf(err, err_size, "MSSQL dbrpcsend sp_prepare: %s",
+                 g_last_msg[0] ? g_last_msg : "failed");
+        return KDBC_ERROR;
+    }
+    if (p_dbsqlok(dbproc) == FAIL) {
+        snprintf(err, err_size, "MSSQL dbsqlok sp_prepare: %s",
+                 g_last_msg[0] ? g_last_msg : "failed");
+        return KDBC_ERROR;
+    }
+
+    /* Drain any result sets (sp_prepare returns none, but be defensive). */
+    while (p_dbresults(dbproc) != NO_MORE_RESULTS) {
+        while (p_dbnextrow(dbproc) != NO_MORE_ROWS) { /* skip */ }
+    }
+
+    /* Read back the OUT handle. dbnumrets returns the number of "return" parameters
+     * (excluding the procedure's RETURN_VALUE). We look for the OUT named @handle. */
+    int n = p_dbnumrets(dbproc);
+    int found = 0;
+    for (int i = 1; i <= n; i++) {
+        const char *name = p_dbretname(dbproc, i);
+        if (!name) continue;
+        if (strcasecmp(name, "@handle") != 0 && strcasecmp(name, "handle") != 0) continue;
+        BYTE *data = p_dbretdata(dbproc, i);
+        int dlen = p_dbretlen(dbproc, i);
+        int type = p_dbrettype(dbproc, i);
+        if (data && dlen >= (int)sizeof(int) && type == SYBINT4) {
+            memcpy(&handle, data, sizeof(int));
+            found = 1;
+            break;
+        }
+    }
+    if (!found || handle <= 0) {
+        /* Some FreeTDS versions surface OUT params unnamed — fall back to scanning
+         * for the first SYBINT4 return value. */
+        for (int i = 1; i <= n; i++) {
+            BYTE *data = p_dbretdata(dbproc, i);
+            int dlen = p_dbretlen(dbproc, i);
+            int type = p_dbrettype(dbproc, i);
+            if (data && dlen >= (int)sizeof(int) && type == SYBINT4) {
+                memcpy(&handle, data, sizeof(int));
+                if (handle > 0) { found = 1; break; }
+            }
+        }
+    }
+    if (!found || handle <= 0) {
+        snprintf(err, err_size, "MSSQL sp_prepare: did not return a valid handle");
+        return KDBC_ERROR;
+    }
+    sd->prepared_handle = handle;
+    return KDBC_OK;
+}
+
+/* Tell the server to drop the prepared plan. Best-effort: errors are swallowed
+ * because the connection may have been broken between prepare and close, in
+ * which case the server already cleaned up. */
+static void tds_send_sp_unprepare(tds_stmt_data *sd) {
+    if (!sd || sd->prepared_handle == 0 || !sd->tc) return;
+    DBPROCESS *dbproc = sd->tc->dbproc;
+    if (!dbproc) return;
+    int handle = sd->prepared_handle;
+    sd->prepared_handle = 0;
+    if (p_dbrpcinit(dbproc, "sp_unprepare", 0) == FAIL) return;
+    if (p_dbrpcparam(dbproc, "@handle", 0, SYBINT4, -1, sizeof(handle),
+                     (BYTE *)&handle) == FAIL) return;
+    if (p_dbrpcsend(dbproc) == FAIL) return;
+    if (p_dbsqlok(dbproc) == FAIL) return;
+    while (p_dbresults(dbproc) != NO_MORE_RESULTS) {
+        while (p_dbnextrow(dbproc) != NO_MORE_ROWS) { /* skip */ }
+    }
+}
+
+/*
+ * Send the user-bound parameters as @p1, @p2, ... arguments to either
+ * sp_executesql (legacy path) or sp_execute (server-side prepared path). The
+ * dbrpcinit call happens in the caller — this function only emits the user
+ * params, with NULL-handling driven by `null_via_datalen`:
+ *
+ *   - sp_executesql path: NULL params already inlined into @stmt; skip them
+ *     here so we don't emit a typeless @pN that the server would reject.
+ *   - sp_execute path: every @pN must be sent (the SQL text is fixed); NULL
+ *     is conveyed by datalen=-1 in dbrpcparam. The declared type lives on the
+ *     server-side prepared plan.
+ */
+static int tds_send_user_params(tds_stmt_data *sd, int null_via_datalen,
+                                char *err, size_t err_size) {
+    DBPROCESS *dbproc = sd->tc->dbproc;
+    for (int i = 0; i < sd->param_count; i++) {
+        tds_param *p = &sd->params[i];
+        if (p->is_null && !null_via_datalen) continue;
+
+        char name[12];
+        snprintf(name, sizeof(name), "@p%d", i + 1);
+
+        DBINT  maxlen = -1;
+        DBINT  datalen;
+        BYTE  *value;
+
+        if (p->is_null) {
+            /* db-lib NULL signal: value pointer NULL with datalen=0. Passing
+             * datalen=-1 here would trip dblib error 20113 for SYBCHAR /
+             * SYBVARCHAR / SYBBINARY / SYBVARBINARY (variable-length types
+             * require a non-negative datalen even when value is NULL). */
+            value = NULL;
+            datalen = 0;
+            maxlen = -1;
+        } else {
+            switch (p->sybtype) {
+                case SYBINT4:
+                    value = (BYTE *)&p->num.i32; datalen = 4;
+                    break;
+                case SYBINT8:
+                    value = (BYTE *)&p->num.i64; datalen = 8;
+                    break;
+                case SYBFLT8:
+                    value = (BYTE *)&p->num.dbl; datalen = 8;
+                    break;
+                case SYBVARCHAR:
+                    value = p->bytes_len > 0 ? (BYTE *)p->bytes : (BYTE *)"";
+                    datalen = p->bytes_len;
+                    break;
+                case SYBNTEXT:
+                case SYBIMAGE:
+                    maxlen = 0;
+                    value = p->bytes_len > 0 ? (BYTE *)p->bytes : (BYTE *)"";
+                    datalen = p->bytes_len;
+                    break;
+                default:
+                    snprintf(err, err_size, "MSSQL: unsupported param type %d", p->sybtype);
+                    return KDBC_ERROR;
+            }
+        }
+
+        if (p_dbrpcparam(dbproc, name, 0, p->sybtype, maxlen, datalen, value) == FAIL) {
+            snprintf(err, err_size, "MSSQL dbrpcparam %s: %s", name,
+                     g_last_msg[0] ? g_last_msg : "failed");
+            return KDBC_ERROR;
+        }
+    }
+    return KDBC_OK;
+}
+
+/*
+ * Eligibility for the sp_prepare/sp_execute fast path.
+ *
+ * Returns 1 when every parameter slot has either a non-null bound value (with
+ * implicit type from p->sybtype + p->decl_type) or a previously-recorded
+ * decl_type. Returns 0 when at least one slot is bound NULL with no type
+ * recorded — we can't generate a meaningful @params declaration in that case
+ * and must fall back to the sp_executesql path which can inline the NULL.
+ */
+static int tds_can_use_sp_prepare(tds_stmt_data *sd) {
+    for (int i = 0; i < sd->param_count; i++) {
+        if (sd->params[i].is_null && sd->params[i].decl_type == NULL)
+            return 0;
+    }
+    return 1;
+}
+
+/*
+ * sp_execute @handle, @p0, @p1, ... — once the statement has been prepared
+ * server-side, subsequent executes flow through this path and only send param
+ * values over the wire (no SQL text). Mirrors what mssql-jdbc and ojdbc do
+ * for repeated executes of the same SQL.
+ */
+static int tds_send_via_sp_execute(tds_stmt_data *sd, char *err, size_t err_size) {
+    DBPROCESS *dbproc = sd->tc->dbproc;
+
+    if (p_dbrpcinit(dbproc, "sp_execute", 0) == FAIL) {
+        snprintf(err, err_size, "MSSQL dbrpcinit sp_execute: %s",
+                 g_last_msg[0] ? g_last_msg : "failed");
+        return KDBC_ERROR;
+    }
+    /* Arg 1: @handle (input). */
+    if (p_dbrpcparam(dbproc, "@handle", 0, SYBINT4, -1, sizeof(int),
+                     (BYTE *)&sd->prepared_handle) == FAIL) {
+        snprintf(err, err_size, "MSSQL dbrpcparam @handle: %s",
+                 g_last_msg[0] ? g_last_msg : "failed");
+        return KDBC_ERROR;
+    }
+    /* Args 2..N+1: user params, NULL via datalen=-1 (server uses declared type). */
+    if (tds_send_user_params(sd, 1 /* null_via_datalen */, err, err_size) != KDBC_OK)
+        return KDBC_ERROR;
+
+    if (p_dbrpcsend(dbproc) == FAIL) {
+        snprintf(err, err_size, "MSSQL dbrpcsend sp_execute: %s",
+                 g_last_msg[0] ? g_last_msg : "failed");
+        return KDBC_ERROR;
+    }
+    if (p_dbsqlok(dbproc) == FAIL) {
+        snprintf(err, err_size, "MSSQL dbsqlok sp_execute: %s",
+                 g_last_msg[0] ? g_last_msg : "failed");
+        return KDBC_ERROR;
+    }
+    return KDBC_OK;
+}
+
 static int tds_send_execute(tds_stmt_data *sd, char *err, size_t err_size) {
     DBPROCESS *dbproc = sd->tc->dbproc;
     g_last_msg[0] = '\0';
@@ -854,13 +1221,28 @@ static int tds_send_execute(tds_stmt_data *sd, char *err, size_t err_size) {
         return KDBC_OK;
     }
 
-    /* Parameterized path: build sp_executesql RPC. */
+    /*
+     * Server-side prepared path (matches the other 4 kdbc drivers and what
+     * mssql-jdbc does by default). We lazily prepare on first execute because
+     * parameter types — needed for the @params declaration — are only known
+     * once bind_* has been called.
+     */
+    if (tds_can_use_sp_prepare(sd)) {
+        if (sd->prepared_handle == 0) {
+            if (tds_send_sp_prepare(sd, err, err_size) != KDBC_OK)
+                return KDBC_ERROR;
+        }
+        return tds_send_via_sp_execute(sd, err, err_size);
+    }
+
+    /*
+     * Legacy sp_executesql fallback for the case where at least one bound NULL
+     * has no type hint — we inline NULL into the SQL text so the server picks
+     * the type from context. (See tds_translate_placeholders comment.)
+     */
     char *translated_sql = tds_translate_placeholders(sd->sql, sd->params, sd->param_count);
     if (!translated_sql) { snprintf(err, err_size, "Out of memory"); return KDBC_ERROR; }
 
-    /* If every parameter was NULL, the inlined SQL has no placeholders left.
-     * sp_executesql still works with an empty @params, but we can also fall
-     * back to a plain language batch which avoids an unnecessary RPC. */
     int non_null_count = 0;
     for (int i = 0; i < sd->param_count; i++)
         if (!sd->params[i].is_null) non_null_count++;
@@ -1578,6 +1960,17 @@ static const kdbc_driver_vtable mssql_vtable = {
     .execute_update         = tds_execute_update,
     .execute_query          = tds_execute_query,
     .get_generated_key      = tds_get_generated_key,
+    /* No native batch path. db-lib forces a request/response sync per RPC
+     * (dbrpcsend + dbsqlok), so we cannot pipeline sp_execute calls.
+     * mssql-jdbc beats us on large batches because it writes raw TDS:
+     * one PKT_RPC request carrying many sp_execute frames separated by the
+     * 0x80 BatchFlag delimiter (MS-TDS §2.2.6.6 RPCRequest), so 100k rows
+     * cost one round-trip instead of 100k. Replicating that needs a hand-
+     * written TDS writer (bypassing db-lib) — large effort, deferred.
+     * useBulkCopyForBatchInsert / bcp_* is a different beast: PKT_BULKLOAD
+     * (0x07) skips triggers and CHECK/FK constraints by default, so it
+     * belongs behind an explicit bulkLoad() API, not this path. */
+    .execute_batch          = NULL,
     .rs_next                = tds_rs_next,
     .rs_col_name            = tds_rs_col_name,
     /* SQL Server returns the alias (e.g. "SELECT x AS y" → "y") via dbcolname,

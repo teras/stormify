@@ -105,6 +105,16 @@ class TableInfo<T : Any> internal constructor(
         for (prop in props) prop.setter(entity, value, stormify)
     }
 
+    /**
+     * Returns the resolved setter lambdas for the column [dbName], pre-keyed by the
+     * lowercased label. Empty list = no matching field on this entity (caller decides
+     * the unmatched-column policy). Used by [Stormify]'s populate hot path to cache the
+     * setter dispatch per-ResultSet so that the per-row inner loop avoids the
+     * `dbName.lowercase()` allocation and `fieldByDbName` HashMap lookup on every cell.
+     */
+    internal fun settersForColumn(dbName: String): List<ResolvedProperty<T>> =
+        fieldByDbName[dbName.lowercase()] ?: emptyList()
+
     // ID operations (cached lists — avoid allocation on every call)
     internal val idDbNames = idProps.map { it.dbName }
     internal val idTypes = idProps.map { it.type }

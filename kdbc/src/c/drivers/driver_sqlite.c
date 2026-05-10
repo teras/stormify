@@ -677,6 +677,7 @@ static const kdbc_driver_vtable sqlite_vtable = {
     .execute_update     = sq_execute_update,
     .execute_query      = sq_execute_query,
     .get_generated_key  = sq_get_generated_key,
+    .execute_batch      = NULL,
     .rs_next            = sq_rs_next,
     .rs_col_name        = sq_rs_col_name,
     .rs_col_label       = NULL, /* SQLite: col_name == col_label */

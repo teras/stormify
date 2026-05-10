@@ -59,6 +59,7 @@ local.properties
 
 ### C build artifacts (kdbc) ###
 kdbc/src/c/**/*.o
+kdbc/src/c/**/*.d
 kdbc/src/c/libkdbc.a
 kdbc/src/c/libkdbc.so
 kdbc/src/c/libkdbc.dll

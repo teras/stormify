@@ -119,7 +119,9 @@ class NativeKdbcDataSource internal constructor(
     private val nativeUrl: String,
     private val user: String?,
     private val password: String?,
-    private val initSql: String? = null
+    private val initSql: String? = null,
+    /** Per-connection prepared-statement cache size. 0 disables caching. */
+    private val statementCacheSize: Int = 64,
 ) : DataSource {
 
     init {
@@ -141,7 +143,7 @@ class NativeKdbcDataSource internal constructor(
         if (conn == null) {
             throw kdbcConnException(null, "Failed to connect to $kind ($nativeUrl): ${connError(null, "unknown error")}")
         }
-        return NativeConnection(conn, kind).runInitSql(initSql)
+        return NativeConnection(conn, kind, statementCacheSize).runInitSql(initSql)
     }
 }
 
@@ -150,8 +152,10 @@ class NativeKdbcDataSource internal constructor(
  */
 private class NativeConnection(
     private val handle: CPointer<kdbc_conn>,
-    private val kind: KdbcDriverKind
+    private val kind: KdbcDriverKind,
+    statementCacheSize: Int = 64,
 ) : NativeKdbcConnection {
+    private val psCache = StatementCache(statementCacheSize)
     // kotlin.concurrent.Volatile (multiplatform) ensures that [cancel], which is
     // explicitly designed to be called from a thread other than the one using the
     // connection, observes a close() that happened on the owning thread. Without
@@ -178,6 +182,11 @@ private class NativeConnection(
         if (stmt == null)
             throw kdbcConnException(handle, "Failed to prepare statement: ${connError(handle, "prepare failed")}\nSQL: $sql")
         return NativeStatement(stmt, handle)
+    }
+
+    override fun acquirePreparedStatement(sql: String): Statement {
+        ensureOpen()
+        return psCache.acquire(this, sql)
     }
 
     private fun prepareReturning(sql: String, columnNames: Array<String>?): CPointer<kdbc_stmt>? {
@@ -258,6 +267,8 @@ private class NativeConnection(
     override fun close() {
         if (closed) return
         closed = true
+        // Release every cached prepared statement before the underlying handle goes away.
+        runCatching { psCache.closeAll() }
         kdbc_close(handle)
     }
 
@@ -325,6 +336,14 @@ private open class NativeStatement(
         // Negatives clamp to 0 (eager) so an over/underflow never accidentally
         // enables streaming via the driver's positive-value gate.
         kdbc_set_fetch_size(handle, if (rows < 0) 0 else rows)
+    }
+
+    override fun reset() {
+        ensureOpen()
+        // kdbc_stmt_reset clears bound params and any pending batch slots while
+        // preserving the underlying server-side prepare. Used by the Stormify-level
+        // PreparedStatement cache to reuse this statement for the next execute.
+        kdbc_stmt_reset(handle)
     }
 
     override fun close() {

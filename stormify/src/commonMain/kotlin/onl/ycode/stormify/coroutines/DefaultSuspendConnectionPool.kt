@@ -123,6 +123,12 @@ internal class DefaultSuspendConnectionPool(
             }
             success = true
             return result
+        } catch (e: HealthyConnectionException) {
+            // Caller (typically SuspendStormify after a clean rollback) explicitly told
+            // us the connection is fine. Keep it in the pool; surface the real cause.
+            success = true
+            @Suppress("UNCHECKED_CAST")
+            throw (e.cause ?: e)
         } finally {
             releaseEntry(entry, success)
         }

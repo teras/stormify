@@ -411,7 +411,14 @@ enum class SqlDialect(
         fetchGeneratedKeys: Boolean,
         pkColumn: String?
     ): onl.ycode.kdbc.Statement =
-        if (!fetchGeneratedKeys) conn.initStatement(query, false, null)
+        // Non-generated-keys path goes through the connection's PreparedStatement cache
+        // so that batched INSERTs across chunks (e.g. 100k rows split into 20 chunks of 5000)
+        // share a single server-side prepare. Without this, drivers that do server-side
+        // prepare (PG/MariaDB/Oracle/MSSQL via sp_prepare) pay a fresh prepare+release
+        // round-trip per chunk — death by a thousand cuts on bulk inserts. The cache
+        // returns the same Statement instance keyed on SQL; close() releases back to pool
+        // and resets parameter state for the next acquire.
+        if (!fetchGeneratedKeys) conn.acquirePreparedStatement(query)
         else when (generatedKeyRetrieval) {
             GeneratedKeyRetrieval.BY_NAME -> conn.initStatement(query, false, arrayOf(pkColumn ?: ""))
             GeneratedKeyRetrieval.BY_INDEX -> conn.initStatement(query, true, null)

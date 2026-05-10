@@ -36,9 +36,11 @@ import kotlin.reflect.KClass
  */
 class AndroidDataSource(
     private val db: SQLiteDatabase,
-    private val initSql: String? = null
+    private val initSql: String? = null,
+    /** Per-connection prepared-statement cache size. 0 disables caching. */
+    private val statementCacheSize: Int = 64,
 ) : DataSource {
-    override fun getConnection(): Connection = AndroidConnection(db).runInitSql(initSql)
+    override fun getConnection(): Connection = AndroidConnection(db, statementCacheSize).runInitSql(initSql)
 }
 
 /**
@@ -53,10 +55,14 @@ class AndroidDataSource(
  * because Android's `inTransaction()` does not distinguish between "we started it"
  * and "the caller had already begun one".
  */
-private class AndroidConnection(private val db: SQLiteDatabase) : Connection {
+private class AndroidConnection(
+    private val db: SQLiteDatabase,
+    statementCacheSize: Int = 64,
+) : Connection {
     private var inTx: Boolean = false
     private var txSuccess: Boolean = false
     private var savepointCounter: Int = 0
+    private val psCache = StatementCache(statementCacheSize)
 
     // cancel() is a no-op on Android, and SQLiteDatabase's ThreadLocal transaction
     // state MUST be unwound via endTransaction() on the begin thread — otherwise the
@@ -74,6 +80,8 @@ private class AndroidConnection(private val db: SQLiteDatabase) : Connection {
         returnGeneratedKeys: Boolean,
         columnNames: Array<String>?
     ): Statement = AndroidStatement(db, sql, returnGeneratedKeys)
+
+    override fun acquirePreparedStatement(sql: String): Statement = psCache.acquire(this, sql)
 
     override fun prepareCall(sql: String): CallableStatement {
         throw SQLException("Android SQLite does not support stored procedures (CALL): $sql")
@@ -141,7 +149,9 @@ private class AndroidConnection(private val db: SQLiteDatabase) : Connection {
 
     override fun close() {
         // Caller owns the SQLiteDatabase. We only need to make sure no transaction
-        // leaks if close() is called mid-transaction.
+        // leaks if close() is called mid-transaction, and that the prepared-statement
+        // cache releases its underlying handles before this connection wrapper goes away.
+        runCatching { psCache.closeAll() }
         if (inTx) {
             try {
                 db.endTransaction()
@@ -205,6 +215,11 @@ private class AndroidStatement(
     override fun addBatch() {
         batches.add(bindings.toMap())
         bindings.clear()
+    }
+
+    override fun reset() {
+        bindings.clear()
+        batches.clear()
     }
 
     override fun executeBatch(): IntArray {

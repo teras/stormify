@@ -145,6 +145,13 @@ private class JdbcStatement(
     override fun addBatch() = ensurePrepared().addBatch()
     override fun executeBatch(): IntArray = ensurePrepared().executeBatch()
 
+    override fun reset() {
+        preparedStatement?.let {
+            it.clearParameters()
+            try { it.clearBatch() } catch (_: Throwable) { /* not all drivers track an empty batch */ }
+        }
+    }
+
     override fun setFetchSize(rows: Int) {
         if (rows < 0 && rows != Integer.MIN_VALUE) return
         pendingFetchSize = rows
@@ -274,16 +281,23 @@ private class JdbcPgCallableStatement(
  */
 class JdbcDataSource(
     private val jdbc: javax.sql.DataSource,
-    private val initSql: String? = null
+    private val initSql: String? = null,
+    /** Per-connection prepared-statement cache size. 0 disables caching. */
+    private val statementCacheSize: Int = 64,
 ) : DataSource {
-    override fun getConnection(): Connection = JdbcConnection(jdbc.connection).runInitSql(initSql)
+    override fun getConnection(): Connection =
+        JdbcConnection(jdbc.connection, statementCacheSize).runInitSql(initSql)
 }
 
 // Wrapper class for Connection
-private class JdbcConnection(private val jdbc: java.sql.Connection) : Connection {
+private class JdbcConnection(
+    private val jdbc: java.sql.Connection,
+    statementCacheSize: Int,
+) : Connection {
     private val isPostgres by lazy {
         jdbc.metaData.databaseProductName.lowercase().contains("postgresql")
     }
+    private val psCache = StatementCache(statementCacheSize)
 
     override val metaData: DatabaseMetaData
         get() = JdbcDatabaseMetaData(jdbc.metaData)
@@ -291,6 +305,8 @@ private class JdbcConnection(private val jdbc: java.sql.Connection) : Connection
 
     override fun initStatement(sql: String, returnGeneratedKeys: Boolean, columnNames: Array<String>?): Statement =
         JdbcStatement(jdbc, sql, returnGeneratedKeys, columnNames)
+
+    override fun acquirePreparedStatement(sql: String): Statement = psCache.acquire(this, sql)
 
     override fun prepareCall(sql: String): CallableStatement =
         if (isPostgres) JdbcPgCallableStatement(jdbc, sql)
@@ -311,7 +327,11 @@ private class JdbcConnection(private val jdbc: java.sql.Connection) : Connection
     }
     override fun getAutoCommit(): Boolean = jdbc.autoCommit
 
-    override fun close() = jdbc.close()
+    override fun close() {
+        // Release all cached statements before the underlying connection goes away.
+        runCatching { psCache.closeAll() }
+        jdbc.close()
+    }
 }
 
 // Wrapper class for DatabaseMetaData

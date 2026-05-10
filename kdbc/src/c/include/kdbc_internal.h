@@ -104,6 +104,14 @@ struct kdbc_conn {
     const kdbc_driver_vtable *vt;
     void                *native;     /* driver-specific connection handle */
     int                  autocommit; /* 1 = autocommit on (default) */
+    /* Deferred-BEGIN flag — set by kdbc_set_autocommit(false) on drivers that
+     * opt into the optimisation via vt->begin_tx. The actual BEGIN/START
+     * TRANSACTION is delayed until the next execute, where the driver can
+     * either send it solo (via vt->begin_tx) or piggyback it on the user's
+     * statement using protocol-level pipelining (libpq pipeline mode).
+     * Drivers that don't opt in (vt->begin_tx == NULL) keep eager-BEGIN
+     * behaviour and never see this flag set. */
+    int                  begin_pending;
     char                 error[KDBC_ERR_SIZE];
     char                 sqlstate[6];   /* SQL-92 SQLSTATE, "" if driver does not provide */
     int                  errcode;       /* vendor-specific numeric code, 0 if none */
@@ -236,6 +244,16 @@ struct kdbc_driver_vtable {
     int (*commit)(kdbc_conn *conn);
     int (*rollback)(kdbc_conn *conn);
 
+    /* Optional. Drivers set this to opt into deferred-BEGIN: kdbc_set_autocommit
+     * stops calling set_autocommit and instead toggles conn->begin_pending. The
+     * driver is then expected to call kdbc_flush_pending_begin (or check the
+     * flag inline) at the start of every execute path so the BEGIN actually
+     * reaches the server before any DML. The fallback implementation here
+     * (when only this hook is provided) sends BEGIN as a solo round-trip;
+     * drivers with protocol-level pipelining can ignore this hook on the hot
+     * paths and bundle the BEGIN with the next statement themselves. */
+    int (*begin_tx)(kdbc_conn *conn);
+
     /* Metadata */
     void (*get_product_name)(void *native, char *buf, size_t buf_size);
     void (*get_product_version)(void *native, char *buf, size_t buf_size);
@@ -271,6 +289,21 @@ struct kdbc_driver_vtable {
     void *(*execute_query)(kdbc_stmt *stmt, int *out_col_count,
                            char *err, size_t err_size);
     int   (*get_generated_key)(kdbc_stmt *stmt, int64_t *out_key);
+
+    /*
+     * Optional batch-execute hook. NULL means "fall back to the per-row loop in
+     * kdbc_execute_batch (one synchronous execute_update per snapshot)". Drivers that
+     * can do better — Postgres pipeline mode, Oracle dpiStmt_executeMany, MariaDB
+     * STMT_ATTR_ARRAY_SIZE — set this to bundle all snapshot rows into a single
+     * round-trip (or as close as the wire protocol allows).
+     *
+     * Contract: the implementation reads stmt->batches[0..batch_count-1] (each is a
+     * kdbc_param[] of stmt->param_count slots), restores the parameters via the same
+     * vt->bind_* callbacks the loop would use, and dispatches them. On success it
+     * returns the SUM of affected-row counts and frees the batch storage with
+     * free_batches(stmt). On error it returns KDBC_ERROR after also freeing batches.
+     */
+    int   (*execute_batch)(kdbc_stmt *stmt);
 
     /* Result set */
     int         (*rs_next)(kdbc_result *rs);
@@ -542,6 +575,41 @@ static inline char *kdbc_translate_params_native(const char *sql) {
 
 /* Each driver file defines its vtable and registers here */
 extern const kdbc_driver_vtable *kdbc_drivers[KDBC_DRIVER_COUNT];
+
+/*
+ * Restore the parameter snapshot for a single batch row by replaying it through the
+ * connection's vt->bind_* callbacks. Drivers that implement vt->execute_batch (e.g.
+ * Postgres pipeline mode) call this once per row to rebuild the driver-side parameter
+ * state before dispatching. Returns KDBC_OK on success.
+ */
+int kdbc_apply_batch_row(kdbc_stmt *stmt, int batch_idx);
+
+/*
+ * Per-row fallback batch executor. Identical to the loop used by kdbc_execute_batch
+ * when vt->execute_batch is NULL. Exposed for drivers that do install a vt->execute_batch
+ * but want to delegate to the fallback at runtime when their fast path is unavailable
+ * (e.g. libpq lacking pipeline mode on older versions). Frees the batch storage on
+ * both success and failure paths exactly like the core.
+ */
+int kdbc_execute_batch_per_row(kdbc_stmt *stmt);
+
+/*
+ * Frees stmt->batches and resets the batch counters. Called automatically by
+ * kdbc_execute_batch and kdbc_stmt_reset; drivers that implement vt->execute_batch
+ * must call this themselves on every exit path.
+ */
+void free_batches(kdbc_stmt *stmt);
+
+/*
+ * Flushes a deferred BEGIN if the connection has one pending. No-op if the
+ * driver did not opt into deferred-BEGIN (vt->begin_tx == NULL) or if no
+ * BEGIN is pending. Drivers that opt in must call this at the start of every
+ * execute path that touches the server, except when they choose to bundle the
+ * BEGIN with the user statement themselves (e.g. PG pipeline mode). On
+ * success the flag is cleared; on failure the flag is left set so the caller
+ * propagates the error and the next execute can retry.
+ */
+int kdbc_flush_pending_begin(kdbc_conn *conn);
 
 /* Driver registration */
 void kdbc_register_driver(kdbc_driver id, const kdbc_driver_vtable *vt);
