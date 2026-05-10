@@ -4,5 +4,5 @@
 plugins {
     kotlin("multiplatform") version "2.2.21" apply false
     id("com.android.library") version "8.7.3" apply false
-    id("onl.ycode.stormify") version "2.5.2" apply false
+    id("onl.ycode.stormify") version "2.6.0" apply false
 }

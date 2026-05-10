@@ -141,12 +141,13 @@ else
     echo "Note: examples/ submodule is not initialized — skipped."
 fi
 
-# 9. Top-level tests/ aggregator pins the stormify Gradle plugin version in
-# build.gradle.kts (plugins block) and settings.gradle.kts (pluginManagement).
+# 9. Sibling subprojects that pin the stormify Gradle plugin version
+# (tests/, benchmarks/, and any future top-level *.gradle.kts subprojects).
 # Per-scenario subprojects reference the plugin id without a version, so they
-# inherit from the aggregator and need no rewrite.
-find tests -maxdepth 2 -type f -name "*.gradle.kts" \
+# inherit from the aggregator and need no rewrite. examples/ is handled above.
+find . -type f -name "*.gradle.kts" \
     ! -path "*/build/*" ! -path "*/.gradle/*" \
+    ! -path "./examples/*" ! -path "*/.git/*" ! -path "*/node_modules/*" \
     -exec sed -i -E "s|(id\\(\"onl\\.ycode\\.stormify\"\\) version \")$OLD_E(\")|\\1$NEW\\2|g" {} +
 
 echo

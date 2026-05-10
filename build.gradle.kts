@@ -7,7 +7,7 @@ allprojects {
 }
 
 group = "onl.ycode"
-version = "2.5.2"
+version = "2.6.0"
 
 plugins {
     base   // provides a root-level `clean` task so docs.gradle.kts can hook into it

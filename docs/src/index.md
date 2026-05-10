@@ -69,7 +69,7 @@ A complete, five-minute walkthrough from zero to your first query.
 
     ```kotlin
     plugins {
-        id("onl.ycode.stormify") version "2.5.2"
+        id("onl.ycode.stormify") version "2.6.0"
     }
     ```
 
@@ -81,7 +81,7 @@ A complete, five-minute walkthrough from zero to your first query.
     <dependency>
         <groupId>onl.ycode</groupId>
         <artifactId>stormify-jvm</artifactId>
-        <version>2.5.2</version>
+        <version>2.6.0</version>
     </dependency>
     ```
 
