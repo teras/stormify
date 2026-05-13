@@ -7,10 +7,17 @@ import onl.ycode.kdbc.SQLException
 
 import java.math.BigDecimal
 import java.math.BigInteger
+import java.nio.ByteBuffer
 import java.time.Instant
+import java.time.OffsetDateTime
+import java.time.OffsetTime
 import java.time.ZoneOffset
+import java.time.ZonedDateTime
 import java.time.format.DateTimeFormatter
+import java.util.UUID
 import kotlin.reflect.KClass
+import kotlin.uuid.toJavaUuid
+import kotlin.uuid.toKotlinUuid
 import kotlinx.datetime.toInstant
 import kotlinx.datetime.toJavaLocalDate
 import kotlinx.datetime.toJavaLocalDateTime
@@ -51,6 +58,7 @@ internal object JavaTypeConverters {
     fun register(registry: MutableMap<KClass<*>, MutableMap<KClass<*>, (Any) -> Any>>) {
         registerJavaMath(registry)
         registerJavaTime(registry)
+        registerJavaUuid(registry)
         registerVendorTypes(registry)
     }
 
@@ -109,6 +117,16 @@ internal object JavaTypeConverters {
             java.time.LocalTime::class, false, supportsKotlinxTime,
             { Instant.ofEpochMilli(it).atOffset(ANCHOR_ZONE).toLocalTime() }, registry
         )
+        registerTimeRelated(Instant::class, false, supportsKotlinxTime,
+            { Instant.ofEpochMilli(it) }, registry)
+        // TZ-aware: lossy on the Long pivot (offset/zone reset to UTC anchor),
+        // lossless via String (ISO preserves the offset/zone).
+        registerTimeRelated(OffsetDateTime::class, false, supportsKotlinxTime,
+            { Instant.ofEpochMilli(it).atOffset(ANCHOR_ZONE) }, registry)
+        registerTimeRelated(ZonedDateTime::class, false, supportsKotlinxTime,
+            { Instant.ofEpochMilli(it).atZone(ANCHOR_ZONE) }, registry)
+        registerTimeRelated(OffsetTime::class, false, supportsKotlinxTime,
+            { Instant.ofEpochMilli(it).atOffset(ANCHOR_ZONE).toOffsetTime() }, registry)
         // Core types: Long, Double, Float, String — add java.sql/time sources to existing groups
         registerTimeRelated(Long::class, true, supportsKotlinxTime, { it }, registry)
         registerTimeRelated(Double::class, true, supportsKotlinxTime, { it / 1000.0 }, registry)
@@ -187,6 +205,70 @@ internal object JavaTypeConverters {
         direct(registry, java.time.LocalDateTime::class, String::class) { java.time.LocalDateTime.parse(it as String) }
         direct(registry, java.time.LocalTime::class, String::class) { java.time.LocalTime.parse(it as String) }
 
+        // java.time.Instant direct paths
+        bidi<java.sql.Timestamp, Instant>(
+            registry,
+            { it.toInstant() },
+            { java.sql.Timestamp.from(it) }
+        )
+        bidi<java.util.Date, Instant>(
+            registry,
+            { it.toInstant() },
+            { java.util.Date.from(it) }
+        )
+        direct(registry, String::class, Instant::class) { it.toString() }
+        direct(registry, Instant::class, String::class) { Instant.parse(it as String) }
+
+        // OffsetDateTime / ZonedDateTime: ↔ Instant pins to UTC (Instant carries no
+        // offset/zone), ↔ String is lossless via ISO. Timestamp/Date routes go
+        // through Instant to preserve nanos that the epoch-millis pivot would lose.
+        bidi<Instant, OffsetDateTime>(
+            registry,
+            { it.atOffset(ZoneOffset.UTC) },
+            { it.toInstant() }
+        )
+        bidi<Instant, ZonedDateTime>(
+            registry,
+            { it.atZone(ZoneOffset.UTC) },
+            { it.toInstant() }
+        )
+        bidi<OffsetDateTime, ZonedDateTime>(
+            registry,
+            { it.toZonedDateTime() },
+            { it.toOffsetDateTime() }
+        )
+        bidi<java.sql.Timestamp, OffsetDateTime>(
+            registry,
+            { it.toInstant().atOffset(ZoneOffset.UTC) },
+            { java.sql.Timestamp.from(it.toInstant()) }
+        )
+        bidi<java.sql.Timestamp, ZonedDateTime>(
+            registry,
+            { it.toInstant().atZone(ZoneOffset.UTC) },
+            { java.sql.Timestamp.from(it.toInstant()) }
+        )
+        bidi<java.util.Date, OffsetDateTime>(
+            registry,
+            { it.toInstant().atOffset(ZoneOffset.UTC) },
+            { java.util.Date.from(it.toInstant()) }
+        )
+        bidi<java.util.Date, ZonedDateTime>(
+            registry,
+            { it.toInstant().atZone(ZoneOffset.UTC) },
+            { java.util.Date.from(it.toInstant()) }
+        )
+        direct(registry, String::class, OffsetDateTime::class) { it.toString() }
+        direct(registry, OffsetDateTime::class, String::class) { OffsetDateTime.parse(it as String) }
+        direct(registry, String::class, ZonedDateTime::class) { it.toString() }
+        direct(registry, ZonedDateTime::class, String::class) { ZonedDateTime.parse(it as String) }
+
+        // OffsetTime: lossless via String (ISO with offset). ↔ LocalTime/sql.Time
+        // drops the offset; ↔ Time anchors the LocalTime portion at the JVM default.
+        direct(registry, String::class, OffsetTime::class) { it.toString() }
+        direct(registry, OffsetTime::class, String::class) { OffsetTime.parse(it as String) }
+        direct(registry, java.time.LocalTime::class, OffsetTime::class) { (it as OffsetTime).toLocalTime() }
+        direct(registry, OffsetTime::class, java.time.LocalTime::class) { (it as java.time.LocalTime).atOffset(ZoneOffset.UTC) }
+
         // Cross-type: kotlinx.datetime ↔ java.time via the official interop
         // extensions. These don't touch a timezone — they just rewrap the wire
         // representation — so they're structurally DST-immune.
@@ -205,6 +287,13 @@ internal object JavaTypeConverters {
                 registry,
                 { it.toJavaLocalTime() },
                 { it.toKotlinLocalTime() }
+            )
+            // kotlin.time.Instant ↔ java.time.Instant: seconds+nanos round-trip
+            // (kotlinx-datetime 0.7.x dropped the toJavaInstant/toKotlinInstant helpers).
+            bidi<kotlin.time.Instant, Instant>(
+                registry,
+                { Instant.ofEpochSecond(it.epochSeconds, it.nanosecondsOfSecond.toLong()) },
+                { kotlin.time.Instant.fromEpochSeconds(it.epochSecond, it.nano.toLong()) }
             )
         }
     }
@@ -225,6 +314,10 @@ internal object JavaTypeConverters {
             // transition. The direct LocalTime ↔ java.sql.Time converters registered
             // below short-circuit this path for that specific pair.
             java.time.LocalTime::class to { (it as java.time.LocalTime).atDate(EPOCH_DATE).toInstant(ZoneOffset.UTC).toEpochMilli() },
+            Instant::class to { (it as Instant).toEpochMilli() },
+            OffsetDateTime::class to { (it as OffsetDateTime).toInstant().toEpochMilli() },
+            ZonedDateTime::class to { (it as ZonedDateTime).toInstant().toEpochMilli() },
+            OffsetTime::class to { (it as OffsetTime).atDate(EPOCH_DATE).toInstant().toEpochMilli() },
         )
         val kotlinxFromMillis: List<Pair<KClass<*>, (Long) -> Any>> = listOf(
             kotlinx.datetime.LocalDate::class to { m: Long ->
@@ -282,6 +375,18 @@ internal object JavaTypeConverters {
                     .toEpochMilli()
             )
         }
+        if (destClass != Instant::class) converters[Instant::class] = {
+            toNative((it as Instant).toEpochMilli())
+        }
+        if (destClass != OffsetDateTime::class) converters[OffsetDateTime::class] = {
+            toNative((it as OffsetDateTime).toInstant().toEpochMilli())
+        }
+        if (destClass != ZonedDateTime::class) converters[ZonedDateTime::class] = {
+            toNative((it as ZonedDateTime).toInstant().toEpochMilli())
+        }
+        if (destClass != OffsetTime::class) converters[OffsetTime::class] = {
+            toNative((it as OffsetTime).atDate(EPOCH_DATE).toInstant().toEpochMilli())
+        }
         if (supportsKotlinxTime) {
             if (destClass != kotlinx.datetime.LocalDate::class) converters[kotlinx.datetime.LocalDate::class] = {
                 toNative(
@@ -309,6 +414,32 @@ internal object JavaTypeConverters {
             converters[Float::class] = { toNative(((it as Float) * 1000.0).toLong()) }
             converters[String::class] = { toNative(parseTemporalString(it as String)) }
         }
+    }
+
+    /** Two on-wire representations: canonical hyphenated text, and 16-byte big-endian (RFC 4122). */
+    @OptIn(kotlin.uuid.ExperimentalUuidApi::class)
+    private fun registerJavaUuid(registry: MutableMap<KClass<*>, MutableMap<KClass<*>, (Any) -> Any>>) {
+        val toUuid = registry.getOrPut(UUID::class) { mutableMapOf() }
+        toUuid[String::class] = { v -> UUID.fromString(v as String) }
+        toUuid[ByteArray::class] = { v ->
+            val bytes = v as ByteArray
+            if (bytes.size != 16)
+                throw SQLException("UUID requires exactly 16 bytes, got ${bytes.size}")
+            val buf = ByteBuffer.wrap(bytes)
+            UUID(buf.long, buf.long)
+        }
+        registry[String::class]?.put(UUID::class) { v -> (v as UUID).toString() }
+        registry[ByteArray::class]?.put(UUID::class) { v ->
+            val u = v as UUID
+            ByteBuffer.allocate(16)
+                .putLong(u.mostSignificantBits)
+                .putLong(u.leastSignificantBits)
+                .array()
+        }
+        // Interop with kotlin.uuid.Uuid via the stdlib bridge methods.
+        toUuid[kotlin.uuid.Uuid::class] = { v -> (v as kotlin.uuid.Uuid).toJavaUuid() }
+        registry.getOrPut(kotlin.uuid.Uuid::class) { mutableMapOf() }[UUID::class] =
+            { v -> (v as UUID).toKotlinUuid() }
     }
 
     private fun registerVendorTypes(registry: MutableMap<KClass<*>, MutableMap<KClass<*>, (Any) -> Any>>) {

@@ -20,7 +20,7 @@ object TestDDL {
     val dialect get() = stormify.sqlDialect
     private val isOracle get() = dialect == SqlDialect.ORACLE_NEW || dialect == SqlDialect.ORACLE_OLD
     private val isMssql get() = dialect == SqlDialect.SQL_SERVER_NEW || dialect == SqlDialect.SQL_SERVER_OLD
-    private val isSqlite get() = dialect == SqlDialect.SQLITE
+    val isSqlite get() = dialect == SqlDialect.SQLITE
     val isMysqlFamily get() = dialect == SqlDialect.MYSQL_OLD || dialect == SqlDialect.MYSQL_NEW ||
             dialect == SqlDialect.MARIA_DB_OLD || dialect == SqlDialect.MARIA_DB_NEW
     val isPostgres get() = dialect == SqlDialect.POSTGRESQL

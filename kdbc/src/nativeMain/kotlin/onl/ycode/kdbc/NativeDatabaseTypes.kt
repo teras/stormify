@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 // (C) Panayotis Katsaloulis
-@file:OptIn(ExperimentalForeignApi::class, kotlin.time.ExperimentalTime::class)
+@file:OptIn(ExperimentalForeignApi::class, kotlin.time.ExperimentalTime::class, kotlin.uuid.ExperimentalUuidApi::class)
 
 package onl.ycode.kdbc
 
@@ -603,6 +603,7 @@ private fun bindValue(stmt: CPointer<kdbc_stmt>, idx: Int, value: Any?) {
         }
         // Char is not a native-driver primitive — coerce to a one-character string.
         is Char -> kdbc_bind_string(stmt, idx, value.toString())
+        is kotlin.uuid.Uuid -> kdbc_bind_string(stmt, idx, value.toString())
         // Refuse anything outside the supported set instead of silently
         // stringifying it. A silent .toString() fallback hides logic errors —
         // an unknown type at bind time always indicates a missing converter.

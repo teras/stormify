@@ -16,6 +16,7 @@ data class DefaultsProfile(
     val booleanDdl: String = "BOOLEAN",
     val localDateDdl: String = "DATE",
     val localTimeDdl: String = "TIME",
+    val offsetTimeDdl: String = "TIME WITH TIME ZONE",
     val localDateTimeDdl: String = "TIMESTAMP",
     val instantDdl: String = "TIMESTAMP WITH TIME ZONE",
     val byteArrayDdl: String = "BLOB",

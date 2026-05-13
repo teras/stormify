@@ -62,6 +62,7 @@ enum class DateType(val display: String, override val kotlin: String, override v
 @Serializable
 enum class TimeType(val display: String, override val kotlin: String, override val import: String?) : KotlinTypeChoice {
     JAVA_LOCAL_TIME("java.time.LocalTime", "LocalTime", "java.time.LocalTime"),
+    JAVA_OFFSET_TIME("java.time.OffsetTime", "OffsetTime", "java.time.OffsetTime"),
     KOTLINX_LOCAL_TIME("kotlinx.datetime.LocalTime", "LocalTime", "kotlinx.datetime.LocalTime"),
 }
 

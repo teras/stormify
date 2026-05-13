@@ -373,6 +373,7 @@ object MigrationGenerator {
         "Boolean", "kotlin.Boolean" -> defaults.booleanDdl
         "LocalDate", "java.time.LocalDate", "java.sql.Date" -> defaults.localDateDdl
         "LocalTime", "java.time.LocalTime", "java.sql.Time", "Time" -> defaults.localTimeDdl
+        "OffsetTime", "java.time.OffsetTime" -> defaults.offsetTimeDdl
         "LocalDateTime", "java.time.LocalDateTime", "java.sql.Timestamp", "Timestamp" -> defaults.localDateTimeDdl
         "Instant", "java.time.Instant", "OffsetDateTime", "java.time.OffsetDateTime",
         "ZonedDateTime", "java.time.ZonedDateTime",

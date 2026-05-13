@@ -3,6 +3,7 @@
 package onl.ycode.kdbc
 
 import onl.ycode.kdbc.converters.IonspinConverters
+import onl.ycode.kdbc.converters.KotlinUuidConverters
 import onl.ycode.kdbc.converters.KotlinxTimeConverters
 import kotlin.jvm.JvmSynthetic
 import kotlin.reflect.KClass
@@ -119,6 +120,7 @@ object TypeConversion {
         }
 
         try { IonspinConverters.register(registry) } catch (_: Throwable) {}
+        try { KotlinUuidConverters.register(registry) } catch (_: Throwable) {}
         // Platform converters (JVM: java.math / java.sql / java.time) run BEFORE
         // KotlinxTimeConverters so that kotlinx direct pair-wise converters registered
         // at the tail of KotlinxTimeConverters.register() are the last writers to the

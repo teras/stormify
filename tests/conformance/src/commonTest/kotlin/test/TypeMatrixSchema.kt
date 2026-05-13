@@ -57,11 +57,13 @@ val NUMERIC_LIKE = setOf(ColCat.NUMERIC, ColCat.TEXT)
 val BOOLEAN_LIKE = setOf(ColCat.BOOLEAN, ColCat.TEXT)
 val TEXT_ONLY = setOf(ColCat.TEXT)
 val BLOB_ONLY = setOf(ColCat.BLOB)
-val DATE_ONLY = setOf(ColCat.DATE, ColCat.TEXT)
-val TIME_ONLY = setOf(ColCat.TIME, ColCat.TEXT)
-val TIMESTAMP_ONLY = setOf(ColCat.TIMESTAMP, ColCat.TEXT)
-val DATE_AND_TIMESTAMP = setOf(ColCat.DATE, ColCat.TIMESTAMP, ColCat.TEXT)
-val DATE_TIME_TIMESTAMP = setOf(ColCat.DATE, ColCat.TIME, ColCat.TIMESTAMP, ColCat.TEXT)
+// TEXT excluded: every JDBC driver stringifies temporal bindings differently,
+// so a typed round-trip via TEXT is driver-quirk territory.
+val DATE_ONLY = setOf(ColCat.DATE)
+val TIME_ONLY = setOf(ColCat.TIME)
+val TIMESTAMP_ONLY = setOf(ColCat.TIMESTAMP)
+val DATE_AND_TIMESTAMP = setOf(ColCat.DATE, ColCat.TIMESTAMP)
+val DATE_TIME_TIMESTAMP = setOf(ColCat.DATE, ColCat.TIME, ColCat.TIMESTAMP)
 val ALL_CATS = ColCat.values().toSet()
 
 /**
@@ -69,8 +71,12 @@ val ALL_CATS = ColCat.values().toSet()
  * (ένα row ανά column για απομόνωση). Αν κάποιος αναμενόμενος συνδυασμός
  * σκάσει, μαζεύει τα errors και καλεί `fail()` με δομημένο μήνυμα.
  */
-fun runTypeMatrix(label: String, value: Any?, accept: Set<ColCat>) =
-    TestHelper.withDb("MATRIX-$label") { s: Stormify ->
+inline fun <reified T : Any> runTypeMatrix(
+    label: String,
+    value: T?,
+    accept: Set<ColCat>,
+    excludeColumns: Set<String> = emptySet(),
+) = TestHelper.withDb("MATRIX-$label") { s: Stormify ->
         TestDDL.dropTable("type_matrix")
         s.executeUpdate(TestDDL.createTable("type_matrix", TypeMatrixSchema.ddl()))
 
@@ -78,6 +84,7 @@ fun runTypeMatrix(label: String, value: Any?, accept: Set<ColCat>) =
             TestDDL.dialect == SqlDialect.SQL_SERVER_OLD
         val cols = TypeMatrixSchema.columns().filter { col ->
             if (col.cat !in accept) return@filter false
+            if (col.name in excludeColumns) return@filter false
             // MSSQL JDBC: untyped null bind to VARBINARY is mapped to NVARCHAR
             // and the server refuses the implicit conversion. Documented
             // limitation with no portable client-side fix.
@@ -94,7 +101,15 @@ fun runTypeMatrix(label: String, value: Any?, accept: Set<ColCat>) =
                     rowId, value,
                 )
                 val n = s.readOne<Int>("SELECT COUNT(*) FROM type_matrix WHERE id = ?", rowId)
-                if (n != 1) failures += "${col.name} (${col.type}): row not found after insert"
+                if (n != 1) {
+                    failures += "${col.name} (${col.type}): row not found after insert"
+                    continue
+                }
+                if (value != null && shouldVerifyReadBack(TestDDL.dialect, col, value)) {
+                    val readBack = s.readOne<T>("SELECT ${col.name} FROM type_matrix WHERE id = ?", rowId)
+                    if (!typeMatrixValuesMatch(value, readBack))
+                        failures += "${col.name} (${col.type}): expected <$value>, got <$readBack>"
+                }
             } catch (e: Throwable) {
                 var pick: Throwable = e
                 var cur: Throwable? = e
@@ -112,3 +127,68 @@ fun runTypeMatrix(label: String, value: Any?, accept: Set<ColCat>) =
             fail("[$label] failed for ${failures.size}/${cols.size} columns:\n" + failures.joinToString("\n"))
         }
     }
+
+/** Skip read-back for dialect quirks; write coverage stays untouched. */
+@PublishedApi
+internal fun shouldVerifyReadBack(dialect: SqlDialect, col: TypeMatrixSchema.Col, value: Any): Boolean {
+    // Enum reconstruction lives in property-setter code, not in TypeConversion.
+    if (value is Enum<*>) return false
+
+    val qn = value::class.qualifiedName
+
+    // SQLite TIME is TEXT affinity; Timestamp bindings get stringified as digits.
+    if (dialect == SqlDialect.SQLITE && col.cat == ColCat.TIME &&
+        qn in jdbcTimestampBoundValueClasses) return false
+
+    // Postgres/MySQL TIMESTAMP routes Timestamp bindings through the JVM default
+    // zone, so absolute-instant types come back shifted from the UTC original.
+    if ((dialect == SqlDialect.POSTGRESQL || dialect.isMysqlVariant) &&
+        col.cat == ColCat.TIMESTAMP && qn in absoluteInstantClasses) return false
+
+    // Non-SQLite drivers cross the JVM-vs-UTC midnight boundary for date-only
+    // values; ±1 day shift is normal.
+    if (dialect != SqlDialect.SQLITE &&
+        (col.cat == ColCat.DATE || col.cat == ColCat.TIMESTAMP) &&
+        qn in dateOnlyShiftSensitive) return false
+
+    return true
+}
+
+private val SqlDialect.isMysqlVariant: Boolean
+    get() = this == SqlDialect.MYSQL_OLD || this == SqlDialect.MYSQL_NEW ||
+        this == SqlDialect.MARIA_DB_OLD || this == SqlDialect.MARIA_DB_NEW
+
+private val jdbcTimestampBoundValueClasses = setOf(
+    "java.util.Date",
+    "java.sql.Date", "java.sql.Time", "java.sql.Timestamp",
+    "java.time.Instant", "java.time.OffsetDateTime", "java.time.ZonedDateTime",
+    "kotlin.time.Instant",
+    "kotlinx.datetime.LocalDate", "kotlinx.datetime.LocalDateTime", "kotlinx.datetime.LocalTime",
+)
+
+private val dateOnlyShiftSensitive = setOf(
+    "java.sql.Date",
+    "java.time.LocalDate",
+    "kotlinx.datetime.LocalDate",
+)
+
+private val absoluteInstantClasses = setOf(
+    "java.util.Date",
+    "java.sql.Date", "java.sql.Time", "java.sql.Timestamp",
+    "java.time.Instant", "java.time.OffsetDateTime", "java.time.ZonedDateTime",
+    "kotlin.time.Instant",
+)
+
+/** Round-trip-friendly equality: representation differences (BigDecimal scale,
+ *  array identity) collapse to value equality. */
+@PublishedApi
+internal fun typeMatrixValuesMatch(expected: Any, actual: Any?): Boolean = when {
+    actual == null -> false
+    expected is ByteArray && actual is ByteArray -> expected.contentEquals(actual)
+    expected is CharArray && actual is CharArray -> expected.contentEquals(actual)
+    expected::class == actual::class && expected is Comparable<*> -> {
+        @Suppress("UNCHECKED_CAST")
+        (expected as Comparable<Any>).compareTo(actual) == 0
+    }
+    else -> expected == actual
+}

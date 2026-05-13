@@ -1,5 +1,5 @@
 @file:Suppress("EXPECT_ACTUAL_CLASSIFIERS_ARE_IN_BETA_WARNING")
-@file:OptIn(kotlin.time.ExperimentalTime::class)
+@file:OptIn(kotlin.time.ExperimentalTime::class, kotlin.uuid.ExperimentalUuidApi::class)
 
 package onl.ycode.stormify
 
@@ -21,7 +21,8 @@ actual val Any.isOtherPrimitive
             this is kotlinx.datetime.LocalDate ||
             this is kotlinx.datetime.LocalDateTime ||
             this is kotlinx.datetime.LocalTime ||
-            this is kotlin.time.Instant
+            this is kotlin.time.Instant ||
+            this is kotlin.uuid.Uuid
 
 internal actual fun <T : Any> tryReflection(type: KClass<T>): EntityMeta<T>? = null
 

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 // (C) Panayotis Katsaloulis
-@file:OptIn(kotlin.time.ExperimentalTime::class)
+@file:OptIn(kotlin.time.ExperimentalTime::class, kotlin.uuid.ExperimentalUuidApi::class)
 
 package test
 
@@ -26,8 +26,11 @@ open class TypeMatrixTest {
     @Test fun shortValue() = runTypeMatrix("Short", 1234.toShort(), NUMERIC_LIKE)
     @Test fun intValue() = runTypeMatrix("Int", 12345, NUMERIC_LIKE)
     @Test fun longValue() = runTypeMatrix("Long", 12345L, NUMERIC_LIKE)
-    @Test fun floatValue() = runTypeMatrix("Float", 3.14f, NUMERIC_LIKE)
-    @Test fun doubleValue() = runTypeMatrix("Double", 2.71828, NUMERIC_LIKE)
+    // Narrow ints truncate fractionals; 4-byte REAL truncates Double precision.
+    @Test fun floatValue() = runTypeMatrix("Float", 3.14f, NUMERIC_LIKE,
+        excludeColumns = setOf("c_smallint", "c_int", "c_bigint"))
+    @Test fun doubleValue() = runTypeMatrix("Double", 2.71828, NUMERIC_LIKE,
+        excludeColumns = setOf("c_smallint", "c_int", "c_bigint", "c_real"))
     @Test fun booleanTrue() = runTypeMatrix("BooleanTrue", true, BOOLEAN_LIKE)
     @Test fun booleanFalse() = runTypeMatrix("BooleanFalse", false, BOOLEAN_LIKE)
     @Test fun stringValue() = runTypeMatrix("String", "hello", TEXT_ONLY)
@@ -50,14 +53,19 @@ open class TypeMatrixTest {
     @Test fun kotlinxLocalTime() =
         runTypeMatrix("KxLocalTime", KxLocalTime(14, 30, 45), TIME_ONLY)
     @Test fun kotlinxLocalDateTime() =
-        runTypeMatrix("KxLocalDateTime", KxLocalDateTime(2024, 6, 15, 14, 30, 45), DATE_TIME_TIMESTAMP)
+        runTypeMatrix("KxLocalDateTime", KxLocalDateTime(2024, 6, 15, 14, 30, 45), TIMESTAMP_ONLY)
     @Test fun kotlinTimeInstant() =
         runTypeMatrix("KtInstant", KtInstant.fromEpochSeconds(1_700_000_000L), TIMESTAMP_ONLY)
+    @Test fun kotlinUuid() = runTypeMatrix(
+        "KotlinUuid",
+        kotlin.uuid.Uuid.parse("12345678-1234-1234-1234-123456789012"),
+        TEXT_ONLY,
+    )
 
     // --- Enums (raw bind, χωρίς entity-level enum-to-X conversion) ---
     @Test fun enumPlain() = runTypeMatrix("PlainStatus", PlainStatus.ACTIVE, TEXT_ONLY)
     @Test fun enumDbValue() = runTypeMatrix("CustomStatus", CustomStatus.BANNED, TEXT_ONLY)
 
     // --- Null ---
-    @Test fun nullValue() = runTypeMatrix("Null", null, ALL_CATS)
+    @Test fun nullValue() = runTypeMatrix<Int>("Null", null, ALL_CATS)
 }

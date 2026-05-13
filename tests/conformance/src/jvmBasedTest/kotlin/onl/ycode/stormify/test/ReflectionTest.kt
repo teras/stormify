@@ -1,8 +1,10 @@
 package onl.ycode.stormify.test
 
 import onl.ycode.stormify.*
+import test.SkipReason
 import test.TestDDL
 import test.TestHelper
+import test.skipTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
@@ -245,6 +247,63 @@ open class ReflectionTest {
         s.update(found)
         assertEquals("ACTIVE", s.readOne<String>("SELECT status FROM refl_enum_string_test WHERE id = ?", 1))
     }
+
+    // Asserts on the instant only — the column carries no offset/zone, so
+    // OffsetDateTime/ZonedDateTime round-trip lose their original anchor.
+    @OptIn(kotlin.uuid.ExperimentalUuidApi::class)
+    @Test
+    fun javaScalarFieldsAreNotReferences() = withDb("REGRESSION-SCALARS") { s ->
+        TestDDL.dropTable("scalar_regression")
+        // pg TIMESTAMP WITHOUT TIME ZONE shifts UTC instants through the JVM
+        // zone; mysql/maria default TIMESTAMP drops sub-second precision.
+        val tsType = when {
+            TestDDL.isPostgres -> "TIMESTAMPTZ"
+            TestDDL.isMysqlFamily -> "TIMESTAMP(3)"
+            else -> TestDDL.timestampType()
+        }
+        s.executeUpdate(TestDDL.createTable("scalar_regression",
+            "${TestDDL.intPrimaryKey("id")}, " +
+                "ts $tsType, " +
+                "odt $tsType, " +
+                "zdt $tsType, " +
+                "uid ${TestDDL.textType()}, " +
+                "kuid ${TestDDL.textType()}"))
+
+        val ts = java.time.Instant.ofEpochMilli(1_700_000_000_123L)
+        val odt = java.time.OffsetDateTime.ofInstant(ts, java.time.ZoneOffset.UTC)
+        val zdt = java.time.ZonedDateTime.ofInstant(ts, java.time.ZoneOffset.UTC)
+        val uid = java.util.UUID.fromString("12345678-1234-1234-1234-123456789012")
+        val kuid = kotlin.uuid.Uuid.parse("12345678-1234-1234-1234-123456789012")
+
+        s.create(ScalarRegression().apply {
+            id = 1; this.ts = ts; this.odt = odt; this.zdt = zdt
+            this.uid = uid; this.kuid = kuid
+        })
+
+        val loaded = s.findById<ScalarRegression>(1)
+        assertNotNull(loaded)
+        assertEquals(ts, loaded.ts)
+        assertEquals(odt.toInstant(), loaded.odt?.toInstant())
+        assertEquals(zdt.toInstant(), loaded.zdt?.toInstant())
+        assertEquals(uid, loaded.uid)
+        assertEquals(kuid, loaded.kuid)
+    }
+
+    // OffsetTime ↔ TIMETZ: only PostgreSQL has TIME WITH TIME ZONE.
+    @Test
+    fun offsetTimeRoundTripWithTimetz() = withDb("OFFSETTIME-TIMETZ") { s ->
+        if (!TestDDL.isPostgres)
+            skipTest(SkipReason.DB_LIMITATION, "TIME WITH TIME ZONE only on PostgreSQL")
+        TestDDL.dropTable("offset_time_test")
+        s.executeUpdate("CREATE TABLE offset_time_test (id INT PRIMARY KEY, ot TIMETZ)")
+
+        val ot = java.time.OffsetTime.of(14, 30, 45, 0, java.time.ZoneOffset.ofHours(2))
+        s.executeUpdate("INSERT INTO offset_time_test VALUES (?, ?)", 1, ot)
+        val back = s.readOne<java.time.OffsetTime>(
+            "SELECT ot FROM offset_time_test WHERE id = ?", 1)
+        assertEquals(ot, back)
+    }
+
 }
 
 // --- Enum test entities (reflection-only, no annproc) ---
@@ -284,6 +343,19 @@ class RefChild : AutoTable() {
     var title: String? by db(null)
     var parent: RefParent? by db(null)
     override fun toString() = "RefChild(id=$id, title=$title)"
+}
+
+// Each of these scalars must be in TypeConversion's registry — without it the
+// property is misclassified as an entity reference and the read fails.
+@DbTable(name = "scalar_regression")
+@OptIn(kotlin.uuid.ExperimentalUuidApi::class)
+class ScalarRegression : AutoTable() {
+    @DbField(primaryKey = true) var id: Int? = null
+    var ts: java.time.Instant? by db(null)
+    var odt: java.time.OffsetDateTime? by db(null)
+    var zdt: java.time.ZonedDateTime? by db(null)
+    var uid: java.util.UUID? by db(null)
+    var kuid: kotlin.uuid.Uuid? by db(null)
 }
 
 // Plain Kotlin inheritance — no AutoTable, no delegates

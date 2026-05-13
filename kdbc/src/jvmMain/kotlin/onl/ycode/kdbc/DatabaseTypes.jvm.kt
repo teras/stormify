@@ -1,3 +1,5 @@
+@file:OptIn(kotlin.uuid.ExperimentalUuidApi::class)
+
 package onl.ycode.kdbc
 
 import java.sql.PreparedStatement
@@ -48,13 +50,16 @@ private fun toJdbcValue(value: Any?): Any? {
         is java.time.Instant -> return java.sql.Timestamp.from(value)
         is java.time.OffsetDateTime -> return java.sql.Timestamp.from(value.toInstant())
         is java.time.ZonedDateTime -> return java.sql.Timestamp.from(value.toInstant())
-        is java.time.OffsetTime -> return java.sql.Time.valueOf(value.toLocalTime())
+        // OffsetTime is left to the driver: pgjdbc preserves the offset against
+        // TIMETZ; MariaDB raises SQLFeatureNotSupportedException; MySQL and MSSQL
+        // silently coerce through the JVM-local zone (lossy on round-trip).
         // Char is not a JDBC parameter type — strict drivers refuse it.
         is Char -> return value.toString()
         // UUID is portable as the canonical 36-char string. PostgreSQL and SQL
         // Server happily coerce it to their native UUID/UNIQUEIDENTIFIER types
         // server-side; everywhere else it lands in CHAR/VARCHAR.
         is java.util.UUID -> return value.toString()
+        is kotlin.uuid.Uuid -> return value.toString()
         // Stormify treats any CharSequence as a scalar (StringBuilder, etc.),
         // but JDBC's setObject only reliably accepts String. Materialize.
         is String -> return value
@@ -354,7 +359,10 @@ private class JdbcResultSet(private val jdbc: java.sql.ResultSet) : ResultSet {
         val javaType = kmpToJdbcTarget[type.qualifiedName]?.java ?: type.java
         if (type == Any::class) jdbc.getObject(columnIndex)
         else jdbc.getObject(columnIndex, javaType)
-    } catch (_: java.sql.SQLException) {
+    } catch (_: Exception) {
+        // Some drivers throw non-SQLException (pg's getObject(idx, UUID.class) on
+        // a TEXT column raises ClassCastException); fall back to untyped and let
+        // the converter pipeline coerce.
         jdbc.getObject(columnIndex)
     }
 

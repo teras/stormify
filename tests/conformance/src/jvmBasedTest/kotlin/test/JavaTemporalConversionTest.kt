@@ -4,13 +4,20 @@ package test
 
 import onl.ycode.kdbc.TypeConversion
 import java.sql.Time
+import java.sql.Timestamp
+import java.time.Instant
 import java.time.LocalDate
 import java.time.LocalDateTime
 import java.time.LocalTime
+import java.time.OffsetDateTime
+import java.time.ZoneOffset
+import java.time.ZonedDateTime
 import java.util.TimeZone
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
+import kotlin.test.assertTrue
+import kotlin.time.ExperimentalTime
 
 /**
  * JVM-specific tests for the direct java.sql/java.time temporal converters.
@@ -123,5 +130,195 @@ open class JavaTemporalConversionTest {
         assertNotNull(sqlTs)
         val back = TypeConversion.castScalar(LocalDateTime::class, sqlTs)
         assertEquals(dt, back)
+    }
+
+    // --- java.time.Instant ----------------------------------------------------
+
+    @Test fun instantIsKnownScalar() {
+        assertTrue(TypeConversion.isKnownScalar(Instant::class))
+    }
+
+    @Test fun instantLongRoundTrip() {
+        val ms = 1_700_000_000_000L
+        val inst = TypeConversion.castScalar(Instant::class, ms)
+        assertEquals(Instant.ofEpochMilli(ms), inst)
+        assertEquals(ms, TypeConversion.castScalar(Long::class, inst!!))
+    }
+
+    @Test fun instantStringIsoLossless() {
+        val inst = Instant.parse("2026-03-20T14:30:45.123456789Z")
+        val s = TypeConversion.castScalar(String::class, inst)
+        assertEquals("2026-03-20T14:30:45.123456789Z", s)
+        val back = TypeConversion.castScalar(Instant::class, s!!)
+        assertEquals(inst, back)
+    }
+
+    @Test fun instantTimestampDirectPreservesNanos() {
+        val inst = Instant.ofEpochSecond(1_700_000_000L, 123_456_789L)
+        val ts = TypeConversion.castScalar(Timestamp::class, inst)
+        assertNotNull(ts)
+        assertEquals(123_456_789, ts.nanos)
+        val back = TypeConversion.castScalar(Instant::class, ts)
+        assertEquals(inst, back)
+    }
+
+    @Test fun instantUtilDateDirectMillis() {
+        val inst = Instant.ofEpochMilli(1_700_000_000_123L)
+        val date = TypeConversion.castScalar(java.util.Date::class, inst)
+        assertNotNull(date)
+        assertEquals(1_700_000_000_123L, date.time)
+        val back = TypeConversion.castScalar(Instant::class, date)
+        assertEquals(inst, back)
+    }
+
+    @OptIn(ExperimentalTime::class)
+    @Test fun instantKotlinTimeInstantInterop() {
+        val jInst = Instant.ofEpochSecond(1_700_000_000L, 123_456_789L)
+        val kInst = TypeConversion.castScalar(kotlin.time.Instant::class, jInst)
+        assertNotNull(kInst)
+        assertEquals(jInst.epochSecond, kInst.epochSeconds)
+        assertEquals(jInst.nano, kInst.nanosecondsOfSecond)
+        val back = TypeConversion.castScalar(Instant::class, kInst)
+        assertEquals(jInst, back)
+    }
+
+    // --- java.time.OffsetDateTime --------------------------------------------
+
+    @Test fun offsetDateTimeIsKnownScalar() {
+        assertTrue(TypeConversion.isKnownScalar(OffsetDateTime::class))
+    }
+
+    @Test fun offsetDateTimeStringIsoLossless() {
+        val odt = OffsetDateTime.of(2026, 3, 20, 14, 30, 45, 0, ZoneOffset.ofHours(2))
+        val s = TypeConversion.castScalar(String::class, odt)
+        assertEquals("2026-03-20T14:30:45+02:00", s)
+        val back = TypeConversion.castScalar(OffsetDateTime::class, s!!)
+        assertEquals(odt, back)
+    }
+
+    @Test fun offsetDateTimeLongLossyResetsToUtc() {
+        val odt = OffsetDateTime.of(2026, 3, 20, 14, 30, 45, 0, ZoneOffset.ofHours(2))
+        val ms = TypeConversion.castScalar(Long::class, odt)
+        assertEquals(odt.toInstant().toEpochMilli(), ms)
+        val back = TypeConversion.castScalar(OffsetDateTime::class, ms!!)
+        // Same instant, but offset reset to UTC anchor.
+        assertEquals(odt.toInstant(), back!!.toInstant())
+        assertEquals(ZoneOffset.UTC, back.offset)
+    }
+
+    @Test fun offsetDateTimeInstantBidi() {
+        val inst = Instant.ofEpochSecond(1_700_000_000L, 500_000_000L)
+        val odt = TypeConversion.castScalar(OffsetDateTime::class, inst)
+        assertNotNull(odt)
+        assertEquals(ZoneOffset.UTC, odt.offset)
+        assertEquals(inst, odt.toInstant())
+    }
+
+    // --- java.time.ZonedDateTime ---------------------------------------------
+
+    @Test fun zonedDateTimeIsKnownScalar() {
+        assertTrue(TypeConversion.isKnownScalar(ZonedDateTime::class))
+    }
+
+    @Test fun zonedDateTimeStringIsoLossless() {
+        val zdt = ZonedDateTime.of(2026, 3, 20, 14, 30, 45, 0, java.time.ZoneId.of("Europe/Athens"))
+        val s = TypeConversion.castScalar(String::class, zdt)
+        assertEquals("2026-03-20T14:30:45+02:00[Europe/Athens]", s)
+        val back = TypeConversion.castScalar(ZonedDateTime::class, s!!)
+        assertEquals(zdt, back)
+    }
+
+    @Test fun zonedDateTimeLongLossyResetsToUtc() {
+        val zdt = ZonedDateTime.of(2026, 3, 20, 14, 30, 45, 0, java.time.ZoneId.of("Europe/Athens"))
+        val ms = TypeConversion.castScalar(Long::class, zdt)
+        assertEquals(zdt.toInstant().toEpochMilli(), ms)
+        val back = TypeConversion.castScalar(ZonedDateTime::class, ms!!)
+        assertEquals(zdt.toInstant(), back!!.toInstant())
+        assertEquals(ZoneOffset.UTC, back.offset)
+    }
+
+    @Test fun zonedDateTimeOffsetDateTimeBidi() {
+        val odt = OffsetDateTime.of(2026, 3, 20, 14, 30, 45, 0, ZoneOffset.ofHours(2))
+        val zdt = TypeConversion.castScalar(ZonedDateTime::class, odt)
+        assertNotNull(zdt)
+        assertEquals(odt.toInstant(), zdt.toInstant())
+        val back = TypeConversion.castScalar(OffsetDateTime::class, zdt)
+        assertEquals(odt, back)
+    }
+
+    // --- Cross-temporal via epoch pivot (UTC anchor) -------------------------
+
+    @Test fun instantLocalDateTimeBidi() {
+        val inst = Instant.ofEpochMilli(1_700_000_000_123L)
+        val ldt = TypeConversion.castScalar(LocalDateTime::class, inst)
+        assertEquals(inst.atOffset(ZoneOffset.UTC).toLocalDateTime(), ldt)
+        val back = TypeConversion.castScalar(Instant::class, ldt!!)
+        assertEquals(inst.toEpochMilli(), back!!.toEpochMilli())
+    }
+
+    @Test fun offsetDateTimeLocalDateTimeBidi() {
+        val odt = OffsetDateTime.of(2026, 3, 20, 14, 30, 45, 0, ZoneOffset.UTC)
+        val ldt = TypeConversion.castScalar(LocalDateTime::class, odt)
+        assertEquals(odt.toLocalDateTime(), ldt)
+        val back = TypeConversion.castScalar(OffsetDateTime::class, ldt!!)
+        assertEquals(odt.toInstant(), back!!.toInstant())
+    }
+
+    @Test fun zonedDateTimeLocalDateTimeBidi() {
+        val zdt = ZonedDateTime.of(2026, 3, 20, 14, 30, 45, 0, ZoneOffset.UTC)
+        val ldt = TypeConversion.castScalar(LocalDateTime::class, zdt)
+        assertEquals(zdt.toLocalDateTime(), ldt)
+        val back = TypeConversion.castScalar(ZonedDateTime::class, ldt!!)
+        assertEquals(zdt.toInstant(), back!!.toInstant())
+    }
+
+    @OptIn(ExperimentalTime::class)
+    @Test fun instantKotlinxLocalDateTimeBidi() {
+        val inst = Instant.ofEpochMilli(1_700_000_000_000L)
+        val kxLdt = TypeConversion.castScalar(kotlinx.datetime.LocalDateTime::class, inst)
+        assertNotNull(kxLdt)
+        val back = TypeConversion.castScalar(Instant::class, kxLdt)
+        assertEquals(inst, back)
+    }
+
+    @Test fun offsetDateTimeTimestampBidi() {
+        val odt = OffsetDateTime.of(2026, 3, 20, 14, 30, 45, 123_456_789, ZoneOffset.ofHours(2))
+        val ts = TypeConversion.castScalar(Timestamp::class, odt)
+        assertNotNull(ts)
+        assertEquals(odt.toInstant().toEpochMilli(), ts.time)
+        val back = TypeConversion.castScalar(OffsetDateTime::class, ts)
+        assertEquals(odt.toInstant(), back!!.toInstant())
+    }
+
+    @Test fun zonedDateTimeTimestampBidi() {
+        val zdt = ZonedDateTime.of(2026, 3, 20, 14, 30, 45, 0, java.time.ZoneId.of("Europe/Athens"))
+        val ts = TypeConversion.castScalar(Timestamp::class, zdt)
+        assertNotNull(ts)
+        assertEquals(zdt.toInstant().toEpochMilli(), ts.time)
+        val back = TypeConversion.castScalar(ZonedDateTime::class, ts)
+        assertEquals(zdt.toInstant(), back!!.toInstant())
+    }
+
+    // --- java.time.OffsetTime ------------------------------------------------
+
+    @Test fun offsetTimeIsKnownScalar() {
+        assertTrue(TypeConversion.isKnownScalar(java.time.OffsetTime::class))
+    }
+
+    @Test fun offsetTimeStringIsoLossless() {
+        val ot = java.time.OffsetTime.of(14, 30, 45, 0, ZoneOffset.ofHours(2))
+        val s = TypeConversion.castScalar(String::class, ot)
+        assertEquals("14:30:45+02:00", s)
+        val back = TypeConversion.castScalar(java.time.OffsetTime::class, s!!)
+        assertEquals(ot, back)
+    }
+
+    @Test fun offsetTimeLocalTimeBidi() {
+        val ot = java.time.OffsetTime.of(14, 30, 45, 0, ZoneOffset.ofHours(2))
+        val lt = TypeConversion.castScalar(LocalTime::class, ot)
+        assertEquals(LocalTime.of(14, 30, 45), lt)
+        val back = TypeConversion.castScalar(java.time.OffsetTime::class, lt!!)
+        assertEquals(LocalTime.of(14, 30, 45), back!!.toLocalTime())
+        assertEquals(ZoneOffset.UTC, back.offset)
     }
 }

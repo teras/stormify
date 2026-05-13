@@ -27,10 +27,11 @@ open class TypeMatrixTestJava {
     private val EPOCH_MS = 1_700_000_000_000L
 
     // --- Temporal Java ---
-    @Test fun javaUtilDate() = runTypeMatrix("javaUtilDate", UtilDate(EPOCH_MS), DATE_TIME_TIMESTAMP)
-    @Test fun javaSqlDate() = runTypeMatrix("javaSqlDate", SqlDate(EPOCH_MS), DATE_AND_TIMESTAMP)
-    @Test fun javaSqlTime() = runTypeMatrix("javaSqlTime", SqlTime(EPOCH_MS), TIME_ONLY)
-    @Test fun javaSqlTimestamp() = runTypeMatrix("javaSqlTimestamp", SqlTimestamp(EPOCH_MS), DATE_TIME_TIMESTAMP)
+    @Test fun javaUtilDate() = runTypeMatrix("javaUtilDate", UtilDate(EPOCH_MS), TIMESTAMP_ONLY)
+    // Normalized inputs so DATE/TIME columns don't truncate the other component.
+    @Test fun javaSqlDate() = runTypeMatrix("javaSqlDate", SqlDate.valueOf("2023-11-15"), DATE_AND_TIMESTAMP)
+    @Test fun javaSqlTime() = runTypeMatrix("javaSqlTime", SqlTime.valueOf("00:13:20"), TIME_ONLY)
+    @Test fun javaSqlTimestamp() = runTypeMatrix("javaSqlTimestamp", SqlTimestamp(EPOCH_MS), TIMESTAMP_ONLY)
     @Test fun javaTimeLocalDate() =
         runTypeMatrix("javaTimeLocalDate", JtLocalDate.of(2024, 6, 15), DATE_AND_TIMESTAMP)
     @Test fun javaTimeLocalTime() =
@@ -38,19 +39,19 @@ open class TypeMatrixTestJava {
     @Test fun javaTimeLocalDateTime() = runTypeMatrix(
         "javaTimeLocalDateTime",
         JtLocalDateTime.of(2024, 6, 15, 14, 30, 45),
-        DATE_TIME_TIMESTAMP,
+        TIMESTAMP_ONLY,
     )
     @Test fun javaTimeInstant() =
         runTypeMatrix("javaTimeInstant", JtInstant.ofEpochSecond(1_700_000_000L), TIMESTAMP_ONLY)
     @Test fun javaTimeOffsetDateTime() = runTypeMatrix(
         "javaTimeOffsetDateTime",
         OffsetDateTime.of(JtLocalDateTime.of(2024, 6, 15, 14, 30, 45), ZoneOffset.UTC),
-        DATE_TIME_TIMESTAMP,
+        TIMESTAMP_ONLY,
     )
     @Test fun javaTimeZonedDateTime() = runTypeMatrix(
         "javaTimeZonedDateTime",
         ZonedDateTime.of(JtLocalDateTime.of(2024, 6, 15, 14, 30, 45), ZoneOffset.UTC),
-        DATE_TIME_TIMESTAMP,
+        TIMESTAMP_ONLY,
     )
 
     // --- Numeric large (java.math) ---

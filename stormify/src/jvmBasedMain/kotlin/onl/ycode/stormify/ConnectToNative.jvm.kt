@@ -36,10 +36,12 @@ internal actual fun transformResultValue(value: Any?): Any? {
     return value
 }
 
+@OptIn(kotlin.uuid.ExperimentalUuidApi::class)
 actual val Any.isOtherPrimitive: Boolean
     get() = this is java.util.Date ||
             this is java.time.temporal.Temporal ||
-            this is java.util.UUID
+            this is java.util.UUID ||
+            this is kotlin.uuid.Uuid
             || (supportsIonspinBigNumbers && this is com.ionspin.kotlin.bignum.BigNumber<*>)
             || (supportsKotlinxDatetime && (this is kotlinx.datetime.LocalDateTime
                     || this is kotlinx.datetime.LocalDate

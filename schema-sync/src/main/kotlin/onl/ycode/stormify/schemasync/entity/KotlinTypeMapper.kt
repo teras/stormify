@@ -23,7 +23,7 @@ object KotlinTypeMapper {
         "Float", "Double", "BigDecimal" -> TypeFamily.DECIMAL
         "Boolean" -> TypeFamily.BOOLEAN
         "LocalDate" -> TypeFamily.DATE
-        "LocalTime", "Time" -> TypeFamily.TIME
+        "LocalTime", "OffsetTime", "Time" -> TypeFamily.TIME
         "LocalDateTime", "Instant", "OffsetDateTime", "ZonedDateTime", "Date", "Timestamp" -> TypeFamily.TIMESTAMP
         "ByteArray", "CharArray" -> TypeFamily.BINARY
         "UUID", "Uuid" -> TypeFamily.UUID
