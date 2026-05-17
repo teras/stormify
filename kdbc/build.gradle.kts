@@ -196,6 +196,18 @@ android {
         sourceCompatibility = JavaVersion.VERSION_1_8
         targetCompatibility = JavaVersion.VERSION_1_8
     }
+
+    // Gradle 9 forks unit-test workers with `--add-opens=java.base/java.io=ALL-UNNAMED`,
+    // a Java 9+ flag rejected by the Java 8 toolchain JVM. Override the test launcher
+    // so the Android unit-test task runs on Java 17; compilation (and the published
+    // bytecode) remains at Java 8.
+    testOptions {
+        unitTests.all {
+            it.javaLauncher.set(javaToolchains.launcherFor {
+                languageVersion.set(JavaLanguageVersion.of(11))
+            })
+        }
+    }
 }
 
 mavenPublishing {

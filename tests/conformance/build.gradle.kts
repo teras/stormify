@@ -141,7 +141,7 @@ android {
         unitTests.isIncludeAndroidResources = true
         unitTests.all {
             it.javaLauncher.set(javaToolchains.launcherFor {
-                languageVersion.set(JavaLanguageVersion.of(17))
+                languageVersion.set(JavaLanguageVersion.of(11))
             })
             it.filter { includeTestsMatching("test.Android*") }
         }
