@@ -40,7 +40,7 @@ gradle run
 
 ### [kotlin-linux](https://github.com/teras/stormify-examples/tree/main/kotlin-linux)
 
-A standalone Kotlin/Native Linux binary (`linuxX64`) — no JVM needed at runtime — using Stormify's native SQLite driver via KDBC. Entity metadata is generated at compile time by the KSP annotation processor. The sample intentionally uses both an `AutoTable` entity (with `by db()` auto-population) and a plain-class entity (requiring explicit `populate()`), so you can see both styles side by side.
+A standalone Kotlin/Native Linux binary (`linuxX64`) — no JVM needed at runtime — using Stormify's native SQLite driver via KDBC. Entity metadata is generated at compile time by the KSP annotation processor. The sample intentionally uses both an `AutoTable` entity (with `by db()` auto-hydration) and a plain-class entity (requiring explicit `stormify.refresh(entity)`), so you can see both styles side by side.
 
 Run:
 

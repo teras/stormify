@@ -380,6 +380,7 @@ class Stormify(val dataSource: DataSource, vararg registrars: EntityRegistrar) {
         val refInfo = resolveTableInfo(refType) as TableInfo<Any>
         val wrapper = refInfo.create()
         if (wrapper is StormifyEntity) wrapper._stormify = this
+        if (wrapper is AutoTable) wrapper._isHydrated.value = false
         refInfo.setField(wrapper, refInfo.idDbNames[0], idValue, this)
         return wrapper
     }
@@ -571,19 +572,19 @@ class Stormify(val dataSource: DataSource, vararg registrars: EntityRegistrar) {
         return idValues
     }
 
-    // --- Populate ---
+    // --- Refresh ---
 
     /** Refreshes an entity with fresh data from the database based on its primary key. */
     @Throws(SQLException::class)
-    fun <T : Any> populate(entity: T): T =
-        populate(null, entity)
+    fun <T : Any> refresh(entity: T): T =
+        refresh(null, entity)
 
     @Suppress("UNCHECKED_CAST")
-    internal fun <T : Any> populate(conn: Connection?, entity: T): T {
+    internal fun <T : Any> refresh(conn: Connection?, entity: T): T {
         attachStormify(entity)
         val info = resolveTableInfo(entity::class) as TableInfo<T>
         val idValues = getValidIds(entity, info)
-        if (idValues.any { it == null }) return entity  // null PK = nothing to populate
+        if (idValues.any { it == null }) return entity  // null PK = nothing to load
         performQuery<Any>(conn, info.populateQuery, idValues, code = { statement ->
             statement.executeQuery().use { rs ->
                 if (rs.next()) return@performQuery populate<T>(entity, rs)
@@ -664,7 +665,7 @@ class Stormify(val dataSource: DataSource, vararg registrars: EntityRegistrar) {
         context: PopulationContext?,
     ): T {
         attachStormify(item)
-        if (item is AutoTable) item.markPopulated()
+        if (item is AutoTable) item.markHydrated()
         val info = plan.info
         for (col in plan.cols) {
             val handler = col.customHandler
@@ -806,7 +807,7 @@ class Stormify(val dataSource: DataSource, vararg registrars: EntityRegistrar) {
         val itemList = if (items is List) items else items.toList()
         itemList.forEach {
             attachStormify(it)
-            if (it is AutoTable) it.markPopulated() // Prevent lazy-load during value extraction
+            if (it is AutoTable) it.markHydrated() // Prevent lazy-load during value extraction
         }
 
         return ConnectionMaker(conn).useWithException("Unable to batch create") { maker ->

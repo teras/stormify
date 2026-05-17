@@ -32,37 +32,48 @@ value of the referenced entity:
     ```
 
 When reading an `Order`, Stormify creates a `Customer` instance with **only its primary key
-set**. If `Customer` extends `AutoTable`, its remaining fields are lazy-loaded on first
-access (see below).
+set** — a *shadow reference*. If `Customer` extends `AutoTable`, the remaining fields are
+auto-loaded on first access (see below).
 
-## AutoTable: Lazy Loading
+## AutoTable: Auto-Hydration
 
-`AutoTable` is an abstract base class that provides automatic lazy-loading of entity fields.
-When you read a list of entities whose reference fields point to `AutoTable` subclasses,
-those references are created with only their primary key set. When you access any non-key
-field, the full entity is loaded from the database on demand.
+`AutoTable` is an abstract base class for entities whose fields are auto-hydrated from
+the database when the library produces a shadow reference for them. The behavior is
+**ownership-based**: who created the entity determines whether the library is allowed to
+fetch from the database without an explicit request.
+
+| How it was created | Behavior on first `db` field access |
+|---|---|
+| **User-constructed** — `User()` in your code, possibly via `apply { id = 1 }` | No DB access. Reads return the in-memory value (or the delegate default); writes just store. |
+| **Library-constructed shadow reference** — the FK stub Stormify produces when loading a row whose column points to another entity | The row is fetched, all fields are filled, then the original read or write proceeds. |
+| **Already loaded** — result of `findById` / `findAll` / `create`, or a shadow that has already been hydrated | No DB access. Reads return the loaded values. |
+
+The distinction is decided **at construction time** and never changes for the lifetime of
+the instance. The library marks every shadow reference it creates; user-constructed
+entities are not marked.
 
 ### How It Works in Kotlin
 
-In Kotlin, the `by db(defaultValue)` property delegate turns any field into a
-lazy-loaded one. Until the row is first read, the delegate serves the default
-value you pass in; on first access, Stormify loads the row from the database
-and returns the real value from then on.
+The `by db(defaultValue)` delegate makes a field auto-hydrating *only on shadow
+references*. On user-constructed entities, the delegate just stores and returns the
+value, with no DB access.
 
 ```kotlin
 class User : AutoTable() {
     @DbField(primaryKey = true)
     var id: Int? = null
-    var name: String by db("")       // Auto-populated on first access
-    var email: String by db("")      // Auto-populated on first access
+    var name: String by db("")
+    var email: String by db("")
 }
 ```
 
-Every non-key property that needs lazy loading uses `by db(defaultValue)`.
+Use `by db(defaultValue)` for every non-primary-key property.
 
 ### How It Works in Java
 
-Subclasses must call `populate()` in every getter/setter of non-primary-key fields:
+Java subclasses call `hydrate()` (a `protected` method on `AutoTable`) from every
+getter/setter of a non-primary-key field. `hydrate()` is a no-op on user-constructed and
+already-loaded entities; on a shadow reference it loads the row exactly once.
 
 ```java
 public class User extends AutoTable {
@@ -73,82 +84,63 @@ public class User extends AutoTable {
     public void setId(Integer id) { this.id = id; }
 
     public String getName() {
-        populate();  // Triggers lazy load if needed
+        hydrate();
         return name;
     }
     public void setName(String name) {
-        populate();
+        hydrate();
         this.name = name;
     }
 }
 ```
 
-### Fresh Construction vs. Lazy Stubs
+### Loading by ID
 
-If you get your entities from Stormify — by querying, creating, or loading
-them — lazy loading is invisible. This section is for when you manually build
-a lightweight reference from just an ID. Whether a field
-access then hits the database depends on two things: whether a `Stormify`
-instance is attached to the object (directly, or via a
-[default instance](Configuration.md#default-instance)), and whether you have
-written anything into the object yourself.
-
-| State | `Stormify` will be attached? | User touched any `db` field? | Behavior on read |
-|-------|------------------------------|-------------------------------|------------------|
-| **Fresh construct** — `User().apply { id=1; name="Alice" }` | — | Yes (e.g., `name="Alice"`) | Returns in-memory value; no DB access |
-| **Manual stub, with a default Stormify** — `User().apply { id=1 }` | Yes | No | First access triggers a `SELECT` to load the row |
-| **Manual stub, no default Stormify** — `User().apply { id=1 }` | — | No | **Throws** `SQLException` — no way to load, and the library refuses to hand back silent defaults |
-| **FK reference stub** — came from a foreign-key read; Stormify auto-attaches | Yes | No | First access triggers a `SELECT` to load the row |
-| **Populated** — came from `findById`/`findAll`/`create`, or has been lazy-loaded already | Yes | — | Returns in-memory value; no further DB access |
-
-Stormify distinguishes these states automatically. You don't need to mark anything — the
-combination of "is a Stormify reachable?" and "has the user written any delegated field?"
-is enough to pick the right behavior.
-
-#### Manual Stubs (Pattern)
-
-You can construct lazy stubs yourself — useful when you already have an ID in hand (e.g.
-from a URL parameter, a cache, or another table). Either attach a Stormify instance
-explicitly via `stormify.attach(...)`, or register a default via `asDefault()` and let
-the library pick it up:
+To fetch a row when you have its primary key, use `findById`:
 
 === "Kotlin"
 
     ```kotlin
-    // Explicit attach — works without a default instance
-    val user = stormify.attach(User().apply { id = userId })
-    println(user.name)    // triggers SELECT, returns the DB value
-    println(user.email)   // already loaded; no second query
-
-    // Or with a default instance — even simpler
-    stormify.asDefault()
-    val user2 = User().apply { id = userId }
-    println(user2.name)   // default instance picks up lazy-load
+    val user = findById<User>(userId)
+        ?: error("User $userId not found")
+    println(user.name)
+    println(user.email)   // no second query — already loaded
     ```
 
 === "Java"
 
     ```java
-    // Explicit attach — works without a default instance
-    User user = stormify.attach(new User());
-    user.setId(userId);
-    System.out.println(user.getName());    // triggers SELECT
-    System.out.println(user.getEmail());   // already loaded
-
-    // Or with a default instance
-    stormify.asDefault();
-    User user2 = new User();
-    user2.setId(userId);
-    System.out.println(user2.getName());
+    User user = StormifyJ.getDefault().findById(User.class, userId);
+    if (user == null) throw new IllegalStateException("User " + userId + " not found");
+    System.out.println(user.getName());
+    System.out.println(user.getEmail());   // no second query — already loaded
     ```
 
-This is exactly what `findById(userId)` does internally, with one difference: `findById`
-eagerly runs the `SELECT` and returns the populated entity, while the manual-stub pattern
-defers the query until the first field access. For "I might not actually read this" code
-paths, manual stubs save a round trip.
+### Refresh
 
-The same `stormify.attach(target)` API works for any `StormifyAware` object — both
-entities and `PagedList` instances — so you only need to remember one pattern.
+To re-fetch an entity that has already been loaded — for example, because another part of
+the system may have written to the row — call `stormify.refresh(entity)`. Every call
+performs a SELECT and overwrites the in-memory fields with the database values. In-memory
+changes set before the call are lost; if you need them afterwards, set them again after
+`refresh` returns.
+
+=== "Kotlin"
+
+    ```kotlin
+    val user = findById<User>(42)!!
+    stormify.refresh(user)   // forces a re-read from the DB
+    ```
+
+=== "Java"
+
+    ```java
+    User user = StormifyJ.getDefault().findById(User.class, 42);
+    StormifyJ.getDefault().refresh(user);
+    ```
+
+`Stormify.refresh(entity)` is the single direct-call API for forcing a reload.
+`hydrate()` is the at-most-once auto-load used by the `db` delegate and by Java
+getters/setters of `AutoTable` subclasses.
 
 ### Lazy Details (Child Records)
 
@@ -384,14 +376,14 @@ Two things happen inside that context, and they work together to eliminate the c
    group (e.g. `orders[0].customer.name`), the whole group wakes up and runs **one**
    `SELECT ... WHERE id IN (?, ?, …)` covering up to 32 siblings at a time. The stub
    that triggered the load pays the round-trip; the other 31 get their data for free
-   and are marked populated, so subsequent field accesses on them don't touch the
+   and are marked hydrated, so subsequent field accesses on them don't touch the
    database at all.
 
 The batch size of 32 is a compile-time constant chosen to keep the `IN` list small
 enough for every supported dialect (including Oracle's 1,000-element limit) while still
 collapsing the round-trip count by more than an order of magnitude. Groups larger than
 32 members are simply drained in successive batches, each triggered by the next
-unpopulated stub that gets touched.
+unhydrated stub that gets touched.
 
 **A concrete comparison**, reading 100 orders and printing each customer's name:
 

@@ -31,11 +31,11 @@ open class CrudTest {
         s.delete(tst)
         assertEquals("[TestC(id=2, name=Test2)]", s.findAll<TestC>().toString())
 
-        // Populate
+        // Refresh
         for (id in 3..5) s.create(TestC(id, "Test$id"))
         tst.id = 2; tst.name = null
         val before = tst.toString()
-        s.populate(tst)
+        s.refresh(tst)
         assertEquals("TestC(id=2, name=null)", before)
         assertEquals("TestC(id=2, name=Test2)", tst.toString())
     }
@@ -59,7 +59,7 @@ open class CrudTest {
         assertEquals("[DualKey(id1=1, id2=2, data=Data3)]", s.findAll<DualKey>().toString())
 
         val dk1P = DualKey(1, 2)
-        s.populate(dk1P)
+        s.refresh(dk1P)
         assertEquals(dk1, dk1P)
     }
 

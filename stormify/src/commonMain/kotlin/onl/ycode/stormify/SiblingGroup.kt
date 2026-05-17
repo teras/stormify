@@ -32,7 +32,7 @@ internal class SiblingGroup {
                 alive.add(ref)
                 if (toPopulate.size >= DEFAULT_BATCH_SIZE) continue
                 if (member !== trigger && member._siblingGroup === this) {
-                    member.markPopulated()
+                    member.markHydrated()
                     member._siblingGroup = null
                     toPopulate.add(member)
                 }
@@ -42,7 +42,7 @@ internal class SiblingGroup {
 
             val stormify = trigger._stormify ?: return
             if (toPopulate.size == 1)
-                stormify.populate(trigger)
+                stormify.refresh(trigger)
             else
                 stormify.batchPopulate(toPopulate)
         }

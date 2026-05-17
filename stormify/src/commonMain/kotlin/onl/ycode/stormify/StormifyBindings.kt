@@ -83,7 +83,7 @@ fun <R> transaction(block: () -> R): R = stormify().transaction(block)
 fun String.procedure(vararg args: Any?) = stormify().procedure(this, *args)
 
 /**
- * Property delegate that triggers auto-population from the database on first access.
+ * Property delegate that triggers auto-hydration from the database on first access.
  * Use with [AutoTable] entities: properties delegated to `db` will lazily load
  * the entity's data when read or written for the first time.
  *
@@ -97,38 +97,28 @@ class db<T>(private val defaultValue: T) : ReadWriteProperty<Any?, T> {
     private var prop: T = defaultValue
 
     /**
-     * Delegate read: triggers lazy-load from the database on first access when the
-     * entity is a [AutoTable] stub (i.e. only its primary key is set and no `db` field
-     * has been written yet). Otherwise returns the in-memory value.
+     * Delegate read: on a library-constructed shadow reference, triggers
+     * [AutoTable.hydrate] to load the row before returning the in-memory value.
+     * On a user-constructed entity (or one already hydrated), returns the
+     * in-memory value directly with no DB access.
      */
     override fun getValue(thisRef: Any?, property: KProperty<*>): T {
         val entity = thisRef as? AutoTable
-        if (entity != null && !entity._hasRun.value && !entity._userTouched) {
-            // Entity has never been populated from DB, and the user has not written any
-            // field on it. This means only the ID is set — a clear lazy-load attempt.
-            // If no Stormify instance is available, lazy-load is impossible — fail loudly
-            // so the user isn't silently handed the delegate's default value.
-            if (entity._stormify == null && Stormify.defaultInstance == null)
-                throw SQLException(
-                    "Cannot lazy-load property '${property.name}' on ${entity::class.qualifiedName}: " +
-                            "no Stormify instance is attached to this entity and no default instance " +
-                            "has been set. Either attach an instance or call Stormify.asDefault()."
-                )
-            entity.populate()
-        }
+        entity?.hydrateIfNeeded()
         return prop
     }
 
     /**
-     * Delegate write: marks the owning [AutoTable] as user-touched so it is no longer
-     * considered a stub (which prevents a subsequent read from triggering lazy-load),
-     * then stores the new value in memory. No immediate database write.
+     * Delegate write: on a library-constructed shadow reference, runs
+     * [AutoTable.hydrate] first so that all other fields keep their database
+     * values, then stores the new value (so the just-written field wins). On a
+     * user-constructed entity (or one already hydrated), stores the value
+     * directly with no DB access.
      */
     override fun setValue(thisRef: Any?, property: KProperty<*>, value: T) {
         val entity = thisRef as? AutoTable
-        entity?.populate()
+        entity?.hydrateIfNeeded()
         prop = value
-        if (entity != null) entity._userTouched = true
     }
 }
 

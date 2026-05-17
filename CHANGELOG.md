@@ -2,6 +2,57 @@
 
 Stormify release history.
 
+## [2.6.0] — 2026-05-17
+
+### Added
+- **Cursor API for row-by-row streaming.** Transparent streaming across the
+  KDBC drivers (JDBC, native Postgres, MariaDB, Oracle) with per-driver
+  dispatch — large result sets can be processed without materialising the
+  whole list. Per-driver `cursorFetchSize` defaults are tuned to match each
+  backend's natural batch size.
+- **`java.time` and Kotlin UUID scalars** registered out of the box in
+  `TypeConversion`: `LocalDate`, `LocalDateTime`, `Instant`,
+  `OffsetDateTime`, `ZonedDateTime`, `kotlin.uuid.Uuid`, and
+  `java.util.UUID` round-trip through the column plan without manual
+  converters.
+- **Benchmark suite** under `benchmarks/` comparing Stormify against JPA
+  across CRUD and read-heavy scenarios, runnable on JVM and native targets.
+- **Schema-sync headless modes** — `export-sql` and `export-kt` subcommands
+  with category and glob filters, suitable for CI and scripted use with no
+  TUI required.
+- **Schema-sync packaged installers** — AppImage on Linux, ZIP on Windows,
+  signed DMG on macOS via `jpackage` app-image; attached to a draft GitHub
+  release on tag push.
+- **Schema-sync TUI on Windows** renders natively against the Windows
+  console (no MinTTY required), with assorted reliability fixes around
+  focus/exit-stack handling.
+- `AutoTable.hydrate()` — `protected` at-most-once lazy-load helper.
+  Subclasses that hand-write getters/setters (typically Java) call this to
+  trigger the same lazy-load behaviour that the Kotlin `db` delegate
+  applies automatically.
+
+### Changed
+- **`AutoTable` auto-hydration is now ownership-based.** A user-constructed
+  entity is never auto-loaded from the database. Library-constructed shadow
+  references (FK stubs produced by a parent's read) continue to auto-hydrate
+  on first `db` property access.
+- `AutoTable.markPopulated()` was renamed to `AutoTable.markHydrated()` for
+  vocabulary consistency.
+- **Published libraries target JVM 8 bytecode**, broadening the set of
+  runtimes that can consume them. `schema-sync` and the test/benchmark
+  modules target JVM 11.
+- The `schema-sync` demo now runs against a dedicated `stormify_demo`
+  database, isolated from the conformance suite so the two no longer share
+  state.
+
+### Removed
+- `AutoTable.populate()` (the public direct-call API) and
+  `Stormify.populate(entity)` / `StormifyJ.populate(entity)` (the
+  manager-level loaders) were removed in favour of the single direct-call
+  entry point `Stormify.refresh(entity)` / `StormifyJ.refresh(entity)`,
+  equivalent to JPA's `EntityManager.refresh(entity)`. Every call performs
+  a SELECT and overwrites the in-memory fields.
+
 ## [2.5.1] — 2026-05-07
 
 ### Fixed

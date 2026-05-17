@@ -90,9 +90,9 @@ class StormifyJ(dataSource: DataSource, vararg registrars: EntityRegistrar) {
     @Throws(SQLException::class)
     fun executeUpdate(query: String, vararg params: Any?) = stormify.executeUpdate(null, query, *params)
 
-    /** Populates [entity] from the database by its primary key. Used internally by [AutoTable]. */
+    /** Refreshes [entity] from the database by its primary key. Used internally by [AutoTable]. */
     @Throws(SQLException::class)
-    fun <T : Any> populate(entity: T) = stormify.populate(null, entity)
+    fun <T : Any> refresh(entity: T) = stormify.refresh(null, entity)
 
     /** Inserts [item] into its mapped table and returns the (possibly key-populated) entity. */
     @Throws(SQLException::class)

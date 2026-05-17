@@ -1675,7 +1675,7 @@ open class PagedListTest {
 
         // 50 parents, 4 children per parent → 200 children total. Raw INSERTs
         // bypass the ORM layer entirely so we don't have to care about the
-        // default-Stormify / `db`-delegate populate-on-setValue interaction.
+        // default-Stormify / `db`-delegate auto-hydrate interaction.
         for (pid in 1..50) {
             s.executeUpdate(
                 "INSERT INTO auto_parent (id, other, data) VALUES (?, ?, ?)",

@@ -2,45 +2,30 @@
 // (C) Panayotis Katsaloulis
 package test
 
-import onl.ycode.kdbc.SQLException
 import onl.ycode.stormify.Stormify
-import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
-import kotlin.test.assertFailsWith
 import kotlin.test.assertNull
-import kotlin.test.assertTrue
 
 /**
- * Tests the lazy-load behavior of [onl.ycode.stormify.AutoTable] and the [onl.ycode.stormify.db]
- * property delegate. Covers the matrix of (stormify attached? / user touched? / hasRun?) states
- * to verify that:
+ * Tests the auto-hydrate behavior of [onl.ycode.stormify.AutoTable] and the
+ * [onl.ycode.stormify.db] property delegate.
  *
- * - Fresh user-constructed entities work without any Stormify instance.
- * - Entities that only have their ID set fail loudly when a field is read without a Stormify.
- * - Stubs from reference resolution lazy-load correctly from the database.
- * - Entities already populated (via findById/create) never re-trigger lazy-load.
+ * The contract under test:
  *
- * Important: the no-database tests in this class require [Stormify.defaultInstance] to be `null`.
- * The class name starts with 'A' so it runs before [PagedListTest] (and any other class that
- * calls `asDefault()`) under the default alphabetical test ordering. The [requireCleanState]
- * guard will fail loudly if this assumption is ever broken.
+ * - **User-constructed entities** (`Entity()` in user code) never auto-hydrate.
+ *   Reads return the in-memory value or the delegate default; writes just store.
+ * - **Library-constructed shadow references** (the FK stubs produced when a parent
+ *   is loaded) auto-hydrate on first access to any [db]-delegated property.
+ * - **Already-loaded entities** (results of `findById`, post-`create`, etc.) never
+ *   auto-hydrate — they're marked hydrated by the loading path.
  */
 open class AutoTableLazyLoadTest {
     private fun withDb(name: String, test: (Stormify) -> Unit) = TestHelper.withDb(name, test)
 
-    @BeforeTest
-    fun requireCleanState() {
-        check(Stormify.defaultInstance == null) {
-            "AutoTableLazyLoadTest requires Stormify.defaultInstance to be null. " +
-                    "Some earlier test has called asDefault() without cleaning up. " +
-                    "This class is named to run first alphabetically — check test ordering."
-        }
-    }
-
     // --- Tests that don't need a database ---
 
-    /** Fresh user construction without any Stormify: setting and reading should work silently. */
+    /** User construction without any Stormify: setting and reading work silently. */
     @Test
     fun freshConstructSetThenRead() {
         val p = AutoParentEntity().apply { id = 1; data = "hello"; other = "world" }
@@ -49,41 +34,42 @@ open class AutoTableLazyLoadTest {
         assertEquals("world", p.other)
     }
 
-    /**
-     * User set field A, reads unset field B: no throw. Once the user has touched any delegated
-     * field, the entity is considered "user-owned" and reads return the delegate default silently.
-     */
+    /** User sets one field, reads a different unset field — returns the delegate default silently. */
     @Test
     fun freshConstructPartialSetReadUnset() {
         val p = AutoParentEntity().apply { id = 1; data = "hello" }
-        // 'other' was never set — should return the delegate default (null) without throwing
         assertNull(p.other)
     }
 
     /**
-     * Only ID is set, no Stormify attached anywhere, user tries to read a delegated field:
-     * this is the classic "forgot to attach stormify, expected lazy-load" bug — must throw
-     * with our specific delegate message (not the populate "No data found" path).
+     * Only id is set, no Stormify reachable, reads return the delegate default silently.
+     * Auto-hydrate is not attempted on user-constructed entities — the user is responsible
+     * for fetching data (via `findById` or an explicit [AutoTable.refresh] call).
      */
     @Test
-    fun onlyIdSetWithoutStormifyThrowsOnRead() {
+    fun onlyIdSetWithoutStormifyReadsDefaultSilently() {
         val p = AutoParentEntity().apply { id = 42 }
-        val ex = assertFailsWith<SQLException> { p.data }
-        val msg = ex.message ?: ""
-        assertTrue(msg.contains("Cannot lazy-load"), "expected delegate check message, got: $msg")
-        assertTrue(msg.contains("data"), "message should mention the property: $msg")
-        assertTrue(msg.contains("AutoParentEntity"), "message should mention the class: $msg")
-    }
-
-    /** Same as above but for a different unset delegated property, to confirm the check is generic. */
-    @Test
-    fun onlyIdSetWithoutStormifyThrowsOnDifferentProperty() {
-        val p = AutoParentEntity().apply { id = 99 }
-        val ex = assertFailsWith<SQLException> { p.other }
-        assertTrue(ex.message?.contains("other") ?: false)
+        assertNull(p.data)
+        assertNull(p.other)
     }
 
     // --- Tests that need a database ---
+
+    /**
+     * A user-constructed entity with an id that does not exist in the database, while a
+     * default Stormify is attached. Setting a field on it must not trigger a SELECT, and
+     * the user's value must be preserved.
+     */
+    @Test
+    fun freshConstructWithDefaultStormifyAttached() = withDb("AUTO-LAZY-FRESH-DEFAULT") { s ->
+        s.createAutoSchema()
+        s.asDefault {
+            val p = AutoParentEntity().apply { id = 999; data = "hello" }
+            assertEquals(999, p.id)
+            assertEquals("hello", p.data)
+            assertNull(p.other)
+        }
+    }
 
     private fun Stormify.createAutoSchema() {
         TestDDL.dropTable("auto_child")
@@ -103,10 +89,7 @@ open class AutoTableLazyLoadTest {
         )
     }
 
-    /**
-     * After findById, the entity has hasRun=true (via markPopulated inside populate).
-     * Reading delegated fields returns loaded values with no further populate calls.
-     */
+    /** After `findById`, the entity is marked hydrated — reads return loaded values. */
     @Test
     fun findByIdResultReturnsLoadedValues() = withDb("AUTO-LAZY-FINDBYID") { s ->
         s.createAutoSchema()
@@ -117,27 +100,19 @@ open class AutoTableLazyLoadTest {
         assertEquals("o1", loaded.other)
     }
 
-    /**
-     * After create, hasRun=true (set by markPopulated in Stormify.create).
-     * Reading unset delegated fields returns the in-memory default without lazy-load attempts.
-     */
+    /** After `create`, the entity is marked hydrated — reads return the in-memory values used to insert. */
     @Test
     fun afterCreateReadsReturnInMemory() = withDb("AUTO-LAZY-CREATE") { s ->
         s.createAutoSchema()
         val p = AutoParentEntity().apply { id = 1; data = "d1" }
-        // 'other' deliberately not set
         s.create(p)
-        // After create, the entity has stormify attached and hasRun=true — reads should just return prop
         assertEquals("d1", p.data)
         assertNull(p.other)
     }
 
     /**
-     * Reference stub: child.parent is a stub with only id set and stormify attached.
-     * Reading a field on the stub triggers lazy-load from DB. This is the auto-attached
-     * counterpart of the "Manual Stubs" pattern documented in Advanced_topics.md — both
-     * go through the same `db` delegate path, the only difference is how the Stormify
-     * instance becomes reachable (FK auto-attach vs. `Stormify.defaultInstance`).
+     * The classic shadow-reference case: a child loaded from the DB carries a FK stub for its
+     * parent. Reading any field on the stub auto-hydrates it from the database.
      */
     @Test
     fun referenceStubLazyLoads() = withDb("AUTO-LAZY-STUB") { s ->
@@ -147,8 +122,40 @@ open class AutoTableLazyLoadTest {
 
         val child = s.findById<AutoChildEntity>(10)!!
         val parent = child.parent!!
-        // Accessing parent.data on the stub should trigger lazy-load and return the DB value
         assertEquals("parent-data", parent.data)
         assertEquals("parent-other", parent.other)
+    }
+
+    /**
+     * Writing a field on a shadow reference must auto-hydrate the row first so that the other
+     * fields keep their DB values; the just-written field is then overwritten with the user's value.
+     */
+    @Test
+    fun referenceStubWriteAutoPopulatesThenOverrides() = withDb("AUTO-LAZY-STUB-WRITE") { s ->
+        s.createAutoSchema()
+        s.create(AutoParentEntity().apply { id = 7; data = "p-data"; other = "p-other" })
+        s.create(AutoChildEntity().apply { id = 20; data = "c-data"; parent = AutoParentEntity().apply { id = 7 } })
+
+        val child = s.findById<AutoChildEntity>(20)!!
+        val parent = child.parent!!
+        parent.data = "overridden"
+        assertEquals("overridden", parent.data)
+        // 'other' was filled by the auto-hydrate that ran before the write
+        assertEquals("p-other", parent.other)
+    }
+
+    /**
+     * Explicit [Stormify.refresh] on a user-constructed entity reloads from the database:
+     * the database row overwrites any in-memory values that were set before the call.
+     */
+    @Test
+    fun explicitRefreshOverwritesUserValues() = withDb("AUTO-LAZY-EXPLICIT-REFRESH") { s ->
+        s.createAutoSchema()
+        s.create(AutoParentEntity().apply { id = 30; data = "db-data"; other = "db-other" })
+
+        val p = AutoParentEntity().apply { id = 30; data = "user-data" }
+        s.refresh(p)
+        assertEquals("db-data", p.data)
+        assertEquals("db-other", p.other)
     }
 }
