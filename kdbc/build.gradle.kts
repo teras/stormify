@@ -148,14 +148,20 @@ tasks.withType<JavaCompile>().configureEach {
 }
 
 // Ensure the correct libkdbc.a is built before each target's cinterop task.
+// The archive is also declared as a cinterop input: cinterop embeds a copy of
+// libkdbc.a in the klib, so without this a C-only change would leave the task
+// UP-TO-DATE and the klib would keep the stale embedded archive.
 tasks.matching { it.name.startsWith("cinteropKdbcLinuxX64") }.configureEach {
     dependsOn(buildNativeKdbc)
+    inputs.file(buildNativeKdbc.map { it.outputs.files.singleFile })
 }
 tasks.matching { it.name.startsWith("cinteropKdbcMingwX64") }.configureEach {
     dependsOn(buildNativeKdbcMingw)
+    inputs.file(buildNativeKdbcMingw.map { it.outputs.files.singleFile })
 }
 tasks.matching { it.name.startsWith("cinteropKdbcLinuxArm64") }.configureEach {
     dependsOn(buildNativeKdbcArm64)
+    inputs.file(buildNativeKdbcArm64.map { it.outputs.files.singleFile })
 }
 
 // Apple targets — each target gets its own architecture-specific libkdbc.a.
@@ -169,18 +175,23 @@ if (System.getProperty("os.name").startsWith("Mac")) {
 
     tasks.matching { it.name.startsWith("cinteropKdbcMacosArm64") }.configureEach {
         dependsOn(buildNativeKdbcMacosArm64)
+        inputs.file(buildNativeKdbcMacosArm64.map { it.outputs.files.singleFile })
     }
     tasks.matching { it.name.startsWith("cinteropKdbcMacosX64") }.configureEach {
         dependsOn(buildNativeKdbcMacosX64)
+        inputs.file(buildNativeKdbcMacosX64.map { it.outputs.files.singleFile })
     }
     tasks.matching { it.name.startsWith("cinteropKdbcIosSimulatorArm64") }.configureEach {
         dependsOn(buildNativeKdbcIosSim)
+        inputs.file(buildNativeKdbcIosSim.map { it.outputs.files.singleFile })
     }
     tasks.matching { it.name.startsWith("cinteropKdbcIosX64") }.configureEach {
         dependsOn(buildNativeKdbcIosSimX64)
+        inputs.file(buildNativeKdbcIosSimX64.map { it.outputs.files.singleFile })
     }
     tasks.matching { it.name.startsWith("cinteropKdbcIosArm64") }.configureEach {
         dependsOn(buildNativeKdbcIos)
+        inputs.file(buildNativeKdbcIos.map { it.outputs.files.singleFile })
     }
 }
 

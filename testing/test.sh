@@ -175,8 +175,10 @@ LINUX_TEST_BIN="$PROJECT_DIR/tests/conformance/build/bin/linuxX64/debugTest/test
 ARM64_TEST_BIN="$PROJECT_DIR/tests/conformance/build/bin/linuxArm64/debugTest/test.kexe"
 MINGW_TEST_BIN="$PROJECT_DIR/tests/conformance/build/bin/mingwX64/debugTest/test.exe"
 
+# Always delegate the up-to-date decision to Gradle. Skipping the build when the
+# binary merely exists silently runs a stale binary against edited sources, which
+# reports green for code that was never compiled.
 build_linux() {
-    [ -x "$LINUX_TEST_BIN" ] && return 0
     echo "Building linuxX64 test binary..."
     cd "$PROJECT_DIR"
     gradle :conformance:linkDebugTestLinuxX64 --console=plain 2>&1
@@ -184,7 +186,6 @@ build_linux() {
 }
 
 build_arm64() {
-    [ -x "$ARM64_TEST_BIN" ] && return 0
     echo "Building linuxArm64 test binary..."
     cd "$PROJECT_DIR"
     gradle :conformance:linkDebugTestLinuxArm64 --console=plain 2>&1
@@ -192,7 +193,6 @@ build_arm64() {
 }
 
 build_mingw() {
-    [ -x "$MINGW_TEST_BIN" ] && return 0
     echo "Building C library for mingw..."
     make -C "$C_SRC_DIR" TARGET=mingw BUILDDIR=build-mingw lib 2>&1
     echo "Building mingwX64 test binary..."
