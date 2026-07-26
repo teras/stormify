@@ -75,9 +75,25 @@ private fun jdbcReadType(type: KClass<*>): Class<*> =
 private fun readsUntyped(type: KClass<*>): Boolean =
     type == Any::class || type.qualifiedName in jdbcUntrustedReads
 
+/**
+ * Materialize a driver LOB handle into the value it stands for.
+ *
+ * A CLOB or BLOB column read without an explicit target type hands back a live
+ * [java.sql.Clob]/[java.sql.Blob] bound to the result set, which stops being
+ * readable once the row moves on. The native drivers return the content itself, so
+ * reading it here is what makes the two sides agree.
+ */
+private fun materializeLob(value: Any?): Any? = when (value) {
+    is java.sql.Clob -> value.getSubString(1, value.length().toInt())
+    is java.sql.Blob -> value.getBytes(1, value.length().toInt())
+    else -> value
+}
+
 /** Read column/parameter [index] untyped via [get] and coerce it to [type]. */
-private fun coerceUntyped(type: KClass<*>, index: Int, get: (Int) -> Any?): Any? =
-    if (type == Any::class) get(index) else TypeConversion.castScalar(type, get(index))
+private fun coerceUntyped(type: KClass<*>, index: Int, get: (Int) -> Any?): Any? {
+    val raw = materializeLob(get(index))
+    return if (type == Any::class) raw else TypeConversion.castScalar(type, raw)
+}
 
 /**
  * Convert a value to a JDBC-compatible type before reaching `setObject`.
@@ -264,7 +280,7 @@ private class JdbcCallableStatement(private val jdbc: java.sql.CallableStatement
     } catch (_: Exception) {
         // Same driver-strictness fallback as JdbcResultSet.getObject: read untyped
         // and let the converter pipeline coerce.
-        jdbc.getObject(parameterIndex)
+        materializeLob(jdbc.getObject(parameterIndex))
     }
     override fun execute(): Boolean = jdbc.execute()
 }
@@ -317,7 +333,7 @@ private class JdbcPgCallableStatement(
         } catch (_: Exception) {
             // Same driver-strictness fallback as JdbcResultSet.getObject: read untyped
             // and let the converter pipeline coerce.
-            rs.getObject(colIndex)
+            materializeLob(rs.getObject(colIndex))
         }
     }
 
@@ -425,7 +441,7 @@ private class JdbcResultSet(private val jdbc: java.sql.ResultSet) : ResultSet {
         // Some drivers throw non-SQLException (pg's getObject(idx, UUID.class) on
         // a TEXT column raises ClassCastException); fall back to untyped and let
         // the converter pipeline coerce.
-        jdbc.getObject(columnIndex)
+        materializeLob(jdbc.getObject(columnIndex))
     }
 
     override fun getMetaData(): ResultSetMetaData = JdbcResultSetMetaData(jdbc.metaData)
