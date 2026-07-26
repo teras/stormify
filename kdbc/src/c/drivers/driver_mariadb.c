@@ -262,6 +262,7 @@ typedef struct {
     int          col_count;
     my_col_data *cols;
     MY_BIND     *bind_result;
+    int          rebind_pending; /* enlarged buffers must be registered before the next fetch */
     MY_FIELD    *fields;
     char       **col_names;    /* cached from metadata */
     char         conv_buf[64];
@@ -1006,6 +1007,19 @@ static int my_get_gen_key(kdbc_stmt *stmt, int64_t *out_key) {
 
 static int my_rs_next(kdbc_result *rs) {
     my_result_set *mrs = (my_result_set *)rs->native;
+    /* Register any buffers enlarged by a previous row's truncation refetch.
+     * This must NOT happen mid-row: mysql_stmt_bind_result resets all bound
+     * *length outputs, which would erase the current row's fetched lengths. */
+    if (mrs->rebind_pending) {
+        mrs->rebind_pending = 0;
+        /* On failure libmariadb keeps pointing at the pre-realloc buffer, which is
+         * already freed — fetching into it would corrupt the heap. */
+        if (p_stmt_bind_result(mrs->stmt, mrs->bind_result)) {
+            RS_ERR_V(rs, p_stmt_sqlstate(mrs->stmt), (int)p_stmt_errno(mrs->stmt),
+                     "MariaDB bind_result: %s", p_stmt_error(mrs->stmt));
+            return KDBC_ERROR;
+        }
+    }
     int rc = p_stmt_fetch(mrs->stmt);
     /* MYSQL_DATA_TRUNCATED (101): row fetched but one or more TEXT/BLOB columns
      * exceeded the initial buffer size. Resize affected columns and refetch them. */
@@ -1033,12 +1047,12 @@ static int my_rs_next(kdbc_result *rs) {
                     tmp.is_null = &c->is_null;
                     p_stmt_fetch_column(mrs->stmt, &tmp, (unsigned int)i, 0);
                     /* Re-sync bind_result so subsequent fetches on the next row
-                     * use the enlarged buffer. */
+                     * use the enlarged buffer (applied at the top of my_rs_next). */
                     mrs->bind_result[i].buffer = c->buf;
                     mrs->bind_result[i].buffer_length = (unsigned long)c->buf_cap;
+                    mrs->rebind_pending = 1;
                 }
             }
-            p_stmt_bind_result(mrs->stmt, mrs->bind_result);
         }
         return 1;
     }
