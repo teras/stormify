@@ -50,7 +50,8 @@ object TypeUtils {
 
     /**
      * Registers a custom type conversion function from [sourceClass] to [targetClass].
-     * Delegates to [TypeConversion.register].
+     * Delegates to [TypeConversion.register]. Call at startup, before any concurrent
+     * query traffic — the registry is not synchronized.
      */
     fun <F : Any, T : Any> register(
         sourceClass: KClass<F>,
@@ -124,8 +125,10 @@ internal fun isScalarObject(request: Any) =
     request is Number || request is CharSequence || request is Char || request is Boolean
             || request is ByteArray || request is CharArray || request.isOtherPrimitive
 
-internal fun Throwable.throwQuery(reason: String): Nothing =
-    if (this is SQLException) throw this else throw SQLException(reason, this)
+internal fun Throwable.throwQuery(reason: String): Nothing = throw asQuery(reason)
+
+internal fun Throwable.asQuery(reason: String): SQLException =
+    if (this is SQLException) this else SQLException(reason, this)
 
 internal val KClass<*>.fullName get() = qualifiedName ?: throw SQLException("Unknown class name of class $this")
 

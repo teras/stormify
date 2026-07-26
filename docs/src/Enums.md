@@ -57,6 +57,11 @@ Enum values work seamlessly as query parameters:
         List.of(Status.ACTIVE, Status.BANNED));
     ```
 
+Raw query parameters carry no field metadata, so an enum parameter is always
+bound by its integer value (ordinal, or the `DbValue` for custom-integer enums).
+For a field declared with `enumAsString = true`, pass the name explicitly:
+`stormify.read<User>("SELECT * FROM user WHERE status = ?", Status.ACTIVE.name)`.
+
 ## Custom Integer Values with `DbValue`
 
 By default, enums are stored as their ordinal (position index). If you need stable integer

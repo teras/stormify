@@ -109,7 +109,7 @@ gradle run
 
 ### [android](https://github.com/teras/stormify-examples/tree/main/android)
 
-A minimal Compose app (two entities, one ViewModel, one screen — readable in five minutes) that uses Android's built-in SQLite through the `Stormify(SQLiteDatabase)` convenience constructor. It demonstrates the KSP-generated `TableInfo` (mandatory on Android, since full reflection isn't available), CRUD operations, a transaction with rollback, lazy references via `AutoTable`, and enum-as-int storage via `DbValue` so enum order changes don't corrupt data. Min SDK 21.
+A minimal Compose app (two entities, one ViewModel, one screen — readable in five minutes) that uses Android's built-in SQLite through the `Stormify(SQLiteDatabase)` convenience constructor. It demonstrates the KSP-generated `TableInfo` (mandatory on Android, since full reflection isn't available), CRUD operations, a transaction with rollback, lazy references via `AutoTable`, and enum-as-int storage via `DbValue` so enum order changes don't corrupt data. Min SDK 26.
 
 Run: open the `android/` folder in Android Studio, or from the command line:
 

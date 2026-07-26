@@ -7,7 +7,7 @@ JVM-only V1. This guide covers all breaking changes and how to update your code.
 
 | Area | V1 | V2 |
 |------|----|----|
-| Platforms | JVM only | JVM, Android, Linux, iOS, macOS |
+| Platforms | JVM only | JVM, Android, Linux, Windows, iOS, macOS |
 | Database access | JDBC directly | KDBC (wraps JDBC on JVM, native drivers elsewhere) |
 | Initialization | Singleton (`StormifyManager.stormify()`) | Constructor (`Stormify(dataSource)`) |
 | Entity discovery | Reflection only | Reflection (JVM) + KSP code generation (native) |
@@ -65,7 +65,9 @@ JVM-only V1. This guide covers all breaking changes and how to update your code.
 
 The separate `db` and `kotlin` modules are merged into a single artifact delivered
 by the Stormify Gradle plugin. The group ID changed from `onl.ycode.stormify` to
-`onl.ycode`. See [Installation](Installation.md) for configuration options.
+`onl.ycode`. The plugin is published to Maven Central — if plugin resolution
+fails, add `mavenCentral()` to `pluginManagement.repositories` in
+`settings.gradle.kts`. See [Installation](Installation.md) for configuration options.
 
 ## Initialization
 

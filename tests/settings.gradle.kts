@@ -1,6 +1,11 @@
 pluginManagement {
     repositories {
-        mavenLocal()
+        // The locally-published stormify plugin and its runtime artifacts must win over
+        // Central, otherwise a released build of the same version number shadows the one
+        // under test. The content filter keeps everything else remote, so stale local
+        // artifacts without Gradle module metadata (e.g. kotlin-test) cannot break
+        // capability resolution.
+        mavenLocal { content { includeGroupByRegex("onl\\.ycode(\\..*)?") } }
         gradlePluginPortal()
         google()
         mavenCentral()
@@ -14,7 +19,7 @@ pluginManagement {
 
 dependencyResolutionManagement {
     repositories {
-        mavenLocal()
+        mavenLocal { content { includeGroupByRegex("onl\\.ycode(\\..*)?") } }
         google()
         mavenCentral()
     }

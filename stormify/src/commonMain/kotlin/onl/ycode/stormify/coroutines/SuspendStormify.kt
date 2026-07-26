@@ -4,11 +4,13 @@ package onl.ycode.stormify.coroutines
 
 import kotlin.concurrent.atomics.AtomicInt
 import kotlin.concurrent.atomics.ExperimentalAtomicApi
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.InternalCoroutinesApi
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.withContext
 import onl.ycode.kdbc.Connection
 import onl.ycode.stormify.Stormify
+import onl.ycode.stormify.asQuery
 import onl.ycode.stormify.nextSavepointName
 import onl.ycode.stormify.throwQuery
 import kotlin.coroutines.coroutineContext
@@ -96,6 +98,10 @@ public class SuspendStormify internal constructor(
     /**
      * Execute [block] inside a transaction. Commits on success, rolls back on any throwable.
      *
+     * Failures surface as [onl.ycode.kdbc.SQLException] with the original throwable as
+     * `cause` — the same contract as blocking [Stormify.transaction]. Coroutine
+     * cancellation is exempt and always propagates unwrapped.
+     *
      * If called from inside another `transaction { }` on the same [SuspendStormify]
      * (detected via the current [ConnectionElement] in the coroutine context),
      * reuses that connection via a savepoint rather than acquiring a new one.
@@ -171,8 +177,13 @@ public class SuspendStormify internal constructor(
                             // eviction.
                             runCatching { conn.cleanupAfterCancel() }
                         }
-                        if (rollbackOk) throw HealthyConnectionException(e)
-                        throw e
+                        // Cancellation propagates unwrapped to preserve structured
+                        // concurrency; everything else surfaces as SQLException (same
+                        // contract as blocking Stormify.transaction), original as cause.
+                        if (e is CancellationException) throw e
+                        val wrapped = e.asQuery("Unable to execute transaction")
+                        if (rollbackOk) throw HealthyConnectionException(wrapped)
+                        throw wrapped
                     } finally {
                         if (cancelled.load() == 0) runCatching { conn.setAutoCommit(true) }
                         cancelHandle.dispose()
@@ -198,7 +209,8 @@ public class SuspendStormify internal constructor(
             result
         } catch (e: Throwable) {
             runCatching { conn.rollback(savepoint) }
-            throw e
+            if (e is CancellationException) throw e
+            e.throwQuery("Unable to execute nested transaction")
         }
     }
 }

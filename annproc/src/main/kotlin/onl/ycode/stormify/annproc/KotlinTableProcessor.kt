@@ -82,6 +82,27 @@ class KotlinTableProcessor(private val env: SymbolProcessorEnvironment) : Symbol
             props.filter { it.isEnum }.forEach { enumTypes.add(it.type) }
         }
 
+        // Generated declarations are named after simple names (UserRef, Tables.User_,
+        // enum imports) and all land in one file — same-named classes in different
+        // packages would produce cryptic redeclaration / conflicting-import errors.
+        // Fail fast with an actionable message.
+        // NOTE: the same check exists in the Gradle plugin (StormifyGenerateSources).
+        val bySimpleName = mutableMapOf<String, MutableSet<String>>()
+        entities.forEach {
+            bySimpleName.getOrPut(it.simpleName.asString()) { mutableSetOf() } +=
+                (it.qualifiedName?.asString() ?: it.simpleName.asString())
+        }
+        enumTypes.forEach { bySimpleName.getOrPut(it.substringAfterLast('.')) { mutableSetOf() } += it }
+        val clashes = bySimpleName.filterValues { it.size > 1 }
+        if (clashes.isNotEmpty()) {
+            env.logger.error(
+                "Stormify: generated code is named after simple class names, but " +
+                        clashes.entries.joinToString("; ") { (name, qns) -> "'$name' (${qns.joinToString(", ")})" } +
+                        " share the same simple name. Rename one of them to avoid the collision."
+            )
+            return
+        }
+
         env.codeGenerator.createNewFile(Dependencies(false), generatedPackage, registrarClass).bufferedWriter().use { w ->
             w.write("package $generatedPackage\n\n")
             w.write("import onl.ycode.stormify.DbValue\n")

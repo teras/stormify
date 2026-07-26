@@ -88,11 +88,17 @@ class Stormify(val dataSource: DataSource, vararg registrars: EntityRegistrar) {
 
     /**
      * Runs [block] with this instance as the default, restoring the previous default
-     * when the block exits. Use for scoped overrides such as per-request tenants.
+     * when the block exits.
      *
      * ```kotlin
      * stormify.asDefault { s -> s.read<User>(...) }
      * ```
+     *
+     * **Not safe under concurrent use.** While the block runs, *every* thread that
+     * reads [defaultInstance] observes this instance — the override is process-wide,
+     * not thread-local. In a multi-threaded environment (e.g. a server handling
+     * parallel requests), pass the `Stormify` instance explicitly instead of relying
+     * on the default inside the block.
      */
     fun <R> asDefault(block: (Stormify) -> R): R {
         val previous = defaultInstance
@@ -144,7 +150,7 @@ class Stormify(val dataSource: DataSource, vararg registrars: EntityRegistrar) {
         synchronized(cacheLock) {
             tableInfoCache.getOrPut(type) {
                 val meta = EntityMeta.find(type) ?: tryReflection(type)
-                ?: throw SQLException("Unknown entity: ${type.simpleName}")
+                ?: throw SQLException("Unknown entity: ${type.fullName}")
                 TableInfo.build(meta, namingPolicy, blacklist, pkResolvers.entries.sortedBy { it.key }.map { it.value })
             } as TableInfo<T>
         }
@@ -267,6 +273,10 @@ class Stormify(val dataSource: DataSource, vararg registrars: EntityRegistrar) {
             sql.append(givenQuery, lastFlush, idx)
             val arg = sqlData(args[consumed++], true)
             if (arg is List<*>) {
+                if (arg.isEmpty()) throw SQLException(
+                    "Parameter ${consumed} of query '$givenQuery' is an empty collection;" +
+                            " it cannot be expanded into an IN list"
+                )
                 sql.append("(")
                 arg.forEachIndexed { i, v ->
                     if (i > 0) sql.append(", ")
@@ -509,7 +519,11 @@ class Stormify(val dataSource: DataSource, vararg registrars: EntityRegistrar) {
                 } else {
                     consumer(
                         castTo(baseClass, rs.getObject(1, baseClass), this)
-                            ?: throw SQLException("Expecting type ${baseClass.fullName} but found null")
+                            ?: throw SQLException(
+                                "Query returned a row whose selected column is NULL, which cannot " +
+                                        "be represented as non-nullable ${baseClass.fullName}. If NULL values " +
+                                        "are expected, handle them in SQL (e.g. COALESCE)."
+                            )
                     )
                 }
             }
@@ -546,7 +560,13 @@ class Stormify(val dataSource: DataSource, vararg registrars: EntityRegistrar) {
             return this
         }
 
-    /** Executes a SELECT query and returns exactly one result, or null if none found. */
+    /**
+     * Executes a SELECT query and returns exactly one result, or null if no row is found.
+     *
+     * A null return always means "no matching row". If a row exists but the selected
+     * scalar column is SQL NULL, an [SQLException] is thrown instead — a non-nullable
+     * [T] cannot represent NULL.
+     */
     @Throws(SQLException::class)
     inline fun <reified T : Any> readOne(query: String, vararg params: Any?): T? =
         readOne(null, T::class, query, *params)
@@ -703,10 +723,10 @@ class Stormify(val dataSource: DataSource, vararg registrars: EntityRegistrar) {
             if (col.setters.isEmpty()) {
                 when (unmatchedColumnPolicy) {
                     UnmatchedColumnPolicy.THROW -> throw SQLException(
-                        "Facet ${col.name} has no matching field in ${info.tableName}"
+                        "Column ${col.name} has no matching field in ${info.tableName}"
                     )
                     UnmatchedColumnPolicy.WARN -> logger.warn(
-                        "Facet ${col.name} has no matching field in ${info.tableName}"
+                        "Column ${col.name} has no matching field in ${info.tableName}"
                     )
                     UnmatchedColumnPolicy.IGNORE -> Unit
                 }
@@ -832,6 +852,10 @@ class Stormify(val dataSource: DataSource, vararg registrars: EntityRegistrar) {
             val sequence = if (hasSinglePk) info.idSequences[0] else ""
             if (needsId.isNotEmpty() && sequence.isNotBlank()) {
                 val seqs = getNextSequences(maker.connection, sequence, needsId.size)
+                if (seqs.size < needsId.size)
+                    throw SQLException(
+                        "Sequence $sequence returned ${seqs.size} value(s), but ${needsId.size} were requested"
+                    )
                 for (i in needsId.indices)
                     info.setField(itemList[needsId[i]], info.idDbNames[0], seqs[i], this)
                 needsId.clear()
@@ -842,32 +866,33 @@ class Stormify(val dataSource: DataSource, vararg registrars: EntityRegistrar) {
             val pkColumn = if (hasSinglePk) info.singleKeyDbName else null
 
             sqlDialect.prepareForInsert(maker.connection, info.createQuery, fetchGeneratedKeys, pkColumn).use { stmt ->
-                for (item in itemList) {
+                for ((index, item) in itemList.withIndex()) {
                     bindAndLog(stmt, info.createQuery, info.getCreateValues(item).map { sqlData(it, false) })
-                    if (fetchGeneratedKeys)
+                    if (fetchGeneratedKeys) {
                         stmt.executeUpdate()
-                    else
+                        // Read the key right after this item's own execution — with multiple
+                        // executions on one statement, getGeneratedKeys() may only reflect the last one.
+                        if (index == needsId[0]) {
+                            stmt.getGeneratedKeys().use { rs ->
+                                if (rs.next()) {
+                                    if (sqlDialect.generatedKeyRetrieval === GeneratedKeyRetrieval.BY_INDEX)
+                                        info.setField(
+                                            item,
+                                            info.singleKeyDbName,
+                                            rs.getObject(1, NativeBigInteger::class),
+                                            this
+                                        )
+                                    else
+                                        populate(item, rs)
+                                }
+                            }
+                        }
+                    } else {
                         stmt.addBatch()
+                    }
                 }
                 if (!fetchGeneratedKeys)
                     stmt.executeBatch()
-
-                // Fetch generated key only for single item (no order guarantee for batch)
-                if (fetchGeneratedKeys) {
-                    stmt.getGeneratedKeys().use { rs ->
-                        if (rs.next()) {
-                            if (sqlDialect.generatedKeyRetrieval === GeneratedKeyRetrieval.BY_INDEX)
-                                info.setField(
-                                    itemList[needsId[0]],
-                                    info.singleKeyDbName,
-                                    rs.getObject(1, NativeBigInteger::class),
-                                    this
-                                )
-                            else
-                                populate(itemList[needsId[0]], rs)
-                        }
-                    }
-                }
             }
             itemList
         }
@@ -891,6 +916,9 @@ class Stormify(val dataSource: DataSource, vararg registrars: EntityRegistrar) {
         val itemList = if (items is List) items else items.toList()
         itemList.forEach { attachStormify(it) }
         val info = resolveTableInfo(itemList[0]::class) as TableInfo<T>
+        for (item in itemList)
+            if (getValidIds(item, info).any { it == null })
+                throw SQLException("Cannot update ${info.tableName}: primary key is null")
         @Suppress("UNCHECKED_CAST")
         performQuery(conn, info.updateQuery, emptyList(),
             batchItems = itemList,
@@ -924,6 +952,8 @@ class Stormify(val dataSource: DataSource, vararg registrars: EntityRegistrar) {
 
         for (item in itemList) {
             val idValues = getValidIds(item, info)
+            if (idValues.any { it == null })
+                throw SQLException("Cannot delete from ${info.tableName}: primary key is null")
             allParams.addAll(idValues)
             conditions.add("($idCondition)")
         }

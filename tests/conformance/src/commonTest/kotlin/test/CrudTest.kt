@@ -118,11 +118,64 @@ open class CrudTest {
     }
 
     @Test
+    fun testBatchCreateGeneratedKeyAssignedToCorrectItem() = withDb("BATCH-GK") { s ->
+        if (!TestDDL.supportsAutoIncrement())
+            skipTest(SkipReason.DB_LIMITATION, "auto-increment not supported on this dialect")
+        if (!TestDDL.isMysqlFamily && !TestDDL.isSqlite)
+            skipTest(SkipReason.DIALECT_QUIRK,
+                "only MySQL-family and SQLite substitute the identity default for an explicitly bound NULL")
+        TestDDL.dropTable("batch_gk_test")
+        s.executeUpdate(TestDDL.createTable("batch_gk_test",
+            "${TestDDL.autoIncrementPrimaryKey("id")}, name ${TestDDL.textType()}"))
+
+        // The item needing a DB-generated key is FIRST in the batch — its key must
+        // come from its own insert, not from a later execution on the same statement.
+        val needsKey = BatchGkEntity("needs-key", null)
+        val first = BatchGkEntity("first", 9001)
+        val last = BatchGkEntity("last", 9002)
+        s.create(listOf(needsKey, first, last))
+
+        val generated = needsKey.id
+        assertNotNull(generated)
+        assertEquals("needs-key", s.findById<BatchGkEntity>(generated)?.name)
+        assertEquals("first", s.findById<BatchGkEntity>(9001)?.name)
+        assertEquals("last", s.findById<BatchGkEntity>(9002)?.name)
+    }
+
+    @Test
     fun testDeleteNonExistent() = withDb("DELETE-GHOST") { s ->
         TestDDL.dropTable("test")
         s.executeUpdate(TestDDL.createTable("test",
             "${TestDDL.intPrimaryKey("id")}, name ${TestDDL.textType()}"))
         s.delete(TestC(999, "ghost"))
+    }
+
+    @Test
+    fun testUpdateNullPrimaryKeyThrows() = withDb("UPDATE-NULL-PK") { s ->
+        // No table setup: the exception fires before any SQL is issued.
+        val e = assertFailsWith<onl.ycode.kdbc.SQLException> {
+            s.update(Child(null, "no-id", null))
+        }
+        assertTrue(e.message!!.contains("primary key is null"), "was: ${e.message}")
+    }
+
+    @Test
+    fun testDeleteNullPrimaryKeyThrows() = withDb("DELETE-NULL-PK") { s ->
+        // No table setup: the exception fires before any SQL is issued.
+        val e = assertFailsWith<onl.ycode.kdbc.SQLException> {
+            s.delete(Child(null, "no-id", null))
+        }
+        assertTrue(e.message!!.contains("primary key is null"), "was: ${e.message}")
+    }
+
+    @Test
+    fun testUpdateEntityWithoutUpdatableFieldsThrows() = withDb("UPDATE-NONE") { s ->
+        TestDDL.dropTable("pk_only")
+        s.executeUpdate(TestDDL.createTable("pk_only", TestDDL.intPrimaryKey("id")))
+        val e = assertFailsWith<onl.ycode.kdbc.SQLException> {
+            s.update(PkOnly(1))
+        }
+        assertTrue(e.message!!.contains("no updatable fields"))
     }
 
     @Test

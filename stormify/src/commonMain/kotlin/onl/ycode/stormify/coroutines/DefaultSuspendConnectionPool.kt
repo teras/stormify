@@ -126,9 +126,16 @@ internal class DefaultSuspendConnectionPool(
         } catch (e: HealthyConnectionException) {
             // Caller (typically SuspendStormify after a clean rollback) explicitly told
             // us the connection is fine. Keep it in the pool; surface the real cause.
+            // Unwrap in a loop: kotlinx-coroutines stack-trace recovery *copies*
+            // exceptions that cross dispatcher boundaries via their (Throwable)
+            // constructor, so the instance arriving here may be a copy of a copy —
+            // each nesting level one HealthyConnectionException deeper.
             success = true
-            @Suppress("UNCHECKED_CAST")
-            throw (e.cause ?: e)
+            var unwrapped: Throwable = e
+            while (unwrapped is HealthyConnectionException) {
+                unwrapped = unwrapped.cause ?: break
+            }
+            throw unwrapped
         } finally {
             releaseEntry(entry, success)
         }

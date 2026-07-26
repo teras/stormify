@@ -289,39 +289,6 @@ abstract class AbstractPagedList<T : Any> internal constructor(
     override fun get(index: Int): T = ensurePage(index)[index - lowBound]
 
     /**
-     * Replaces the element at the given index in the cached page.
-     * This does NOT update the database — it only affects the in-memory view.
-     * The index must be within the currently loaded page.
-     *
-     * @throws IndexOutOfBoundsException if index is outside the cached page
-     */
-    operator fun set(index: Int, element: T): T {
-        if (index !in lowBound..<upperBound || fragment == null)
-            throw IndexOutOfBoundsException("Index $index is outside cached page [$lowBound, $upperBound)")
-        val mutableFragment = fragment as? MutableList<T>
-            ?: fragment!!.toMutableList().also { fragment = it }
-        val old = mutableFragment[index - lowBound]
-        mutableFragment[index - lowBound] = element
-        return old
-    }
-
-    /**
-     * Marks [entity] as [selected] so it appears first in the list.
-     * Call this after creating the entity via Stormify.
-     */
-    fun add(entity: T) {
-        selected = entity
-    }
-
-    /**
-     * Clears the current [selected] entity.
-     * Call this after deleting the entity via Stormify.
-     */
-    fun remove(entity: T) {
-        selected = null
-    }
-
-    /**
      * Searches for the element in the currently cached page.
      * Returns the absolute index, or -1 if not found in the current page.
      */
@@ -407,6 +374,10 @@ abstract class AbstractPagedList<T : Any> internal constructor(
      */
     fun getAggregator(): PagedAggregator = PagedAggregator(SingleAggregatorCore(core))
 
+    // Saturating add: lowBound + pageSize can overflow when index approaches Int.MAX_VALUE.
+    private fun pageEnd(from: Int) =
+        if (pageSize >= Int.MAX_VALUE - from) Int.MAX_VALUE else from + pageSize
+
     private fun ensurePage(index: Int): List<T> {
         if (index < 0)
             throw IndexOutOfBoundsException("Index $index out of bounds")
@@ -425,7 +396,7 @@ abstract class AbstractPagedList<T : Any> internal constructor(
                 mapOf(TOTAL_ALIAS to { v -> _size = (v as Number).toInt() })
             else null
 
-            upperBound = if (_size != null) min(_size!!, lowBound + pageSize) else lowBound + pageSize
+            upperBound = if (_size != null) min(_size!!, pageEnd(lowBound)) else pageEnd(lowBound)
             // Use `<table>.*` so JOINs with duplicate column names don't clobber entity mapping
             val result = stormify.read(
                 null, classType, stormify.sqlDialect.queryFormatter(
@@ -447,7 +418,7 @@ abstract class AbstractPagedList<T : Any> internal constructor(
                     throw IndexOutOfBoundsException("Index $index out of bounds for size $resolvedSize")
             }
 
-            upperBound = min(_size!!, lowBound + pageSize)
+            upperBound = min(_size!!, pageEnd(lowBound))
             // A short page from a classic-path fetch means the cached size is stale
             // (someone deleted rows). When the merged query delivered the size in
             // this same statement, the short page is authoritative — not staleness.

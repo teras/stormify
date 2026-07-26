@@ -18,6 +18,11 @@ through the same `Stormify` instance inside the block (including top-level
 extensions and [`CRUDTable`](CRUD.md)-implementing entities) automatically joins
 the transaction. The same call works identically inside or outside a transaction.
 
+Failures are always reported as `SQLException` with the original throwable kept
+as `cause` — whether the failure came from the database or from your own code
+inside the block. (Coroutine cancellation in the suspend API is the one
+exception: it propagates unwrapped.)
+
 ### Basic Transaction Example
 
 === "Direct"

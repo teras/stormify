@@ -78,6 +78,15 @@ instance across arbitrarily many concurrent requests.
     }
     ```
 
+## Stormify instance
+
+`PagedQuery` resolves its `Stormify` instance from
+[the default instance](Configuration.md#default-instance) on first access. If you
+run multiple `Stormify` instances in the same process, bind the query explicitly at
+configuration time with `stormify.attach(query)`. With neither an attached nor a
+default instance, any data access throws a `SQLException` telling you to call
+`stormify.attach(query)` or `Stormify.asDefault()` first.
+
 ## Aliases are the whole contract
 
 Every facet in a `PagedQuery` has a string [`alias`][Facet.alias]. **The alias is
@@ -388,10 +397,11 @@ flight. If you need a different shape, construct a fresh instance.
 shared across every caller of the list — a second request racing against the
 first would corrupt its state. Its cached page, `_size` and `selected` entity
 persist across calls and have no meaning in a stateless request/response cycle.
-Its `saveState()` produces keys derived internally from paths and SQL
-expressions: designed for local round-trip persistence, never as a wire
-contract — publishing it as a REST payload exposes field paths, foreign-key
-traversals, and raw SQL fragments the server was meant to keep private.
+Its `saveState()` keys are opaque facet aliases — auto-assigned creation indices
+unless renamed — never paths or SQL, so publishing it would leak nothing about the
+schema. The problem is the opposite: the mapping from key to facet lives only in
+the list's own configuration and shifts whenever facets are added or reordered.
+It is designed for local round-trip persistence, never as a wire contract.
 
 `PagedQuery` is the right tool whenever you find yourself either instantiating
 a fresh `PagedList` per HTTP request, or mapping request parameters to

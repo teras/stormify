@@ -12,8 +12,10 @@ Primary keys in databases commonly follow a naming convention. If this is the ca
 
 To set up a primary key resolver, use the `registerPrimaryKeyResolver` method. You provide:
 
-- **Priority**: A numeric value that determines execution order when multiple resolvers are registered. Higher values are checked earlier. The default priority is 0; use values like 10, 20, etc. to run before the default.
+- **Priority**: A numeric value that determines evaluation order when multiple resolvers are registered. Lower values are evaluated first, and the first resolver returning `true` marks the field as a primary key (resolvers are combined with OR, so all of them may be consulted until one matches).
 - **Resolver Function**: A function that receives the table name and field name, and returns `true` if the field should be treated as a primary key.
+
+Resolvers are only consulted for entities that declare **no** primary-key annotation at all — if any field carries `@Id` or `@DbField(primaryKey = true)`, annotations alone decide the primary keys and resolvers are ignored for that entity.
 
 ### Example
 
@@ -38,7 +40,7 @@ To set up a primary key resolver, use the `registerPrimaryKeyResolver` method. Y
 In this example:
 
 - The resolver checks if the field name is `id`, a common but not universal pattern.
-- The priority `10` means this resolver runs earlier than any default (priority 0) resolvers.
+- The priority `10` determines where it sits relative to other registered resolvers — lower priorities are evaluated first. There is no built-in default resolver; without a registration (and without annotations) no field is auto-detected as a primary key.
 
 By setting up custom primary key resolvers, Stormify can accurately identify primary keys without relying on annotations for every class.
 

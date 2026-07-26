@@ -420,59 +420,26 @@ open class PagedListTest {
         assertEquals("Item100", list[99].name)
     }
 
-    // --- add / remove ---
+    // --- selection ---
 
     @Test
-    fun testAddRemove() = withDb("PAGED-ADD-REMOVE") { s ->
+    fun testSelectedOnCreateDelete() = withDb("PAGED-SELECTED") { s ->
         setupTable(s, 5)
         val list = PagedList<TestC>()
         assertEquals(5, list.size)
 
-        // Create and add
+        // Create and select — appears first, size +1
         val newItem = TestC(6, "Item6")
         s.create(newItem)
-        list.add(newItem)
+        list.selected = newItem
         assertEquals(6, list.size)
         assertEquals(newItem, list.selected)
 
-        // Delete and remove
+        // Delete and clear selection
         s.delete(newItem)
-        list.remove(newItem)
+        list.selected = null
         assertEquals(5, list.size)
         assertNull(list.selected)
-    }
-
-    // --- set ---
-
-    @Test
-    fun testSetInCachedPage() = withDb("PAGED-SET") { s ->
-        setupTable(s, 5)
-        val list = PagedList<TestC>()
-        list.pageSize = 10
-
-        // Access to load page
-        assertEquals("Item1", list[0].name)
-
-        // Set in cached page
-        val updated = TestC(1, "Updated")
-        val old = list.set(0, updated)
-        assertEquals("Item1", old.name)
-        assertEquals("Updated", list[0].name)
-    }
-
-    @Test
-    fun testSetOutsideCachedPage() = withDb("PAGED-SET-OOB") { s ->
-        setupTable(s, 20)
-        val list = PagedList<TestC>()
-        list.pageSize = 5
-
-        // Load first page
-        list[0]
-
-        // Try to set outside cached page
-        assertFailsWith<IndexOutOfBoundsException> {
-            list.set(10, TestC(11, "X"))
-        }
     }
 
     // --- Enum filter ---

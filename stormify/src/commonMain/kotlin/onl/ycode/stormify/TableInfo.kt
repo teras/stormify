@@ -93,10 +93,10 @@ class TableInfo<T : Any> internal constructor(
         if (props.isNullOrEmpty()) {
             when (policy) {
                 UnmatchedColumnPolicy.THROW -> throw SQLException(
-                    "Facet $dbName has no matching field in ${meta.type.simpleName}"
+                    "Column $dbName has no matching field in ${meta.type.simpleName}"
                 )
                 UnmatchedColumnPolicy.WARN -> stormify.logger.warn(
-                    "Facet $dbName has no matching field in ${meta.type.simpleName}"
+                    "Column $dbName has no matching field in ${meta.type.simpleName}"
                 )
                 UnmatchedColumnPolicy.IGNORE -> Unit
             }
@@ -137,6 +137,8 @@ class TableInfo<T : Any> internal constructor(
         "INSERT INTO $tableName ($fields) VALUES ($placeholders)"
     }
     internal val updateQuery by lazy {
+        if (updatableProps.isEmpty())
+            throw SQLException("Entity $tableName has no updatable fields")
         val setClause = updatableProps.joinToString(", ") { "${it.dbName} = ?" }
         val whereClause = idProps.joinToString(" AND ") { "${it.dbName} = ?" }
         "UPDATE $tableName SET $setClause WHERE $whereClause"

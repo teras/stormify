@@ -39,12 +39,28 @@ data class DualKey(
     override fun hashCode() = 31 * id1 + id2
 }
 
+@DbTable(name = "pk_only")
+data class PkOnly(
+    @DbField(primaryKey = true) var id: Int = 0
+)
+
 @DbTable(name = "auto_increment")
 data class AutoIncrementEntity(
     var name: String? = null,
     @DbField(primaryKey = true, autoIncrement = true) var id: Int = 0
 ) {
     override fun toString() = "AutoIncrementEntity(id=$id, name=$name)"
+}
+
+// Non-autoIncrement PK on a table whose column still generates keys database-side
+// (SERIAL/IDENTITY/AUTOINCREMENT): a null id in a batch must receive the key of its
+// own insert, not of a neighbouring execution on the same statement.
+@DbTable(name = "batch_gk_test")
+data class BatchGkEntity(
+    var name: String? = null,
+    @DbField(primaryKey = true) var id: Int? = null
+) {
+    override fun toString() = "BatchGkEntity(id=$id, name=$name)"
 }
 
 @DbTable(name = "fly_test")

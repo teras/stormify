@@ -70,9 +70,11 @@ Stormify supports three styles for Create / Read / Update / Delete on entities. 
 
 === "Extension (Kotlin)"
 
-    In Kotlin, **any** entity can call `create()`, `update()`, `delete()`, and
-    `refresh()` directly — no interface needed. The query helpers (`findById`,
-    `findAll`, `details`) are also available at top level.
+    In Kotlin, **any** entity can call `create()`, `update()`, and `delete()`
+    directly — no interface needed. The query helpers (`findById`, `findAll`,
+    `details`) are also available at top level. Reloading an entity from the
+    database is done via `stormify.refresh(entity)` — there is no extension
+    `refresh()`.
 
     ```kotlin
     stormify.asDefault()

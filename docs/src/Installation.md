@@ -3,7 +3,7 @@
 ## Requirements
 
 - **JVM**: Java 8 or later.
-- **Android**: minimum API 28 (Android 9.0).
+- **Android**: minimum API 26 (Android 8.0).
 - **Linux native**: glibc 2.31+ (x86_64 or ARM64).
 - **Windows native**: Windows 10 or later (mingwX64 build).
 - **macOS native**: macOS 11+ on Apple Silicon or Intel.
@@ -19,6 +19,18 @@ processor, the runtime dependency, and the generated sources.
 ```kotlin
 plugins {
     id("onl.ycode.stormify") version "2.6.0"
+}
+```
+
+The plugin is published to Maven Central (not the Gradle Plugin Portal), so make
+sure `mavenCentral()` is available for plugin resolution in `settings.gradle.kts`:
+
+```kotlin
+pluginManagement {
+    repositories {
+        mavenCentral()
+        gradlePluginPortal()
+    }
 }
 ```
 

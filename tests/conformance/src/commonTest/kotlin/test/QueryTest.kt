@@ -34,6 +34,32 @@ open class QueryTest {
     }
 
     @Test
+    fun testEmptyCollectionParameterThrows() = withDb("EMPTY-IN") { s ->
+        val e = assertFailsWith<onl.ycode.kdbc.SQLException> {
+            s.read<Int>("SELECT 1 WHERE 1 IN ?", emptyList<Int>())
+        }
+        assertTrue(e.message!!.contains("empty collection"))
+    }
+
+    @Test
+    fun testNullScalarThrows() = withDb("NULL-SCALAR") { s ->
+        TestDDL.dropTable("test")
+        s.executeUpdate(TestDDL.createTable("test",
+            "${TestDDL.intPrimaryKey("id")}, name ${TestDDL.textType()}"))
+        s.executeUpdate("INSERT INTO test (id, name) VALUES (?, ?)", 1, null)
+        s.executeUpdate("INSERT INTO test (id, name) VALUES (?, ?)", 2, "Bob")
+
+        // NULL scalar value → SQLException (distinct from "no row", which returns null)
+        val e = assertFailsWith<onl.ycode.kdbc.SQLException> {
+            s.readOne<String>("SELECT name FROM test WHERE id = ?", 1)
+        }
+        assertTrue(e.message!!.contains("NULL"))
+        assertFailsWith<onl.ycode.kdbc.SQLException> {
+            s.read<String>("SELECT name FROM test ORDER BY id")
+        }
+    }
+
+    @Test
     fun testOnTheFlyFields() = withDb("ON-THE-FLY") { s ->
         TestDDL.dropTable("fly_test")
         s.executeUpdate(TestDDL.createTable("fly_test",

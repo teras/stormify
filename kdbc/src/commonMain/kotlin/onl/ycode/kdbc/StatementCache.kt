@@ -53,6 +53,10 @@ internal class StatementCache(private val maxSize: Int = 64) {
             runCatching { stmt.close() }
             return
         }
+        // fetchSize is not covered by Statement.reset — a cursor query's fetch size
+        // (e.g. MySQL's Int.MIN_VALUE streaming switch) would otherwise leak into
+        // the next borrower of the same SQL. 0 restores the driver default.
+        runCatching { stmt.setFetchSize(0) }
         // LRU touch: remove and re-insert the SQL bucket so iteration finds the
         // least-recently-released bucket first. (Multiplatform LinkedHashMap doesn't
         // expose the JVM-only accessOrder constructor.)

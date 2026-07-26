@@ -354,7 +354,7 @@ stmt.close()
 
 !!! warning "Android limitation"
     Android's SQLite does not support stored procedures. Calling `prepareCall` on Android
-    throws `UnsupportedOperationException`.
+    throws `SQLException`.
 
 ## Async Cancellation
 

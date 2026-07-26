@@ -37,6 +37,16 @@ open class CursorStreamingTest {
     }
 
     @Test
+    fun readCursorWithExplicitFetchSizeEmitsAllRows() = withDb("CS_FETCHSIZE") { s ->
+        seed(s, 50)
+        val seen = mutableListOf<Int>()
+        s.readCursor<Map<String, Any>>("SELECT id FROM cs_test ORDER BY id", fetchSize = 5) { row ->
+            seen += (row["id"] as Number).toInt()
+        }
+        assertEquals((1..50).toList(), seen)
+    }
+
+    @Test
     fun readCursorOnEmptyTableInvokesConsumerZeroTimes() = withDb("CS_EMPTY") { s ->
         seed(s, 0)
         var calls = 0

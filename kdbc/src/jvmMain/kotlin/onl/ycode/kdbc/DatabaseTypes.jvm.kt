@@ -208,7 +208,7 @@ private class JdbcCallableStatement(private val jdbc: java.sql.CallableStatement
     override fun close() = jdbc.close()
     override fun registerOutParameter(parameterIndex: Int, type: KClass<*>) =
         jdbc.registerOutParameter(parameterIndex, toSqlType(type))
-    override fun getObject(parameterIndex: Int, type: KClass<*>): Any? = jdbc.getObject(parameterIndex, type.java)
+    override fun getObject(parameterIndex: Int, type: KClass<*>): Any? = jdbc.getObject(parameterIndex, type.javaObjectType)
     override fun execute(): Boolean = jdbc.execute()
 }
 
@@ -255,7 +255,7 @@ private class JdbcPgCallableStatement(
         val colIndex = outIndices.indexOf(parameterIndex) + 1
         if (colIndex == 0) throw SQLException("Parameter $parameterIndex is not an OUT/INOUT parameter")
         return if (type == Any::class) rs.getObject(colIndex)
-        else rs.getObject(colIndex, type.java)
+        else rs.getObject(colIndex, type.javaObjectType)
     }
 
     override fun executeUpdate(): Int = stmt.executeUpdate()
@@ -356,7 +356,9 @@ private class JdbcSavepoint(val jdbc: java.sql.Savepoint) : Savepoint {
 private class JdbcResultSet(private val jdbc: java.sql.ResultSet) : ResultSet {
     override fun next(): Boolean = jdbc.next()
     override fun getObject(columnIndex: Int, type: KClass<*>): Any? = try {
-        val javaType = kmpToJdbcTarget[type.qualifiedName]?.java ?: type.java
+        // javaObjectType: a KClass may carry the primitive Java class (e.g. boolean.class
+        // when it originates from typeOf<T>().classifier), which JDBC drivers reject.
+        val javaType = kmpToJdbcTarget[type.qualifiedName]?.java ?: type.javaObjectType
         if (type == Any::class) jdbc.getObject(columnIndex)
         else jdbc.getObject(columnIndex, javaType)
     } catch (_: Exception) {

@@ -16,5 +16,8 @@ package onl.ycode.stormify.coroutines
  *
  * The original cause is exposed via [cause]; [SuspendConnectionPool.use] re-throws that
  * `cause` to the caller so [HealthyConnectionException] never escapes the pool boundary.
+ * Note that kotlinx-coroutines stack-trace recovery copies this exception (via its
+ * `(Throwable)` constructor) when it crosses a dispatcher boundary, wrapping it one
+ * level deeper each time — the pool therefore unwraps in a loop, not once.
  */
 internal class HealthyConnectionException(cause: Throwable) : RuntimeException(cause)

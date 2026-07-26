@@ -289,6 +289,23 @@ open class ReflectionTest {
         assertEquals(kuid, loaded.kuid)
     }
 
+    // Entity-level round-trip for java.time LocalDate/LocalDateTime — the type
+    // matrix only exercises the raw-SQL path, not ORM property mapping.
+    @Test
+    fun javaLocalTemporalEntityRoundTrip() = withDb("JAVA-LOCAL-TEMPORAL") { s ->
+        TestDDL.dropTable("java_local_temporal")
+        s.executeUpdate(TestDDL.createTable("java_local_temporal",
+            "${TestDDL.intPrimaryKey("id")}, ld DATE, ldt ${TestDDL.timestampType()}"))
+        val ld = java.time.LocalDate.of(2026, 3, 20)
+        // Whole seconds: some dialects (MySQL family) drop sub-second precision.
+        val ldt = java.time.LocalDateTime.of(2026, 3, 20, 14, 30, 45)
+        s.create(JavaLocalTemporal().apply { id = 1; this.ld = ld; this.ldt = ldt })
+        val loaded = s.findById<JavaLocalTemporal>(1)
+        assertNotNull(loaded)
+        assertEquals(ld, loaded.ld)
+        assertEquals(ldt, loaded.ldt)
+    }
+
     // OffsetTime ↔ TIMETZ: only PostgreSQL has TIME WITH TIME ZONE.
     @Test
     fun offsetTimeRoundTripWithTimetz() = withDb("OFFSETTIME-TIMETZ") { s ->
@@ -302,6 +319,33 @@ open class ReflectionTest {
         val back = s.readOne<java.time.OffsetTime>(
             "SELECT ot FROM offset_time_test WHERE id = ?", 1)
         assertEquals(ot, back)
+    }
+
+    // --- JPA annotations via reflection (no annproc) ---
+
+    @Test
+    fun jpaAnnotationsViaReflection() = withDb("REFL-JPA") { s ->
+        TestDDL.dropTable("jpa_users")
+        s.executeUpdate(TestDDL.createTable("jpa_users",
+            "${TestDDL.intPrimaryKey("uid")}, email ${TestDDL.textType()}, inserted_at ${TestDDL.textType()}"))
+
+        s.create(JpaReflUser().apply {
+            id = 1; emailAddress = "a@b.c"; insertedAt = "NOT-INSERTABLE"; scratch = "ignored"
+        })
+        // @Column(name = ...) honored on both read and write paths
+        assertEquals("a@b.c", s.readOne<String>("SELECT email FROM jpa_users WHERE uid = ?", 1))
+        // insertable = false → column excluded from INSERT (readOne throws on NULL, so count instead)
+        assertEquals(0, s.readOne<Int>("SELECT COUNT(*) FROM jpa_users WHERE uid = ? AND inserted_at IS NOT NULL", 1))
+
+        val loaded = s.findById<JpaReflUser>(1)
+        assertNotNull(loaded)
+        assertEquals("a@b.c", loaded.emailAddress)
+        loaded.emailAddress = "x@y.z"
+        loaded.insertedAt = "NOT-UPDATABLE"
+        s.update(loaded)
+        assertEquals("x@y.z", s.readOne<String>("SELECT email FROM jpa_users WHERE uid = ?", 1))
+        // updatable = false → column excluded from UPDATE
+        assertEquals(0, s.readOne<Int>("SELECT COUNT(*) FROM jpa_users WHERE uid = ? AND inserted_at IS NOT NULL", 1))
     }
 
 }
@@ -326,6 +370,25 @@ class ReflEnumStringEntity {
     @DbField(primaryKey = true) var id: Int = 0
     @DbField(enumAsString = true) var status: ReflPlainStatus? = null
     var priority: ReflPlainStatus? = null  // ordinal for comparison
+}
+
+// JPA-annotated entity, resolved purely through reflection (test sources are
+// not processed by the annotation processor). `scratch` must be excluded from
+// all SQL; if it leaked in, every statement would fail with "no such column".
+@javax.persistence.Table(name = "jpa_users")
+class JpaReflUser {
+    @javax.persistence.Id
+    @javax.persistence.Column(name = "uid")
+    var id: Int = 0
+
+    @javax.persistence.Column(name = "email")
+    var emailAddress: String? = null
+
+    @javax.persistence.Column(name = "inserted_at", insertable = false, updatable = false)
+    var insertedAt: String? = null
+
+    @javax.persistence.Transient
+    var scratch: String? = null
 }
 
 // --- Test entity classes ---
@@ -356,6 +419,13 @@ class ScalarRegression : AutoTable() {
     var zdt: java.time.ZonedDateTime? by db(null)
     var uid: java.util.UUID? by db(null)
     var kuid: kotlin.uuid.Uuid? by db(null)
+}
+
+@DbTable(name = "java_local_temporal")
+class JavaLocalTemporal : AutoTable() {
+    @DbField(primaryKey = true) var id: Int? = null
+    var ld: java.time.LocalDate? by db(null)
+    var ldt: java.time.LocalDateTime? by db(null)
 }
 
 // Plain Kotlin inheritance — no AutoTable, no delegates

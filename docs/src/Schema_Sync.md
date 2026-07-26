@@ -334,15 +334,22 @@ The shipped `default-config.toml` is the seed. On first launch it is copied
 verbatim to `.schema-sync.toml` in the working directory; from that point on
 the file is owned by the project and the tool never overwrites edits.
 
-The file has three top-level sections:
+The file's top-level keys and sections:
 
 - `namingPolicy` — how Kotlin property names map to column names. Values:
   `LOWER_CASE_WITH_UNDERSCORES` (default), `UPPER_CASE_WITH_UNDERSCORES`,
   `CAMEL_CASE`. Match what your Stormify runtime is configured for.
+- `[connection]` — the persisted JDBC coordinates (`url`, `user`, `password`),
+  written on first use as described above. Absent from the shipped seed.
 - `[defaults]` — the base profile, with `[defaults.<dialect>]` overrides for
   each of the six supported dialects.
 - `[[slots.<category>]]` — the per-category slot tables (`text`, `integral`,
   `decimal`).
+- `[paths]` — optional output paths for the apply step (`entitiesDir`,
+  `migrationSql`), relative to the project directory.
+- `[kotlin]` — optional preferences for generating Kotlin entity properties
+  from DB columns (PK integer type, date/time/timestamp/decimal type mappings,
+  `ByDb` base-class handling).
 
 ## Supported databases
 

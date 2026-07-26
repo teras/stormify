@@ -73,6 +73,9 @@ A complete, five-minute walkthrough from zero to your first query.
     }
     ```
 
+    The plugin is on Maven Central — add `mavenCentral()` to
+    `pluginManagement.repositories` in `settings.gradle.kts` if needed.
+
     Covers JVM, Android, and Kotlin Multiplatform (all native targets).
 
 === "Maven (pure Java)"

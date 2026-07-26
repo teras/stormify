@@ -9,7 +9,7 @@ The `@DbTable` annotation marks a Kotlin class as a Stormify entity. It serves t
 1. **Marks the class for compile-time metadata generation** so type-safe [PagedList](PagedList.md) paths (`Tables.Foo_.name`) and the entity registrar are emitted.
 2. **Overrides the table name** when the database table doesn't match the class name under the current naming policy.
 
-When the table name already matches the policy (e.g. class `User` ↔ table `user`), use `@DbTable` without arguments as a pure marker. Provide `name = "..."` only when the database table name differs. On JVM with reflection-based discovery the annotation is optional — the class is still picked up, but type-safe paths are not generated without it.
+When the table name already matches the policy (e.g. class `User` ↔ table `user`), use `@DbTable` without arguments as a pure marker. Provide `name = "..."` only when the database table name differs. On JVM with reflection-based discovery the annotation is optional — the class is still picked up. For KSP path generation, `@DbTable` (or JPA `@Entity`) is the explicit marker, but classes are also discovered implicitly when any of their properties carries `@DbField`, `@Id`, `@Column`, or `@JoinColumn`, so those get type-safe paths generated as well.
 
 ### Attributes
 

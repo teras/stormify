@@ -35,7 +35,7 @@ time to bind the list to a specific one.
     ```kotlin
     import onl.ycode.stormify.biglist.Facet
     import onl.ycode.stormify.biglist.PagedList
-    import onl.ycode.stormify.generated.Company_   // KSP-generated typed paths
+    import onl.ycode.stormify.generated.Tables.Company_   // KSP-generated typed paths
 
     val list = PagedList<Company>()
     // val list = stormify.attach(PagedList<Company>())    // when not using a default instance
@@ -59,7 +59,7 @@ time to bind the list to a specific one.
     ```java
     import onl.ycode.stormify.biglist.Facet;
     import onl.ycode.stormify.biglist.PagedList;
-    import onl.ycode.stormify.generated.Company_;   // KSP-generated typed paths
+    import static onl.ycode.stormify.generated.Tables.Company_;   // KSP-generated typed paths
 
     PagedList<Company> list = new PagedList<>(Company.class);
     // PagedList<Company> list = stormify.attach(new PagedList<>(Company.class));  // when not using a default instance
@@ -410,28 +410,27 @@ highlighted row at the top":
     list.get(0);  // always currentCompany (when non-null)
     ```
 
-The helpers `list.add(entity)` and `list.remove(entity)` set or clear the selection as a
-side effect. Use them when you create/delete an entity and want the list to reflect the
-change immediately without resetting the user's filters:
+Set `selected` directly when you create/delete an entity and want the list to
+reflect the change immediately without resetting the user's filters:
 
 === "Kotlin"
 
     ```kotlin
     val company = stormify.create(Company(name = "Acme"))
-    list.add(company)        // appears first
+    list.selected = company  // appears first
 
     stormify.delete(company)
-    list.remove(company)     // selection cleared
+    list.selected = null     // selection cleared
     ```
 
 === "Java"
 
     ```java
     Company company = stormify.create(new Company("Acme"));
-    list.add(company);        // appears first
+    list.setSelected(company);  // appears first
 
     stormify.delete(company);
-    list.remove(company);     // selection cleared
+    list.setSelected(null);     // selection cleared
     ```
 
 ## Filter Values (Distinct Per-Facet)
@@ -932,6 +931,9 @@ the current list are silently ignored (so your list can add/remove facets betwee
 sessions without blowing up). Constraints, the selected entity, and input parsers are
 **not** part of the state — they are structural or ephemeral, not user-visible choices.
 
-State keys are derived from each facet's paths (raw facets use their SQL expression;
-field facets use their paths joined alphabetically), so the order in which paths were
-passed to `addFacet` does not affect the key.
+State keys are simply each facet's `alias` — for facets added without an explicit
+alias this is the auto-assigned creation index (`"0"`, `"1"`, …). Keys are opaque:
+they are never derived from field paths or SQL expressions, so a persisted state
+reveals nothing about your schema or queries. Note that auto-assigned keys follow
+facet creation order, so adding or removing facets between sessions can shift them
+(unmatched keys are ignored, as described above).

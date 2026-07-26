@@ -4,6 +4,7 @@
 package onl.ycode.stormify.gradle
 
 import org.gradle.api.DefaultTask
+import org.gradle.api.GradleException
 import org.gradle.api.file.ConfigurableFileCollection
 import org.gradle.api.file.DirectoryProperty
 import org.gradle.api.provider.MapProperty
@@ -267,6 +268,21 @@ abstract class StormifyGenerateSources : DefaultTask() {
     }
 
     private fun writeRegistrar(pkgDir: File, ctx: EmissionContext, visible: List<EntityMeta>) {
+        val enumTypes = visible.flatMap { it.enumTypes }.distinct()
+        // Generated declarations are named after simple names (UserRef, Tables.User_,
+        // enum imports) and all land in one file — same-named classes in different
+        // packages would produce cryptic redeclaration / conflicting-import errors.
+        // Fail fast with an actionable message.
+        // NOTE: the same check exists in the annotation processor (KotlinTableProcessor).
+        val bySimpleName = mutableMapOf<String, MutableSet<String>>()
+        visible.forEach { bySimpleName.getOrPut(it.simpleName) { mutableSetOf() } += it.qualifiedName }
+        enumTypes.forEach { bySimpleName.getOrPut(it.substringAfterLast('.')) { mutableSetOf() } += it }
+        val clashes = bySimpleName.filterValues { it.size > 1 }
+        if (clashes.isNotEmpty()) throw GradleException(
+            "Stormify: generated code is named after simple class names, but " +
+                    clashes.entries.joinToString("; ") { (name, qns) -> "'$name' (${qns.joinToString(", ")})" } +
+                    " share the same simple name. Rename one of them to avoid the collision."
+        )
         File(pkgDir, "${ctx.registrarCls}.kt").writeText(buildString {
             append("@file:Suppress(\"unused\", \"UNCHECKED_CAST\")\n")
             append("package ${ctx.pkg}\n\n")
@@ -277,7 +293,6 @@ abstract class StormifyGenerateSources : DefaultTask() {
             append("import onl.ycode.stormify.PropertyMeta\n")
             append("import onl.ycode.stormify.TypeUtils.castTo\n\n")
             visible.forEach { append("import ${it.qualifiedName}\n") }
-            val enumTypes = visible.flatMap { it.enumTypes }.distinct()
             enumTypes.forEach { append("import $it\n") }
             append("\nobject ${ctx.registrarCls} : EntityRegistrar {\n")
             append("    override fun register() {\n")

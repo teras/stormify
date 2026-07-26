@@ -66,6 +66,7 @@ kotlin {
             dependencies {
                 implementation(kotlin("reflect"))
                 implementation("org.jetbrains.kotlinx:atomicfu:0.32.1")
+                implementation("javax.persistence:javax.persistence-api:2.2")
             }
         }
 
@@ -169,6 +170,15 @@ tasks.matching {
     it.name.startsWith("compile") && it.name.contains("Kotlin")
 }.configureEach {
     if (name != "kspCommonMainKotlinMetadata") dependsOn("kspCommonMainKotlinMetadata")
+}
+
+// KSP's up-to-date tracking can report this task UP-TO-DATE while its output
+// directory is empty (observed after the Android KSP tasks run in a previous
+// build), which then fails every Kotlin compile with "Unresolved reference
+// 'Tables'". The task is fast (~1s) — always re-execute it so the generated
+// entities are guaranteed to be present when a compile task needs them.
+tasks.matching { it.name == "kspCommonMainKotlinMetadata" }.configureEach {
+    outputs.upToDateWhen { false }
 }
 
 tasks.withType<Test> {

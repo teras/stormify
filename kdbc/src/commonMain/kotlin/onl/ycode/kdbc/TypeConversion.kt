@@ -54,6 +54,10 @@ object TypeConversion {
 
     /**
      * Register a custom conversion function.
+     *
+     * Registration mutates a global, non-synchronized registry — call this at
+     * startup, before any concurrent query traffic. The built-in converters are
+     * registered during object initialization, which is already thread-safe.
      */
     fun register(
         sourceClass: KClass<*>,

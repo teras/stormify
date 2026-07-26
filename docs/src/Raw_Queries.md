@@ -46,6 +46,22 @@ The direct methods take a query string and bind parameters positionally:
     "DELETE FROM users WHERE age < ?".executeUpdate(18)
     ```
 
+## Null Semantics
+
+`readOne` returns `null` only when **no row matches**. If a row exists but the
+selected scalar column is SQL NULL, a non-nullable target type cannot represent
+it and an `SQLException` is thrown. Handle expected NULL values in SQL, e.g.
+with `COALESCE`.
+
+```kotlin
+stormify.readOne<String>("SELECT email FROM users WHERE id = ?", 1)
+// null if no such user; throws SQLException if the row exists but email is NULL
+
+stormify.readOne<String>("SELECT COALESCE(email, '') FROM users WHERE id = ?", 1)
+// "" when email is NULL
+```
+
+
 ## Collection Parameter Expansion
 
 When a `?` placeholder receives a `Collection` or array, Stormify automatically expands

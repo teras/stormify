@@ -17,12 +17,12 @@ Stormify release history.
   converters.
 - **Benchmark suite** under `benchmarks/` comparing Stormify against JPA
   across CRUD and read-heavy scenarios, runnable on JVM and native targets.
-- **Schema-sync headless modes** — `export-sql` and `export-kt` subcommands
+- **Schema-sync headless modes** — `--export-sql` and `--export-kt` flags
   with category and glob filters, suitable for CI and scripted use with no
   TUI required.
 - **Schema-sync packaged installers** — AppImage on Linux, ZIP on Windows,
-  signed DMG on macOS via `jpackage` app-image; attached to a draft GitHub
-  release on tag push.
+  signed + notarized `.app` inside a `.tar.gz` on macOS; attached to a
+  draft GitHub release on tag push.
 - **Schema-sync TUI on Windows** renders natively against the Windows
   console (no MinTTY required), with assorted reliability fixes around
   focus/exit-stack handling.
@@ -44,8 +44,66 @@ Stormify release history.
 - The `schema-sync` demo now runs against a dedicated `stormify_demo`
   database, isolated from the conformance suite so the two no longer share
   state.
+- **Android minimum is now API 26** (Android 8.0), the floor imposed by
+  `java.time` usage in the shared JVM/Android source set. (The 2.5.x line
+  had silently raised the floor from 21 to 28; 26 is the actual technical
+  minimum and restores part of the lost device coverage.)
+- **Suspend `transaction { }` now reports failures as `SQLException`**, the
+  same contract the blocking API always had: the original throwable (from
+  the database or from user code inside the block) is kept as `cause`.
+  Coroutine cancellation is exempt and still propagates unwrapped.
+
+### Fixed
+- Reflection-based entity discovery (Maven/plain-JVM projects without the
+  annotation processor) again honors `javax.persistence.Column`
+  (`name`/`insertable`/`updatable`) — it had been looking up a nonexistent
+  `javax.persistence.Facet` annotation since 2.1.0.
+- Batch `create()` no longer assigns a generated key to the wrong entity
+  when the single item needing a database-generated id is not the last in
+  the batch; the key is now read immediately after that item's own insert.
+- JDBC typed `getObject` calls no longer receive primitive Java classes
+  (`boolean.class` & friends) when the requested `KClass` originates from
+  `typeOf<T>()` — drivers that reject primitive class tokens now get the
+  boxed type, restoring proper typed conversions (e.g. SQLite
+  `TEXT '1'` → `Boolean true`).
+- Scalar reads whose selected column is SQL NULL now fail with a clear
+  `SQLException` naming the target type and suggesting SQL-side handling
+  (`COALESCE`), instead of the generic "Expecting type … but found null".
+- `update()` / `delete()` with a null primary key now fail immediately with a
+  clear `SQLException` instead of silently affecting zero rows.
+- Batch `create()` with sequence-generated ids now fails with a clear
+  `SQLException` when the database returns fewer sequence values than
+  requested, instead of an `IndexOutOfBoundsException`.
+- An empty collection passed as a query parameter now fails with a clear
+  `SQLException` ("cannot be expanded into an IN list") instead of producing
+  invalid `IN ()` SQL and a driver-level syntax error.
+- A cursor query's `fetchSize` no longer leaks into subsequent non-cursor
+  uses of the same SQL through the prepared-statement cache; the driver
+  default is restored when the statement is returned to the cache.
+- `update()` on an entity with no updatable fields now fails with a clear
+  `SQLException` instead of emitting invalid `UPDATE … SET  WHERE …` SQL.
+- The annotation processor and the Gradle plugin's source generator now report
+  a clear error at build time when two entities, two enums, or an entity and
+  an enum share the same simple name in different packages, instead of
+  emitting colliding declarations that fail with a cryptic "redeclaration"
+  or "conflicting import" error.
+- Unmatched-column diagnostics and `@DbField` KDoc no longer refer to columns
+  as "Facet" — a leftover of an old rename that pointed users at the
+  unrelated `biglist.Facet` API.
+- Suspend `transaction { }` no longer leaks the internal
+  `HealthyConnectionException` marker to callers when an exception crosses
+  a dispatcher boundary; the connection-health signal is unwrapped layer
+  by layer at the pool boundary.
 
 ### Removed
+- `PagedList.add(entity)` / `PagedList.remove(entity)` — misleading names
+  inherited from the original Java API: they never touched the database, they
+  merely set/cleared the selection (`remove` even ignored its argument). Use
+  the `selected` property directly.
+- `PagedList.set(index, element)` — mutated only the cached page in memory
+  while looking exactly like `java.util.List.set`, suggesting persistence that
+  never happened; the change vanished silently on the next `refresh()`. To
+  show updated data, persist via `update(entity)` and call `refresh()`.
 - `AutoTable.populate()` (the public direct-call API) and
   `Stormify.populate(entity)` / `StormifyJ.populate(entity)` (the
   manager-level loaders) were removed in favour of the single direct-call
@@ -238,6 +296,7 @@ Initial public release on Maven Central.
 - JPA annotation compatibility (`@Id`, `@Table`, `@Column`, …).
 - JVM / JDBC-only, reflection-based entity discovery.
 
+[2.6.0]: https://github.com/teras/stormify/compare/v2.5.1...v2.6.0
 [2.5.1]: https://github.com/teras/stormify/compare/v2.5.0...v2.5.1
 [2.5.0]: https://github.com/teras/stormify/compare/v2.1.1...v2.5.0
 [2.1.1]: https://github.com/teras/stormify/compare/v2.1.0...v2.1.1

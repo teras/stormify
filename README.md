@@ -46,7 +46,7 @@ Designed for developers seeking a simple yet powerful ORM, Stormify excels in pr
 ## Requirements
 
 - **JVM**: Java 8 or later.
-- **Android**: minimum API 28 (Android 9.0).
+- **Android**: minimum API 26 (Android 8.0).
 - **Native**: glibc 2.31+ on Linux, macOS 11+, iOS 14+, Windows 10+.
 
 ## Installation
@@ -58,6 +58,8 @@ plugins {
     id("onl.ycode.stormify") version "2.6.0"
 }
 ```
+
+The plugin lives on Maven Central — if plugin resolution fails, add `mavenCentral()` to `pluginManagement.repositories` in `settings.gradle.kts`.
 
 **Maven (pure Java):**
 

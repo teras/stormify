@@ -106,9 +106,9 @@ open class SuspendTransactionTest {
                 throw RuntimeException("boom")
             }
             fail("Expected exception was not thrown")
-        } catch (e: Throwable) {
-            // Expected — exception propagates out of suspend transaction
-            assertTrue("boom" in (e.message ?: ""), "Unexpected exception: ${e.message}")
+        } catch (e: onl.ycode.kdbc.SQLException) {
+            // User failures surface as SQLException, original throwable kept as cause
+            assertEquals("boom", e.cause?.message, "Unexpected exception: ${e.message}")
         }
 
         val names = stormify.read<String>("SELECT name FROM $dbNameForTest WHERE id IN (10, 11) ORDER BY id")

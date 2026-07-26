@@ -144,7 +144,7 @@ getters/setters of `AutoTable` subclasses.
 
 ### Lazy Details (Child Records)
 
-A regular `db` reference (`var customer: Customer by db()`) lets you navigate from a
+A regular `db` reference (`var customer: Customer? by db(null)`) lets you navigate from a
 **child** to its **parent**: given an `Order`, you follow the `customer` reference to
 reach the owning customer. `lazyDetails` is the **mirror direction** — it lets you
 navigate from a **parent** to all of its **children**: given a `Customer`, you ask for
@@ -159,7 +159,7 @@ the direction of traversal differs.
         @DbField(primaryKey = true)
         var id: Int? = null
         var total: Double by db(0.0)
-        var customer: Customer by db()                 // child → parent
+        var customer: Customer? by db(null)            // child → parent
         var items: List<OrderItem> by lazyDetails()    // parent → children
     }
     ```
@@ -219,8 +219,8 @@ overload doesn't exist and the call fails to resolve.
     class OrderItem : AutoTable() {
         @DbField(primaryKey = true)
         var id: Int? = null
-        var order: Order by db()
-        var originalOrder: Order by db()
+        var order: Order? by db(null)
+        var originalOrder: Order? by db(null)
     }
 
     class Order : AutoTable() {
