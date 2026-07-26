@@ -1273,12 +1273,18 @@ static void *pg_execute_query(kdbc_stmt *stmt, int *out_col_count,
     prs->streaming   = streaming;
     prs->pg          = (stmt->fetch_size > 0) ? sd->pg : NULL;
 
-    /* Cache column type OIDs for efficient binary decoding */
+    /* Cache column type OIDs for binary decoding. Every getter decodes by OID, so
+     * a missing cache would silently mistype every column — fail here instead. */
     prs->col_types = (Oid *)calloc(ncols, sizeof(Oid));
-    if (prs->col_types) {
-        for (int i = 0; i < ncols; i++)
-            prs->col_types[i] = p_ftype(res, i);
+    if (!prs->col_types) {
+        snprintf(err, err_size, "Out of memory");
+        free(prs);
+        p_clear(res);
+        if (async_path) pg_drain_results(sd->pg);
+        return NULL;
     }
+    for (int i = 0; i < ncols; i++)
+        prs->col_types[i] = p_ftype(res, i);
 
     *out_col_count = ncols;
     return prs;
@@ -1475,7 +1481,7 @@ static int64_t pg_rs_get_long(kdbc_result *rs, int col) {
     const char *raw = p_getvalue(prs->res, prs->current_row, ci);
     int len = p_getlength(prs->res, prs->current_row, ci);
     int fmt = p_fformat(prs->res, ci);
-    Oid oid = (prs->col_types && ci < prs->col_count) ? prs->col_types[ci] : 0;
+    Oid oid = (ci < prs->col_count) ? prs->col_types[ci] : 0;
 
     if (fmt == 1) {
         /* Only decode as binary integer when the column OID is a numeric/bool type.
@@ -1489,6 +1495,20 @@ static int64_t pg_rs_get_long(kdbc_result *rs, int col) {
             if (len == 2) { int16_t v; memcpy(&v, raw, 2); return pg_be16toh(v); }
             if (len == 4) { int32_t v; memcpy(&v, raw, 4); return pg_be32toh(v); }
             if (len == 8) { int64_t v; memcpy(&v, raw, 8); return pg_be64toh(v); }
+        }
+        /* Float columns read as integers (JDBC getLong on REAL/DOUBLE):
+         * decode the IEEE value and truncate toward zero. */
+        if (oid == PG_FLOAT4_OID && len == 4) {
+            int32_t bits; memcpy(&bits, raw, 4);
+            bits = pg_be32toh(bits);
+            float f; memcpy(&f, &bits, sizeof(f));
+            return (int64_t)f;
+        }
+        if (oid == PG_FLOAT8_OID && len == 8) {
+            int64_t bits; memcpy(&bits, raw, 8);
+            bits = pg_be64toh(bits);
+            double d; memcpy(&d, &bits, sizeof(d));
+            return (int64_t)d;
         }
         if (oid == PG_NUMERIC_OID) {
             /* Decode the base-10000 binary NUMERIC into a text representation
@@ -1536,11 +1556,14 @@ static double pg_rs_get_double(kdbc_result *rs, int col) {
     const char *raw = p_getvalue(prs->res, prs->current_row, ci);
     int len = p_getlength(prs->res, prs->current_row, ci);
     int fmt = p_fformat(prs->res, ci);
+    Oid oid = (ci < prs->col_count) ? prs->col_types[ci] : 0;
 
     if (fmt == 1) {
-        /* Binary format */
-        if (len == 4) {
-            /* float4 */
+        /* Binary format — decode by column OID, never by byte length: an INT4 and a
+         * FLOAT4 are both 4 bytes, and a TEXT column holding "12.5" is 4 bytes of
+         * UTF-8. Types not listed here fall through to the text parse below. */
+        if (oid == PG_BOOL_OID && len >= 1) return raw[0] ? 1.0 : 0.0;
+        if (oid == PG_FLOAT4_OID && len == 4) {
             int32_t bits;
             memcpy(&bits, raw, 4);
             bits = pg_be32toh(bits);
@@ -1548,15 +1571,7 @@ static double pg_rs_get_double(kdbc_result *rs, int col) {
             memcpy(&f, &bits, sizeof(f));
             return (double)f;
         }
-        if (len == 8) {
-            /* float8 or int8 - check type OID to distinguish */
-            Oid oid = prs->col_types ? prs->col_types[ci] : 0;
-            if (oid == PG_INT8_OID) {
-                int64_t v;
-                memcpy(&v, raw, 8);
-                return (double)pg_be64toh(v);
-            }
-            /* Assume float8 */
+        if (oid == PG_FLOAT8_OID && len == 8) {
             int64_t bits;
             memcpy(&bits, raw, 8);
             bits = pg_be64toh(bits);
@@ -1564,11 +1579,29 @@ static double pg_rs_get_double(kdbc_result *rs, int col) {
             memcpy(&d, &bits, sizeof(d));
             return d;
         }
-        if (len == 2) { int16_t v; memcpy(&v, raw, 2); return (double)pg_be16toh(v); }
-        if (len == 4) { int32_t v; memcpy(&v, raw, 4); return (double)pg_be32toh(v); }
+        if (oid == PG_INT2_OID && len == 2) { int16_t v; memcpy(&v, raw, 2); return (double)pg_be16toh(v); }
+        if (oid == PG_INT4_OID && len == 4) { int32_t v; memcpy(&v, raw, 4); return (double)pg_be32toh(v); }
+        if (oid == PG_INT8_OID && len == 8) { int64_t v; memcpy(&v, raw, 8); return (double)pg_be64toh(v); }
+        if (oid == PG_NUMERIC_OID) {
+            /* 512 chars spans the whole range a double can represent (|x| < 1e309);
+             * a value needing more is out of range for the return type anyway. */
+            char buf[512];
+            int n = pg_decode_numeric((const unsigned char *)raw, len, buf, sizeof(buf));
+            if (n > 0) return strtod(buf, NULL);
+            return 0.0;
+        }
+        /* For TEXT-like types, the raw bytes are UTF-8 without NUL terminator. */
+        if (raw && len > 0) {
+            char buf[64];
+            int blen = len < 63 ? len : 63;
+            memcpy(buf, raw, blen);
+            buf[blen] = '\0';
+            return strtod(buf, NULL);
+        }
+        return 0.0;
     }
 
-    /* Text format or fallback */
+    /* Text format - raw is already null-terminated */
     return raw ? strtod(raw, NULL) : 0.0;
 }
 
@@ -1592,7 +1625,7 @@ static const char *pg_rs_get_string(kdbc_result *rs, int col) {
     }
 
     /* Binary format - need to convert to string based on type */
-    Oid oid = prs->col_types ? prs->col_types[ci] : 0;
+    Oid oid = (ci < prs->col_count) ? prs->col_types[ci] : 0;
 
     switch (oid) {
         case PG_BOOL_OID:
