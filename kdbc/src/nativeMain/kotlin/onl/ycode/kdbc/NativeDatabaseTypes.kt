@@ -428,7 +428,7 @@ private class NativeResultSet(
             Long::class -> kdbc_get_long(handle, columnIndex)
             Float::class -> kdbc_get_double(handle, columnIndex).toFloat()
             Double::class -> kdbc_get_double(handle, columnIndex)
-            Boolean::class -> kdbc_get_long(handle, columnIndex) != 0L
+            Boolean::class -> readBoolean(columnIndex)
             String::class -> kdbc_get_string(handle, columnIndex)?.toKString()
             ByteArray::class -> readBlob(columnIndex)
             BigInteger::class -> readBigInteger(columnIndex)
@@ -456,6 +456,13 @@ private class NativeResultSet(
         s.toDoubleOrNull()?.let { return it }
         return s
     }
+
+    // Read through the string form and apply the shared rule, rather than testing
+    // kdbc_get_long directly: the two disagree on inputs each parses differently
+    // (a text "0.5" reads as 0 through the integer getter), and boolean reads must
+    // give the same answer here as on JVM and Android.
+    private fun readBoolean(col: Int): Boolean =
+        kdbc_get_string(handle, col)?.toKString()?.let { TypeConversion.asBoolean(it) } ?: false
 
     private fun readBlob(col: Int): ByteArray? = memScoped {
         val lenVar = alloc<ULongVar>()

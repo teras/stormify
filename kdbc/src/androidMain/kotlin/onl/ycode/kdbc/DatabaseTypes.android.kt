@@ -331,7 +331,13 @@ private class AndroidResultSet(private val cursor: Cursor) : ResultSet {
             Float::class -> cursor.getFloat(idx)
             Short::class -> cursor.getShort(idx)
             Byte::class -> cursor.getShort(idx).toByte()
-            Boolean::class -> cursor.getInt(idx) != 0
+            // A text column carries the flag as a token ('Y', 't', 'true') or as a
+            // number, neither of which getInt reads correctly. Same rule as the JVM
+            // and native drivers.
+            Boolean::class ->
+                if (cursor.getType(idx) == Cursor.FIELD_TYPE_STRING)
+                    TypeConversion.asBoolean(cursor.getString(idx))
+                else cursor.getInt(idx) != 0
             ByteArray::class -> cursor.getBlob(idx)
             // For Any::class (the most common path Stormify uses) return the
             // most-specific native column type so the TypeConversion registry can

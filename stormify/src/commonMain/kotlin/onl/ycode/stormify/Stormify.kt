@@ -680,7 +680,8 @@ class Stormify(
     private class ColumnPlanEntry<T : Any>(
         val index: Int,
         val name: String,                  // original case (for error messages)
-        val scalarType: kotlin.reflect.KClass<*>?,
+        /** Type to request from the driver, or null to read untyped. */
+        val readType: kotlin.reflect.KClass<*>?,
         val isReference: Boolean,
         val refType: kotlin.reflect.KClass<*>?,
         val customHandler: ((Any?) -> Unit)?,
@@ -707,8 +708,14 @@ class Stormify(
             val scalarType = if (handler == null) info.getScalarType(name) else null
             val isRef = handler == null && info.isReferenceField(name)
             val refType = if (isRef) info.getReferenceType(name) else null
+            // A reference column carries the referenced entity's primary key, so ask the
+            // driver for that type. An untyped read can hand back a driver-native class
+            // (ojdbc returns oracle.sql.TIMESTAMP for a temporal key) that no converter
+            // accepts, and the reference stub then cannot be built.
+            val readType = scalarType
+                ?: refType?.let { resolveTableInfo(it).idTypes.singleOrNull() }
             val setters = if (handler == null) info.settersForColumn(name) else emptyList()
-            arr[i - 1] = ColumnPlanEntry(i, name, scalarType, isRef, refType, handler, setters)
+            arr[i - 1] = ColumnPlanEntry(i, name, readType, isRef, refType, handler, setters)
         }
         @Suppress("UNCHECKED_CAST")
         return ColumnPlan(info, arr as Array<ColumnPlanEntry<T>>)
@@ -749,7 +756,7 @@ class Stormify(
             }
 
             val value = transformResultValue(
-                if (col.scalarType != null) rs.getObject(col.index, col.scalarType)
+                if (col.readType != null) rs.getObject(col.index, col.readType)
                 else rs.getObject(col.index, Any::class)
             )
 
@@ -828,7 +835,10 @@ class Stormify(
                 // Build the column plan once for the whole batch (same SELECT, same row shape).
                 var plan: ColumnPlan<AutoTable>? = null
                 while (rs.next()) {
-                    val key = rs.getObject(pkColIdx, info.idTypes[0]).toString()
+                    // Convert before keying: a driver may hand back a different
+                    // representation of the same id (java.sql.Timestamp for an Instant
+                    // key), whose toString() would never match the entity-side key.
+                    val key = castTo(info.idTypes[0], rs.getObject(pkColIdx, info.idTypes[0]), this).toString()
                     val targets = byId.remove(key)
                     if (targets != null) {
                         if (plan == null) plan = buildColumnPlan(rs, info, null)

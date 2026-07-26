@@ -30,6 +30,56 @@ private val kmpToJdbcTarget = mapOf<String, KClass<*>>(
 )
 
 /**
+ * Java class to request from the driver, per declared type.
+ *
+ * Everything [kmpToJdbcTarget] remaps on the way in has to be remapped on the way
+ * out too, so that table is the base. On top of it sit the absolute-instant
+ * `java.time` types: asking a driver for those directly is not portable (ojdbc
+ * rejects `Instant.class`, and the untyped fallback yields an unconvertible
+ * `oracle.sql.TIMESTAMP`), and a driver-native read interprets the stored wall
+ * time as UTC while the bind wrote it through the JVM default zone — an
+ * asymmetric shift. `java.sql.Timestamp` is accepted by every driver and is
+ * zone-symmetric with [toJdbcValue]; [TypeConversion] finishes the conversion.
+ */
+private val jdbcReadTarget: Map<String, KClass<*>> = kmpToJdbcTarget + mapOf(
+    "java.time.Instant" to java.sql.Timestamp::class,
+    "java.time.OffsetDateTime" to java.sql.Timestamp::class,
+    "java.time.ZonedDateTime" to java.sql.Timestamp::class,
+)
+
+/**
+ * Types the driver is never asked for, because it answers without failing and the
+ * answers disagree.
+ *
+ * A driver that rejects a requested class throws, and the call sites recover by
+ * re-reading untyped. Silent disagreement has no such safety net, so it has to be
+ * pre-empted here. Measured on a text column holding a boolean token: the MariaDB
+ * driver reads `'false'` as true, xerial SQLite reads `'true'` as false, and
+ * mssql-jdbc rejects `'t'`. Reading untyped and applying
+ * [TypeConversion.isTrueToken] gives one answer on every database, and the same
+ * answer as the native drivers.
+ */
+private val jdbcUntrustedReads = setOf("kotlin.Boolean")
+
+/**
+ * The Java class to request from the driver when the caller asks for [type].
+ *
+ * Falls back to `javaObjectType`: a [KClass] may carry the primitive Java class
+ * (e.g. `boolean.class` when it originates from `typeOf<T>().classifier`), which
+ * JDBC drivers reject.
+ */
+private fun jdbcReadType(type: KClass<*>): Class<*> =
+    jdbcReadTarget[type.qualifiedName]?.java ?: type.javaObjectType
+
+/** True when [type] must be read untyped and coerced by [TypeConversion]. */
+private fun readsUntyped(type: KClass<*>): Boolean =
+    type == Any::class || type.qualifiedName in jdbcUntrustedReads
+
+/** Read column/parameter [index] untyped via [get] and coerce it to [type]. */
+private fun coerceUntyped(type: KClass<*>, index: Int, get: (Int) -> Any?): Any? =
+    if (type == Any::class) get(index) else TypeConversion.castScalar(type, get(index))
+
+/**
  * Convert a value to a JDBC-compatible type before reaching `setObject`.
  *
  * Strict JDBC drivers refuse `java.util.Date` and the absolute-instant
@@ -208,7 +258,14 @@ private class JdbcCallableStatement(private val jdbc: java.sql.CallableStatement
     override fun close() = jdbc.close()
     override fun registerOutParameter(parameterIndex: Int, type: KClass<*>) =
         jdbc.registerOutParameter(parameterIndex, toSqlType(type))
-    override fun getObject(parameterIndex: Int, type: KClass<*>): Any? = jdbc.getObject(parameterIndex, type.javaObjectType)
+    override fun getObject(parameterIndex: Int, type: KClass<*>): Any? = try {
+        if (readsUntyped(type)) coerceUntyped(type, parameterIndex, jdbc::getObject)
+        else jdbc.getObject(parameterIndex, jdbcReadType(type))
+    } catch (_: Exception) {
+        // Same driver-strictness fallback as JdbcResultSet.getObject: read untyped
+        // and let the converter pipeline coerce.
+        jdbc.getObject(parameterIndex)
+    }
     override fun execute(): Boolean = jdbc.execute()
 }
 
@@ -254,8 +311,14 @@ private class JdbcPgCallableStatement(
         val outIndices = outParams.keys.sorted()
         val colIndex = outIndices.indexOf(parameterIndex) + 1
         if (colIndex == 0) throw SQLException("Parameter $parameterIndex is not an OUT/INOUT parameter")
-        return if (type == Any::class) rs.getObject(colIndex)
-        else rs.getObject(colIndex, type.javaObjectType)
+        return try {
+            if (readsUntyped(type)) coerceUntyped(type, colIndex, rs::getObject)
+            else rs.getObject(colIndex, jdbcReadType(type))
+        } catch (_: Exception) {
+            // Same driver-strictness fallback as JdbcResultSet.getObject: read untyped
+            // and let the converter pipeline coerce.
+            rs.getObject(colIndex)
+        }
     }
 
     override fun executeUpdate(): Int = stmt.executeUpdate()
@@ -356,11 +419,8 @@ private class JdbcSavepoint(val jdbc: java.sql.Savepoint) : Savepoint {
 private class JdbcResultSet(private val jdbc: java.sql.ResultSet) : ResultSet {
     override fun next(): Boolean = jdbc.next()
     override fun getObject(columnIndex: Int, type: KClass<*>): Any? = try {
-        // javaObjectType: a KClass may carry the primitive Java class (e.g. boolean.class
-        // when it originates from typeOf<T>().classifier), which JDBC drivers reject.
-        val javaType = kmpToJdbcTarget[type.qualifiedName]?.java ?: type.javaObjectType
-        if (type == Any::class) jdbc.getObject(columnIndex)
-        else jdbc.getObject(columnIndex, javaType)
+        if (readsUntyped(type)) coerceUntyped(type, columnIndex, jdbc::getObject)
+        else jdbc.getObject(columnIndex, jdbcReadType(type))
     } catch (_: Exception) {
         // Some drivers throw non-SQLException (pg's getObject(idx, UUID.class) on
         // a TEXT column raises ClassCastException); fall back to untyped and let

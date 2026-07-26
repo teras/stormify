@@ -27,6 +27,8 @@ import org.robolectric.RobolectricTestRunner
 @RunWith(RobolectricTestRunner::class) class AndroidAutocommitTest : AutocommitTest()
 @RunWith(RobolectricTestRunner::class) class AndroidAutoTableLazyLoadTest : AutoTableLazyLoadTest()
 @RunWith(RobolectricTestRunner::class) class AndroidEncodingTest : EncodingTest()
+@RunWith(RobolectricTestRunner::class) class AndroidBooleanTokenTest : BooleanTokenTest()
+@RunWith(RobolectricTestRunner::class) class AndroidReadAgreementTest : ReadAgreementTest()
 @RunWith(RobolectricTestRunner::class) class AndroidStringPkTest : StringPkTest()
 @RunWith(RobolectricTestRunner::class) class AndroidSuspendTransactionTest : SuspendTransactionTest()
 @RunWith(RobolectricTestRunner::class) class AndroidTemporalConversionTest : TemporalConversionTest()

@@ -67,6 +67,32 @@ object TypeConversion {
         registry.getOrPut(targetClass) { mutableMapOf() }[sourceClass] = converter
     }
 
+    /**
+     * Tokens a text column may use to encode a true flag: the set every JDBC driver
+     * agrees on, so a text flag reads the same on JVM and native. A `CHAR(1)` holding
+     * `'Y'` is the standard Oracle idiom, since Oracle has no BOOLEAN column type.
+     */
+    private val trueTokens = arrayOf("true", "t", "yes", "y", "1")
+
+    /** True when [text] is one of the recognised true tokens, ignoring case. */
+    internal fun isTrueToken(text: String): Boolean =
+        trueTokens.any { it.equals(text, ignoreCase = true) }
+
+    /**
+     * Interprets [text] as a boolean, so that a flag means the same thing whether it
+     * was stored in a numeric or a text column: a numeric payload follows the numeric
+     * rule and is true when non-zero, anything else falls back to [isTrueToken].
+     *
+     * This is the single rule every platform reads booleans by — JDBC drivers
+     * disagree with each other here, so the answer cannot be delegated to them.
+     */
+    internal fun asBoolean(text: String): Boolean {
+        val t = text.trim()
+        t.toLongOrNull()?.let { return it != 0L }
+        t.toDoubleOrNull()?.let { return it != 0.0 }
+        return isTrueToken(t)
+    }
+
     init {
         val toBoolean = mutableMapOf<KClass<*>, (Any) -> Any>().also { registry[Boolean::class] = it }
         val toString = mutableMapOf<KClass<*>, (Any) -> Any>().also { registry[String::class] = it }
@@ -74,8 +100,8 @@ object TypeConversion {
         val toByteArr = mutableMapOf<KClass<*>, (Any) -> Any>().also { registry[ByteArray::class] = it }
         val toCharArr = mutableMapOf<KClass<*>, (Any) -> Any>().also { registry[CharArray::class] = it }
 
-        toBoolean[String::class] = { (it as String).toBoolean() }
-        toBoolean[Char::class] = { (it as Char) == '1' }
+        toBoolean[String::class] = { asBoolean(it as String) }
+        toBoolean[Char::class] = { asBoolean((it as Char).toString()) }
         toBoolean[Number::class] = { (it as Number).toInt() != 0 }
 
         toString[Boolean::class] = { it.toString() }
@@ -110,7 +136,13 @@ object TypeConversion {
             fromGroup[Boolean::class] = { converter(if ((it as Boolean)) 1 else 0) }
             toBoolean[target] = { (it as Number).toInt() != 0 }
             if (target != Double::class && target != Float::class)
-                fromGroup[String::class] = { converter((it as String).toLong()) }
+            // A decimal column read into an integral field arrives as text on the
+            // drivers that stringify numerics; truncate toward zero, as both the
+            // native drivers and JDBC getInt do.
+                fromGroup[String::class] = {
+                    val t = (it as String).trim()
+                    converter(t.toLongOrNull() ?: t.toDouble().toLong())
+                }
             else
                 fromGroup[String::class] = { converter((it as String).toDouble()) }
             toString[target] = { it.toString() }
