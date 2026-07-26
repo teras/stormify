@@ -213,22 +213,78 @@ The coroutines API requires `kotlinx-coroutines-core` as a runtime dependency. I
 
 ### Setup
 
-Create a `SuspendStormify` from an existing `Stormify` instance:
+Every `Stormify` instance carries a lazily-created connection pool behind its
+`suspending` property:
 
 ```kotlin
 import onl.ycode.stormify.Stormify
 import onl.ycode.stormify.coroutines.*
 
-val stormify = Stormify(dataSource)
-val async = stormify.suspending(PoolConfig(
+val stormify = Stormify(dataSource)          // pool created on first suspending access
+val async = stormify.suspending              // always the same shared pool
+```
+
+Pool tuning goes through the `poolConfig` constructor parameter (defaults are
+sensible — tune only if needed):
+
+```kotlin
+val stormify = Stormify(dataSource, poolConfig = PoolConfig(
     minConnections = 2,
     maxConnections = 10,
 ))
 ```
 
-The `suspending()` extension creates an internal connection pool configured by `PoolConfig`.
 The blocking `Stormify` instance continues to work independently — `SuspendStormify`
 is purely additive. You can use both APIs side-by-side.
+
+!!! note "Pooling is suspend-only, by design"
+    Each pooled connection is pinned to a dedicated worker thread (Native drivers
+    and Android's `SQLiteSession` forbid cross-thread connection use), so the
+    blocking API can never borrow from this pool — there is no blocking-API pool
+    and no `PooledDataSource`. If you want pooling, write suspend code.
+
+If you need a second, independent pool (e.g. an isolated reporting workload),
+construct one explicitly:
+
+```kotlin
+val reporting = SuspendStormify(stormify, PoolConfig(maxConnections = 2))
+```
+
+!!! warning "Already pooling DataSource (e.g. HikariCP)"
+    If your `DataSource` already pools connections, the suspend pool holds up to
+    `maxConnections` of its connections permanently. Keep `maxConnections` well
+    below the outer pool's size so other consumers (migrations, health checks)
+    are not starved, and raise or disable the outer pool's leak-detection
+    threshold — long-lived borrows here are normal, not leaks.
+
+### Two Scopes
+
+Inside a scope, every database operation uses the scope's connection — the
+blocking API is called unchanged and joins the borrowed connection transparently:
+
+- **`withConnection { }`** — borrows a pooled connection, auto-commit stays on.
+  For reads and any work that does not need atomicity. Exceptions propagate
+  **unchanged** and do not evict the connection.
+- **`transaction { }`** — the same borrow plus BEGIN/COMMIT (rollback on any
+  throwable). For writes that need atomicity.
+
+```kotlin
+async.withConnection {
+    val suppliers = stormify.read<Supplier>("SELECT * FROM supplier WHERE active = ?", true)
+}
+```
+
+Application-level exceptions inside `withConnection` (validation errors, not-found,
+constraint violations in auto-commit) reach the caller unwrapped — no `SQLException`
+wrapping on this path — and the borrowed connection returns to the pool healthy.
+Only coroutine cancellation evicts a connection.
+
+Scopes nest in every combination on the same coroutine lineage:
+
+| inner ↓ / outer → | `withConnection` | `transaction` |
+|---|---|---|
+| `withConnection` | reuse the connection | reuse, autoCommit untouched |
+| `transaction` | full BEGIN/COMMIT on the ambient connection | savepoint |
 
 ### Suspend Transactions
 
@@ -292,6 +348,10 @@ PoolConfig(
 ```
 
 When the pool is saturated, callers **suspend** (not block) until a connection is released.
+A server that borrows one connection per request can therefore serve at most
+`maxConnections` requests concurrently — further requests suspend up to
+`acquireTimeout` and then fail with `PoolAcquireTimeoutException`. Size the pool
+to your expected concurrency.
 
 ### Pool Statistics
 
@@ -305,5 +365,10 @@ println("total=${stats.total} inUse=${stats.inUse} idle=${stats.idle}")
 ### Shutdown
 
 ```kotlin
-async.close()  // Waits up to shutdownTimeout (default 30s), then force-closes remaining
+stormify.closeSuspending()  // closes the shared pool; a no-op if it was never created
+async.close()               // or close an explicitly constructed SuspendStormify
 ```
+
+Both wait up to `shutdownTimeout` (default 30s) for in-flight borrows, then
+force-close what remains. On Native every pooled connection owns a thread —
+skipping shutdown leaks threads, not just connections.

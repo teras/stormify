@@ -30,6 +30,25 @@ Stormify release history.
   Subclasses that hand-write getters/setters (typically Java) call this to
   trigger the same lazy-load behaviour that the Kotlin `db` delegate
   applies automatically.
+- **`SuspendStormify.withConnection { }`** — a pooled-connection scope
+  without transaction semantics. Until now the only way to borrow from the
+  suspend pool was `transaction { }`, which forced BEGIN/COMMIT (and its
+  `SQLException` wrapping) onto plain reads. `withConnection` borrows a
+  pooled connection in auto-commit mode, publishes it to the ambient
+  blocking API exactly like a transaction does, and propagates exceptions
+  **unchanged** — application exceptions no longer evict healthy
+  connections, and only coroutine cancellation does. The two scopes nest
+  in every combination: `withConnection` inside either scope reuses the
+  ambient connection, `transaction` inside `transaction` opens a savepoint
+  (unchanged), and `transaction` inside `withConnection` runs a full
+  BEGIN/COMMIT cycle on the borrowed connection.
+- **`stormify.suspending` shared pool.** `suspending` is now a lazy
+  property on `Stormify` (tuned by the new `poolConfig` constructor
+  parameter), so the whole process shares one pool by default. The
+  `suspending(config)` factory extension is removed — code that needs a
+  separate pool uses the new public `SuspendStormify(stormify, config)`
+  constructor. `Stormify.closeSuspending()` closes the shared pool at
+  shutdown without creating it when it was never used.
 
 ### Changed
 - **`AutoTable` auto-hydration is now ownership-based.** A user-constructed

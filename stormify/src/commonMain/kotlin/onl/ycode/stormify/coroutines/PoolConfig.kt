@@ -7,7 +7,21 @@ import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Duration.Companion.seconds
 
 /**
- * Configuration for [SuspendConnectionPool].
+ * Tuning for the connection pool behind [SuspendStormify].
+ *
+ * **You normally don't need this.** The defaults are sensible for most
+ * applications; pass a `PoolConfig` only to tune. Note that with
+ * [maxConnections] at its default, a server that borrows one connection per
+ * request can serve at most [maxConnections] requests concurrently — further
+ * requests suspend up to [acquireTimeout] and then fail with
+ * [PoolAcquireTimeoutException]. Size the pool to your expected concurrency.
+ *
+ * **Double-pooling warning:** if your `DataSource` already pools connections
+ * (e.g. HikariCP on JVM), this pool holds up to [maxConnections] of its
+ * connections permanently. Keep [maxConnections] well below the outer pool's
+ * size so other consumers (migration tools, health checks, other frameworks)
+ * are not starved, and raise or disable the outer pool's leak-detection
+ * threshold — long-lived borrows are normal here, not leaks.
  *
  * All durations use `kotlin.time.Duration`. All validations in `init` are intentionally
  * strict — it is better to fail fast with a clear message than to produce a pool with

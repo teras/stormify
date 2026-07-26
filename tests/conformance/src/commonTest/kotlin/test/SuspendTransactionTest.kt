@@ -15,7 +15,6 @@ import kotlinx.coroutines.withContext
 import onl.ycode.stormify.Stormify
 import onl.ycode.stormify.coroutines.PoolConfig
 import onl.ycode.stormify.coroutines.SuspendStormify
-import onl.ycode.stormify.coroutines.suspending
 import kotlin.test.AfterTest
 import kotlin.test.Ignore
 import kotlin.test.BeforeTest
@@ -64,7 +63,7 @@ open class SuspendTransactionTest {
             )
         )
 
-        runner = stormify.suspending(PoolConfig(minConnections = 0, maxConnections = 4))
+        runner = SuspendStormify(stormify, PoolConfig(minConnections = 0, maxConnections = 4))
     }
 
     @AfterTest

@@ -41,9 +41,16 @@ import kotlin.coroutines.CoroutineContext
  * Drivers forbid parallel use of a single connection, so do not issue concurrent
  * DB work from those children. See [SuspendStormify.transaction] for the pattern.
  */
-internal expect class ConnectionElement(conn: Connection, stormify: Stormify) : CoroutineContext.Element {
+internal expect class ConnectionElement(
+    conn: Connection,
+    stormify: Stormify,
+    inTransaction: Boolean,
+) : CoroutineContext.Element {
     internal val conn: Connection
     internal val stormify: Stormify
+
+    /** `true` when the owning scope is a `transaction { }`, `false` for a bare `withConnection { }` borrow. */
+    internal val inTransaction: Boolean
     override val key: CoroutineContext.Key<*>
 
     companion object Key : CoroutineContext.Key<ConnectionElement>

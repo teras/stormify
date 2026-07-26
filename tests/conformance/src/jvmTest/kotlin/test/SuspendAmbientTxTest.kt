@@ -14,7 +14,6 @@ import kotlinx.coroutines.withContext
 import onl.ycode.stormify.Stormify
 import onl.ycode.stormify.coroutines.PoolConfig
 import onl.ycode.stormify.coroutines.SuspendStormify
-import onl.ycode.stormify.coroutines.suspending
 import java.util.concurrent.ConcurrentHashMap
 import kotlin.test.AfterTest
 import kotlin.test.BeforeTest
@@ -59,7 +58,7 @@ open class SuspendAmbientTxTest {
             TestDDL.createTable(table,
                 "${TestDDL.intPrimaryKey("id")}, name ${TestDDL.textType()}")
         )
-        runner = stormify.suspending(PoolConfig(minConnections = 0, maxConnections = 4))
+        runner = SuspendStormify(stormify, PoolConfig(minConnections = 0, maxConnections = 4))
     }
 
     @AfterTest

@@ -7,7 +7,7 @@ import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import onl.ycode.stormify.coroutines.PoolConfig
-import onl.ycode.stormify.coroutines.suspending
+import onl.ycode.stormify.coroutines.SuspendStormify
 import kotlin.concurrent.atomics.AtomicInt
 import kotlin.concurrent.atomics.ExperimentalAtomicApi
 import kotlin.test.Test
@@ -49,7 +49,7 @@ class SuspendStressTest {
         // Pool size matches the testing Hikari config (maximumPoolSize=16) on the JVM
         // target — the suspend pool wraps the same underlying JDBC pool, so we must not
         // ask for more connections than the upstream provider hands out.
-        val async = s.suspending(PoolConfig(minConnections = 0, maxConnections = 16))
+        val async = SuspendStormify(s, PoolConfig(minConnections = 0, maxConnections = 16))
         try {
             runBlocking {
                 coroutineScope {

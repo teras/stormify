@@ -19,6 +19,7 @@ import kotlin.coroutines.CoroutineContext
 internal actual class ConnectionElement actual constructor(
     actual internal val conn: Connection,
     actual internal val stormify: Stormify,
+    actual internal val inTransaction: Boolean,
 ) : AbstractCoroutineContextElement(Key) {
 
     actual override val key: CoroutineContext.Key<*> get() = Key

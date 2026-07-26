@@ -15,6 +15,8 @@ import onl.ycode.stormify.biglist.AbstractPagedList
 import onl.ycode.stormify.biglist.FilterSyntax
 import onl.ycode.stormify.biglist.InputParser
 import onl.ycode.stormify.biglist.ReferencePath
+import onl.ycode.stormify.coroutines.PoolConfig
+import onl.ycode.stormify.coroutines.SuspendStormify
 import kotlin.reflect.KClass
 
 
@@ -46,8 +48,15 @@ private class PreparedSql(val sql: String, val params: List<Any?>)
  *
  * @param dataSource the data source for all database operations
  * @param registrars optional entity registrars to register at construction time
+ * @param poolConfig tuning for the connection pool behind [suspending]. The defaults
+ *   are sensible for most applications — see [PoolConfig] for the double-pooling
+ *   warning when [dataSource] already pools (e.g. HikariCP).
  */
-class Stormify(val dataSource: DataSource, vararg registrars: EntityRegistrar) {
+class Stormify(
+    val dataSource: DataSource,
+    vararg registrars: EntityRegistrar,
+    val poolConfig: PoolConfig = PoolConfig(),
+) {
 
     /**
      * Single-argument convenience constructor. Exists primarily so Spring XML
@@ -55,6 +64,47 @@ class Stormify(val dataSource: DataSource, vararg registrars: EntityRegistrar) {
      * resolve constructors by arity) can pick an unambiguous one-arg match.
      */
     constructor(dataSource: DataSource) : this(dataSource, *emptyArray())
+
+    /** Convenience constructor with pool tuning and no registrars. */
+    constructor(dataSource: DataSource, poolConfig: PoolConfig) : this(dataSource, *emptyArray(), poolConfig = poolConfig)
+
+    private val suspendingLazy = lazy(LazyThreadSafetyMode.SYNCHRONIZED) { SuspendStormify(this, poolConfig) }
+
+    /**
+     * The coroutine-aware API of this instance, backed by a single connection pool
+     * created lazily on first access with [poolConfig].
+     *
+     * Inside a scope, every database operation uses the scope's connection — the
+     * blocking API is called unchanged and joins the borrowed connection
+     * transparently:
+     *
+     * ```kotlin
+     * stormify.suspending.withConnection { /* reads, auto-commit */ }
+     * stormify.suspending.transaction { /* writes, BEGIN/COMMIT */ }
+     * ```
+     *
+     * **Pooling is suspend-only, by design.** Pooled connections are pinned to
+     * dedicated worker threads, which a blocking caller cannot honor — there is no
+     * blocking-API pool and there will be no `PooledDataSource`. If you want
+     * pooling, write suspend code.
+     *
+     * **Lifecycle:** shut the pool down with `stormify.suspending.close()` at
+     * application shutdown ([Stormify] itself is not and cannot be `AutoCloseable`
+     * — pool closing is a suspending operation). On Native every pooled connection
+     * owns a thread, so skipping this leaks threads, not just connections.
+     * [closeSuspending] offers the same shutdown without creating the pool when it
+     * was never used.
+     */
+    val suspending: SuspendStormify get() = suspendingLazy.value
+
+    /**
+     * Closes the [suspending] connection pool if it was ever created; a no-op
+     * otherwise. Use this in shutdown hooks where touching [suspending] just to
+     * close it would needlessly spin up a pool.
+     */
+    suspend fun closeSuspending() {
+        if (suspendingLazy.isInitialized()) suspendingLazy.value.close()
+    }
 
     init {
         for (r in registrars) EntityMeta.invokeRegistrar(r)
