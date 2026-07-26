@@ -263,10 +263,12 @@ open class ReflectionTest {
         }
         s.executeUpdate(TestDDL.createTable("scalar_regression",
             "${TestDDL.intPrimaryKey("id")}, " +
-                "ts $tsType, " +
-                "odt $tsType, " +
-                "zdt $tsType, " +
-                "uid ${TestDDL.textType()}, " +
+                // Nullable: MySQL 5.7 otherwise invents an invalid zero-date
+                // default for every TIMESTAMP column after the first.
+                "ts $tsType NULL, " +
+                "odt $tsType NULL, " +
+                "zdt $tsType NULL, " +
+                "uuid ${TestDDL.textType()}, " +
                 "kuid ${TestDDL.textType()}"))
 
         val ts = java.time.Instant.ofEpochMilli(1_700_000_000_123L)
@@ -277,7 +279,7 @@ open class ReflectionTest {
 
         s.create(ScalarRegression().apply {
             id = 1; this.ts = ts; this.odt = odt; this.zdt = zdt
-            this.uid = uid; this.kuid = kuid
+            this.uuid = uid; this.kuid = kuid
         })
 
         val loaded = s.findById<ScalarRegression>(1)
@@ -285,7 +287,7 @@ open class ReflectionTest {
         assertEquals(ts, loaded.ts)
         assertEquals(odt.toInstant(), loaded.odt?.toInstant())
         assertEquals(zdt.toInstant(), loaded.zdt?.toInstant())
-        assertEquals(uid, loaded.uid)
+        assertEquals(uid, loaded.uuid)
         assertEquals(kuid, loaded.kuid)
     }
 
@@ -327,15 +329,15 @@ open class ReflectionTest {
     fun jpaAnnotationsViaReflection() = withDb("REFL-JPA") { s ->
         TestDDL.dropTable("jpa_users")
         s.executeUpdate(TestDDL.createTable("jpa_users",
-            "${TestDDL.intPrimaryKey("uid")}, email ${TestDDL.textType()}, inserted_at ${TestDDL.textType()}"))
+            "${TestDDL.intPrimaryKey("user_id")}, email ${TestDDL.textType()}, inserted_at ${TestDDL.textType()}"))
 
         s.create(JpaReflUser().apply {
             id = 1; emailAddress = "a@b.c"; insertedAt = "NOT-INSERTABLE"; scratch = "ignored"
         })
         // @Column(name = ...) honored on both read and write paths
-        assertEquals("a@b.c", s.readOne<String>("SELECT email FROM jpa_users WHERE uid = ?", 1))
+        assertEquals("a@b.c", s.readOne<String>("SELECT email FROM jpa_users WHERE user_id = ?", 1))
         // insertable = false → column excluded from INSERT (readOne throws on NULL, so count instead)
-        assertEquals(0, s.readOne<Int>("SELECT COUNT(*) FROM jpa_users WHERE uid = ? AND inserted_at IS NOT NULL", 1))
+        assertEquals(0, s.readOne<Int>("SELECT COUNT(*) FROM jpa_users WHERE user_id = ? AND inserted_at IS NOT NULL", 1))
 
         val loaded = s.findById<JpaReflUser>(1)
         assertNotNull(loaded)
@@ -343,9 +345,9 @@ open class ReflectionTest {
         loaded.emailAddress = "x@y.z"
         loaded.insertedAt = "NOT-UPDATABLE"
         s.update(loaded)
-        assertEquals("x@y.z", s.readOne<String>("SELECT email FROM jpa_users WHERE uid = ?", 1))
+        assertEquals("x@y.z", s.readOne<String>("SELECT email FROM jpa_users WHERE user_id = ?", 1))
         // updatable = false → column excluded from UPDATE
-        assertEquals(0, s.readOne<Int>("SELECT COUNT(*) FROM jpa_users WHERE uid = ? AND inserted_at IS NOT NULL", 1))
+        assertEquals(0, s.readOne<Int>("SELECT COUNT(*) FROM jpa_users WHERE user_id = ? AND inserted_at IS NOT NULL", 1))
     }
 
 }
@@ -378,7 +380,7 @@ class ReflEnumStringEntity {
 @javax.persistence.Table(name = "jpa_users")
 class JpaReflUser {
     @javax.persistence.Id
-    @javax.persistence.Column(name = "uid")
+    @javax.persistence.Column(name = "user_id")
     var id: Int = 0
 
     @javax.persistence.Column(name = "email")
@@ -417,7 +419,7 @@ class ScalarRegression : AutoTable() {
     var ts: java.time.Instant? by db(null)
     var odt: java.time.OffsetDateTime? by db(null)
     var zdt: java.time.ZonedDateTime? by db(null)
-    var uid: java.util.UUID? by db(null)
+    var uuid: java.util.UUID? by db(null)
     var kuid: kotlin.uuid.Uuid? by db(null)
 }
 
