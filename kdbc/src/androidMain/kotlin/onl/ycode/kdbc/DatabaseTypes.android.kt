@@ -325,33 +325,51 @@ private class AndroidResultSet(private val cursor: Cursor) : ResultSet {
 
         return when (type) {
             String::class -> cursor.getString(idx)
-            Int::class -> cursor.getInt(idx)
-            Long::class -> cursor.getLong(idx)
-            Double::class -> cursor.getDouble(idx)
-            Float::class -> cursor.getFloat(idx)
-            Short::class -> cursor.getShort(idx)
-            Byte::class -> cursor.getShort(idx).toByte()
+            // A CharArray field holds the same characters a String would.
+            CharArray::class -> cursor.getString(idx).toCharArray()
+            Int::class -> numeric(idx, type) { cursor.getInt(idx) }
+            Long::class -> numeric(idx, type) { cursor.getLong(idx) }
+            Double::class -> numeric(idx, type) { cursor.getDouble(idx) }
+            Float::class -> numeric(idx, type) { cursor.getFloat(idx) }
+            Short::class -> numeric(idx, type) { cursor.getShort(idx) }
+            Byte::class -> numeric(idx, type) { cursor.getShort(idx).toByte() }
             // A text column carries the flag as a token ('Y', 't', 'true') or as a
-            // number, neither of which getInt reads correctly. Same rule as the JVM
-            // and native drivers.
-            Boolean::class ->
-                if (cursor.getType(idx) == Cursor.FIELD_TYPE_STRING)
-                    TypeConversion.asBoolean(cursor.getString(idx))
-                else cursor.getInt(idx) != 0
+            // number, neither of which getInt reads correctly. Reading the column in
+            // its own shape and coercing applies the same rule as the JVM and native
+            // drivers.
+            Boolean::class -> TypeConversion.castScalar(Boolean::class, readAny(idx))
             ByteArray::class -> cursor.getBlob(idx)
-            // For Any::class (the most common path Stormify uses) return the
-            // most-specific native column type so the TypeConversion registry can
-            // coerce later.
-            Any::class -> when (cursor.getType(idx)) {
-                Cursor.FIELD_TYPE_INTEGER -> cursor.getLong(idx)
-                Cursor.FIELD_TYPE_FLOAT -> cursor.getDouble(idx)
-                Cursor.FIELD_TYPE_STRING -> cursor.getString(idx)
-                Cursor.FIELD_TYPE_BLOB -> cursor.getBlob(idx)
-                else -> null
-            }
+            Any::class -> readAny(idx)
             else -> cursor.getString(idx)
         }
     }
+
+    /**
+     * The column's value in its own type, so the [TypeConversion] registry can coerce
+     * from there. This is what the untyped read hands back.
+     */
+    private fun readAny(idx: Int): Any? = when (cursor.getType(idx)) {
+        Cursor.FIELD_TYPE_INTEGER -> cursor.getLong(idx)
+        Cursor.FIELD_TYPE_FLOAT -> cursor.getDouble(idx)
+        Cursor.FIELD_TYPE_STRING -> cursor.getString(idx)
+        Cursor.FIELD_TYPE_BLOB -> cursor.getBlob(idx)
+        else -> null
+    }
+
+    /**
+     * Take a number from [idx] through [direct] only when the column actually holds
+     * one; otherwise read the column in its own shape and let [TypeConversion] coerce
+     * it to [target].
+     *
+     * `Cursor.getInt` on a column of words answers 0 and reports nothing back, so
+     * without this guard a text column read into an integer field would quietly
+     * become 0 here while the same read throws on JVM.
+     */
+    private inline fun numeric(idx: Int, target: KClass<*>, direct: () -> Any?): Any? =
+        when (cursor.getType(idx)) {
+            Cursor.FIELD_TYPE_INTEGER, Cursor.FIELD_TYPE_FLOAT -> direct()
+            else -> TypeConversion.castScalar(target, readAny(idx))
+        }
 
     override fun getMetaData(): ResultSetMetaData = AndroidResultSetMetaData(cursor)
 

@@ -1349,6 +1349,28 @@ static int pg_rs_next(kdbc_result *rs) {
     return 0;
 }
 
+/* Domain oids never reach here — PostgreSQL reports the base type in the row
+ * description — so a plain oid switch is enough. */
+static kdbc_type pg_rs_col_type(kdbc_result *rs, int col) {
+    pg_result_set *prs = (pg_result_set *)rs->native;
+    int ci = col - 1;
+    if (ci >= prs->col_count) return KDBC_TYPE_STRING;
+    switch (prs->col_types[ci]) {
+        case PG_BOOL_OID:      return KDBC_TYPE_BOOL;
+        case PG_INT2_OID:
+        case PG_INT4_OID:
+        case PG_INT8_OID:      return KDBC_TYPE_LONG;
+        case PG_FLOAT4_OID:
+        case PG_FLOAT8_OID:    return KDBC_TYPE_DOUBLE;
+        case PG_BYTEA_OID:     return KDBC_TYPE_BLOB;
+        case PG_DATE_OID:      return KDBC_TYPE_DATE;
+        case PG_TIME_OID:      return KDBC_TYPE_TIME;
+        case PG_TIMESTAMP_OID: return KDBC_TYPE_TIMESTAMP;
+        case PG_NUMERIC_OID:   return KDBC_TYPE_DECIMAL;
+        default:               return KDBC_TYPE_STRING;
+    }
+}
+
 static const char *pg_rs_col_name(void *native_rs, int col) {
     pg_result_set *prs = (pg_result_set *)native_rs;
     return p_fname(prs->res, col - 1);
@@ -1959,6 +1981,7 @@ static const kdbc_driver_vtable postgres_vtable = {
     .rs_next            = pg_rs_next,
     .rs_col_name        = pg_rs_col_name,
     .rs_col_label       = NULL,
+    .rs_col_type        = pg_rs_col_type,
     .rs_is_null         = pg_rs_is_null,
     .rs_get_long        = pg_rs_get_long,
     .rs_get_double      = pg_rs_get_double,

@@ -1022,6 +1022,8 @@ typedef struct {
     int            col_count;
     char         **col_names;
     unsigned int  *native_types;
+    unsigned int  *oracle_types;  /* DPI_ORACLE_TYPE_* per column — the native type
+                                   * alone cannot tell RAW from VARCHAR2 or BLOB from CLOB */
     dpiVar       **fetch_vars;  /* dpiStmt_define overrides per column, may contain NULL */
     char           conv_buf[64];
 } ora_result_set;
@@ -1063,6 +1065,7 @@ static void *ora_execute_query(kdbc_stmt *stmt, int *out_col_count,
     ors->col_count = (int)numQueryCols;
     ors->col_names = (char **)calloc(numQueryCols, sizeof(char *));
     ors->native_types = (unsigned int *)calloc(numQueryCols, sizeof(unsigned int));
+    ors->oracle_types = (unsigned int *)calloc(numQueryCols, sizeof(unsigned int));
     ors->fetch_vars = (dpiVar **)calloc(numQueryCols, sizeof(dpiVar *));
 
     /* Cache column info and override NUMBER columns to fetch as BYTES so that
@@ -1085,6 +1088,7 @@ static void *ora_execute_query(kdbc_stmt *stmt, int *out_col_count,
             }
             ors->col_names[i - 1] = name;
             ors->native_types[i - 1] = qi.typeInfo.defaultNativeTypeNum;
+            ors->oracle_types[i - 1] = qi.typeInfo.oracleTypeNum;
 
             if (qi.typeInfo.oracleTypeNum == DPI_ORACLE_TYPE_NUMBER) {
                 /* maxArraySize must match dpiStmt_getFetchArraySize (default
@@ -1137,6 +1141,29 @@ static int ora_rs_next(kdbc_result *rs) {
         return KDBC_ERROR;
     }
     return found ? 1 : 0;
+}
+
+static kdbc_type ora_rs_col_type(kdbc_result *rs, int col) {
+    ora_result_set *ors = (ora_result_set *)rs->native;
+    int i = col - 1;
+    if (i < 0 || i >= ors->col_count || !ors->oracle_types) return KDBC_TYPE_STRING;
+    switch (ors->oracle_types[i]) {
+        case DPI_ORACLE_TYPE_RAW:
+        case DPI_ORACLE_TYPE_LONG_RAW:
+        case DPI_ORACLE_TYPE_BLOB:      return KDBC_TYPE_BLOB;
+        case DPI_ORACLE_TYPE_NATIVE_INT:
+        case DPI_ORACLE_TYPE_NATIVE_UINT: return KDBC_TYPE_LONG;
+        case DPI_ORACLE_TYPE_NATIVE_FLOAT:
+        case DPI_ORACLE_TYPE_NATIVE_DOUBLE: return KDBC_TYPE_DOUBLE;
+        case DPI_ORACLE_TYPE_BOOLEAN:   return KDBC_TYPE_BOOL;
+        case DPI_ORACLE_TYPE_DATE:
+        case DPI_ORACLE_TYPE_TIMESTAMP:
+        case DPI_ORACLE_TYPE_TIMESTAMP_TZ:
+        case DPI_ORACLE_TYPE_TIMESTAMP_LTZ: return KDBC_TYPE_TIMESTAMP;
+        case DPI_ORACLE_TYPE_NUMBER:    return KDBC_TYPE_DECIMAL;
+        /* CLOB/CHAR/VARCHAR2 are text. */
+        default:                        return KDBC_TYPE_STRING;
+    }
 }
 
 static const char *ora_rs_col_name(void *native_rs, int col) {
@@ -1335,6 +1362,7 @@ static void ora_rs_close(void *native_rs) {
         free(ors->fetch_vars);
     }
     free(ors->native_types);
+    free(ors->oracle_types);
     free(ors);
 }
 
@@ -1513,6 +1541,7 @@ static const kdbc_driver_vtable oracle_vtable = {
     .rs_next            = ora_rs_next,
     .rs_col_name        = ora_rs_col_name,
     .rs_col_label       = NULL,
+    .rs_col_type        = ora_rs_col_type,
     .rs_is_null         = ora_rs_is_null,
     .rs_get_long        = ora_rs_get_long,
     .rs_get_double      = ora_rs_get_double,

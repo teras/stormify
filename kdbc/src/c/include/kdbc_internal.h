@@ -309,6 +309,10 @@ struct kdbc_driver_vtable {
     int         (*rs_next)(kdbc_result *rs);
     const char *(*rs_col_name)(void *native_rs, int col);
     const char *(*rs_col_label)(void *native_rs, int col);
+    /* Type of the value in the current row. Optional — a NULL entry makes
+     * kdbc_col_type answer KDBC_TYPE_STRING, which is what a caller that cannot
+     * distinguish has to assume. */
+    kdbc_type   (*rs_col_type)(kdbc_result *rs, int col);
     int         (*rs_is_null)(kdbc_result *rs, int col);
     int64_t     (*rs_get_long)(kdbc_result *rs, int col);
     double      (*rs_get_double)(kdbc_result *rs, int col);

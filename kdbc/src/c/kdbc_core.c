@@ -1117,6 +1117,13 @@ const char *kdbc_col_name(kdbc_result *rs, int col) {
     return rs->conn->vt->rs_col_name(rs->native, col);
 }
 
+kdbc_type kdbc_col_type(kdbc_result *rs, int col) {
+    if (!rs || col < 1 || col > rs->col_count) return KDBC_TYPE_STRING;
+    if (!rs->native) return KDBC_TYPE_STRING; /* synthetic generated-key result */
+    if (!rs->conn->vt->rs_col_type) return KDBC_TYPE_STRING;
+    return rs->conn->vt->rs_col_type(rs, col);
+}
+
 const char *kdbc_col_label(kdbc_result *rs, int col) {
     if (!rs || col < 1 || col > rs->col_count) return NULL;
     if (!rs->native) return rs->synthetic_col_name; /* synthetic generated-key result */

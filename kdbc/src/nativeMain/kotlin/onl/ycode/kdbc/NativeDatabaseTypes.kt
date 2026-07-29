@@ -422,17 +422,25 @@ private class NativeResultSet(
         ensureOpen()
         if (kdbc_is_null(handle, columnIndex) == 1) return null
         return when (type) {
-            Byte::class -> kdbc_get_long(handle, columnIndex).toByte()
-            Short::class -> kdbc_get_long(handle, columnIndex).toShort()
-            Int::class -> kdbc_get_long(handle, columnIndex).toInt()
-            Long::class -> kdbc_get_long(handle, columnIndex)
-            Float::class -> kdbc_get_double(handle, columnIndex).toFloat()
-            Double::class -> kdbc_get_double(handle, columnIndex)
-            Boolean::class -> readBoolean(columnIndex)
+            Byte::class -> numeric(columnIndex, type) { kdbc_get_long(handle, columnIndex).toByte() }
+            Short::class -> numeric(columnIndex, type) { kdbc_get_long(handle, columnIndex).toShort() }
+            Int::class -> numeric(columnIndex, type) { kdbc_get_long(handle, columnIndex).toInt() }
+            Long::class -> numeric(columnIndex, type) { kdbc_get_long(handle, columnIndex) }
+            Float::class -> numeric(columnIndex, type) { kdbc_get_double(handle, columnIndex).toFloat() }
+            Double::class -> numeric(columnIndex, type) { kdbc_get_double(handle, columnIndex) }
+            // Read the column in its own shape and apply the shared rule, rather than
+            // testing kdbc_get_long directly: the two disagree on inputs each parses
+            // differently (a text "0.5" reads as 0 through the integer getter), and
+            // boolean reads must give the same answer here as on JVM and Android.
+            Boolean::class -> TypeConversion.castScalar(Boolean::class, readAny(columnIndex))
             String::class -> kdbc_get_string(handle, columnIndex)?.toKString()
+            // A CharArray field holds the same characters a String would; read the text
+            // rather than falling through to readAny, whose numeric guess would turn a
+            // column of digits into a number that cannot become a CharArray at all.
+            CharArray::class -> kdbc_get_string(handle, columnIndex)?.toKString()?.toCharArray()
             ByteArray::class -> readBlob(columnIndex)
-            BigInteger::class -> readBigInteger(columnIndex)
-            BigDecimal::class -> readBigDecimal(columnIndex)
+            BigInteger::class -> numeric(columnIndex, type) { readBigInteger(columnIndex) }
+            BigDecimal::class -> numeric(columnIndex, type) { readBigDecimal(columnIndex) }
             LocalDateTime::class -> readTimestamp(columnIndex)
             LocalDate::class -> readDate(columnIndex)
             LocalTime::class -> readTime(columnIndex)
@@ -447,22 +455,45 @@ private class NativeResultSet(
     }
 
     private fun readAny(col: Int): Any? {
-        // The C layer does not expose a "natural column type" function, so we fetch the value
-        // as a string (drivers format numerics/dates consistently when asked for strings) and
-        // reinterpret: prefer Long, then Double, else String. This mirrors what JDBC's
-        // `getObject(i)` returns for the generic Map<String, Any> read path in Stormify.
-        val s = kdbc_get_string(handle, col)?.toKString() ?: return null
-        s.toLongOrNull()?.let { return it }
-        s.toDoubleOrNull()?.let { return it }
-        return s
+        // Retrieve by the column's own type rather than inferring one from the text form:
+        // a text column holding digits is text, and a binary column is bytes no matter what
+        // its content looks like when stringified. Matches what JDBC's `getObject(i)` gives
+        // for the generic Map<String, Any> read path in Stormify.
+        if (kdbc_is_null(handle, col) != 0) return null
+        return when (kdbc_col_type(handle, col)) {
+            KDBC_TYPE_NULL -> null
+            KDBC_TYPE_BLOB -> readBlob(col)
+            KDBC_TYPE_BOOL -> kdbc_get_long(handle, col) != 0L
+            KDBC_TYPE_INT, KDBC_TYPE_LONG -> kdbc_get_long(handle, col)
+            KDBC_TYPE_DOUBLE -> kdbc_get_double(handle, col)
+            // The widest [kotlin.Number] that holds the value, rather than the
+            // exact-precision type: that one is not a [kotlin.Number] here, and an
+            // untyped read handing back a non-Number gives the caller a value no
+            // generic numeric code can use. Declare [BigDecimal] to keep every digit.
+            KDBC_TYPE_DECIMAL -> kdbc_get_string(handle, col)?.toKString()
+                ?.let { it.toLongOrNull() ?: it.toDoubleOrNull() ?: it }
+            KDBC_TYPE_DATE -> readDate(col)
+            KDBC_TYPE_TIME -> readTime(col)
+            KDBC_TYPE_TIMESTAMP -> readTimestamp(col)
+            else -> kdbc_get_string(handle, col)?.toKString()
+        }
     }
 
-    // Read through the string form and apply the shared rule, rather than testing
-    // kdbc_get_long directly: the two disagree on inputs each parses differently
-    // (a text "0.5" reads as 0 through the integer getter), and boolean reads must
-    // give the same answer here as on JVM and Android.
-    private fun readBoolean(col: Int): Boolean =
-        kdbc_get_string(handle, col)?.toKString()?.let { TypeConversion.asBoolean(it) } ?: false
+    /**
+     * Take a number from [col] through [direct] only when the column actually holds
+     * one; otherwise read the column in its own shape and let [TypeConversion] coerce
+     * it to [target].
+     *
+     * The C getters parse text with `strtoll`/`strtod`, which answer 0 for input they
+     * cannot parse and report nothing back. Without this guard a column of words read
+     * into an integer field would quietly become 0 here while the same read throws on
+     * JVM — the one kind of disagreement that loses data instead of surfacing.
+     */
+    private inline fun numeric(col: Int, target: KClass<*>, direct: () -> Any?): Any? =
+        when (kdbc_col_type(handle, col)) {
+            KDBC_TYPE_INT, KDBC_TYPE_LONG, KDBC_TYPE_DOUBLE, KDBC_TYPE_DECIMAL, KDBC_TYPE_BOOL -> direct()
+            else -> TypeConversion.castScalar(target, readAny(col))
+        }
 
     private fun readBlob(col: Int): ByteArray? = memScoped {
         val lenVar = alloc<ULongVar>()

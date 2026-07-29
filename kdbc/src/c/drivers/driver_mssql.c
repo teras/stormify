@@ -1561,6 +1561,33 @@ static int tds_rs_next(kdbc_result *rs) {
     return KDBC_ERROR;
 }
 
+static kdbc_type tds_rs_col_type(kdbc_result *rs, int col) {
+    tds_result_set *trs = (tds_result_set *)rs->native;
+    switch (p_dbcoltype(trs->dbproc, col)) {
+        case SYBBINARY:
+        case SYBVARBINARY:
+        case SYBIMAGE:          return KDBC_TYPE_BLOB;
+        case SYBBIT:            return KDBC_TYPE_BOOL;
+        case SYBINT1:
+        case SYBINT2:
+        case SYBINT4:
+        case SYBINT8:           return KDBC_TYPE_LONG;
+        case SYBREAL:
+        case SYBFLT8:           return KDBC_TYPE_DOUBLE;
+        case SYBMSDATE:         return KDBC_TYPE_DATE;
+        case SYBMSTIME:         return KDBC_TYPE_TIME;
+        case SYBDATETIME:
+        case SYBDATETIME4:
+        case SYBMSDATETIME2:    return KDBC_TYPE_TIMESTAMP;
+        case SYBDECIMAL:
+        case SYBNUMERIC:
+        case SYBMONEY:
+        case SYBMONEY4:
+        case SYBMONEYN:         return KDBC_TYPE_DECIMAL;
+        default:                return KDBC_TYPE_STRING;
+    }
+}
+
 static const char *tds_rs_col_name(void *native_rs, int col) {
     tds_result_set *trs = (tds_result_set *)native_rs;
     return p_dbcolname(trs->dbproc, col);
@@ -1976,6 +2003,7 @@ static const kdbc_driver_vtable mssql_vtable = {
     /* SQL Server returns the alias (e.g. "SELECT x AS y" → "y") via dbcolname,
      * so label and name are the same — just alias the function pointer. */
     .rs_col_label           = tds_rs_col_name,
+    .rs_col_type            = tds_rs_col_type,
     .rs_is_null             = tds_rs_is_null,
     .rs_get_long            = tds_rs_get_long,
     .rs_get_double          = tds_rs_get_double,

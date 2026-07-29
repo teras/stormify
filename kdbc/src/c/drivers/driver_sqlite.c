@@ -492,6 +492,19 @@ static int sq_rs_next(kdbc_result *rs) {
     return KDBC_ERROR;
 }
 
+/* SQLite types values, not columns: a column declared TEXT holding "42" reports
+ * SQLITE_TEXT, which is exactly the distinction callers need. */
+static kdbc_type sq_rs_col_type(kdbc_result *rs, int col) {
+    sq_result *sr = (sq_result *)rs->native;
+    switch (p_column_type(sr->stmt, col - 1)) {
+        case SQLITE_INTEGER: return KDBC_TYPE_LONG;
+        case SQLITE_FLOAT:   return KDBC_TYPE_DOUBLE;
+        case SQLITE_BLOB:    return KDBC_TYPE_BLOB;
+        case SQLITE_NULL:    return KDBC_TYPE_NULL;
+        default:             return KDBC_TYPE_STRING;
+    }
+}
+
 static const char *sq_rs_col_name(void *native_rs, int col) {
     sq_result *sr = (sq_result *)native_rs;
     return p_column_name(sr->stmt, col - 1); /* convert to 0-based */
@@ -681,6 +694,7 @@ static const kdbc_driver_vtable sqlite_vtable = {
     .rs_next            = sq_rs_next,
     .rs_col_name        = sq_rs_col_name,
     .rs_col_label       = NULL, /* SQLite: col_name == col_label */
+    .rs_col_type        = sq_rs_col_type,
     .rs_is_null         = sq_rs_is_null,
     .rs_get_long        = sq_rs_get_long,
     .rs_get_double      = sq_rs_get_double,

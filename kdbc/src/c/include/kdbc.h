@@ -77,7 +77,8 @@ typedef enum {
     KDBC_TYPE_BOOL      = 6,  /**< Boolean */
     KDBC_TYPE_DATE      = 7,  /**< Date (year, month, day) — decomposed, no epoch indirection */
     KDBC_TYPE_TIME      = 8,  /**< Time (hour, minute, second, microsecond) — decomposed */
-    KDBC_TYPE_TIMESTAMP = 9   /**< Timestamp (full date + time + microsecond) — decomposed */
+    KDBC_TYPE_TIMESTAMP = 9,  /**< Timestamp (full date + time + microsecond) — decomposed */
+    KDBC_TYPE_DECIMAL   = 10  /**< Exact decimal — read as text to keep every digit */
 } kdbc_type;
 
 /**
@@ -969,6 +970,24 @@ const char *kdbc_col_name(kdbc_result *rs, int col);
  * @return Column label, or NULL if index is invalid.
  */
 const char *kdbc_col_label(kdbc_result *rs, int col);
+
+/**
+ * @brief Get the type of a column value in the current row.
+ *
+ * Lets a caller retrieve a value with the getter that matches the column instead of
+ * guessing from the text form — a text column holding digits is KDBC_TYPE_STRING, not
+ * a number, and a binary column is KDBC_TYPE_BLOB rather than whatever its bytes look
+ * like as text.
+ *
+ * Databases that type values per row rather than per column (SQLite) report the type
+ * of the value in the current row, so call this after kdbc_next.
+ *
+ * @param rs   A result set.
+ * @param col  Column index (1-indexed).
+ * @return The column type, or KDBC_TYPE_STRING when the index is invalid or the
+ *         driver cannot report one.
+ */
+kdbc_type kdbc_col_type(kdbc_result *rs, int col);
 
 /**
  * @brief Check if a column value is NULL.

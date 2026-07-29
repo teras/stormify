@@ -1064,6 +1064,46 @@ static int my_rs_next(kdbc_result *rs) {
     return 0; /* MYSQL_NO_DATA (100) */
 }
 
+/* MySQL reports TEXT and BLOB under the same MYSQL_TYPE_*BLOB codes; only the
+ * charset separates them — 63 is the binary collation. */
+static kdbc_type my_rs_col_type(kdbc_result *rs, int col) {
+    my_result_set *mrs = (my_result_set *)rs->native;
+    int i = col - 1;
+    if (i < 0 || i >= mrs->col_count) return KDBC_TYPE_STRING;
+    int binary = mrs->fields && mrs->fields[i].charsetnr == 63;
+    switch (mrs->cols[i].type) {
+        /* BOOLEAN is a TINYINT(1) on MySQL and MariaDB, and both JDBC drivers
+         * report it as a boolean by default (tinyInt1isBit). The display width
+         * is the only thing that separates it from a plain small integer. */
+        case MYSQL_TYPE_TINY:
+            if (mrs->fields && mrs->fields[i].length == 1) return KDBC_TYPE_BOOL;
+            return KDBC_TYPE_LONG;
+        case MYSQL_TYPE_SHORT:
+        case MYSQL_TYPE_INT24:
+        case MYSQL_TYPE_LONG:
+        case MYSQL_TYPE_LONGLONG:
+        case MYSQL_TYPE_YEAR:
+        case MYSQL_TYPE_BIT:        return KDBC_TYPE_LONG;
+        case MYSQL_TYPE_FLOAT:
+        case MYSQL_TYPE_DOUBLE:     return KDBC_TYPE_DOUBLE;
+        case MYSQL_TYPE_DATE:
+        case MYSQL_TYPE_NEWDATE:    return KDBC_TYPE_DATE;
+        case MYSQL_TYPE_TIME:       return KDBC_TYPE_TIME;
+        case MYSQL_TYPE_DATETIME:
+        case MYSQL_TYPE_TIMESTAMP:  return KDBC_TYPE_TIMESTAMP;
+        case MYSQL_TYPE_TINY_BLOB:
+        case MYSQL_TYPE_MEDIUM_BLOB:
+        case MYSQL_TYPE_LONG_BLOB:
+        case MYSQL_TYPE_BLOB:
+        case MYSQL_TYPE_STRING:
+        case MYSQL_TYPE_VAR_STRING:
+        case MYSQL_TYPE_VARCHAR:    return binary ? KDBC_TYPE_BLOB : KDBC_TYPE_STRING;
+        case MYSQL_TYPE_DECIMAL:
+        case MYSQL_TYPE_NEWDECIMAL: return KDBC_TYPE_DECIMAL;
+        default:                    return KDBC_TYPE_STRING;
+    }
+}
+
 static const char *my_rs_col_name(void *native_rs, int col) {
     my_result_set *mrs = (my_result_set *)native_rs;
     if (mrs->col_names && col >= 1 && col <= mrs->col_count)
@@ -1539,6 +1579,7 @@ static const kdbc_driver_vtable mariadb_vtable = {
     .rs_next            = my_rs_next,
     .rs_col_name        = my_rs_col_name,
     .rs_col_label       = NULL,
+    .rs_col_type        = my_rs_col_type,
     .rs_is_null         = my_rs_is_null,
     .rs_get_long        = my_rs_get_long,
     .rs_get_double      = my_rs_get_double,

@@ -255,9 +255,9 @@ appropriate C binding function based on the value's type:
 | `Long` | `kdbc_bind_long` | BIGINT |
 | `Float`, `Double` | `kdbc_bind_double` | DOUBLE |
 | `Boolean` | `kdbc_bind_bool` | BOOLEAN / BIT / INTEGER |
-| `String` | `kdbc_bind_string` | VARCHAR / TEXT |
+| `String` | `kdbc_bind_string` | VARCHAR / TEXT / CLOB |
 | `ByteArray` | `kdbc_bind_blob` | BLOB / BYTEA |
-| `CharArray` | `kdbc_bind_string` | CLOB / TEXT |
+| `CharArray` | `kdbc_bind_string` | VARCHAR / TEXT / CLOB (synonym for `String`) |
 | `BigInteger` | long or string | NUMERIC |
 | `BigDecimal` | string | DECIMAL |
 | `LocalDateTime` | `kdbc_bind_timestamp` | TIMESTAMP |

@@ -40,11 +40,16 @@ private val kmpToJdbcTarget = mapOf<String, KClass<*>>(
  * time as UTC while the bind wrote it through the JVM default zone — an
  * asymmetric shift. `java.sql.Timestamp` is accepted by every driver and is
  * zone-symmetric with [toJdbcValue]; [TypeConversion] finishes the conversion.
+ *
+ * `CharArray` is here for a blunter reason: `char[]` is not a JDBC type, so asking
+ * for it throws on every driver and costs a caught exception per cell before the
+ * fallback arrives at the text anyway.
  */
 private val jdbcReadTarget: Map<String, KClass<*>> = kmpToJdbcTarget + mapOf(
     "java.time.Instant" to java.sql.Timestamp::class,
     "java.time.OffsetDateTime" to java.sql.Timestamp::class,
     "java.time.ZonedDateTime" to java.sql.Timestamp::class,
+    "kotlin.CharArray" to String::class,
 )
 
 /**
@@ -84,8 +89,8 @@ private fun readsUntyped(type: KClass<*>): Boolean =
  * reading it here is what makes the two sides agree.
  */
 private fun materializeLob(value: Any?): Any? = when (value) {
-    is java.sql.Clob -> value.getSubString(1, value.length().toInt())
-    is java.sql.Blob -> value.getBytes(1, value.length().toInt())
+    is java.sql.Clob -> value.characterStream.use { it.readText() }
+    is java.sql.Blob -> value.binaryStream.use { it.readBytes() }
     else -> value
 }
 
