@@ -5,6 +5,7 @@
 package onl.ycode.stormify.biglist
 
 import onl.ycode.kdbc.SQLException
+import onl.ycode.kdbc.TypeConversion
 import onl.ycode.stormify.Stormify
 import onl.ycode.stormify.StormifyAware
 import kotlin.jvm.JvmOverloads
@@ -221,7 +222,10 @@ abstract class AbstractPagedQuery<T : Any> internal constructor(
             )
             val rows = stormify.read(
                 null, classType, pageSql, *plan.args.toTypedArray(),
-                customFields = mapOf(TOTAL_ALIAS to { v -> observedTotal = (v as Number).toLong() })
+                // Coerced rather than cast: the window count arrives as whatever numeric
+                // type the driver reports it as, and the big-number types are not
+                // `kotlin.Number` on every platform.
+                customFields = mapOf(TOTAL_ALIAS to { v -> observedTotal = TypeConversion.castScalar(Long::class, v) })
             )
             observedTotal?.let { return Page(rows = rows, total = it, page = page, pageSize = pageSize) }
             // Empty page: out-of-range or truly empty. Fall through to classic COUNT.

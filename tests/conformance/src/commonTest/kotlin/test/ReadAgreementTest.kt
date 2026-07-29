@@ -9,18 +9,12 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 
 /**
- * Cross-platform agreement when reading a column as a type other than its own.
+ * Cross-platform read behaviour that the read matrix cannot express.
  *
- * The type matrix round-trips values Stormify itself wrote, so it only ever sees
- * canonical representations. This test covers the other case: rows that already
- * exist in the database — written by a legacy schema, a migration, or another
- * application — read into a declared Kotlin type. That is where each JDBC driver
- * and each native driver applies its own coercion rules, and where they can
- * disagree without anyone failing.
- *
- * Values are inserted as SQL literals rather than bound parameters so the stored
- * representation is exactly the one under test. Every assertion states the single
- * answer required on all 9 databases, on JVM, native and Android alike.
+ * [ReadMatrixTest] crosses every stored column with every declared read type against a
+ * single small row, which is the right shape for coercion rules. The two cases here need
+ * a row the matrix does not have: a LOB large enough that a driver hands back a locator
+ * instead of the value, and a row of SQL NULLs.
  */
 open class ReadAgreementTest {
     private fun withDb(name: String, test: (Stormify) -> Unit) = TestHelper.withDb(name, test)
@@ -36,92 +30,34 @@ open class ReadAgreementTest {
         )
     }
 
-    /** A text column holding a number, read as each numeric type. */
-    @Test
-    fun textHoldingNumberReadsAsNumeric() = withDb("READ-AGREE-TEXT-NUM") { s ->
-        s.createSchema()
-        s.executeUpdate("INSERT INTO read_agree (id, t) VALUES (1, '42')")
-        s.executeUpdate("INSERT INTO read_agree (id, t) VALUES (2, '12.5')")
-        s.executeUpdate("INSERT INTO read_agree (id, t) VALUES (3, '-7')")
-
-        assertEquals(42, s.readOne<Int>("SELECT t FROM read_agree WHERE id = 1"), "'42' as Int")
-        assertEquals(42L, s.readOne<Long>("SELECT t FROM read_agree WHERE id = 1"), "'42' as Long")
-        assertEquals(42.0, s.readOne<Double>("SELECT t FROM read_agree WHERE id = 1"), "'42' as Double")
-        assertEquals("42", s.readOne<String>("SELECT t FROM read_agree WHERE id = 1"), "'42' as String")
-
-        assertEquals(12.5, s.readOne<Double>("SELECT t FROM read_agree WHERE id = 2"), "'12.5' as Double")
-        assertEquals(-7, s.readOne<Int>("SELECT t FROM read_agree WHERE id = 3"), "'-7' as Int")
-    }
-
-    /** A numeric column read as text and as boolean. */
-    @Test
-    fun numericReadsAsTextAndBoolean() = withDb("READ-AGREE-NUM") { s ->
-        s.createSchema()
-        s.executeUpdate("INSERT INTO read_agree (id, n) VALUES (1, 42)")
-        s.executeUpdate("INSERT INTO read_agree (id, n) VALUES (2, 0)")
-        s.executeUpdate("INSERT INTO read_agree (id, n) VALUES (3, 1)")
-
-        assertEquals("42", s.readOne<String>("SELECT n FROM read_agree WHERE id = 1"), "42 as String")
-        assertEquals(true, s.readOne<Boolean>("SELECT n FROM read_agree WHERE id = 3"), "1 as Boolean")
-        assertEquals(false, s.readOne<Boolean>("SELECT n FROM read_agree WHERE id = 2"), "0 as Boolean")
-        // JDBC treats any non-zero numeric as true.
-        assertEquals(true, s.readOne<Boolean>("SELECT n FROM read_agree WHERE id = 1"), "42 as Boolean")
-    }
-
     /**
-     * A text column holding a number, read as boolean. The numeric getter and the
-     * token rule give different answers here unless both platforms agree on which
-     * one wins, so this is the case most likely to drift.
+     * LOB columns read without a declared target type.
+     *
+     * The generic row-as-map read asks for no particular type, which is where a JDBC
+     * driver is free to hand back a live `Clob`/`Blob` locator instead of the value.
+     * Such a handle stops being readable once the row moves on and has no counterpart
+     * on the native drivers, so both sides must present the content itself.
      */
     @Test
-    fun textHoldingNumberReadsAsBoolean() = withDb("READ-AGREE-TEXT-BOOL") { s ->
-        s.createSchema()
-        s.executeUpdate("INSERT INTO read_agree (id, t) VALUES (1, '1')")
-        s.executeUpdate("INSERT INTO read_agree (id, t) VALUES (2, '0')")
-        s.executeUpdate("INSERT INTO read_agree (id, t) VALUES (3, '42')")
+    fun lobColumnsReadUntypedYieldTheirContent() = withDb("READ-AGREE-LOB") { s ->
+        TestDDL.dropTable("read_agree_lob")
+        s.executeUpdate(
+            TestDDL.createTable(
+                "read_agree_lob",
+                "${TestDDL.intPrimaryKey("id")}, c ${TestDDL.largeTextType()}, b ${TestDDL.blobType()}"
+            )
+        )
+        try {
+            val text = "x".repeat(5000)
+            val bytes = ByteArray(5000) { (it % 251).toByte() }
+            s.executeUpdate("INSERT INTO read_agree_lob (id, c, b) VALUES (?, ?, ?)", 1, text, bytes)
 
-        assertEquals(true, s.readOne<Boolean>("SELECT t FROM read_agree WHERE id = 1"), "'1' as Boolean")
-        assertEquals(false, s.readOne<Boolean>("SELECT t FROM read_agree WHERE id = 2"), "'0' as Boolean")
-        // Consistent with the numeric rule: a non-zero value is true.
-        assertEquals(true, s.readOne<Boolean>("SELECT t FROM read_agree WHERE id = 3"), "'42' as Boolean")
-    }
-
-    /**
-     * A decimal column read as an integral type. Whether the fraction is truncated
-     * or rounded is exactly the kind of rule each driver picks for itself, so it is
-     * pinned here: JDBC `getInt`/`getLong` truncate toward zero.
-     */
-    @Test
-    fun decimalReadsAsIntegralAndBoolean() = withDb("READ-AGREE-DECIMAL") { s ->
-        s.createSchema()
-        s.executeUpdate("INSERT INTO read_agree (id, d) VALUES (1, 12.5)")
-        s.executeUpdate("INSERT INTO read_agree (id, d) VALUES (2, 0)")
-        s.executeUpdate("INSERT INTO read_agree (id, d) VALUES (3, -3.75)")
-        s.executeUpdate("INSERT INTO read_agree (id, d) VALUES (4, 12.4)")
-
-        assertEquals(12.5, s.readOne<Double>("SELECT d FROM read_agree WHERE id = 1"), "12.5 as Double")
-        assertEquals(12, s.readOne<Int>("SELECT d FROM read_agree WHERE id = 1"), "12.5 as Int")
-        assertEquals(12L, s.readOne<Long>("SELECT d FROM read_agree WHERE id = 1"), "12.5 as Long")
-        // Truncation, not rounding — 12.4 and 12.5 must land on the same integer.
-        assertEquals(12, s.readOne<Int>("SELECT d FROM read_agree WHERE id = 4"), "12.4 as Int")
-        // Toward zero, not floor.
-        assertEquals(-3, s.readOne<Int>("SELECT d FROM read_agree WHERE id = 3"), "-3.75 as Int")
-
-        assertEquals(true, s.readOne<Boolean>("SELECT d FROM read_agree WHERE id = 1"), "12.5 as Boolean")
-        assertEquals(false, s.readOne<Boolean>("SELECT d FROM read_agree WHERE id = 2"), "0 as Boolean")
-    }
-
-    /** An integer column read as the wider numeric types. */
-    @Test
-    fun integerReadsAsWiderNumerics() = withDb("READ-AGREE-WIDEN") { s ->
-        s.createSchema()
-        s.executeUpdate("INSERT INTO read_agree (id, n) VALUES (1, 42)")
-        s.executeUpdate("INSERT INTO read_agree (id, n) VALUES (2, -42)")
-
-        assertEquals(42.0, s.readOne<Double>("SELECT n FROM read_agree WHERE id = 1"), "42 as Double")
-        assertEquals(42L, s.readOne<Long>("SELECT n FROM read_agree WHERE id = 1"), "42 as Long")
-        assertEquals(-42.0, s.readOne<Double>("SELECT n FROM read_agree WHERE id = 2"), "-42 as Double")
-        assertEquals("-42", s.readOne<String>("SELECT n FROM read_agree WHERE id = 2"), "-42 as String")
+            val row = s.read<Map<String, Any>>("SELECT c, b FROM read_agree_lob WHERE id = 1").single()
+            assertEquals(5000, (row["c"] as? String)?.length, "clob as String")
+            assertEquals(5000, (row["b"] as? ByteArray)?.size, "blob as ByteArray")
+        } finally {
+            TestDDL.dropTable("read_agree_lob")
+        }
     }
 
     /**

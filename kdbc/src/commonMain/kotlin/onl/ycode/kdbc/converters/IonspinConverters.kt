@@ -31,6 +31,15 @@ internal object IonspinConverters {
             tGroup[BIN::class] = { (it as BIN).doubleValue().let { d -> tGroup[Double::class]?.invoke(d) ?: d } }
         }
 
+        // The ionspin types are not `kotlin.Number`, so the registry's Number fallback
+        // never reaches them and every target they can reach has to be named. A flag
+        // stored in a decimal column follows the same non-zero rule as any other
+        // number, truncating first exactly as `Number.toInt()` does.
+        registry[Boolean::class]?.let { toBoolean ->
+            toBoolean[BDN::class] = { (it as BDN).doubleValue(false).toInt() != 0 }
+            toBoolean[BIN::class] = { (it as BIN).doubleValue(false).toInt() != 0 }
+        }
+
         // ionspin BigDecimal
         val toBDN = mutableMapOf<KClass<*>, (Any) -> Any>().also { registry[BDN::class] = it }
         int.forEach { t -> toBDN[t] = { BDN.fromLong((it as Number).toLong()) } }

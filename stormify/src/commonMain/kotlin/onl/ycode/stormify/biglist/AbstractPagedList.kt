@@ -5,6 +5,7 @@
 package onl.ycode.stormify.biglist
 
 import onl.ycode.kdbc.SQLException
+import onl.ycode.kdbc.TypeConversion
 import onl.ycode.stormify.NativeBigInteger
 import onl.ycode.stormify.Stormify
 import onl.ycode.stormify.StormifyAware
@@ -393,7 +394,10 @@ abstract class AbstractPagedList<T : Any> internal constructor(
             val useMerged = _size == null && stormify.sqlDialect.supportsWindowFunctions
             val columns = if (useMerged) core.windowCountColumns() else "${info.tableName}.*"
             val customFields: Map<String, (Any?) -> Unit>? = if (useMerged)
-                mapOf(TOTAL_ALIAS to { v -> _size = (v as Number).toInt() })
+                // Coerced rather than cast: the window count arrives as whatever numeric
+                // type the driver reports it as, and the big-number types are not
+                // `kotlin.Number` on every platform.
+                mapOf(TOTAL_ALIAS to { v -> _size = TypeConversion.castScalar(Int::class, v) })
             else null
 
             upperBound = if (_size != null) min(_size!!, pageEnd(lowBound)) else pageEnd(lowBound)

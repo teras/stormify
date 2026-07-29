@@ -73,6 +73,21 @@ Stormify release history.
   Coroutine cancellation is exempt and still propagates unwrapped.
 
 ### Fixed
+- Reading a text or binary column into a numeric field no longer yields `0`
+  on the native drivers and on Android. The C getters parse with
+  `strtoll`/`strtod` and `Cursor.getInt` behaves the same way — both answer
+  `0` for input they cannot parse and report no error, so a column of words
+  read into an `Int` field silently became zero on those platforms while the
+  same read failed on JVM. The numeric getters are now taken only when the
+  column actually holds a number; otherwise the value is read in the
+  column's own type and converted, which refuses what it cannot represent.
+- Reading a numeric column into a `CharArray` works on every database.
+  `TypeConversion` derives the `CharArray` conversions from the `String`
+  ones, so anything with a text form has a character form.
+- MySQL/MariaDB `BOOLEAN` columns (stored as `TINYINT(1)`) are reported as
+  booleans by the native driver, matching both JDBC drivers.
+- Paged-list and paged-query window counts no longer assume the driver hands
+  back a `kotlin.Number`, and are converted through `TypeConversion`.
 - Reflection-based entity discovery (Maven/plain-JVM projects without the
   annotation processor) again honors `javax.persistence.Column`
   (`name`/`insertable`/`updatable`) — it had been looking up a nonexistent

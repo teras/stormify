@@ -164,6 +164,18 @@ object TypeConversion {
         // KotlinxTimeConverters.register() for the rationale.
         registerPlatformConverters(registry)
         try { KotlinxTimeConverters.register(registry) } catch (_: Throwable) {}
+
+        // Every number has a text form, whatever class the driver hands back. The
+        // numeric group above covers the Kotlin primitives by name; this covers
+        // java.math.BigDecimal and anything else that arrives as a plain Number.
+        toString[Number::class] = { it.toString() }
+        // A CharArray is the character view of a value, so whatever has a text form
+        // has one too. Mirroring the String sources — after every platform converter
+        // has registered — keeps the two in step instead of maintaining a second list
+        // that silently falls behind on one driver and not another.
+        toString.forEach { (source, toText) ->
+            if (source !in toCharArr) toCharArr[source] = { (toText(it) as String).toCharArray() }
+        }
     }
 }
 
