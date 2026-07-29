@@ -29,7 +29,7 @@ Every example targets Stormify `2.6.0` and uses SQLite as the default database (
 
 ### [kotlin-jvm](https://github.com/teras/stormify-examples/tree/main/kotlin-jvm)
 
-The shortest path to a working Stormify app on the JVM. A single Kotlin file wires SQLite via JDBC, defines two entities that extend `AutoTable` with `by db()` and `by lazyDetails()` delegates, and runs a full CRUD scenario (create/find/update/delete) plus a transaction with rollback and a raw SQL JOIN query. Good starting point if you want to see idiomatic Kotlin Stormify code with no platform ceremony.
+The shortest path to a working Stormify app on the JVM. A single Kotlin file wires SQLite via JDBC, defines a `Task` entity extending `AutoTable` with `by db()` and `by lazyDetails()` delegates alongside a deliberately plain `User` class — the contrast is the point, since the plain one needs an explicit `refresh()` where the `AutoTable` one lazy-loads on first read. It then runs a full CRUD scenario (create/find/update/delete) plus a transaction with rollback and a raw SQL JOIN query. Good starting point if you want to see idiomatic Kotlin Stormify code with no platform ceremony.
 
 Run:
 
@@ -128,7 +128,7 @@ Run: open `ios/iosApp/iosApp.xcodeproj` in Xcode and launch on a simulator or de
 
 A Ktor REST server backed by Stormify over SQLite. It shows how Stormify fits into a realistic web-service layout — entity model, DTOs, service layer, routes, seed data — and exposes `POST /search` endpoints that take Stormify `PageSpec` payloads for paged/filtered/sorted queries. This is the one to look at when you want to see Stormify beyond a toy `main()` and inside the kind of structure a production service would have.
 
-The companion [`frontend-react`](https://github.com/teras/stormify-examples/tree/main/frontend-react) folder contains a React + TypeScript admin UI (Vite, MUI Data Grid, TanStack Query, React Router) that consumes this backend through the same `PageSpec`/`PagedResponse` contract — useful if you want to see what a real client for these paged endpoints looks like.
+The companion [`frontend-react`](https://github.com/teras/stormify-examples/tree/main/frontend-react) folder contains a React + TypeScript admin UI (Vite, MUI, AG Grid, TanStack Query, React Router) that consumes this backend through the same `PageSpec`/`PagedResponse` contract — useful if you want to see what a real client for these paged endpoints looks like.
 
 Run the backend (Kotlin/Native — pick the executable for your host):
 
