@@ -2,7 +2,7 @@
 
 Stormify release history.
 
-## [2.6.0] — 2026-05-17
+## [2.6.0] — 2026-07-29
 
 ### Added
 - **Batched `lazyDetails` loading.** Reading a `by lazyDetails()` property across
