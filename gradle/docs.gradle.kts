@@ -228,10 +228,14 @@ tasks.register("releaseDocs") {
             rm -f "$ver/.devel-marker"
             echo "✓ Released /docs/$ver/ (marker removed)"
             # Strip the noindex meta from every HTML in the released folder so search engines
-            # can index it now that it is the canonical version.
+            # can index it now that it is the canonical version, and revert the GitHub repo
+            # link from the devel branch (injected by publishDocs for previews) back to the
+            # stable repo root now that this version is released.
             find "$ver" -type f -name '*.html' -exec sed -i \
-                's|<meta name="robots" content="noindex,nofollow">||g' {} +
-            echo "✓ noindex meta stripped from /docs/$ver/"
+                -e 's|<meta name="robots" content="noindex,nofollow">||g' \
+                -e 's|href="https://github.com/teras/stormify/tree/devel"|href="https://github.com/teras/stormify"|g' \
+                {} +
+            echo "✓ noindex meta stripped and GitHub link restored for /docs/$ver/"
             cat > index.html <<'HTML'
 <!doctype html>
 <html lang="en">

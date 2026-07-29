@@ -645,8 +645,18 @@ abstract class MacTarTask : DefaultTask() {
         val keyId = parsed["key_id"] ?: error("notary JSON missing key_id")
         val privateKey = parsed["private_key"] ?: error("notary JSON missing private_key")
 
+        // notarytool's PEM parser (SwiftASN1) enforces RFC 7468 line
+        // wrapping: a single unbroken base64 line is rejected as
+        // invalidPEMDocument. Strip any markers/whitespace the secret may
+        // carry, then re-wrap the body at 64 columns.
+        val keyBody = privateKey
+            .replace("-----BEGIN PRIVATE KEY-----", "")
+            .replace("-----END PRIVATE KEY-----", "")
+            .replace(Regex("\\s"), "")
+            .chunked(64)
+            .joinToString("\n")
         val keyFile = temporaryDir.resolve("AuthKey_$keyId.p8")
-        keyFile.writeText("-----BEGIN PRIVATE KEY-----\n$privateKey\n-----END PRIVATE KEY-----\n")
+        keyFile.writeText("-----BEGIN PRIVATE KEY-----\n$keyBody\n-----END PRIVATE KEY-----\n")
 
         // notarytool exits 0 even when the package is rejected — only the
         // status field tells us whether stapling will succeed. Use JSON
