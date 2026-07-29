@@ -30,6 +30,7 @@ import org.robolectric.RobolectricTestRunner
 @RunWith(RobolectricTestRunner::class) class AndroidBooleanTokenTest : BooleanTokenTest()
 @RunWith(RobolectricTestRunner::class) class AndroidReadAgreementTest : ReadAgreementTest()
 @RunWith(RobolectricTestRunner::class) class AndroidReadMatrixTest : ReadMatrixTest()
+@RunWith(RobolectricTestRunner::class) class AndroidLazyDetailsBatchTest : LazyDetailsBatchTest()
 @RunWith(RobolectricTestRunner::class) class AndroidLargeTextRowTest : LargeTextRowTest()
 @RunWith(RobolectricTestRunner::class) class AndroidStringPkTest : StringPkTest()
 @RunWith(RobolectricTestRunner::class) class AndroidSuspendTransactionTest : SuspendTransactionTest()

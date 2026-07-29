@@ -12,6 +12,12 @@ import kotlin.jvm.Transient
 abstract class StormifyEntity : StormifyAware {
     @Transient internal var _stormify: Stormify? = null
 
+    /**
+     * The other rows this one came back with, when it was read as part of a result.
+     * [lazyDetails] uses it to load the children of the whole group at once.
+     */
+    @Transient internal var _detailsGroup: DetailsGroup? = null
+
     override fun attachTo(stormify: Stormify) {
         _stormify = stormify
     }

@@ -607,8 +607,28 @@ class Stormify(
             // server-side cursor on PostgreSQL).
             val hint = if (sqlDialect.isOracleVariant) cursorFetchSize else 0
             readCursor(conn, baseClass, query, *params, fetchSize = hint, customFields = customFields) { add(it) }
+            groupForDetails(this)
             return this
         }
+
+    /**
+     * Marks the rows of one result as belonging together, so that reading a
+     * `by lazyDetails()` property on any of them can fetch the children of all of them
+     * in a single query instead of one query per row.
+     *
+     * Only whole-result reads get a group. A streaming read deliberately does not: its
+     * rows are never all in hand at once, which is the entire point of streaming.
+     */
+    private fun groupForDetails(rows: List<Any?>) {
+        if (rows.size < 2) return
+        var group: DetailsGroup? = null
+        for (row in rows) {
+            if (row !is StormifyEntity) continue
+            val g = group ?: DetailsGroup().also { group = it }
+            row._detailsGroup = g
+            g.add(row)
+        }
+    }
 
     /**
      * Executes a SELECT query and returns exactly one result, or null if no row is found.
@@ -1056,28 +1076,12 @@ class Stormify(
         detailsClass: KClass<D>,
         propertyName: String? = null
     ): List<D> {
-        require(propertyName == null || '.' !in propertyName) {
-            "getDetails propertyName must be a single field name on ${detailsClass.fullName}, " +
-                "not a traversal path — got '$propertyName'"
-        }
         val parentInfo = resolveTableInfo(parent::class) as TableInfo<M>
         val parentId = this.getValidIds(parent, parentInfo)
         require(parentId.size == 1) { "Parent class ${parent::class.fullName} should have exactly one primary key" }
 
         val detailInfo = resolveTableInfo(detailsClass)
-        val nonKeyFields = detailInfo.fieldInfos.filter { !it.isPrimaryKey }
-
-        val matchIndex: Int
-        if (propertyName == null) {
-            val types = nonKeyFields.map { it.type }
-            matchIndex = findItemOnce(types, parent::class, detailsClass.fullName)
-        } else {
-            val names = nonKeyFields.map { it.name }
-            matchIndex = findItemOnce(names, propertyName, detailsClass.fullName)
-            if (nonKeyFields[matchIndex].type != parent::class)
-                throw SQLException("Field $propertyName is not of type ${parent::class.fullName} in class ${detailsClass.fullName}")
-        }
-        val propertyDbName = nonKeyFields[matchIndex].dbName
+        val propertyDbName = detailsForeignKey(parent::class, detailsClass, propertyName)
 
         val details = read(
             conn,
@@ -1088,6 +1092,96 @@ class Stormify(
         for (detail in details)
             detailInfo.setField(detail, propertyDbName, parent, this)
         return details
+    }
+
+    /**
+     * The column on [detailsClass] that points back at [parentClass].
+     *
+     * With [propertyName] null the child type is scanned for exactly one field of the
+     * parent's type; otherwise the named Kotlin property is looked up and checked to be
+     * of that type.
+     */
+    private fun detailsForeignKey(
+        parentClass: KClass<*>,
+        detailsClass: KClass<*>,
+        propertyName: String?
+    ): String {
+        require(propertyName == null || '.' !in propertyName) {
+            "getDetails propertyName must be a single field name on ${detailsClass.fullName}, " +
+                "not a traversal path — got '$propertyName'"
+        }
+        val nonKeyFields = resolveTableInfo(detailsClass).fieldInfos.filter { !it.isPrimaryKey }
+        val matchIndex: Int
+        if (propertyName == null) {
+            matchIndex = findItemOnce(nonKeyFields.map { it.type }, parentClass, detailsClass.fullName)
+        } else {
+            matchIndex = findItemOnce(nonKeyFields.map { it.name }, propertyName, detailsClass.fullName)
+            if (nonKeyFields[matchIndex].type != parentClass)
+                throw SQLException("Field $propertyName is not of type ${parentClass.fullName} in class ${detailsClass.fullName}")
+        }
+        return nonKeyFields[matchIndex].dbName
+    }
+
+    /** The single primary key of [entity], or null when it has none or has several. */
+    internal fun singleIdOrNull(entity: Any): Any? {
+        val info = resolveTableInfo(entity::class)
+        @Suppress("UNCHECKED_CAST")
+        val ids = (info as TableInfo<Any>).getIdValues(entity)
+        return ids.singleOrNull()
+    }
+
+    /**
+     * Fetches the children of many parents in one query, grouped by parent id.
+     *
+     * This is what turns a page of parents from N+1 queries into two. Returns null when
+     * the batch cannot be built — a parent whose key is missing, or a child type whose
+     * rows do not carry the foreign key back — and the caller falls back to querying per
+     * parent rather than silently returning something incomplete.
+     */
+    internal fun <D : Any> getDetailsBatch(
+        conn: Connection?,
+        parents: List<Any>,
+        detailsClass: KClass<D>,
+        propertyName: String?,
+    ): Map<Any, List<D>>? {
+        if (parents.isEmpty()) return null
+        val parentClass = parents.first()::class
+        val byId = HashMap<Any, Any>(parents.size)
+        for (parent in parents) {
+            val id = singleIdOrNull(parent) ?: return null
+            byId[id] = parent
+        }
+
+        val detailInfo = resolveTableInfo(detailsClass)
+        val fkColumn = detailsForeignKey(parentClass, detailsClass, propertyName)
+        val placeholders = byId.keys.joinToString(", ") { "?" }
+
+        // The property behind the foreign key column, so each loaded row can be asked
+        // which parent it points at.
+        val fkProperty = detailInfo.settersForColumn(fkColumn).firstOrNull() ?: return null
+
+        val rows = read(
+            conn,
+            detailsClass,
+            "SELECT * FROM ${detailInfo.tableName} WHERE $fkColumn IN ($placeholders)",
+            *byId.keys.toTypedArray(),
+        )
+
+        val grouped = HashMap<Any, MutableList<D>>(byId.size)
+        for (id in byId.keys) grouped[id] = mutableListOf()
+        for (row in rows) {
+            // The column loaded as a reference to the parent, so read that reference and
+            // take its key. Reading it does not fetch anything: a primary key is a plain
+            // property, not one of the lazily loaded ones.
+            val ownerRef = fkProperty.getter(row) ?: return null
+            val ownerId = singleIdOrNull(ownerRef) ?: return null
+            val owner = byId[ownerId] ?: return null
+            // Point the child at the parent instance the caller already holds, rather
+            // than at the stub the read created, so the two sides agree.
+            detailInfo.setField(row, fkColumn, owner, this)
+            grouped[ownerId]?.add(row)
+        }
+        return grouped
     }
 
     // --- Find operations ---

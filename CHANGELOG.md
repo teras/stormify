@@ -5,6 +5,15 @@ Stormify release history.
 ## [2.6.0] — 2026-05-17
 
 ### Added
+- **Batched `lazyDetails` loading.** Reading a `by lazyDetails()` property across
+  the rows of one result now issues a single grouped query for every row's
+  children instead of one query per row — the classic N+1 that turns a fast
+  endpoint slow as the page grows. Rows of a result are marked as belonging
+  together, and the first delegate asked fetches the whole group's children and
+  hands each row its own slice. Applies to whole-result reads (`read`,
+  `findAll`, paged queries); streaming reads are deliberately untouched, since
+  their rows are never all in hand at once. The plain `getDetails`/`details()`
+  path is unchanged: it re-queries on every call by contract.
 - **Cursor API for row-by-row streaming.** Transparent streaming across the
   KDBC drivers (JDBC, native Postgres, MariaDB, Oracle) with per-driver
   dispatch — large result sets can be processed without materialising the

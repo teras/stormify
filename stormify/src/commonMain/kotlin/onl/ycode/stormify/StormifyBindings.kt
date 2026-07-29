@@ -187,8 +187,13 @@ internal class LazyDetailsProperty<T : Any>(
         if (!initialized) {
             initialized = true
             val s = (thisRef as? StormifyEntity)?._stormify ?: stormify()
-            @Suppress("UNCHECKED_CAST")
-            value = s.getDetails(null, thisRef!!, cls, propertyName.ifBlank { null })
+            val name = propertyName.ifBlank { null }
+            // When this entity arrived as one row of a result, fetch the children of
+            // every row in that result at once — the alternative is a query per row,
+            // which is the N+1 this delegate would otherwise walk straight into.
+            val batched = (thisRef as? StormifyEntity)?._detailsGroup
+                ?.detailsFor(thisRef, cls, name, s)
+            value = batched ?: s.getDetails(null, thisRef!!, cls, name)
         }
         return value
     }
