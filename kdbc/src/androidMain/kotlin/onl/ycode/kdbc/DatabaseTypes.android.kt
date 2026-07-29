@@ -29,10 +29,11 @@ import kotlin.reflect.KClass
  * does not close the underlying [SQLiteDatabase]. Lifecycle of the database is the
  * caller's responsibility (typically tied to the Android `Application` lifetime).
  *
- * [initSql] is a single SQL statement executed on every [getConnection] call before the
- * connection is returned — equivalent to HikariCP's `connectionInitSql`. Typical use:
- * `PRAGMA foreign_keys = ON`. Note that Android wraps a single shared [SQLiteDatabase],
- * so the statement runs once per borrow even though the underlying handle is reused.
+ * [initSql] runs on every [getConnection] call before the connection is returned — like
+ * HikariCP's `connectionInitSql`. Separate more than one statement with `;`; each is run in
+ * order. Typical use: `AndroidDataSource(db, "PRAGMA foreign_keys = ON")`. Note that Android
+ * wraps a single shared [SQLiteDatabase], so the statements run once per borrow even though
+ * the underlying handle is reused.
  */
 class AndroidDataSource(
     private val db: SQLiteDatabase,

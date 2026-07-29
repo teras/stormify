@@ -80,6 +80,11 @@ Stormify release history.
   same contract the blocking API always had: the original throwable (from
   the database or from user code inside the block) is kept as `cause`.
   Coroutine cancellation is exempt and still propagates unwrapped.
+- **`initSql` now accepts more than one statement**, separated by `;` and run
+  in order on every freshly opened connection, so common setups no longer need a
+  hand-written `DataSource` wrapper to apply more than one pragma
+  (`initSql = "PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 5000"`). Applies
+  to `KdbcDataSource`, `JdbcDataSource` and `AndroidDataSource`.
 
 ### Fixed
 - Reading a text or binary column into a numeric field no longer yields `0`
