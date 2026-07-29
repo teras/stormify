@@ -734,8 +734,8 @@ class Stormify(
             // accepts, and the reference stub then cannot be built.
             val readType = scalarType
                 ?: refType?.let { resolveTableInfo(it).idTypes.singleOrNull() }
-            val setters = if (handler == null) info.settersForColumn(name) else emptyList()
-            arr[i - 1] = ColumnPlanEntry(i, name, readType, isRef, refType, handler, setters)
+            val properties = if (handler == null) info.propertiesForColumn(name) else emptyList()
+            arr[i - 1] = ColumnPlanEntry(i, name, readType, isRef, refType, handler, properties)
         }
         @Suppress("UNCHECKED_CAST")
         return ColumnPlan(info, arr as Array<ColumnPlanEntry<T>>)
@@ -1158,7 +1158,7 @@ class Stormify(
 
         // The property behind the foreign key column, so each loaded row can be asked
         // which parent it points at.
-        val fkProperty = detailInfo.settersForColumn(fkColumn).firstOrNull() ?: return null
+        val fkProperty = detailInfo.propertiesForColumn(fkColumn).firstOrNull() ?: return null
 
         val rows = read(
             conn,
