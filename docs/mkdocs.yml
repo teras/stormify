@@ -37,8 +37,8 @@ theme:
         icon: material/weather-night
         text: Switch to Light Mode
       primary: "black"
-  logo: logo.png
-  favicon: logo.png
+  logo: logo.svg
+  favicon: logo.svg
   icon:
     repo: material/github
   features:

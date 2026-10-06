@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/src/logo.png" alt="Stormify Logo" width="200" height="175">
+  <img src="docs/src/logo.svg" alt="Stormify Logo" width="200" height="175">
 </p>
 
 # Stormify

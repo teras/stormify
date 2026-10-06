@@ -6,7 +6,7 @@
 <title>Stormify — Kotlin Multiplatform ORM</title>
 <meta name="description" content="An open source flexible Kotlin Multiplatform ORM. Plain classes, no XML, no reflection mandatory. JVM, Android, iOS, native Linux/Windows/macOS — same API everywhere.">
 <link rel="canonical" href="https://stormify.org/">
-<link rel="icon" href="assets/images/logo.png">
+<link rel="icon" type="image/svg+xml" href="assets/images/logo.svg">
 
 <!-- Open Graph -->
 <meta property="og:type" content="website">
@@ -142,7 +142,7 @@
     height: 56px;
   }
   .brand { display: flex; align-items: center; gap: 10px; font-weight: 700; color: var(--fg); }
-  .brand img { width: 26px; height: 26px; }
+  .brand img { width: 26px; height: 26px; object-fit: contain; }
   .brand span b { color: var(--accent); font-weight: 700; }
   .topnav nav { display: flex; gap: 22px; align-items: center; font-size: 14px; }
   .topnav nav a { color: var(--fg-dim); font-weight: 500; }
@@ -269,6 +269,7 @@
   .hero-wordmark img {
     width: clamp(64px, 9vw, 104px);
     height: clamp(64px, 9vw, 104px);
+    object-fit: contain;
     filter: drop-shadow(0 8px 24px rgba(74,130,194,.22));
   }
 
@@ -466,7 +467,7 @@
 <header class="topnav">
   <div class="container topnav-inner">
     <a href="#" class="brand">
-      <img src="assets/images/logo.png" alt="Stormify">
+      <img src="assets/images/logo.svg" alt="Stormify">
       <span>St<b>orm</b>ify</span>
     </a>
     <div class="topnav-right">
@@ -493,7 +494,7 @@
   <div class="container">
     <div class="hero-wordmark">
       <span class="wm">St<b>orm</b>ify</span>
-      <img src="assets/images/logo.png" alt="Stormify">
+      <img src="assets/images/logo.svg" alt="Stormify">
     </div>
     <div class="hero-grid">
     <div>
@@ -563,8 +564,8 @@ stormify.<span class="fn">transaction</span> {
   <div class="container">
     <div class="platforms-label">Runs everywhere Kotlin runs</div>
     <div class="platforms-row">
-      <span class="platform-pill">JVM · Java 11+</span>
-      <span class="platform-pill">Android · API 21+</span>
+      <span class="platform-pill">JVM · Java 8+</span>
+      <span class="platform-pill">Android · API 26+</span>
       <span class="platform-pill">Linux · x64 &amp; ARM64</span>
       <span class="platform-pill">Windows · x64</span>
       <span class="platform-pill">macOS · Apple Silicon &amp; Intel</span>

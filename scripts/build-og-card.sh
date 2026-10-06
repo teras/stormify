@@ -3,7 +3,7 @@
 #
 # Inputs (committed):
 #   docs/static/assets/images/og-bg.jpg   (1200x630 background)
-#   docs/static/assets/images/logo.png    (cloud logo)
+#   docs/static/assets/images/logo.svg    (cloud logo)
 #
 # Output:
 #   docs/static/assets/images/og-card.jpg (1200x630 social card, ~150 KB)
@@ -15,7 +15,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 ASSETS="$ROOT/docs/static/assets/images"
 BG="$ASSETS/og-bg.jpg"
-LOGO="$ASSETS/logo.png"
+LOGO="$ASSETS/logo.svg"
 OUT="$ASSETS/og-card.jpg"
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
@@ -38,7 +38,7 @@ magick "$BG" \
 
 # 2. Compose logo on left (larger for stronger brand presence)
 magick "$TMP/bg.png" \
-  \( "$LOGO" -resize 380x \) \
+  \( -background none -density 300 "$LOGO" -resize 380x \) \
   -gravity West -geometry +75+0 -composite "$TMP/with_logo.png"
 
 # 3. Render text with subtle shadow (4px right-down offset)
