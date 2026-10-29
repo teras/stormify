@@ -98,6 +98,9 @@ abstract class StormifyGenerateSources : DefaultTask() {
         val genRegistrar = generateRegistrar.get()
 
         if (!kmpProject.get()) {
+            // Without test entities there is nothing to hold: an empty TablesTest would only
+            // make Gradle see test sources with no tests in them and fail the test task.
+            if (entities.isEmpty() && mySs == "test") return
             emitPaths(pkgDir, ctx, entities, kmpActual = false, actualEntities = emptySet())
             if (genRegistrar) {
                 writeRegistrar(pkgDir, ctx, entities)
@@ -190,7 +193,7 @@ abstract class StormifyGenerateSources : DefaultTask() {
                 append("package ${ctx.pkg}\n\n")
                 append("import onl.ycode.stormify.biglist.ReferencePath\n")
                 append("import onl.ycode.stormify.biglist.ScalarPath\n\n")
-                append("expect class ${e.simpleName}Ref(path: String) : ReferencePath {\n")
+                append("expect class ${e.simpleName}Ref(path: String = \"\") : ReferencePath {\n")
                 e.properties.forEach { p ->
                     if (p.isReference) {
                         val refSimple = p.type.substringAfterLast('.')
@@ -237,16 +240,18 @@ abstract class StormifyGenerateSources : DefaultTask() {
                 append("import onl.ycode.stormify.biglist.ScalarPath\n\n")
                 val classKw = if (isActual) "actual class" else "class"
                 val ctorKw = if (isActual) " actual constructor" else ""
-                append("$classKw ${e.simpleName}Ref$ctorKw(path: String) : ReferencePath(path) {\n")
+                // The empty default of the root path lives on the expect declaration only
+                val pathDefault = if (isActual) "" else " = \"\""
+                append("$classKw ${e.simpleName}Ref$ctorKw(path: String$pathDefault) : ReferencePath(path) {\n")
                 val actualKw = if (isActual) "actual " else ""
                 e.properties.forEach { p ->
                     if (p.isReference) {
                         val refSimple = p.type.substringAfterLast('.')
                         if (refSimple !in visibleSimpleNames) return@forEach
-                        if (ctx.jvm) append("    @get:JvmName(\"${p.name}\")\n")
-                        append("    ${actualKw}val ${p.name} get() = ${refSimple}Ref(\"\${toString()}${p.name}.\")\n")
+                        if (ctx.jvm) append("    @get:JvmName(\"${p.name.kEsc()}\")\n")
+                        append("    ${actualKw}val ${p.name} get() = ${refSimple}Ref(\"\${toString()}${p.name.kEsc()}.\")\n")
                     } else {
-                        append("    $jvmField${actualKw}val ${p.name} = ScalarPath(\"\${toString()}${p.name}\")\n")
+                        append("    $jvmField${actualKw}val ${p.name} = ScalarPath(\"\${toString()}${p.name.kEsc()}\")\n")
                     }
                 }
                 append("}\n")
@@ -261,7 +266,7 @@ abstract class StormifyGenerateSources : DefaultTask() {
             append("$objectKw ${ctx.pathsCls} {\n")
             visible.forEach { e ->
                 val actualKw = if (e.qualifiedName in actualQns) "actual " else ""
-                append("    $jvmField${actualKw}val ${e.simpleName}_ = ${e.simpleName}Ref(\"\")\n")
+                append("    $jvmField${actualKw}val ${e.simpleName}_ = ${e.simpleName}Ref()\n")
             }
             append("}\n")
         })
@@ -294,52 +299,113 @@ abstract class StormifyGenerateSources : DefaultTask() {
             append("import onl.ycode.stormify.TypeUtils.castTo\n\n")
             visible.forEach { append("import ${it.qualifiedName}\n") }
             enumTypes.forEach { append("import $it\n") }
+            // One registration function per enum and per entity, spread over several part
+            // objects: a single register() for hundreds of entities exceeds the JVM limits on
+            // method size (64 KB) and on the constant pool of one class. Same layout as the
+            // registrar annproc writes directly.
+            // Functions are numbered, not named after the classes: names derived from class
+            // names can collide (an enum `Status` and an entity `EnumStatus`).
+            val units = mutableListOf<RegistrationUnit>()
+            enumTypes.forEachIndexed { index, fqn ->
+                val s = fqn.substringAfterLast('.')
+                units += RegistrationUnit("registerEnum${index + 1}", 1, buildString {
+                    append("    // $s\n")
+                    append("    private fun registerEnum${index + 1}() {\n")
+                    append("        EnumRegistry.register(\n")
+                    append("            $s::class,\n")
+                    append("            $s.entries.toTypedArray(),\n")
+                    append("            { v -> if (v is DbValue) v.dbValue else (v as Enum<*>).ordinal }\n")
+                    append("        )\n")
+                    append("    }\n")
+                })
+            }
+            visible.forEachIndexed { index, e ->
+                units += RegistrationUnit("registerEntity${index + 1}", maxOf(1, e.properties.size), entityRegistration(index + 1, e))
+            }
+            val parts = splitIntoParts(units)
             append("\nobject ${ctx.registrarCls} : EntityRegistrar {\n")
             append("    override fun register() {\n")
-            enumTypes.forEach { fqn ->
-                val s = fqn.substringAfterLast('.')
-                append("        EnumRegistry.register(\n")
-                append("            $s::class,\n")
-                append("            $s.entries.toTypedArray(),\n")
-                append("            { v -> if (v is DbValue) v.dbValue else (v as Enum<*>).ordinal }\n")
-                append("        )\n\n")
-            }
-            visible.forEach { e -> emitEntityMetaRegistration(this, e) }
+            parts.indices.forEach { append("        ${ctx.registrarCls}Part${it + 1}.register()\n") }
             append("    }\n")
             append("}\n")
+            parts.forEachIndexed { i, part ->
+                append("\ninternal object ${ctx.registrarCls}Part${i + 1} {\n")
+                append("    fun register() {\n")
+                part.forEach { append("        ${it.function}()\n") }
+                append("    }\n")
+                part.forEach { append("\n").append(it.code) }
+                append("}\n")
+            }
         })
     }
 
-    private fun emitEntityMetaRegistration(sb: StringBuilder, e: EntityMeta) {
+    /** One registration function in a part object, and how many properties it maps. */
+    private class RegistrationUnit(val function: String, val cost: Int, val code: String)
+
+    /** Groups [units] into part objects of at most [PROPERTIES_PER_PART] properties. */
+    private fun splitIntoParts(units: List<RegistrationUnit>): List<List<RegistrationUnit>> {
+        val parts = mutableListOf<MutableList<RegistrationUnit>>()
+        var cost = 0
+        for (unit in units) {
+            if (parts.isEmpty() || (cost + unit.cost > PROPERTIES_PER_PART && parts.last().isNotEmpty())) {
+                parts += mutableListOf<RegistrationUnit>()
+                cost = 0
+            }
+            parts.last() += unit
+            cost += unit.cost
+        }
+        if (parts.isEmpty()) parts += mutableListOf<RegistrationUnit>()
+        return parts
+    }
+
+    /** The registration function of one entity, its properties built in chunks of [PROPERTIES_PER_FUNCTION]. */
+    private fun entityRegistration(number: Int, e: EntityMeta): String = buildString {
         val typeArgs = if (e.typeParameterCount == 0) ""
         else "<" + List(e.typeParameterCount) { "kotlin.Any?" }.joinToString(", ") + ">"
         val fullClass = "${e.simpleName}$typeArgs"
         val kclass = if (typeArgs.isEmpty()) "${e.simpleName}::class"
         else "@Suppress(\"UNCHECKED_CAST\") (${e.simpleName}::class as kotlin.reflect.KClass<$fullClass>)"
+        val chunks = e.properties.chunked(PROPERTIES_PER_FUNCTION)
+        val prefix = "entity$number"
+        val propertyLists = if (chunks.isEmpty()) "emptyList()"
+        else chunks.indices.joinToString(" + ") { "${prefix}Properties${it + 1}()" }
 
-        sb.append("        EntityMeta.register(EntityMeta<$fullClass>(\n")
-        sb.append("            $kclass,\n")
-        sb.append("            { $fullClass() },\n")
-        sb.append("            listOf(\n")
-        e.properties.joinTo(sb, separator = ",\n", postfix = "\n") { p ->
-            val notNull = if (!p.nullable)
-                " ?: throw IllegalArgumentException(\"${p.name.kEsc()} cannot be null in ${e.simpleName.kEsc()}\")"
-            else ""
-            buildString {
-                append("                PropertyMeta(\n")
-                append("                    \"${p.name.kEsc()}\", ${p.type}::class, ${p.isReference},\n")
-                append("                    { it.${p.name} },\n")
-                append("                    { en, v, s -> en.${p.name} = (castTo(${p.type}::class, v, s) as? ${p.fullType})$notNull },\n")
-                append("                    ${if (p.dbName != p.name) "\"${p.dbName.kEsc()}\"" else "null"},\n")
-                append("                    ${p.primary},\n")
-                append("                    ${if (p.sequence.isNotBlank()) "\"${p.sequence.kEsc()}\"" else "null"},\n")
-                append("                    ${p.autoIncrement}, ${p.insertable}, ${p.updatable}, false, ${p.isEnum}, ${p.enumAsString}\n")
-                append("                )")
+        append("    // ${e.simpleName}\n")
+        append("    private fun registerEntity$number() {\n")
+        append("        EntityMeta.register(EntityMeta<$fullClass>(\n")
+        append("            $kclass,\n")
+        append("            { $fullClass() },\n")
+        append("            $propertyLists,\n")
+        append("            ${if (e.tableName.isNotBlank()) "\"${e.tableName.kEsc()}\"" else "null"}\n")
+        append("        ))\n")
+        append("    }\n")
+        chunks.forEachIndexed { k, chunk ->
+            append("\n    private fun ${prefix}Properties${k + 1}(): List<PropertyMeta<$fullClass>> = listOf(\n")
+            chunk.joinTo(this, separator = ",\n", postfix = "\n") { p ->
+                val notNull = if (!p.nullable)
+                    " ?: throw IllegalArgumentException(\"${p.name.kEsc()} cannot be null in ${e.simpleName.kEsc()}\")"
+                else ""
+                buildString {
+                    append("        PropertyMeta(\n")
+                    append("            \"${p.name.kEsc()}\", ${p.type}::class, ${p.isReference},\n")
+                    append("            { it.${p.name} },\n")
+                    append("            { en, v, s -> en.${p.name} = (castTo(${p.type}::class, v, s) as? ${p.fullType})$notNull },\n")
+                    append("            ${if (p.dbName != p.name) "\"${p.dbName.kEsc()}\"" else "null"},\n")
+                    append("            ${p.primary},\n")
+                    append("            ${if (p.sequence.isNotBlank()) "\"${p.sequence.kEsc()}\"" else "null"},\n")
+                    append("            ${p.autoIncrement}, ${p.insertable}, ${p.updatable}, false, ${p.isEnum}, ${p.enumAsString}\n")
+                    append("        )")
+                }
             }
+            append("    )\n")
         }
-        sb.append("            ),\n")
-        sb.append("            ${if (e.tableName.isNotBlank()) "\"${e.tableName.kEsc()}\"" else "null"}\n")
-        sb.append("        ))\n\n")
+    }
+
+    private companion object {
+        /** Properties mapped per generated part object; well below the 65535 constant pool limit. */
+        const val PROPERTIES_PER_PART = 1000
+        /** Properties built per generated function; well below the 64 KB method limit. */
+        const val PROPERTIES_PER_FUNCTION = 100
     }
 
     /** Bundles per-task constants resolved from `Property<T>` getters once. */
@@ -362,7 +428,7 @@ private fun String.kEsc(): String = buildString(length) {
         '\n' -> append("\\n")
         '\r' -> append("\\r")
         '\t' -> append("\\t")
-        else -> append(c)
+        else -> if (c.code < 0x20) append("\\u").append(c.code.toString(16).padStart(4, '0')) else append(c)
     }
 }
 

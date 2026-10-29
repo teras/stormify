@@ -1,6 +1,8 @@
 package onl.ycode.stormify.annproc
 
+import com.google.devtools.ksp.processing.KSPLogger
 import com.google.devtools.ksp.symbol.ClassKind
+import com.google.devtools.ksp.symbol.FileLocation
 import com.google.devtools.ksp.symbol.KSAnnotation
 import com.google.devtools.ksp.symbol.KSClassDeclaration
 import com.google.devtools.ksp.symbol.KSPropertyDeclaration
@@ -22,9 +24,31 @@ private val TRANSIENT_ANNOTATIONS = setOf(
 private const val COLUMN = "javax.persistence.Column"
 private const val JOIN_COLUMN = "javax.persistence.JoinColumn"
 private const val SEQUENCE = "javax.persistence.SequenceGenerator"
+private const val GENERATED_VALUE = "javax.persistence.GeneratedValue"
 private const val ENUMERATED = "javax.persistence.Enumerated"
 
 private const val AUTO_TABLE = "onl.ycode.stormify.AutoTable"
+
+/** Annotations that declare a property as a mapped column. */
+private val MAPPING_ANNOTATIONS = setOf(DB_FIELD, ID, COLUMN, JOIN_COLUMN)
+
+private fun KSAnnotation.qualifiedName(): String? =
+    annotationType.resolve().declaration.qualifiedName?.asString()
+
+/**
+ * The function a delegated property delegates to (`db`, `lazy`, `observable`, ...), read
+ * from its source, since KSP does not expose the delegate expression. Null when the
+ * source is not available (a property compiled in another module) or not recognised.
+ */
+private fun KSPropertyDeclaration.delegateName(): String? {
+    val loc = location as? FileLocation ?: return null
+    val lines = runCatching { java.io.File(loc.filePath).readLines() }.getOrNull() ?: return null
+    val text = lines.drop((loc.lineNumber - 1).coerceAtLeast(0)).take(8).joinToString(" ")
+    val name = Regex.escape(simpleName.asString())
+    val decl = Regex("\\b(?:val|var)\\s+$name\\b").find(text) ?: return null
+    return Regex("\\bby\\s+([A-Za-z_][\\w.]*)").find(text, decl.range.last + 1)
+        ?.groupValues?.get(1)?.substringAfterLast('.')
+}
 
 /** True if this annotation marks a property as transient (JPA or Kotlin). */
 private fun KSAnnotation.isTransient(): Boolean =
@@ -86,6 +110,12 @@ internal class EntityProperty(declaration: KSPropertyDeclaration, entity: KSClas
      * path's `Collection.isAssignableFrom` / `Map.isAssignableFrom` filter.
      */
     val skip: Boolean
+    /**
+     * True when the generated code cannot assign the property: a `val`, or a `var`
+     * whose setter is private or protected. The processor rejects such a property.
+     */
+    val readOnly: Boolean = !declaration.isMutable ||
+            declaration.setter?.let { it.modifiers.contains(Modifier.PRIVATE) || it.modifiers.contains(Modifier.PROTECTED) } == true
 
     init {
         val resolved = declaration.type.resolve()
@@ -109,59 +139,41 @@ internal class EntityProperty(declaration: KSPropertyDeclaration, entity: KSClas
         }
         val allAnnotations = declaration.annotations.toList() + ctorParamAnnotations
 
-        var _dbname = ""
-        var _sequence = ""
-        var _updt = true
-        var _insertable = true
-        var _primary = false
-        var _autoIncrement = false
-        var _enumAsString = false
-        allAnnotations.forEach { ann ->
-            when (ann.annotationType.resolve().declaration.qualifiedName?.asString()) {
-                DB_FIELD -> {
-                    _enumAsString = ann.arguments.firstOrNull { it.name?.asString() == "enumAsString" }?.value?.toString()
-                        ?.toBoolean() ?: false
-                    _dbname = ann.arguments.firstOrNull { it.name?.asString() == "name" }?.value?.toString() ?: ""
-                    _primary = ann.arguments.firstOrNull { it.name?.asString() == "primaryKey" }?.value?.toString()
-                        ?.toBoolean() ?: false
-                    _autoIncrement = ann.arguments.firstOrNull { it.name?.asString() == "autoIncrement" }?.value?.toString()
-                        ?.toBoolean() ?: false
-                    _sequence =
-                        ann.arguments.firstOrNull { it.name?.asString() == "primarySequence" }?.value?.toString() ?: ""
-                    _updt =
-                        ann.arguments.firstOrNull { it.name?.asString() == "updatable" }?.value?.toString()?.toBoolean()
-                            ?: true
-                    _insertable = ann.arguments.firstOrNull { it.name?.asString() == "creatable" }?.value?.toString()
-                        ?.toBoolean() ?: true
-                }
+        // Stormify and JPA annotations may be combined on one property. Every attribute
+        // is merged the same way regardless of annotation order, matching the JVM
+        // reflection path: a name comes from the first source that sets one (@DbField,
+        // @Column, @JoinColumn), a flag that defaults to false is set by any source, and
+        // a flag that defaults to true is cleared by any source.
+        fun KSAnnotation.arg(name: String): String? =
+            arguments.firstOrNull { it.name?.asString() == name }?.value?.toString()
+        fun KSAnnotation.nameArg(name: String): String? = arg(name)?.takeIf { it.isNotBlank() }
+        fun KSAnnotation.flag(name: String, default: Boolean): Boolean = arg(name)?.toBoolean() ?: default
 
-                COLUMN, JOIN_COLUMN -> {
-                    _dbname = ann.arguments.firstOrNull { it.name?.asString() == "name" }?.value?.toString() ?: ""
-                    _updt =
-                        ann.arguments.firstOrNull { it.name?.asString() == "updatable" }?.value?.toString()?.toBoolean()
-                            ?: true
-                    _insertable = ann.arguments.firstOrNull { it.name?.asString() == "insertable" }?.value?.toString()
-                        ?.toBoolean() ?: true
-                }
+        val byName = allAnnotations.groupBy { it.annotationType.resolve().declaration.qualifiedName?.asString() }
+        fun first(qn: String) = byName[qn]?.firstOrNull()
+        val dbField = first(DB_FIELD)
+        val column = first(COLUMN)
+        val joinColumn = first(JOIN_COLUMN)
+        val sequenceGenerator = first(SEQUENCE)
 
-                SEQUENCE -> _sequence = ann.arguments.firstOrNull { it.name?.asString() == "name" }?.value?.toString() ?: ""
-                ID -> _primary = true
-                ENUMERATED -> {
-                    val enumType = ann.arguments.firstOrNull { it.name?.asString() == "value" }?.value?.toString() ?: ""
-                    if (enumType.endsWith("STRING")) _enumAsString = true
-                }
-            }
-        }
-        dbname = _dbname.ifEmpty { name }
-        sequence = _sequence
-        updatable = _updt
-        insertable = _insertable
-        primary = _primary
-        autoIncrement = _autoIncrement
+        dbname = dbField?.nameArg("name") ?: column?.nameArg("name") ?: joinColumn?.nameArg("name") ?: name
+        // In JPA `name` names the generator and `sequenceName` the database sequence;
+        // the generator name is the sequence only when `sequenceName` is left empty.
+        sequence = dbField?.nameArg("primarySequence") ?: sequenceGenerator?.nameArg("sequenceName")
+            ?: sequenceGenerator?.nameArg("name") ?: ""
+        updatable = dbField?.flag("updatable", true) != false &&
+                column?.flag("updatable", true) != false && joinColumn?.flag("updatable", true) != false
+        insertable = dbField?.flag("insertable", true) != false &&
+                column?.flag("insertable", true) != false && joinColumn?.flag("insertable", true) != false
+        primary = dbField?.flag("primaryKey", false) == true || first(ID) != null
+        autoIncrement = dbField?.flag("autoIncrement", false) == true ||
+                byName[GENERATED_VALUE].orEmpty().any { it.arg("strategy")?.endsWith("IDENTITY") == true }
+        val enumString = dbField?.flag("enumAsString", false) == true ||
+                byName[ENUMERATED].orEmpty().any { it.arg("value")?.endsWith("STRING") == true }
 
         val typeDecl = resolved.declaration
         isEnum = typeDecl is KSClassDeclaration && typeDecl.classKind == ClassKind.ENUM_CLASS
-        enumAsString = _enumAsString && isEnum
+        enumAsString = enumString && isEnum
         isReference = !isEnum && typeDecl is KSClassDeclaration &&
                 typeDecl.classKind == ClassKind.CLASS && (
                 typeDecl.annotations.any { ann ->
@@ -185,30 +197,66 @@ internal class EntityProperty(declaration: KSPropertyDeclaration, entity: KSClas
     }
 
     companion object {
-        fun find(entity: KSClassDeclaration): Collection<EntityProperty> {
+        /**
+         * The mapped properties of [entity]. A property is either a column, or skipped
+         * because it stores nothing (computed) or is marked transient, or an error
+         * reported through [logger]: the generated code must be able to assign every
+         * column, so a read-only property or a delegate other than `db()` is rejected.
+         */
+        fun find(entity: KSClassDeclaration, logger: KSPLogger? = null): Collection<EntityProperty> {
             // Also check constructor parameter annotations for @Transient
             val ctorParamNames = entity.primaryConstructor?.parameters
                 ?.filter { p -> p.annotations.any { it.isTransient() } }
                 ?.mapNotNull { it.name?.asString() }?.toSet() ?: emptySet()
+            val entityName = entity.simpleName.asString()
             return entity.getAllProperties().mapNotNull {
                 val propName = it.simpleName.asString()
                 if (propName in ctorParamNames) return@mapNotNull null
                 // Transient: Java keyword, @kotlin.jvm.Transient, @javax.persistence.Transient
+                // (any use-site target, so `@delegate:Transient` counts too)
                 if (Modifier.JAVA_TRANSIENT in it.modifiers) return@mapNotNull null
                 if (it.annotations.any { ann -> ann.isTransient() }) return@mapNotNull null
-                EntityProperty(it, entity).takeUnless { p -> p.skip }
+                // A computed property (`val x get() = ...`) stores nothing: not a column.
+                // Silent, unless a column annotation says the author expected one.
+                if (!it.hasBackingField && !it.isDelegated()) {
+                    if (it.annotations.any { ann -> ann.qualifiedName() in MAPPING_ANNOTATIONS })
+                        logger?.warn("Stormify: property $entityName.$propName has no backing field; " +
+                                "its column annotation is ignored and it is not a column", it)
+                    return@mapNotNull null
+                }
+                val prop = EntityProperty(it, entity).takeUnless { p -> p.skip } ?: return@mapNotNull null
+                // The generated code assigns every column through the property's setter, so
+                // a mutable property is a column whatever it delegates to; a read-only one
+                // cannot be loaded and is rejected, with the fix that fits its shape.
+                if (prop.readOnly) {
+                    val delegate = if (it.isDelegated()) it.delegateName() else null
+                    val message = when {
+                        // A var whose setter is private or protected, delegated or not.
+                        it.isMutable -> "has no public setter: make its setter public to be mapped by the annotation processor"
+                        !it.isDelegated() -> "must be a var (or use by db()) to be mapped by the annotation processor"
+                        delegate == "db" -> "must be a var to be mapped by the annotation processor"
+                        else -> "is a read-only delegate" + (delegate?.let { d -> " ($d())" } ?: "") +
+                                " the annotation processor cannot load: mark it @delegate:Transient, " +
+                                "or make it a var ... by db()"
+                    }
+                    logger?.error("Stormify: property $entityName.$propName $message", it)
+                    return@mapNotNull null
+                }
+                prop
             }.toList()
         }
 
+        /**
+         * Table name override: `@DbTable`, then JPA `@Table`, then JPA `@Entity` (whose name is
+         * also the JPA default table name), regardless of annotation order. Same precedence
+         * as the JVM reflection path. Empty when none of them sets a name.
+         */
         fun findTableName(declaration: KSClassDeclaration): String {
-            var name = ""
-            declaration.annotations.forEach { ann ->
-                when (ann.annotationType.resolve().declaration.qualifiedName?.asString()) {
-                    DB_TABLE, ENTITY, TABLE ->
-                        name = ann.arguments.firstOrNull { it.name?.asString() == "name" }?.value?.toString() ?: ""
-                }
+            val names = declaration.annotations.associate { ann ->
+                ann.annotationType.resolve().declaration.qualifiedName?.asString() to
+                        ann.arguments.firstOrNull { it.name?.asString() == "name" }?.value?.toString()
             }
-            return name
+            return listOf(DB_TABLE, TABLE, ENTITY).firstNotNullOfOrNull { names[it]?.takeIf { n -> n.isNotBlank() } } ?: ""
         }
 
         /**

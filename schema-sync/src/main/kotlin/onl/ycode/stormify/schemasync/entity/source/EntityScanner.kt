@@ -245,7 +245,7 @@ object EntityScanner {
                 nullable = nullable,
                 autoIncrement = dbField?.boolArg("autoIncrement") == true,
                 sequence = dbField?.literalArg("primarySequence").orEmpty(),
-                creatable = dbField?.boolArg("creatable") ?: true,
+                insertable = dbField?.boolArg("insertable") ?: true,
                 updatable = dbField?.boolArg("updatable") ?: true,
                 referencedEntity = if (isReference) simpleType else null,
                 defaultLiteral = sanitizeLiteral(initializerText),
@@ -315,7 +315,7 @@ private val POSITIONAL_ARG_NAMES: Map<String, List<String>> = mapOf(
     "Entity" to listOf("name"),
     "Column" to listOf("name"),
     "JoinColumn" to listOf("name"),
-    "DbField" to listOf("name", "primaryKey", "primarySequence", "autoIncrement", "creatable", "updatable", "enumAsString"),
+    "DbField" to listOf("name", "primaryKey", "primarySequence", "autoIncrement", "insertable", "updatable", "enumAsString"),
 )
 
 /** Resolves Kotlin string-literal escape sequences (`\n`, `\t`, `\\`, `\"`,

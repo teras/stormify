@@ -34,7 +34,7 @@ data class EntityField(
     val nullable: Boolean = true,
     val autoIncrement: Boolean = false,
     val sequence: String = "",
-    val creatable: Boolean = true,
+    val insertable: Boolean = true,
     val updatable: Boolean = true,
     /** When non-null, this field is an entity reference (FK). Holds the target entity className. */
     val referencedEntity: String? = null,

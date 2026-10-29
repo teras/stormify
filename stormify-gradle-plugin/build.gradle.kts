@@ -19,8 +19,12 @@ java {
 kotlin {
     compilerOptions {
         jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_11)
+        // gradleApi() puts the kotlin-stdlib of the running Gradle on the classpath, newer
+        // than this compiler reads on recent Gradle; the plugin runs on that stdlib anyway.
+        freeCompilerArgs.add("-Xskip-metadata-version-check")
     }
-    jvmToolchain(11)
+    // Build with JDK 17 (the oldest JDK Gradle 9 runs on); the bytecode stays Java 11.
+    jvmToolchain(17)
 }
 
 dependencies {

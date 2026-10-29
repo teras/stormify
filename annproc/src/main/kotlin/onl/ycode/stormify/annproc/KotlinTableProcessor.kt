@@ -39,6 +39,13 @@ class KotlinTableProcessorProvider : SymbolProcessorProvider {
  */
 class KotlinTableProcessor(private val env: SymbolProcessorEnvironment) : SymbolProcessor {
 
+    private companion object {
+        /** Properties mapped per generated part object (see [splitIntoParts]). */
+        const val PROPERTIES_PER_PART = 1000
+        /** Properties built per generated function (see [entityRegistration]). */
+        const val PROPERTIES_PER_FUNCTION = 100
+    }
+
     private val metaOutputDir: String? = env.options["stormify.metaOutputDir"]?.takeIf { it.isNotBlank() }
 
     private val generatedPackage: String =
@@ -77,7 +84,7 @@ class KotlinTableProcessor(private val env: SymbolProcessorEnvironment) : Symbol
 
     private fun writeDirectKotlin(entities: Collection<KSClassDeclaration>) {
         val enumTypes = mutableSetOf<String>()
-        val entityProps = entities.associateWith { EntityProperty.find(it) }
+        val entityProps = entities.associateWith { EntityProperty.find(it, env.logger) }
         entityProps.values.forEach { props ->
             props.filter { it.isEnum }.forEach { enumTypes.add(it.type) }
         }
@@ -115,28 +122,50 @@ class KotlinTableProcessor(private val env: SymbolProcessorEnvironment) : Symbol
             entities.forEach { w.write("import ${it.qualifiedName?.asString()}\n") }
             enumTypes.forEach { w.write("import $it\n") }
 
-            w.write("\nobject $registrarClass : EntityRegistrar {\n")
-            w.write("    override fun register() {\n")
-
-            enumTypes.forEach { enumFqn ->
+            // One registration function per enum and per entity, spread over several part
+            // objects: a single register() for hundreds of entities exceeds the JVM limits on
+            // method size (64 KB) and on the constant pool of one class.
+            // Functions are numbered, not named after the classes: names derived from class
+            // names can collide (an enum `Status` and an entity `EnumStatus`).
+            val units = mutableListOf<RegistrationUnit>()
+            enumTypes.forEachIndexed { index, enumFqn ->
                 val simpleName = enumFqn.substringAfterLast('.')
-                w.write("        EnumRegistry.register(\n")
-                w.write("            $simpleName::class,\n")
-                w.write("            $simpleName.entries.toTypedArray(),\n")
-                w.write("            { v -> if (v is DbValue) v.dbValue else (v as Enum<*>).ordinal }\n")
-                w.write("        )\n\n")
+                units += RegistrationUnit("registerEnum${index + 1}", 1, buildString {
+                    append("    // $simpleName\n")
+                    append("    private fun registerEnum${index + 1}() {\n")
+                    append("        EnumRegistry.register(\n")
+                    append("            $simpleName::class,\n")
+                    append("            $simpleName.entries.toTypedArray(),\n")
+                    append("            { v -> if (v is DbValue) v.dbValue else (v as Enum<*>).ordinal }\n")
+                    append("        )\n")
+                    append("    }\n")
+                })
             }
-
-            entities.forEach { entity ->
+            entities.forEachIndexed { index, entity ->
                 val className = entity.simpleName.asString()
                 val tableName = EntityProperty.findTableName(entity)
                 val props = entityProps[entity]!!
                 val typeParams = entity.typeParameters.size
-                writeEntityMetaDirect(w, className, tableName, props, typeParams)
+                units += RegistrationUnit(
+                    "registerEntity${index + 1}", maxOf(1, props.size),
+                    entityRegistration(index + 1, className, tableName, props, typeParams)
+                )
             }
+            val parts = splitIntoParts(units)
 
+            w.write("\nobject $registrarClass : EntityRegistrar {\n")
+            w.write("    override fun register() {\n")
+            parts.indices.forEach { w.write("        ${registrarClass}Part${it + 1}.register()\n") }
             w.write("    }\n")
             w.write("}\n")
+            parts.forEachIndexed { i, part ->
+                w.write("\ninternal object ${registrarClass}Part${i + 1} {\n")
+                w.write("    fun register() {\n")
+                part.forEach { w.write("        ${it.function}()\n") }
+                w.write("    }\n")
+                part.forEach { w.write("\n"); w.write(it.code) }
+                w.write("}\n")
+            }
         }
 
         env.codeGenerator.createNewFile(Dependencies(true), generatedPackage, pathsClass).bufferedWriter().use { w ->
@@ -157,7 +186,7 @@ class KotlinTableProcessor(private val env: SymbolProcessorEnvironment) : Symbol
             w.write("object $pathsClass {\n")
             for (entity in entities) {
                 val className = entity.simpleName.asString()
-                w.write("    ${jvmFieldPrefix}val ${className}_ = ${className}Ref(\"\")\n")
+                w.write("    ${jvmFieldPrefix}val ${className}_ = ${className}Ref()\n")
             }
             w.write("}\n")
         }
@@ -169,29 +198,56 @@ class KotlinTableProcessor(private val env: SymbolProcessorEnvironment) : Symbol
         props: Collection<EntityProperty>,
         entityQNames: Set<String>
     ) {
-        w.write("class ${className}Ref(path: String) : ReferencePath(path) {\n")
+        w.write("class ${className}Ref(path: String = \"\") : ReferencePath(path) {\n")
         for (prop in props) {
             if (prop.isReference) {
                 val refTypeName = prop.type
                 val shortName = refTypeName.substringAfterLast(".")
                 val isKnownEntity = entityQNames.any { it.endsWith(".$shortName") || it == refTypeName }
                 if (!isKnownEntity) continue
-                if (jvmTarget) w.write("    @get:JvmName(\"${prop.name}\")\n")
-                w.write("    val ${prop.name} get() = ${shortName}Ref(\"\${toString()}${prop.name}.\")\n")
+                if (jvmTarget) w.write("    @get:JvmName(\"${prop.name.kEsc()}\")\n")
+                w.write("    val ${prop.name} get() = ${shortName}Ref(\"\${toString()}${prop.name.kEsc()}.\")\n")
             } else {
-                w.write("    ${jvmFieldPrefix}val ${prop.name} = ScalarPath(\"\${toString()}${prop.name}\")\n")
+                w.write("    ${jvmFieldPrefix}val ${prop.name} = ScalarPath(\"\${toString()}${prop.name.kEsc()}\")\n")
             }
         }
         w.write("}\n\n")
     }
 
-    private fun writeEntityMetaDirect(
-        w: java.io.Writer,
+    /** One registration function in a part object, and how many properties it maps. */
+    private class RegistrationUnit(val function: String, val cost: Int, val code: String)
+
+    /**
+     * Groups [units] into part objects of at most [PROPERTIES_PER_PART] properties, so
+     * that no generated class outgrows the JVM constant pool (65535 entries).
+     */
+    private fun splitIntoParts(units: List<RegistrationUnit>): List<List<RegistrationUnit>> {
+        val parts = mutableListOf<MutableList<RegistrationUnit>>()
+        var cost = 0
+        for (unit in units) {
+            if (parts.isEmpty() || (cost + unit.cost > PROPERTIES_PER_PART && parts.last().isNotEmpty())) {
+                parts += mutableListOf<RegistrationUnit>()
+                cost = 0
+            }
+            parts.last() += unit
+            cost += unit.cost
+        }
+        if (parts.isEmpty()) parts += mutableListOf<RegistrationUnit>()
+        return parts
+    }
+
+    /**
+     * The registration function of one entity. Its properties are built by functions of
+     * at most [PROPERTIES_PER_FUNCTION] each, so even an entity with very many columns
+     * stays far below the 64 KB limit on the bytecode of one method.
+     */
+    private fun entityRegistration(
+        number: Int,
         className: String,
         tableName: String,
         properties: Collection<EntityProperty>,
         typeParamCount: Int
-    ) {
+    ): String = buildString {
         val typeArgs = if (typeParamCount == 0) "" else
             "<" + List(typeParamCount) { "kotlin.Any?" }.joinToString(", ") + ">"
         val fullClassName = "$className$typeArgs"
@@ -199,32 +255,40 @@ class KotlinTableProcessor(private val env: SymbolProcessorEnvironment) : Symbol
             "${className}::class"
         else
             "@Suppress(\"UNCHECKED_CAST\") (${className}::class as kotlin.reflect.KClass<$fullClassName>)"
+        val chunks = properties.chunked(PROPERTIES_PER_FUNCTION)
+        val propertyLists = if (chunks.isEmpty()) "emptyList()"
+        else chunks.indices.joinToString(" + ") { "entity${number}Properties${it + 1}()" }
 
-        w.write("        EntityMeta.register(EntityMeta<$fullClassName>(\n")
-        w.write("            $kclassExpr,\n")
-        w.write("            { $fullClassName() },\n")
-        w.write("            listOf(\n")
+        append("    // $className\n")
+        append("    private fun registerEntity$number() {\n")
+        append("        EntityMeta.register(EntityMeta<$fullClassName>(\n")
+        append("            $kclassExpr,\n")
+        append("            { $fullClassName() },\n")
+        append("            $propertyLists,\n")
+        append("            ${if (tableName.isNotBlank()) "\"${tableName.kEsc()}\"" else "null"}\n")
+        append("        ))\n")
+        append("    }\n")
 
-        properties.forEachIndexed { i, prop ->
-            val comma = if (i < properties.size - 1) "," else ""
-            w.write("                PropertyMeta(\n")
-            w.write("                    \"${prop.name}\", ${prop.type}::class, ${prop.isReference},\n")
-            w.write("                    { it.${prop.name} },\n")
-            val fullType = prop.fullType
-            val notNullSuffix = if (!prop.nullable)
-                " ?: throw IllegalArgumentException(\"${prop.name} cannot be null in $className\")"
-            else ""
-            w.write("                    @Suppress(\"UNCHECKED_CAST\") { e, v, s -> e.${prop.name} = (castTo(${prop.type}::class, v, s) as? $fullType)$notNullSuffix },\n")
-            w.write("                    ${if (prop.dbname != prop.name) "\"${prop.dbname}\"" else "null"},\n")
-            w.write("                    ${prop.primary},\n")
-            w.write("                    ${if (prop.sequence.isNotBlank()) "\"${prop.sequence}\"" else "null"},\n")
-            w.write("                    ${prop.autoIncrement}, ${prop.insertable}, ${prop.updatable}, false, ${prop.isEnum}, ${prop.enumAsString}\n")
-            w.write("                )$comma\n")
+        chunks.forEachIndexed { k, chunk ->
+            append("\n    private fun entity${number}Properties${k + 1}(): ")
+            append("List<PropertyMeta<$fullClassName>> = listOf(\n")
+            chunk.forEachIndexed { i, prop ->
+                val comma = if (i < chunk.size - 1) "," else ""
+                append("        PropertyMeta(\n")
+                append("            \"${prop.name.kEsc()}\", ${prop.type}::class, ${prop.isReference},\n")
+                append("            { it.${prop.name} },\n")
+                val notNullSuffix = if (!prop.nullable)
+                    " ?: throw IllegalArgumentException(\"${prop.name.kEsc()} cannot be null in ${className.kEsc()}\")"
+                else ""
+                append("            @Suppress(\"UNCHECKED_CAST\") { e, v, s -> e.${prop.name} = (castTo(${prop.type}::class, v, s) as? ${prop.fullType})$notNullSuffix },\n")
+                append("            ${if (prop.dbname != prop.name) "\"${prop.dbname.kEsc()}\"" else "null"},\n")
+                append("            ${prop.primary},\n")
+                append("            ${if (prop.sequence.isNotBlank()) "\"${prop.sequence.kEsc()}\"" else "null"},\n")
+                append("            ${prop.autoIncrement}, ${prop.insertable}, ${prop.updatable}, false, ${prop.isEnum}, ${prop.enumAsString}\n")
+                append("        )$comma\n")
+            }
+            append("    )\n")
         }
-
-        w.write("            ),\n")
-        w.write("            ${if (tableName.isNotBlank()) "\"$tableName\"" else "null"}\n")
-        w.write("        ))\n\n")
     }
 
     private fun writeMetadata(entities: Collection<KSClassDeclaration>) {
@@ -256,7 +320,7 @@ class KotlinTableProcessor(private val env: SymbolProcessorEnvironment) : Symbol
         val typeParameterCount = entity.typeParameters.size
         val sourceSet = entity.containingFile?.let { sourceSetFromPath(it.filePath) } ?: "commonMain"
         val sourceFile = entity.containingFile?.filePath ?: ""
-        val props = EntityProperty.find(entity)
+        val props = EntityProperty.find(entity, env.logger)
         val enumTypes = props.filter { it.isEnum }.map { it.type }.distinct()
 
         return JsonWriter().obj {
@@ -301,5 +365,22 @@ class KotlinTableProcessor(private val env: SymbolProcessorEnvironment) : Symbol
             return parts[srcIdx + 1]
         }
         return "commonMain"
+    }
+}
+
+/**
+ * Escapes text placed inside a generated Kotlin string literal: `\`, `"` and `$` (which
+ * would start a template), and control characters as `\uXXXX`. Other characters, Greek
+ * letters included, stay as they are; the generated file is UTF-8 like any Kotlin source.
+ */
+internal fun String.kEsc(): String = buildString(length) {
+    for (c in this@kEsc) when (c) {
+        '\\' -> append("\\\\")
+        '"' -> append("\\\"")
+        '$' -> append("\\$")
+        '\n' -> append("\\n")
+        '\r' -> append("\\r")
+        '\t' -> append("\\t")
+        else -> if (c.code < 0x20) append("\\u").append(c.code.toString(16).padStart(4, '0')) else append(c)
     }
 }
