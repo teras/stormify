@@ -4,8 +4,7 @@ package onl.ycode.logger
 
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
-import java.io.OutputStream
-import java.io.PrintStream
+import org.slf4j.helpers.NOPLoggerFactory
 
 internal class SLF4JLogger : onl.ycode.logger.Logger {
     private val logger: Logger
@@ -35,21 +34,19 @@ internal class SLF4JLogger : onl.ycode.logger.Logger {
         }
     }
 
-    private class DummyPrintStream : PrintStream(object : OutputStream() {
-        override fun write(b: Int) {}
-    })
-
     companion object {
         init {
-            val originalErr = System.err
-            try {
-                DummyPrintStream().use { dummy ->
-                    System.setErr(dummy)
-                    check(LoggerFactory.getLogger("test").name != "NOP") { "No actual SLF4J logger found." }
-                }
-            } finally {
-                System.setErr(originalErr)
-            }
+            // SLF4J without a backend prints a warning to System.err when it initializes,
+            // and then discards every message. Look for a backend first, the way SLF4J
+            // itself does, so that SLF4J is not even initialized when there is none: a
+            // service provider (2.x), an explicit provider property (2.x), or a static
+            // binder (1.x). Then reject a backend that discards everything (slf4j-nop).
+            val loader = LoggerFactory::class.java.classLoader ?: ClassLoader.getSystemClassLoader()
+            val hasBackend = loader.getResource("META-INF/services/org.slf4j.spi.SLF4JServiceProvider") != null ||
+                    !System.getProperty("slf4j.provider").isNullOrBlank() ||
+                    loader.getResource("org/slf4j/impl/StaticLoggerBinder.class") != null
+            check(hasBackend) { "No SLF4J backend found." }
+            check(LoggerFactory.getILoggerFactory() !is NOPLoggerFactory) { "SLF4J discards all messages (NOP backend)." }
         }
     }
 }
