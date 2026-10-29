@@ -6,7 +6,7 @@ import kotlin.jvm.JvmOverloads
 import kotlin.jvm.JvmStatic
 
 /**
- * Per-request specification passed to [PagedQuery.execute][AbstractPagedQuery.execute] and friends.
+ * Per-request specification passed to [PagedQuery.execute] and friends.
  * Describes the filters, sorts, case-sensitivity flags and pagination the
  * caller wants for this single query. Keys in the map fields are facet
  * aliases (see [Facet.alias]); any alias not present in the map contributes
@@ -21,11 +21,11 @@ import kotlin.jvm.JvmStatic
  * Two constructors are provided:
  *
  * - **Paginated** — `PageSpec(page, pageSize, filters?, sorts?, cs?)`. Use
- *   for [PagedQuery.execute][AbstractPagedQuery.execute] / [PagedQuery.filterValues][AbstractPagedQuery.filterValues] where page
+ *   for [PagedQuery.execute] / [PagedQuery.filterValues] where page
  *   and pageSize control which slice is returned.
  * - **Non-paginated** — `PageSpec(filters?, sorts?, cs?)`. Equivalent to
  *   `PageSpec(0, 15, ...)`. Use for
- *   [PagedQuery.forEachStreaming][AbstractPagedQuery.forEachStreaming] / [PagedQuery.getAggregator][AbstractPagedQuery.getAggregator]
+ *   [PagedQuery.forEachStreaming] / [PagedQuery.getAggregator]
  *   where pagination is ignored.
  *
  * Both constructors have `@JvmOverloads` so Java callers can omit trailing
@@ -33,7 +33,8 @@ import kotlin.jvm.JvmStatic
  *
  * @property page Zero-based page index.
  * @property pageSize Number of rows per page. Must be at least 1.
- * @property filters Per-alias filter values. Missing aliases → no filter.
+ * @property filters Per-alias filter values. Missing aliases, empty and blank
+ *   values → no filter.
  *   The configured `nullToken` (default `"NULL"`) produces `IS NULL`.
  * @property sorts Per-alias sort directions.
  * @property caseSensitive Per-alias case-sensitivity overrides for text
@@ -43,7 +44,7 @@ data class PageSpec @JvmOverloads constructor(
     val page: Int,
     val pageSize: Int,
     val filters: Map<String, String> = emptyMap(),
-    val sorts: Map<String, SortDir> = emptyMap(),
+    val sorts: Map<String, SortState> = emptyMap(),
     val caseSensitive: Map<String, Boolean> = emptyMap(),
 ) {
     init {
@@ -54,14 +55,14 @@ data class PageSpec @JvmOverloads constructor(
     /**
      * Non-paginated spec constructor. Delegates to the paginated form with
      * `page = 0`, `pageSize = 15`. The pagination defaults are **ignored**
-     * by use cases that do not paginate ([PagedQuery.forEachStreaming][AbstractPagedQuery.forEachStreaming],
-     * [PagedQuery.getAggregator][AbstractPagedQuery.getAggregator]); for paginated callers that accept
+     * by use cases that do not paginate ([PagedQuery.forEachStreaming],
+     * [PagedQuery.getAggregator]); for paginated callers that accept
      * defaults, they represent "first page, 15 rows".
      */
     @JvmOverloads
     constructor(
         filters: Map<String, String> = emptyMap(),
-        sorts: Map<String, SortDir> = emptyMap(),
+        sorts: Map<String, SortState> = emptyMap(),
         caseSensitive: Map<String, Boolean> = emptyMap(),
     ) : this(0, 15, filters, sorts, caseSensitive)
 
@@ -70,8 +71,8 @@ data class PageSpec @JvmOverloads constructor(
         /**
          * Parses a JSON object matching the exact shape of [PageSpec] into a
          * new instance. Unknown top-level keys are silently skipped (forward-
-         * compatible). Unknown sort values (outside [SortDir]) are silently
-         * dropped. Malformed input (wrong types, truncated escapes, integer
+         * compatible). A sort value is `"ASC"`/`"ASCENDING"` or `"DESC"`/`"DESCENDING"`;
+         * other values are silently dropped. Malformed input (wrong types, truncated escapes, integer
          * overflow, invalid characters) throws [IllegalArgumentException].
          *
          * Shape:
@@ -92,7 +93,7 @@ data class PageSpec @JvmOverloads constructor(
             var page = 0
             var pageSize = 15
             var filters: Map<String, String> = emptyMap()
-            var sorts: Map<String, SortDir> = emptyMap()
+            var sorts: Map<String, SortState> = emptyMap()
             var cs: Map<String, Boolean> = emptyMap()
             if (r.peek() != '}') {
                 while (true) {
@@ -103,8 +104,11 @@ data class PageSpec @JvmOverloads constructor(
                         "pageSize" -> pageSize = r.readInt()
                         "filters" -> filters = r.readMap { r.readString() }
                         "sorts" -> sorts = r.readMap {
-                            val v = r.readString()
-                            try { SortDir.valueOf(v) } catch (_: IllegalArgumentException) { null }
+                            when (r.readString()) {
+                                "ASC", "ASCENDING" -> SortState.ASCENDING
+                                "DESC", "DESCENDING" -> SortState.DESCENDING
+                                else -> null
+                            }
                         }
                         "caseSensitive" -> cs = r.readMap { r.readBool() }
                         else -> r.skipValue()   // forward-compatible: ignore unknown keys
@@ -120,25 +124,7 @@ data class PageSpec @JvmOverloads constructor(
 }
 
 /**
- * Sort direction for entries in [PageSpec.sorts]. Declared as an enum (not a
- * [SortState] alias) so the public REST-facing contract stays decoupled from
- * the UI-model's internal sort-state representation.
- */
-enum class SortDir {
-    /** Ascending sort. */
-    ASC,
-
-    /** Descending sort. */
-    DESC;
-
-    internal fun toSortState(): SortState = when (this) {
-        ASC -> SortState.ASCENDING
-        DESC -> SortState.DESCENDING
-    }
-}
-
-/**
- * Result of a [PagedQuery.execute][AbstractPagedQuery.execute] call. Contains the rows for the
+ * Result of a [PagedQuery.execute] call. Contains the rows for the
  * requested page, the total matching row count, and pagination metadata —
  * everything a typical REST response needs without a second round-trip.
  */

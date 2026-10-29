@@ -10,7 +10,7 @@ import kotlin.reflect.KClass
  *
  * Holds the mutable list of [AggregateEntry]s, generates default aliases,
  * builds the final aggregate SQL and executes it against the parent
- * [PagedList][AbstractPagedList]. Both the JVM and Native `SingleAggregator` actuals
+ * [PagedList]. Both the JVM and Native `SingleAggregator` actuals
  * delegate to a single instance of this class, so the aggregation logic
  * lives here once.
  */
@@ -19,6 +19,9 @@ internal class SingleAggregatorCore(
     private val state: PagedQueryCore.RequestState? = null,
 ) {
     internal val entries: MutableList<AggregateEntry> = mutableListOf()
+
+    /** Field nodes read by the structured aggregates; their JOINs go into every plan. */
+    private val joinNodes: MutableList<NodeField> = mutableListOf()
 
     /**
      * Registers an aggregate. [function] is the tag used for alias
@@ -66,11 +69,11 @@ internal class SingleAggregatorCore(
 
     private fun buildExpressionSql(function: String, expression: String): String {
         if (function == "raw") return expression
-        // Resolve field paths using the same tree that AbstractPagedList uses for
+        // Resolve field paths using the same tree that PagedList uses for
         // column expressions — this handles FK traversal and join aliasing.
         val resolved = when (expression) {
             "*" -> "*"
-            else -> core.resolveAggregateExpression(expression)
+            else -> core.resolveAggregateNode(expression).also { joinNodes.add(it) }.columnHandler
         }
         return when (function) {
             "sum" -> "SUM($resolved)"
@@ -113,24 +116,44 @@ internal class SingleAggregatorCore(
                 if (sanitized.isEmpty()) function else "${function}_$sanitized"
             }
         }
-        val base = normalizeFirstChar(rawBase)
+        val max = maxAliasLength()
+        val base = fitAlias(normalizeFirstChar(rawBase), max)
         if (entries.none { it.alias == base }) return base
         var i = 2
-        while (entries.any { it.alias == "${base}_$i" }) i++
-        return "${base}_$i"
+        while (entries.any { it.alias == fitAlias("${base}_$i", max) }) i++
+        return fitAlias("${base}_$i", max)
+    }
+
+    /**
+     * The identifier limit of the database: a generated alias longer than that fails on
+     * Oracle 11 (ORA-00972) and is silently truncated by PostgreSQL. When no instance is
+     * reachable yet, the strictest common limit (30) is assumed.
+     */
+    private fun maxAliasLength(): Int =
+        runCatching { core.stormify.sqlDialect.maxIdentifierLength }.getOrDefault(30)
+
+    /**
+     * [alias] as is when it fits in [max] characters; otherwise its beginning followed by
+     * a hash of the whole of it, so long aliases that share a beginning stay distinct and
+     * the same expression always gets the same alias.
+     */
+    private fun fitAlias(alias: String, max: Int): String {
+        if (alias.length <= max) return alias
+        val hash = alias.hashCode().toUInt().toString(16).padStart(8, '0')
+        return alias.take(max - hash.length - 1).trimEnd('_') + "_" + hash
     }
 
     /** Builds the final SQL for the current entry list. */
     internal fun buildQuery(): String = buildPlan().first
 
     /** Returns the positional argument list that accompanies [buildQuery]. */
-    internal fun buildArgs(): List<Any> = buildPlan().second
+    internal fun buildArgs(): List<Any?> = buildPlan().second
 
-    private fun buildPlan(): Pair<String, List<Any>> {
+    private fun buildPlan(): Pair<String, List<Any?>> {
         require(entries.isNotEmpty()) { "Aggregator has no aggregations to run" }
         val dialect = core.stormify.sqlDialect
         val select = entries.joinToString(", ") { "${it.expression} AS ${dialect.quoteAlias(it.alias)}" }
-        return core.planAggregate(select, state)
+        return core.planAggregate(select, state, joinNodes)
     }
 
     /**

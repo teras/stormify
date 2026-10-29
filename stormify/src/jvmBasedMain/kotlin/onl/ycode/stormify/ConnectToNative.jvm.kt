@@ -5,6 +5,8 @@ package onl.ycode.stormify
 
 import onl.ycode.kdbc.TypeConversion
 import kotlin.reflect.KClass
+import kotlin.reflect.full.primaryConstructor
+import kotlin.reflect.jvm.javaField
 
 /** Maps to [java.math.BigInteger] on JVM. */
 actual typealias NativeBigInteger = java.math.BigInteger
@@ -35,6 +37,10 @@ internal actual fun transformResultValue(value: Any?): Any? {
     if (value is java.sql.Blob) return value.getBytes(1, value.length().toInt())
     return value
 }
+
+internal actual fun isBigDecimal(value: Any): Boolean =
+    value is java.math.BigDecimal ||
+            (supportsIonspinBigNumbers && value is com.ionspin.kotlin.bignum.decimal.BigDecimal)
 
 @OptIn(kotlin.uuid.ExperimentalUuidApi::class)
 actual val Any.isOtherPrimitive: Boolean
@@ -75,11 +81,11 @@ internal actual fun enumEntries(klass: KClass<*>): Array<out Enum<*>>? =
 
 internal actual fun <T : Any> tryReflection(type: KClass<T>): EntityMeta<T>? {
     val jClass = type.java
-    // Build table name override from @DbTable or JPA @Table/@Entity
+    // Table name override: @DbTable, then JPA @Table, then JPA @Entity (whose name is
+    // also the JPA default table name). Same precedence as the annotation processor.
     val tableNameOverride = jClass.getAnnotation(DbTable::class.java)?.name?.takeIf { it.isNotBlank() }
-        ?: jClass.annotations.find { it.annotationClass.qualifiedName == "javax.persistence.Table" }
-            ?.let { ann -> ann.annotationClass.java.getMethod("name").invoke(ann) as? String }
-            ?.takeIf { it.isNotBlank() }
+        ?: jClass.annotations.jpa("Table")?.stringAttr("name")
+        ?: jClass.annotations.jpa("Entity")?.stringAttr("name")
 
     val kProps = type.members.filterIsInstance<kotlin.reflect.KProperty1<T, *>>()
     if (kProps.isEmpty()) return null
@@ -97,6 +103,14 @@ internal actual fun <T : Any> tryReflection(type: KClass<T>): EntityMeta<T>? {
             }
             null
         }
+        // Where the value lives: the backing field, or for a delegated property the field
+        // holding the delegate. A property with neither, such as `val x get() = ...` or a
+        // `var` whose custom get and set use no field, stores nothing of its own, so it is
+        // not a column. The annotation processor skips these properties too; how the two
+        // paths treat properties that do have a field but no public setter is described
+        // where the setter is chosen below.
+        val storage = try { kProp.javaField } catch (_: Throwable) { jField }
+            ?: return@mapNotNull null
         val javaGetter = try { jClass.getMethod("get$capitalizedName") } catch (_: Exception) {
             try { jClass.getMethod("is$capitalizedName") } catch (_: Exception) {
                 // Boolean property named "isFoo" — getter is isFoo(), not getIsFoo()
@@ -114,13 +128,17 @@ internal actual fun <T : Any> tryReflection(type: KClass<T>): EntityMeta<T>? {
         //    `var`/`val` params to the parameter target, not the property — pick them up here
         //    so users don't need -Xannotation-default-target=param-property).
         //    Walk the class hierarchy so inherited constructor properties are found too.
+        //    Every constructor that declares the parameter contributes, the primary one
+        //    first: a secondary constructor repeating the parameter without annotations
+        //    must not hide the annotations of the primary one.
         val ctorParamAnnotations: List<Annotation> = run {
             var cls: Class<*>? = jClass
             while (cls != null) {
-                for (ctor in cls.kotlin.constructors) {
-                    val param = ctor.parameters.find { it.name == propName }
-                    if (param != null) return@run param.annotations.toList()
-                }
+                val kClass = cls.kotlin
+                val ctors = listOfNotNull(kClass.primaryConstructor) +
+                        kClass.constructors.filter { it != kClass.primaryConstructor }
+                val params = ctors.mapNotNull { ctor -> ctor.parameters.find { it.name == propName } }
+                if (params.isNotEmpty()) return@run params.flatMap { it.annotations }.distinct()
                 cls = cls.superclass
             }
             emptyList()
@@ -130,28 +148,34 @@ internal actual fun <T : Any> tryReflection(type: KClass<T>): EntityMeta<T>? {
                 (kProp.annotations) +
                 ctorParamAnnotations
 
-        // Check transient: Java keyword, Kotlin @Transient, JPA @Transient
-        val isJavaTransient = jField != null && java.lang.reflect.Modifier.isTransient(jField.modifiers)
+        // Check transient: Java keyword, Kotlin @Transient (on the backing field, or with
+        // @delegate:Transient on the delegate field), JPA @Transient
+        val isJavaTransient = java.lang.reflect.Modifier.isTransient(storage.modifiers)
         val isTransient = isJavaTransient || annotations.any {
             it is Transient || it.annotationClass.qualifiedName == "javax.persistence.Transient"
         }
 
+        // Stormify and JPA annotations may be combined on one property. Every attribute
+        // is merged the same way regardless of which annotations are present, so the
+        // result matches the annotation processor: a name comes from the first source
+        // that sets one (@DbField, @Column, @JoinColumn), a flag that defaults to false
+        // is set by any source, and a flag that defaults to true is cleared by any source.
         val dbField = annotations.filterIsInstance<DbField>().firstOrNull()
-        val jpaId = annotations.any { it.annotationClass.qualifiedName == "javax.persistence.Id" }
-        val jpaColumn = annotations.find { it.annotationClass.qualifiedName == "javax.persistence.Column" }
-        val jpaJoinColumn = annotations.find { it.annotationClass.qualifiedName == "javax.persistence.JoinColumn" }
-        val jpaSequence = annotations.find { it.annotationClass.qualifiedName == "javax.persistence.SequenceGenerator" }
+        val jpaId = annotations.jpa("Id") != null
+        val jpaColumn = annotations.jpa("Column")
+        val jpaJoinColumn = annotations.jpa("JoinColumn")
+        val jpaSequence = annotations.jpa("SequenceGenerator")
 
         val dbNameOverride = dbField?.name?.takeIf { it.isNotBlank() }
-            ?: (jpaColumn ?: jpaJoinColumn)?.let { ann ->
-                try { ann.annotationClass.java.getMethod("name").invoke(ann) as? String } catch (_: Exception) { null }
-            }?.takeIf { it.isNotBlank() }
+            ?: jpaColumn?.stringAttr("name")
+            ?: jpaJoinColumn?.stringAttr("name")
 
-        val isPrimaryKey = dbField?.primaryKey ?: jpaId
+        val isPrimaryKey = (dbField?.primaryKey ?: false) || jpaId
+        // In JPA `name` names the generator and `sequenceName` the database sequence;
+        // the generator name is the sequence only when `sequenceName` is left empty.
         val sequence = dbField?.primarySequence?.takeIf { it.isNotBlank() }
-            ?: jpaSequence?.let { ann ->
-                try { ann.annotationClass.java.getMethod("name").invoke(ann) as? String } catch (_: Exception) { null }
-            }?.takeIf { it.isNotBlank() }
+            ?: jpaSequence?.stringAttr("sequenceName")
+            ?: jpaSequence?.stringAttr("name")
 
         val isAutoIncrement = (dbField?.autoIncrement ?: false) || annotations.any { ann ->
             if (ann.annotationClass.qualifiedName == "javax.persistence.GeneratedValue") {
@@ -162,15 +186,13 @@ internal actual fun <T : Any> tryReflection(type: KClass<T>): EntityMeta<T>? {
             } else false
         }
 
-        val isCreatable = dbField?.creatable ?: (jpaColumn?.let { ann ->
-            try { ann.annotationClass.java.getMethod("insertable").invoke(ann) as? Boolean } catch (_: Exception) { null }
-        } ?: true)
-        val isUpdatable = dbField?.updatable ?: (jpaColumn?.let { ann ->
-            try { ann.annotationClass.java.getMethod("updatable").invoke(ann) as? Boolean } catch (_: Exception) { null }
-        } ?: true)
+        val isInsertable = (dbField?.insertable ?: true) &&
+                jpaColumn?.booleanAttr("insertable") != false && jpaJoinColumn?.booleanAttr("insertable") != false
+        val isUpdatable = (dbField?.updatable ?: true) &&
+                jpaColumn?.booleanAttr("updatable") != false && jpaJoinColumn?.booleanAttr("updatable") != false
 
         // Determine if enum should be stored as string
-        val enumAsString = dbField?.enumAsString ?: annotations.any { ann ->
+        val enumAsString = (dbField?.enumAsString ?: false) || annotations.any { ann ->
             if (ann.annotationClass.qualifiedName == "javax.persistence.Enumerated") {
                 try {
                     val enumType = ann.annotationClass.java.getMethod("value").invoke(ann)
@@ -206,24 +228,65 @@ internal actual fun <T : Any> tryReflection(type: KClass<T>): EntityMeta<T>? {
                 else null
         }
 
-        val getter: (T) -> Any? = if (javaGetter != null) {
+        // How a value read from the database is stored. A public setter (Java bean setter,
+        // or Kotlin `var`, delegated or not) is used when there is one. Otherwise a property
+        // with a backing field (a `val`, a `var` with a private or protected setter, a Java
+        // field without setter, final or not) is loaded through that field, so it is never
+        // left with a stale value that a later UPDATE would write back, and is read from it
+        // for INSERT and UPDATE as well (see the getter below). A read-only property
+        // whose field holds a delegate other than `db` (for example `by lazy`) has nowhere to
+        // store the value: it cannot be a column, which is reported when the table metadata
+        // is built, unless it is transient.
+        // This loading through the field is specific to reflection: code generated by the
+        // annotation processor cannot assign a field without a public setter, so that path
+        // does not map such properties the same way.
+        val publicKotlinSetter = mutableProp != null &&
+                mutableProp.setter.visibility == kotlin.reflect.KVisibility.PUBLIC
+        val isBackingField = storage.name == propName
+        // A property loaded through its field (no public setter) is written through the same
+        // field, so a custom getter cannot turn a load followed by an update into a change
+        // of the stored value. Everything else is read through its getter.
+        val fieldOnly = javaSetter == null && !publicKotlinSetter && isBackingField
+        val getter: (T) -> Any? = if (fieldOnly) {
+            storage.isAccessible = true
+            { entity: T -> storage.get(entity) }
+        } else if (javaGetter != null) {
             { entity: T -> javaGetter.invoke(entity) }
         } else {
             { entity: T -> kProp.get(entity) }
+        }
+
+        val readOnlyDelegate = javaSetter == null && !publicKotlinSetter && !isBackingField
+        val delegateError = when {
+            !readOnlyDelegate -> null
+            // A db delegate stores the value, but only a public setter reaches it: `val x by db()`,
+            // or `var x by db()` with a private or protected setter.
+            db::class.java.isAssignableFrom(storage.type) ->
+                if (mutableProp != null)
+                    "Property ${kProp.name} of ${type.simpleName} has no public setter: make its setter public to be loaded"
+                else
+                    "Property ${kProp.name} of ${type.simpleName} is a val by db(): it must be a var to be loaded"
+            else -> "Property ${kProp.name} of ${type.simpleName} uses a delegate and cannot be mapped to a column: " +
+                    "mark it @delegate:Transient or use by db()"
         }
 
         val setter: (T, Any?, Stormify) -> Unit = if (javaSetter != null) {
             { entity: T, value: Any?, stormify: Stormify ->
                 javaSetter.invoke(entity, TypeUtils.castTo(propType, value, stormify))
             }
-        } else if (mutableProp != null) {
+        } else if (publicKotlinSetter) {
             @Suppress("UNCHECKED_CAST")
             { entity: T, value: Any?, stormify: Stormify ->
                 (mutableProp as kotlin.reflect.KMutableProperty1<T, Any?>).set(entity, TypeUtils.castTo(propType, value, stormify))
             }
+        } else if (isBackingField) {
+            storage.isAccessible = true
+            { entity: T, value: Any?, stormify: Stormify ->
+                storage.set(entity, TypeUtils.castTo(propType, value, stormify))
+            }
         } else {
             { _: T, _: Any?, _: Stormify ->
-                throw onl.ycode.kdbc.SQLException("Property ${kProp.name} is not mutable in ${type.simpleName}")
+                throw onl.ycode.kdbc.SQLException(delegateError ?: "Property ${kProp.name} is not mutable in ${type.simpleName}")
             }
         }
 
@@ -237,12 +300,12 @@ internal actual fun <T : Any> tryReflection(type: KClass<T>): EntityMeta<T>? {
             isPrimaryKey = isPrimaryKey,
             sequence = sequence,
             isAutoIncrement = isAutoIncrement,
-            isCreatable = isCreatable,
+            isInsertable = isInsertable,
             isUpdatable = isUpdatable,
             isTransient = isTransient,
             isEnum = isEnum,
             enumAsString = enumAsString
-        )
+        ).also { it.mappingError = delegateError }
     }
 
     if (properties.isEmpty()) return null
@@ -273,3 +336,16 @@ internal actual fun <T : Any> tryReflection(type: KClass<T>): EntityMeta<T>? {
         tableNameOverride = tableNameOverride
     )
 }
+
+private fun Array<Annotation>.jpa(simpleName: String): Annotation? = asList().jpa(simpleName)
+
+private fun List<Annotation>.jpa(simpleName: String): Annotation? =
+    find { it.annotationClass.qualifiedName == "javax.persistence.$simpleName" }
+
+private fun Annotation.attr(name: String): Any? =
+    try { annotationClass.java.getMethod(name).invoke(this) } catch (_: Exception) { null }
+
+/** A string attribute of a JPA annotation, or null when it is missing or blank (the JPA "unset" value). */
+private fun Annotation.stringAttr(name: String): String? = (attr(name) as? String)?.takeIf { it.isNotBlank() }
+
+private fun Annotation.booleanAttr(name: String): Boolean? = attr(name) as? Boolean

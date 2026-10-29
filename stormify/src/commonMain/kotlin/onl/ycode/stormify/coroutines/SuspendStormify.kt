@@ -7,9 +7,9 @@ import kotlin.concurrent.atomics.ExperimentalAtomicApi
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.InternalCoroutinesApi
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.ensureActive
 import onl.ycode.kdbc.Connection
 import onl.ycode.stormify.Stormify
-import onl.ycode.stormify.asQuery
 import onl.ycode.stormify.nextSavepointName
 import onl.ycode.stormify.throwQuery
 import kotlin.coroutines.coroutineContext
@@ -26,8 +26,8 @@ import kotlin.coroutines.coroutineContext
  *
  *  - [withConnection] — borrows a pooled connection for the duration of the block.
  *    Auto-commit stays on; no transaction is started. Use it for reads and for any
- *    work that does not need atomicity. Exceptions propagate **unchanged** (no
- *    `SQLException` wrapping) and do not destroy the borrowed connection.
+ *    work that does not need atomicity. Exceptions propagate **unchanged** and do
+ *    not destroy the borrowed connection.
  *  - [transaction] — the same borrow, plus BEGIN/COMMIT around the block (rollback
  *    on any throwable). Use it only where atomicity is required.
  *
@@ -115,8 +115,7 @@ public class SuspendStormify internal constructor(
      * [SuspendStormify], reuses that scope's connection (auto-commit is never touched).
      *
      * **Exception contract:** whatever [block] throws propagates to the caller
-     * unchanged — unlike [transaction], no `SQLException` wrapping happens on this
-     * path. Application-level exceptions (validation, not-found, constraint
+     * unchanged, as from [transaction]. Application-level exceptions (validation, not-found, constraint
      * violations in auto-commit) do not harm the borrowed connection; it is
      * returned to the pool and reused. Only coroutine cancellation evicts it.
      */
@@ -134,10 +133,11 @@ public class SuspendStormify internal constructor(
             try {
                 block()
             } catch (e: Throwable) {
-                // Cancellation — or a cancel that raced with an application throw —
-                // leaves the connection in an unknown state: propagate unwrapped so
-                // the pool evicts it.
-                if (e is CancellationException || cancelled.load() != 0) throw e
+                // Cancellation, or a failure the cancel caused (the interrupted statement),
+                // leaves the connection in an unknown state: propagate as cancellation so
+                // the pool evicts it and the coroutine counts as cancelled, not failed.
+                if (e is CancellationException) throw e
+                if (cancelled.load() != 0) throw CancellationException("Cancelled", e)
                 // Everything else leaves an auto-commit connection healthy. The
                 // wrapper tells the pool to keep it and rethrow the original.
                 throw HealthyConnectionException(e)
@@ -148,9 +148,11 @@ public class SuspendStormify internal constructor(
     /**
      * Execute [block] inside a transaction. Commits on success, rolls back on any throwable.
      *
-     * Failures surface as [onl.ycode.kdbc.SQLException] with the original throwable as
-     * `cause` — the same contract as blocking [Stormify.transaction]. Coroutine
-     * cancellation is exempt and always propagates unwrapped.
+     * Whatever [block] throws propagates unchanged after the rollback, as from the
+     * blocking [Stormify.transaction]; the transaction's own failures (begin, commit)
+     * are [onl.ycode.kdbc.SQLException]s. A cancelled coroutine ends in a
+     * `CancellationException`, with the failure of the interrupted statement as its
+     * cause.
      *
      * If called from inside another `transaction { }` on the same [SuspendStormify],
      * opens a savepoint on the ambient connection. If called from inside a bare
@@ -227,10 +229,14 @@ public class SuspendStormify internal constructor(
      */
     @OptIn(ExperimentalAtomicApi::class)
     private suspend fun <R> runTxBody(conn: Connection, block: suspend () -> R, cancelled: AtomicInt?): R {
+        stormify.txSnapshotLog.begin(conn)
         try {
             conn.setAutoCommit(false)
             val result = block()
+            // A block that ends normally after its coroutine was cancelled does not commit.
+            coroutineContext.ensureActive()
             conn.commit()
+            stormify.txSnapshotLog.commit(conn)
             return result
         } catch (e: Throwable) {
             var rollbackOk = false
@@ -239,18 +245,21 @@ public class SuspendStormify internal constructor(
             } else {
                 runCatching { conn.cleanupAfterCancel() }
             }
-            // Cancellation propagates unwrapped to preserve structured concurrency;
-            // everything else surfaces as SQLException (same contract as blocking
-            // Stormify.transaction), original as cause.
+            // Whether or not the rollback went through, the transaction did not commit.
+            stormify.txSnapshotLog.rollback(conn)
+            // Cancellation propagates as it is, to preserve structured concurrency;
+            // everything else propagates unchanged, as from the blocking
+            // Stormify.transaction.
             if (e is CancellationException) throw e
-            val wrapped = e.asQuery("Unable to execute transaction")
+            // The failure of a statement the cancel interrupted is the cancellation itself
+            if (cancelled != null && cancelled.load() != 0) throw CancellationException("Cancelled", e)
             // HealthyConnectionException is a signal for the pool boundary — only
             // meaningful when this transaction owns the borrow (cancelled != null).
             // Nested inside withConnection { } there is no pool boundary ahead, so
             // the marker must not leak into user code; the enclosing withConnection
             // re-wraps for the pool on its own.
-            if (rollbackOk && cancelled != null) throw HealthyConnectionException(wrapped)
-            throw wrapped
+            if (rollbackOk && cancelled != null) throw HealthyConnectionException(e)
+            throw e
         } finally {
             if (cancelled == null || cancelled.load() == 0) runCatching { conn.setAutoCommit(true) }
         }
@@ -265,6 +274,7 @@ public class SuspendStormify internal constructor(
         } catch (e: Throwable) {
             e.throwQuery("Unable to open savepoint for nested transaction")
         }
+        val mark = stormify.txSnapshotLog.mark(conn)
         return try {
             val result = block()
             if (stormify.sqlDialect.supportsReleaseSavepoint) {
@@ -273,8 +283,8 @@ public class SuspendStormify internal constructor(
             result
         } catch (e: Throwable) {
             runCatching { conn.rollback(savepoint) }
-            if (e is CancellationException) throw e
-            e.throwQuery("Unable to execute nested transaction")
+            stormify.txSnapshotLog.rollbackTo(conn, mark)
+            throw e
         }
     }
 }

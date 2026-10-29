@@ -8,40 +8,40 @@ import onl.ycode.kdbc.SQLException
  * Parsed operator expression for ordered (numeric/temporal) facet filters.
  * Returned by [OrderedQuery.parse].
  */
-sealed interface OrderedNode
+internal sealed interface OrderedNode
 
 /** `value` — exact match. */
-data class EqualNode(
+internal data class EqualNode(
     /** The value to match. */
     val value: String
 ) : OrderedNode
 
 /** `< value` */
-data class LessThanNode(
+internal data class LessThanNode(
     /** The upper bound (exclusive). */
     val value: String
 ) : OrderedNode
 
 /** `> value` */
-data class GreaterThanNode(
+internal data class GreaterThanNode(
     /** The lower bound (exclusive). */
     val value: String
 ) : OrderedNode
 
 /** `<= value` */
-data class LessOrEqualNode(
+internal data class LessOrEqualNode(
     /** The upper bound (inclusive). */
     val value: String
 ) : OrderedNode
 
 /** `>= value` */
-data class GreaterOrEqualNode(
+internal data class GreaterOrEqualNode(
     /** The lower bound (inclusive). */
     val value: String
 ) : OrderedNode
 
 /** `low...high` — inclusive range. */
-data class BetweenNode(
+internal data class BetweenNode(
     /** The lower bound (inclusive). */
     val low: String,
     /** The upper bound (inclusive). */
@@ -56,7 +56,7 @@ data class BetweenNode(
  * [Converter] implementations can call [parse] and pattern-match on the
  * [OrderedNode] subtypes for custom rendering.
  */
-object OrderedQuery {
+internal object OrderedQuery {
 
     /**
      * Parses [input] into an [OrderedNode]. Throws [SQLException] on malformed

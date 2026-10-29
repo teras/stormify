@@ -4,17 +4,20 @@
 
 package onl.ycode.stormify
 
+import onl.ycode.stormify.biglist.SortState
 import kotlin.concurrent.Volatile
-import kotlinx.atomicfu.locks.synchronized
+import kotlinx.atomicfu.locks.withLock
 import onl.ycode.kdbc.*
 import onl.ycode.logger.LogManager
 import onl.ycode.stormify.SqlDialect.GeneratedKeyRetrieval
 import onl.ycode.stormify.Stormify.Companion.defaultInstance
 import onl.ycode.stormify.TypeUtils.castTo
-import onl.ycode.stormify.biglist.AbstractPagedList
+import onl.ycode.stormify.biglist.PagedList
+import onl.ycode.stormify.biglist.PagedQuery
 import onl.ycode.stormify.biglist.FilterSyntax
 import onl.ycode.stormify.biglist.InputParser
 import onl.ycode.stormify.biglist.ReferencePath
+import onl.ycode.stormify.biglist.TextFolding
 import onl.ycode.stormify.coroutines.PoolConfig
 import onl.ycode.stormify.coroutines.SuspendStormify
 import kotlin.reflect.KClass
@@ -115,9 +118,10 @@ class Stormify(
         private val _defaultInstance = kotlinx.atomicfu.atomic<Stormify?>(null)
 
         /**
-         * The default Stormify instance, used by [AutoTable], [PagedList][AbstractPagedList], and the
-         * Kotlin entity extensions when no instance is explicitly attached. Set this
-         * once at startup via [asDefault]; callers can then omit the receiver.
+         * The default Stormify instance, set once at startup via [asDefault]. A call that
+         * names no instance (the top-level functions, the lazy load of an entity no
+         * instance read) works on the instance of the enclosing transaction or
+         * connection scope, and on this one outside of them.
          */
         var defaultInstance: Stormify?
             get() = _defaultInstance.value
@@ -128,36 +132,19 @@ class Stormify(
         /** Classloader-leak cleanup hook — on JVM, invoked by `StormifyLifecycle.clear()`. */
         internal fun clearDefault() { _defaultInstance.value = null }
 
+        /**
+         * The instance a call without one works on: the owner of the innermost transaction
+         * or connection scope open on this thread, else [defaultInstance].
+         */
+        @PublishedApi
+        internal fun current(): Stormify? = ActiveTxRegistry.currentOwner() ?: defaultInstance
+
     }
 
     /** Sets this instance as [defaultInstance] and returns it. */
     fun asDefault(): Stormify {
         defaultInstance = this
         return this
-    }
-
-    /**
-     * Runs [block] with this instance as the default, restoring the previous default
-     * when the block exits.
-     *
-     * ```kotlin
-     * stormify.asDefault { s -> s.read<User>(...) }
-     * ```
-     *
-     * **Not safe under concurrent use.** While the block runs, *every* thread that
-     * reads [defaultInstance] observes this instance — the override is process-wide,
-     * not thread-local. In a multi-threaded environment (e.g. a server handling
-     * parallel requests), pass the `Stormify` instance explicitly instead of relying
-     * on the default inside the block.
-     */
-    fun <R> asDefault(block: (Stormify) -> R): R {
-        val previous = defaultInstance
-        defaultInstance = this
-        try {
-            return block(this)
-        } finally {
-            defaultInstance = previous
-        }
     }
 
     // --- Policies ---
@@ -192,12 +179,12 @@ class Stormify(
     // The cache is lazily populated on the query hot path, so its getOrPut must be
     // atomic even though configuration above is documented as startup-only.
 
-    private val cacheLock = kotlinx.atomicfu.locks.SynchronizedObject()
+    private val cacheLock = kotlinx.atomicfu.locks.reentrantLock()
     private val tableInfoCache = mutableMapOf<KClass<*>, TableInfo<*>>()
 
     @Suppress("UNCHECKED_CAST")
     internal fun <T : Any> resolveTableInfo(type: KClass<out T>): TableInfo<T> =
-        synchronized(cacheLock) {
+        cacheLock.withLock {
             tableInfoCache.getOrPut(type) {
                 val meta = EntityMeta.find(type) ?: tryReflection(type)
                 ?: throw SQLException("Unknown entity: ${type.fullName}")
@@ -235,6 +222,13 @@ class Stormify(
      */
     @Volatile
     var unmatchedColumnPolicy: UnmatchedColumnPolicy = UnmatchedColumnPolicy.IGNORE
+
+    /**
+     * What a reference to a missing row does: throw when loaded ([DanglingReferences.THROW],
+     * the default) or read as `null` ([DanglingReferences.NULL], as with JPA).
+     */
+    @Volatile
+    var danglingReferences: DanglingReferences = DanglingReferences.THROW
 
     /**
      * How many rows the driver buffers per round-trip during streaming
@@ -278,6 +272,46 @@ class Stormify(
      */
     @Volatile
     var inputParser: InputParser? = null
+
+    /**
+     * Text folding of case-insensitive facet filters: how [TEXT][onl.ycode.stormify.biglist.Facet.Type.TEXT]
+     * filters fold the column and the typed text, and how [ENUM][onl.ycode.stormify.biglist.Facet.Type.ENUM]
+     * filters match display names. Default is [TextFolding.DEFAULT], the
+     * case-insensitive `LIKE` of the dialect.
+     */
+    @Volatile
+    var textFolding: TextFolding = TextFolding.DEFAULT
+
+    /**
+     * When `true`, [update] writes only the columns that changed since the entity was
+     * loaded, instead of every updatable column. Default `false`.
+     *
+     * Applies to entities that extend [StormifyEntity] (and so [AutoTable]): when one is
+     * loaded, a copy of its column values is kept with it, and [update] compares the
+     * current values against that copy. Entities that are not [StormifyEntity], or that
+     * were never loaded (created in code, or loaded while this was off), get the full
+     * `UPDATE`. An entity with no changed column issues no statement at all. After an
+     * update, the written values become the new reference. In a batch [update], entities
+     * are grouped by the set of changed columns, one batched statement per group, on the
+     * same connection.
+     *
+     * Costs a second copy of each loaded row's values in memory. A value changed in
+     * place, such as `java.util.Date.setTime`, is detected, since the copy is taken of
+     * mutable values. An entity whose primary key changed gets the full `UPDATE`.
+     *
+     * Inside a [transaction] (or a suspend transaction), the written values become the
+     * reference only when the transaction commits: on rollback, of the transaction or
+     * of the savepoint of a nested one, the entities it updated lose their reference
+     * and their next update is the full `UPDATE`, also when this was switched on inside
+     * the transaction. On a connection whose transaction is managed outside Stormify,
+     * the reference is not replaced, since the statement may still be rolled back there;
+     * the next update writes the changed columns again.
+     *
+     * An entity with no changed column issues no statement, so nothing checks that its
+     * row still exists.
+     */
+    @Volatile
+    var dynamicUpdate: Boolean = false
 
     // --- Internal connection management ---
 
@@ -440,7 +474,7 @@ class Stormify(
         val refInfo = resolveTableInfo(refType) as TableInfo<Any>
         val wrapper = refInfo.create()
         if (wrapper is StormifyEntity) wrapper._stormify = this
-        if (wrapper is AutoTable) wrapper._isHydrated.value = false
+        if (wrapper is AutoTable) wrapper.markNotHydrated()
         refInfo.setField(wrapper, refInfo.idDbNames[0], idValue, this)
         return wrapper
     }
@@ -465,26 +499,41 @@ class Stormify(
     // --- Attach stormify to entity ---
 
     /**
-     * Attaches this Stormify instance to [target] so the target can use it for database
-     * operations without receiving it as an explicit parameter.
-     *
-     * Works for any [StormifyAware] — [StormifyEntity] subclasses (entities, [AutoTable])
-     * and [PagedList][AbstractPagedList] instances. Returns [target] for fluent chaining.
+     * Attaches this Stormify instance to the entity [target], so it lazy-loads and
+     * writes through this instance. Entities this instance reads are attached already.
+     * Returns [target] for fluent chaining.
      *
      * ```kotlin
-     * // Manual stub — user knows the ID, lets Stormify lazy-load the rest
+     * // Manual stub: the id is known, the rest loads on first access
      * val user = stormify.attach(User().apply { id = 42 })
      * println(user.name)  // triggers SELECT via the attached instance
-     *
-     * // Paged list — attach before use (or rely on Stormify.defaultInstance)
-     * val list = stormify.attach(PagedList<Company>())
-     * list.addFacet("name")
      * ```
      */
-    fun <T : StormifyAware> attach(target: T): T = target.also { it.attachTo(this) }
+    fun <T : StormifyEntity> attach(target: T): T = target.also { it._stormify = this }
+
+    /**
+     * Creates a [PagedList] of [T] working on this instance, ready to be configured.
+     *
+     * ```kotlin
+     * val list = stormify.pagedList<Company>()
+     *     .facet(Company_.name)
+     *     .sort(Company_.name, SortState.ASCENDING)
+     * ```
+     */
+    inline fun <reified T : Any> pagedList(): PagedList<T> = PagedList(T::class, this)
+
+    /**
+     * Creates a [PagedQuery] of [T] working on this instance, ready to be configured.
+     *
+     * ```kotlin
+     * val customers = stormify.pagedQuery<Customer>()
+     * customers.addFacet("name", Customer_.name)
+     * ```
+     */
+    inline fun <reified T : Any> pagedQuery(): PagedQuery<T> = PagedQuery(T::class, this)
 
     private fun attachStormify(target: Any) {
-        if (target is StormifyAware) target.attachTo(this)
+        if (target is StormifyEntity) target._stormify = this
     }
 
     // --- Read operations ---
@@ -531,12 +580,19 @@ class Stormify(
         fetchSize: Int = cursorFetchSize,
         customFields: Map<String, (Any?) -> Unit>? = null,
         consumer: (T) -> Unit
-    ) = performQuery(conn, query, params.toList(), fetchSize = fetchSize, code = { statement ->
+    ): Int {
+      var resultContext: PopulationContext? = null
+      // With DanglingReferences.NULL the rows are handed over once the result is complete
+      // and checked, so the consumer sees the references to missing rows as null.
+      var held: ArrayList<Any>? = null
+      val rows = performQuery(conn, query, params.toList(), fetchSize = fetchSize, code = { statement ->
         val isMap = Map::class == baseClass
         val info = if (TypeConversion.isKnownScalar(baseClass) || isMap) null else resolveTableInfo(baseClass)
         val normalizedCustomFields = customFields?.mapKeys { it.key.lowercase() }
         statement.executeQuery().use { rs ->
-            val context = if (info != null) PopulationContext() else null
+            val context = if (info != null) PopulationContext().also { resultContext = it } else null
+            val deferred = if (context != null && danglingReferences == DanglingReferences.NULL)
+                ArrayList<Any>().also { held = it } else null
             var count = 0
             // Lazily build per-result-set plans (only once we see the first row),
             // because some drivers materialize column metadata only after rs.next().
@@ -564,8 +620,9 @@ class Stormify(
                     }
                     @Suppress("UNCHECKED_CAST")
                     val item = info.create().also { attachStormify(it) } as Any
+                    val populated = populateWithPlan(item, rs, entityPlan, context)
                     @Suppress("UNCHECKED_CAST")
-                    consumer(populateWithPlan(item, rs, entityPlan, context) as T)
+                    if (deferred != null) deferred.add(populated) else consumer(populated as T)
                 } else {
                     consumer(
                         castTo(baseClass, rs.getObject(1, baseClass), this)
@@ -576,6 +633,65 @@ class Stormify(
                             )
                     )
                 }
+            }
+            count
+        }
+      })
+      // Once the result is complete: references to missing rows read as null, if asked to.
+      resultContext?.resolveDanglingReferences(this, conn)
+      @Suppress("UNCHECKED_CAST")
+      held?.forEach { consumer(it as T) }
+      return rows
+    }
+
+    /**
+     * Reads the first column of every row as a string, keeping SQL `NULL` as
+     * `null` where the scalar [read] rejects it. Same per-driver conversion as
+     * `read<String>`.
+     */
+    internal fun readNullableStrings(query: String, vararg params: Any?): List<String?> =
+        performQuery(null, query, params.toList(), code = { statement ->
+            statement.executeQuery().use { rs ->
+                val out = ArrayList<String?>()
+                while (rs.next())
+                    out.add(castTo(String::class, rs.getObject(1, String::class), this))
+                out
+            }
+        })
+
+    /**
+     * Executes a SELECT query and returns every row as an array of its column values, by
+     * position. Unlike `read<Map<String, Any?>>`, columns with the same label (`a.id`,
+     * `b.id`) all come back. Values are converted as for a `Map` read; SQL `NULL` is
+     * `null`. Runs on the connection of the active transaction, if any, like every read.
+     */
+    @Throws(SQLException::class)
+    fun readRows(query: String, vararg params: Any?): List<Array<Any?>> {
+        val rows = ArrayList<Array<Any?>>()
+        readRowsCursor(query, *params, fetchSize = 0) { rows.add(it) }
+        return rows
+    }
+
+    /**
+     * Streaming form of [readRows]: hands each row to [consumer] as it is read, without
+     * materializing the result, and returns the number of rows. [fetchSize] is the driver
+     * batch size hint, as for [readCursor].
+     */
+    @Throws(SQLException::class)
+    fun readRowsCursor(
+        query: String,
+        vararg params: Any?,
+        fetchSize: Int = cursorFetchSize,
+        consumer: (Array<Any?>) -> Unit
+    ): Int = performQuery(null, query, params.toList(), fetchSize = fetchSize, code = { statement ->
+        statement.executeQuery().use { rs ->
+            var columns = -1
+            var count = 0
+            while (rs.next()) {
+                // Column count only once a row is there: some drivers expose metadata late.
+                if (columns < 0) columns = rs.getMetaData().columnCount
+                consumer(Array(columns) { rs.getObject(it + 1, Any::class) })
+                count++
             }
             count
         }
@@ -669,18 +785,40 @@ class Stormify(
     fun <T : Any> refresh(entity: T): T =
         refresh(null, entity)
 
+    /**
+     * Loads [entity]'s row into it, as [refresh] does, and returns `false` without throwing
+     * when the row does not exist. Used by lazy loading, which applies [danglingReferences].
+     */
+    @Suppress("UNCHECKED_CAST")
+    internal fun <T : Any> loadIfExists(entity: T): Boolean {
+        attachStormify(entity)
+        val info = resolveTableInfo(entity::class) as TableInfo<T>
+        val idValues = getValidIds(entity, info)
+        if (idValues.any { it == null }) return true
+        val context = PopulationContext()
+        val found = performQuery(null, info.populateQuery, idValues, code = { statement ->
+            statement.executeQuery().use { rs ->
+                if (rs.next()) { populate<T>(entity, rs, context); true } else false
+            }
+        })
+        context.resolveDanglingReferences(this, null)
+        return found
+    }
+
     @Suppress("UNCHECKED_CAST")
     internal fun <T : Any> refresh(conn: Connection?, entity: T): T {
         attachStormify(entity)
         val info = resolveTableInfo(entity::class) as TableInfo<T>
         val idValues = getValidIds(entity, info)
         if (idValues.any { it == null }) return entity  // null PK = nothing to load
+        val context = PopulationContext()
         performQuery<Any>(conn, info.populateQuery, idValues, code = { statement ->
             statement.executeQuery().use { rs ->
-                if (rs.next()) return@performQuery populate<T>(entity, rs)
+                if (rs.next()) return@performQuery populate<T>(entity, rs, context)
                 else throw SQLException("No data found for ${info.tableName}:${info.getIdValues(entity)}")
             }
         })
+        context.resolveDanglingReferences(this, conn)
         return entity
     }
 
@@ -762,8 +900,13 @@ class Stormify(
         context: PopulationContext?,
     ): T {
         attachStormify(item)
-        if (item is AutoTable) item.markHydrated()
+        // A shadow reference being loaded is marked loaded by its loader once every field
+        // is filled; marking it here would let other threads see it half-filled.
+        if (item is AutoTable && !item.loadInProgress()) item.markHydrated()
         val info = plan.info
+        // For the dynamic update snapshot: the key each reference column holds, as read,
+        // so taking the snapshot never reads a referenced entity (and loads its row).
+        val referenceKeys = if (dynamicUpdate && item is StormifyEntity) HashMap<String, Any?>() else null
         for (col in plan.cols) {
             val handler = col.customHandler
             if (handler != null) {
@@ -780,10 +923,16 @@ class Stormify(
                 else rs.getObject(col.index, Any::class)
             )
 
+            if (referenceKeys != null && col.isReference) {
+                val keyType = resolveTableInfo(col.refType!!).idTypes.singleOrNull()
+                referenceKeys[col.name.lowercase()] =
+                    if (value != null && keyType != null) castTo(keyType, value, this) else value
+            }
+
             val resolved = if (value != null && col.isReference) {
                 val refType = col.refType!!
                 try {
-                    if (context != null) context.getOrCreateReference(refType, value, this)
+                    if (context != null) context.getOrCreateReference(refType, value, this, item, col.setters)
                     else createReferenceStub(refType, value)
                 } catch (e: Exception) {
                     throw SQLException(
@@ -810,17 +959,26 @@ class Stormify(
                 continue
             }
             try {
-                for (setter in col.setters) setter.setter(item, resolved, this)
+                // A column can back both a reference and a plain scalar (a read-only
+                // association next to its raw foreign key): only reference properties
+                // take the resolved entity, the others take the column value.
+                for (setter in col.setters) setter.setter(item, if (setter.isReference) resolved else value, this)
             } catch (e: NullPointerException) {
                 throw SQLException("Null value for non-null field '${col.name}' in ${item::class.simpleName}", e)
             }
         }
+        if (referenceKeys != null) (item as StormifyEntity)._updateSnapshot = takeUpdateSnapshot(info, item, referenceKeys)
         return item
     }
 
+    /**
+     * Loads [members] (entities of one class, by single primary key) in one query and
+     * returns the members whose row was not found, which are left untouched. Throws only
+     * when the query itself fails.
+     */
     @Suppress("UNCHECKED_CAST")
-    internal fun batchPopulate(members: List<AutoTable>) {
-        if (members.isEmpty()) return
+    internal fun batchPopulate(members: List<AutoTable>): List<AutoTable> {
+        if (members.isEmpty()) return emptyList()
         val info = resolveTableInfo(members[0]::class) as TableInfo<AutoTable>
 
         // Collect unique IDs and map members by string key
@@ -829,7 +987,7 @@ class Stormify(
 
         for (member in members) {
             val id = info.getIdValues(member)[0]
-            val key = id.toString()
+            val key = identityKey(id)
             if (byId.containsKey(key))
                 byId[key]!!.add(member)
             else {
@@ -858,7 +1016,8 @@ class Stormify(
                     // Convert before keying: a driver may hand back a different
                     // representation of the same id (java.sql.Timestamp for an Instant
                     // key), whose toString() would never match the entity-side key.
-                    val key = castTo(info.idTypes[0], rs.getObject(pkColIdx, info.idTypes[0]), this).toString()
+                    // identityKey then equates decimals that differ only in scale.
+                    val key = identityKey(castTo(info.idTypes[0], rs.getObject(pkColIdx, info.idTypes[0]), this))
                     val targets = byId.remove(key)
                     if (targets != null) {
                         if (plan == null) plan = buildColumnPlan(rs, info, null)
@@ -869,9 +1028,9 @@ class Stormify(
                 0
             }
         })
+        nestedContext.resolveDanglingReferences(this, null)
 
-        if (byId.isNotEmpty())
-            throw SQLException("No data found for ${info.tableName} with ids ${byId.keys}")
+        return byId.values.flatten()
     }
 
     // --- Sequence support ---
@@ -884,6 +1043,14 @@ class Stormify(
         if (result.isNotEmpty())
             _dbLog("Sequence $sequence incremented by ${result.size} to ${result.last()}")
         return result
+    }
+
+    private fun isIntegralZero(value: Any): Boolean = when (value) {
+        is Long -> value == 0L
+        is Int -> value == 0
+        is Short -> value == 0.toShort()
+        is Byte -> value == 0.toByte()
+        else -> false
     }
 
     private fun getNextSequence(conn: Connection?, sequence: String) =
@@ -916,20 +1083,23 @@ class Stormify(
 
             // Identify items needing IDs (single PK)
             val isAutoIncrement = hasSinglePk && info.primaryKeys[0].isAutoIncrement
+            val sequence = if (hasSinglePk) info.idSequences[0] else ""
             val needsId = mutableListOf<Int>()
             if (hasSinglePk) {
                 if (isAutoIncrement) {
                     // Auto-increment: all items need generated IDs
                     for (i in itemList.indices) needsId.add(i)
                 } else {
-                    for (i in itemList.indices)
-                        if (info.getIdValues(itemList[i])[0] == null)
+                    for (i in itemList.indices) {
+                        val id = info.getIdValues(itemList[i])[0]
+                        // A primitive key cannot be null, so 0 stands for unassigned when a sequence fills it
+                        if (id == null || (sequence.isNotBlank() && isIntegralZero(id)))
                             needsId.add(i)
+                    }
                 }
             }
 
             // Bulk fetch sequences if applicable
-            val sequence = if (hasSinglePk) info.idSequences[0] else ""
             if (needsId.isNotEmpty() && sequence.isNotBlank()) {
                 val seqs = getNextSequences(maker.connection, sequence, needsId.size)
                 if (seqs.size < needsId.size)
@@ -995,16 +1165,105 @@ class Stormify(
         if (items.isEmpty()) return emptyList()
         val itemList = if (items is List) items else items.toList()
         itemList.forEach { attachStormify(it) }
+        // An unloaded shadow reference is loaded before its values are read: a column read
+        // straight from its field (no public setter) would otherwise still hold its default
+        // and be written back over the stored value.
+        itemList.forEach { if (it is AutoTable) it.hydrateIfNeeded() }
         val info = resolveTableInfo(itemList[0]::class) as TableInfo<T>
         for (item in itemList)
             if (getValidIds(item, info).any { it == null })
                 throw SQLException("Cannot update ${info.tableName}: primary key is null")
+        if (dynamicUpdate) {
+            updateChangedColumns(conn, info, itemList)
+            return itemList
+        }
         @Suppress("UNCHECKED_CAST")
         performQuery(conn, info.updateQuery, emptyList(),
             batchItems = itemList,
             batchParamOf = { (info as TableInfo<Any>).getUpdateValues(it!!).map { v -> sqlData(v, false) } }
         ) { it.executeBatch() }
         return itemList
+    }
+
+    private class ChangedRow<T>(val item: T, val values: List<Any?>)
+
+    /**
+     * The [dynamicUpdate] path of [update]: compares each entity against its
+     * [UpdateSnapshot], groups the entities by the set of changed columns and issues one
+     * batched `UPDATE` per group, all on one connection.
+     */
+    private fun <T : Any> updateChangedColumns(conn: Connection?, info: TableInfo<T>, items: List<T>) {
+        val allColumns = (0 until info.updatableCount).toList()
+        val groups = LinkedHashMap<List<Int>, MutableList<ChangedRow<T>>>()
+        for (item in items) {
+            val values = info.getUpdatableValues(item).map { sqlData(it, false) }
+            // A changed primary key points the UPDATE at another row: write it whole, as
+            // without dynamic update.
+            val snapshot = (item as? StormifyEntity)?._updateSnapshot?.takeIf { it.info === info }
+                ?.takeIf { snap -> snapshotIds(info, item).let { ids -> ids.indices.all { sameSnapshotValue(ids[it], snap.ids[it]) } } }
+            val columns = if (snapshot == null) {
+                if (allColumns.isEmpty()) throw SQLException("Entity ${info.tableName} has no updatable fields")
+                allColumns
+            } else values.indices.filter { !sameSnapshotValue(values[it], snapshot.values[it]) }
+            if (columns.isNotEmpty())
+                groups.getOrPut(columns) { mutableListOf() }.add(ChangedRow(item, values))
+        }
+        if (groups.isEmpty()) return
+        ConnectionMaker(conn).use { maker ->
+            for ((columns, rows) in groups) {
+                val query = if (columns.size == allColumns.size) info.updateQuery else info.partialUpdateQuery(columns)
+                performQuery(maker.connection, query, emptyList(),
+                    batchItems = rows,
+                    batchParamOf = { row ->
+                        @Suppress("UNCHECKED_CAST")
+                        row as ChangedRow<T>
+                        columns.map { row.values[it] } + info.getIdValues(row.item).map { sqlData(it, false) }
+                    }
+                ) { it.executeBatch() }
+            }
+            // The written values are the reference for the next update, once they are
+            // final: inside a transaction of this instance they are logged, so a rollback
+            // drops them again; in auto-commit they are committed. On a connection whose
+            // transaction is managed elsewhere the statement may still be rolled back, so
+            // the old reference stays, which at worst writes the same columns again.
+            val autoCommit by lazy { maker.connection.getAutoCommit() }
+            for (rows in groups.values)
+                for (row in rows) {
+                    val entity = row.item as? StormifyEntity ?: continue
+                    if (txSnapshotLog.record(maker.connection, entity) || autoCommit)
+                        entity._updateSnapshot = UpdateSnapshot(
+                            info, Array(row.values.size) { snapshotCopy(row.values[it]) }, snapshotIds(info, row.item)
+                        )
+                }
+        }
+    }
+
+    /** Snapshots replaced inside open transactions, dropped again on rollback. */
+    internal val txSnapshotLog = TxSnapshotLog()
+
+    /**
+     * Copies the current updatable column values of [item] for [dynamicUpdate]. A reference
+     * column takes its key from [referenceKeys] (as read by the load) when present, rather
+     * than through the referenced entity, which would load that entity's row.
+     */
+    private fun <T : Any> takeUpdateSnapshot(
+        info: TableInfo<T>,
+        item: T,
+        referenceKeys: Map<String, Any?> = emptyMap(),
+    ): UpdateSnapshot {
+        val props = info.updatableProperties
+        val values = Array(props.size) { i ->
+            val prop = props[i]
+            val key = prop.dbName.lowercase()
+            if (prop.isReference && referenceKeys.containsKey(key)) referenceKeys[key]
+            else sqlData(prop.sqlValue(item), false)
+        }
+        return UpdateSnapshot(info, Array(values.size) { snapshotCopy(values[it]) }, snapshotIds(info, item))
+    }
+
+    private fun <T : Any> snapshotIds(info: TableInfo<T>, item: T): Array<Any?> {
+        val ids = info.getIdValues(item)
+        return Array(ids.size) { snapshotCopy(sqlData(ids[it], false)) }
     }
 
     // --- Delete ---
@@ -1060,7 +1319,7 @@ class Stormify(
 
     /**
      * Type-safe variant of [getDetails] that accepts an annotation-processor-generated
-     * reference path (e.g. `Paths.AuditEntry_.createdBy`) instead of a string. The
+     * reference path (e.g. `Tables.AuditEntry_.createdBy`) instead of a string. The
      * compiler guarantees the referenced property exists on the child type, so typos
      * and renames surface at build time rather than on first query.
      */
@@ -1131,7 +1390,8 @@ class Stormify(
     }
 
     /**
-     * Fetches the children of many parents in one query, grouped by parent id.
+     * Fetches the children of many parents in one query, grouped by parent id (as
+     * [identityKey]).
      *
      * This is what turns a page of parents from N+1 queries into two. Returns null when
      * the batch cannot be built — a parent whose key is missing, or a child type whose
@@ -1143,18 +1403,23 @@ class Stormify(
         parents: List<Any>,
         detailsClass: KClass<D>,
         propertyName: String?,
-    ): Map<Any, List<D>>? {
+    ): Map<String, List<D>>? {
         if (parents.isEmpty()) return null
         val parentClass = parents.first()::class
-        val byId = HashMap<Any, Any>(parents.size)
+        // Keyed by identityKey: the key read back through the child's foreign key column
+        // may differ in type or scale from the parent's own (an INT column pointing at a
+        // DECIMAL key), and must still find its parent.
+        val byId = LinkedHashMap<String, Any>(parents.size)
+        val ids = ArrayList<Any>(parents.size)
         for (parent in parents) {
             val id = singleIdOrNull(parent) ?: return null
-            byId[id] = parent
+            byId[identityKey(id)] = parent
+            ids.add(id)
         }
 
         val detailInfo = resolveTableInfo(detailsClass)
         val fkColumn = detailsForeignKey(parentClass, detailsClass, propertyName)
-        val placeholders = byId.keys.joinToString(", ") { "?" }
+        val placeholders = ids.joinToString(", ") { "?" }
 
         // The property behind the foreign key column, so each loaded row can be asked
         // which parent it points at.
@@ -1164,17 +1429,17 @@ class Stormify(
             conn,
             detailsClass,
             "SELECT * FROM ${detailInfo.tableName} WHERE $fkColumn IN ($placeholders)",
-            *byId.keys.toTypedArray(),
+            *ids.toTypedArray(),
         )
 
-        val grouped = HashMap<Any, MutableList<D>>(byId.size)
+        val grouped = HashMap<String, MutableList<D>>(byId.size)
         for (id in byId.keys) grouped[id] = mutableListOf()
         for (row in rows) {
             // The column loaded as a reference to the parent, so read that reference and
             // take its key. Reading it does not fetch anything: a primary key is a plain
             // property, not one of the lazily loaded ones.
             val ownerRef = fkProperty.getter(row) ?: return null
-            val ownerId = singleIdOrNull(ownerRef) ?: return null
+            val ownerId = identityKey(singleIdOrNull(ownerRef) ?: return null)
             val owner = byId[ownerId] ?: return null
             // Point the child at the parent instance the caller already holds, rather
             // than at the stub the read created, so the two sides agree.
@@ -1220,6 +1485,9 @@ class Stormify(
      * Executes [block] within a database transaction with automatic commit on success
      * and rollback on any thrown exception, returning the block's result.
      *
+     * Whatever [block] throws propagates unchanged after the rollback; the
+     * transaction's own failures (connection, savepoint, commit) are [SQLException]s.
+     *
      * **Nesting.** If this call is made from inside another `transaction { }` on the
      * same [Stormify] instance and the same thread (detected via [ActiveTxRegistry]),
      * the inner call reuses the outer connection and bounds its work with a database
@@ -1247,17 +1515,20 @@ class Stormify(
 
     private fun <R> runTransactionBody(conn: Connection, block: () -> R): R {
         ActiveTxRegistry.push(this, conn)
+        txSnapshotLog.begin(conn)
         try {
             conn.setAutoCommit(false)
             val result = block()
             conn.commit()
+            txSnapshotLog.commit(conn)
             return result
         } catch (e: Throwable) {
             // The connection may already be broken (the reason we landed here);
-            // swallow rollback / autocommit failures so the original exception
-            // propagates unchanged.
+            // swallow rollback / autocommit failures so they do not replace the
+            // original exception, which propagates unchanged.
             runCatching { conn.rollback() }
-            e.throwQuery("Unable to execute transaction")
+            txSnapshotLog.rollback(conn)
+            throw e
         } finally {
             runCatching { conn.setAutoCommit(true) }
             ActiveTxRegistry.pop(this, conn)
@@ -1270,6 +1541,7 @@ class Stormify(
         } catch (e: Throwable) {
             e.throwQuery("Unable to open savepoint for nested transaction")
         }
+        val mark = txSnapshotLog.mark(conn)
         return try {
             val result = block()
             if (sqlDialect.supportsReleaseSavepoint)
@@ -1277,7 +1549,8 @@ class Stormify(
             result
         } catch (e: Throwable) {
             runCatching { conn.rollback(savepoint) }
-            e.throwQuery("Unable to execute nested transaction")
+            txSnapshotLog.rollbackTo(conn, mark)
+            throw e
         }
     }
 

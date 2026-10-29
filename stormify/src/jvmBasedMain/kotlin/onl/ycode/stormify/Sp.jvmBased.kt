@@ -29,7 +29,7 @@ actual sealed class Sp actual constructor() {
         override fun toString() = "OUT<${type.simpleName}>:${_value}"
     }
 
-    actual class InOut<T : Any> actual constructor(actual val type: KClass<T>, actual val input: T) : Sp() {
+    actual class InOut<T : Any> actual constructor(actual val type: KClass<T>, actual val input: T?) : Sp() {
         private var _value: T? = input
 
         @Suppress("UNCHECKED_CAST")
@@ -54,7 +54,7 @@ actual sealed class Sp actual constructor() {
         actual fun <T : Any> outParam(type: KClass<T>): Out<T> = Out(type)
 
         @JvmStatic
-        actual fun <T : Any> inOutParam(type: KClass<T>, value: T): InOut<T> = InOut(type, value)
+        actual fun <T : Any> inOutParam(type: KClass<T>, value: T?): InOut<T> = InOut(type, value)
 
         /** `Class<T>` overload for Java callers; equivalent to `outParam(type.kotlin)`. */
         @JvmStatic
@@ -62,6 +62,6 @@ actual sealed class Sp actual constructor() {
 
         /** `Class<T>` overload for Java callers; equivalent to `inOutParam(type.kotlin, value)`. */
         @JvmStatic
-        fun <T : Any> inOutParam(type: Class<T>, value: T): InOut<T> = InOut(type.kotlin, value)
+        fun <T : Any> inOutParam(type: Class<T>, value: T?): InOut<T> = InOut(type.kotlin, value)
     }
 }

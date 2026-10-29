@@ -99,15 +99,16 @@ open class SuspendTransactionTest {
 
         stormify.executeUpdate("INSERT INTO $dbNameForTest (id, name) VALUES (?, ?)", 10, "seed")
 
+        val boom = RuntimeException("boom")
         try {
             runner.transaction {
                 stormify.executeUpdate("INSERT INTO $dbNameForTest (id, name) VALUES (?, ?)", 11, "should-roll-back")
-                throw RuntimeException("boom")
+                throw boom
             }
             fail("Expected exception was not thrown")
-        } catch (e: onl.ycode.kdbc.SQLException) {
-            // User failures surface as SQLException, original throwable kept as cause
-            assertEquals("boom", e.cause?.message, "Unexpected exception: ${e.message}")
+        } catch (e: RuntimeException) {
+            // The block's own exception reaches the caller unchanged
+            assertEquals("boom", e.message, "Unexpected exception: $e")
         }
 
         val names = stormify.read<String>("SELECT name FROM $dbNameForTest WHERE id IN (10, 11) ORDER BY id")

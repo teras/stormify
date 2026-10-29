@@ -2,6 +2,8 @@
 // (C) Panayotis Katsaloulis
 package onl.ycode.stormify.biglist
 
+import kotlin.jvm.JvmOverloads
+
 import onl.ycode.stormify.SqlDialect
 
 /**
@@ -55,7 +57,7 @@ data class OrNode(
  * Longest match wins among overlapping tokens: configuring `not = "-"` and
  * `nullToken = "--"` is fine — `--` is tried before `-`.
  */
-data class FilterSyntax(
+data class FilterSyntax @JvmOverloads constructor(
     /** OR operator. Default `"OR"`. */
     val or: String = "OR",
     /** NOT operator. Default `"-"`. */
@@ -105,7 +107,7 @@ private data class Token(val type: TokenType, val value: String = "")
 object TextQuery {
 
     /** Default token configuration — English Google-like syntax. */
-    val defaultSyntax = FilterSyntax()
+    internal val defaultSyntax = FilterSyntax()
 
     /**
      * Parses [input] into a [TextNode] AST, or returns `null` if empty/malformed.
@@ -124,7 +126,7 @@ object TextQuery {
      * [TermNode] and [PhraseNode] leaves. Boolean composition (AND/OR/NOT) and
      * [NullNode] are emitted as standard SQL.
      */
-    fun renderAst(
+    internal fun renderAst(
         ast: TextNode,
         column: String,
         atomRenderer: (text: String, isPhrase: Boolean) -> String
@@ -147,11 +149,12 @@ object TextQuery {
         dialect: SqlDialect,
         caseSensitive: Boolean,
         args: SqlArgsCollector,
-        syntax: FilterSyntax = defaultSyntax
+        syntax: FilterSyntax = defaultSyntax,
+        folding: TextFolding = TextFolding.DEFAULT
     ): String? {
         val ast = parse(input, syntax) ?: return null
         return renderAst(ast, column) { text, isPhrase ->
-            renderLikeTerm(text, isPhrase, column, dialect, caseSensitive, args)
+            renderLikeTerm(text, isPhrase, column, dialect, caseSensitive, args, syntax.wildcard, folding)
         }
     }
 
@@ -286,32 +289,41 @@ object TextQuery {
         column: String,
         dialect: SqlDialect,
         caseSensitive: Boolean,
-        args: SqlArgsCollector
+        args: SqlArgsCollector,
+        wildcard: Char = defaultSyntax.wildcard,
+        folding: TextFolding = TextFolding.DEFAULT,
     ): String {
         var col = column
         var likeOp = "LIKE"
-        var text = input
+        var fold: (String) -> String = { it }
 
         if (!caseSensitive) {
-            val (foldedCol, op) = dialect.caseInsensitiveLike(col)
-            col = foldedCol
-            likeOp = op
-            text = dialect.transformLikeValue(text)
+            col = folding.column(col, dialect)
+            likeOp = folding.likeOperator(dialect)
+            fold = { folding.likeValue(it, dialect) }
         }
 
-        if (isPhrase) {
-            text = "%${escapeLike(text)}%"
+        // Folding applies to the literal pieces only, after the wildcards are split
+        // off and before escaping, so a folding cannot remove or alter a wildcard and
+        // the escapes it would otherwise see.
+        val text = if (isPhrase) {
+            "%${escapeLike(fold(input))}%"
         } else {
-            if (!text.startsWith("*") && !text.endsWith("*")) text = "*$text*"
-            text = COLLAPSE_WILDCARDS.replace(text, "*")
-            text = escapeLike(text).replace('*', '%')
+            var pattern = input
+            if (!pattern.startsWith(wildcard) && !pattern.endsWith(wildcard)) pattern = "$wildcard$pattern$wildcard"
+            // Split on the configured wildcard before escaping, so a wildcard that is itself
+            // a LIKE metacharacter ('%', '_') is not escaped into a literal.
+            collapseRuns(pattern, wildcard).split(wildcard).joinToString("%") { escapeLike(fold(it)) }
         }
 
         args.add(text)
         return "$col $likeOp ? ${dialect.likeEscapeClause()}"
     }
 
-    private val COLLAPSE_WILDCARDS = Regex("\\*+")
+    /** Two wildcards in a row match exactly what one does: keep one. */
+    private fun collapseRuns(text: String, wildcard: Char): String = buildString(text.length) {
+        for (c in text) if (c != wildcard || lastOrNull() != wildcard) append(c)
+    }
 
     private fun escapeLike(text: String): String = buildString(text.length) {
         for (c in text) when (c) {

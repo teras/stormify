@@ -3,9 +3,8 @@
 package onl.ycode.stormify.biglist
 
 /**
- * The sort direction of a [Facet].
- *
- * Use `Facet.ASCENDING` or `Facet.DESCENDING` for convenience.
+ * A sort direction: of a [Facet], of the primary key ([PagedList.keySort]), and of
+ * the entries of [PageSpec.sorts] and [PagedListState.sorts].
  */
 enum class SortState {
     /** Sort in ascending order (A-Z, 0-9). */

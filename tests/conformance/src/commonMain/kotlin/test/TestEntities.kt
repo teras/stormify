@@ -2,6 +2,7 @@
 // (C) Panayotis Katsaloulis
 package test
 
+import com.ionspin.kotlin.bignum.decimal.BigDecimal
 import kotlinx.datetime.LocalDate
 import onl.ycode.stormify.*
 import onl.ycode.stormify.biglist.HumanReadable
@@ -10,7 +11,7 @@ import onl.ycode.stormify.biglist.HumanReadable
 class CrudTableRow(
     @DbField(primaryKey = true) var id: Int = 0,
     var name: String? = null,
-) : CRUDTable
+) : CRUDTable<CrudTableRow>
 
 @DbTable(name = "test")
 data class TestC(
@@ -28,6 +29,15 @@ data class Child(
 ) {
     override fun toString() = "Child(id=$id, name=$name, parent=$parent)"
 }
+
+// One column backing both a plain foreign key value and a read-only reference:
+// the column is written through `parentId` only, and read into both.
+@DbTable(name = "shared_col_child")
+data class SharedColumnChild(
+    var id: Int? = null,
+    @DbField(name = "parent") var parentId: Int? = null,
+    @DbField(name = "parent", insertable = false, updatable = false) var parentRef: TestC? = null,
+)
 
 data class DualKey(
     @DbField(primaryKey = true) var id1: Int = 0,
@@ -98,7 +108,7 @@ class AutoChildEntity : AutoTable() {
 data class DoubleDbName(
     var id: Int = 0,
     @DbField(name = "name", updatable = false) var name1: String = "",
-    @DbField(name = "name", creatable = false) var name2: String = ""
+    @DbField(name = "name", insertable = false) var name2: String = ""
 )
 
 // --- Data types ---
@@ -138,7 +148,7 @@ data class BlobEntity(
 data class AnnotatedEntity(
     @DbField(primaryKey = true) var id: Int = 0,
     @DbField(name = "custom_col") var renamedField: String? = null,
-    @DbField(creatable = false) var readOnlyOnCreate: String? = null,
+    @DbField(insertable = false) var readOnlyOnCreate: String? = null,
     @DbField(updatable = false) var readOnlyOnUpdate: String? = null
 )
 
@@ -174,6 +184,19 @@ data class UpperPolicyEntity(
 @DbTable(name = "pk_simple")
 data class PkSimple(
     @DbField(primaryKey = true, primarySequence = "pk_simple_seq") var id: Long? = null,
+    var name: String? = null
+)
+
+// A primitive key cannot be null: 0 is its unassigned value.
+@DbTable(name = "pk_seq_long")
+data class PkSeqLong(
+    @DbField(primaryKey = true, primarySequence = "pk_seq_long_seq") var id: Long = 0,
+    var name: String? = null
+)
+
+@DbTable(name = "pk_seq_int")
+data class PkSeqInt(
+    @DbField(primaryKey = true, primarySequence = "pk_seq_int_seq") var id: Int = 0,
     var name: String? = null
 )
 
@@ -352,4 +375,47 @@ class NestingOuter {
             )
         }
     }
+}
+
+// --- Decimal keys whose FK and PK columns differ in scale ---
+
+@DbTable(name = "dec_parent")
+class DecParent : AutoTable() {
+    @DbField(primaryKey = true) var id: BigDecimal? = null
+    var name: String? by db(null)
+}
+
+@DbTable(name = "dec_child")
+class DecChild : AutoTable() {
+    @DbField(primaryKey = true) var id: Int? = null
+    var parent: DecParent? by db(null)
+    var other: DecParent? by db(null)
+}
+
+// --- Properties that are not columns ---
+// A read-only property with a backing field is a compile error under annproc (see
+// docs/src/Annotations.md), so it cannot appear in this KSP-processed source set.
+
+@DbTable(name = "computed_test")
+class ComputedEntity {
+    @DbField(primaryKey = true) var id: Int = 0
+    var amount: Int = 0
+
+    /** Computed, no backing field: not a column. */
+    val doubled: Int get() = amount * 2
+
+    /** Delegate marked transient: not a column. */
+    @delegate:kotlin.jvm.Transient
+    val label: String by lazy { "L$id" }
+
+    /** A mutable property with any delegate is a column, assigned through its setter. */
+    var note: String? by kotlin.properties.Delegates.observable(null) { _, _, _ -> }
+}
+
+// --- Names the generated code must escape: '$' and a non-ASCII (Greek) letter ---
+
+@DbTable(name = "escape_test")
+class EscapeEntity {
+    @DbField(primaryKey = true) var id: Int = 0
+    @DbField(name = "val\$ο") var value: String? = null
 }

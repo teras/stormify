@@ -2,6 +2,8 @@
 
 package test
 
+import onl.ycode.stormify.biglist.Converter
+import onl.ycode.stormify.pagedList
 import kotlinx.datetime.LocalDate
 import kotlinx.datetime.LocalDateTime
 import kotlinx.datetime.LocalTime
@@ -11,11 +13,11 @@ import onl.ycode.logger.WatchLogger
 import onl.ycode.logger.LogLevel
 import onl.ycode.stormify.SqlDialect
 import onl.ycode.stormify.Stormify
+import onl.ycode.stormify.TypeUtils
 import onl.ycode.stormify.biglist.Facet
 import onl.ycode.stormify.biglist.FilterSyntax
 import onl.ycode.stormify.biglist.InputParser
 import onl.ycode.stormify.biglist.PagedList
-import onl.ycode.stormify.biglist.PagedListSort
 import onl.ycode.stormify.biglist.PagedListState
 import onl.ycode.stormify.biglist.SortState
 import onl.ycode.stormify.biglist.execute
@@ -23,7 +25,7 @@ import kotlin.test.*
 
 open class PagedListTest {
     private fun withDb(name: String, test: (Stormify) -> Unit) = TestHelper.withDb(name) {
-        it.asDefault(test)
+        it.asDefault(); test(it)
     }
 
     private fun setupTable(s: Stormify, count: Int) {
@@ -84,12 +86,37 @@ open class PagedListTest {
         ))
     }
 
+    private fun setupPersonCityCountry(s: Stormify) {
+        TestDDL.dropTable("person")
+        TestDDL.dropTable("city")
+        TestDDL.dropTable("country")
+        s.executeUpdate(TestDDL.createTable("country",
+            "${TestDDL.intPrimaryKey("id")}, name ${TestDDL.textType()}"))
+        s.executeUpdate(TestDDL.createTable("city",
+            "${TestDDL.intPrimaryKey("id")}, name ${TestDDL.textType()}, " +
+                    "${TestDDL.intColumn("country")}, ${TestDDL.foreignKey("country", "country", "id")}"))
+        s.executeUpdate(TestDDL.createTable("person",
+            "${TestDDL.intPrimaryKey("id")}, name ${TestDDL.textType()}, " +
+                    "${TestDDL.intColumn("city")}, ${TestDDL.foreignKey("city", "city", "id")}"))
+        val greece = Country(1, "Greece")
+        val italy = Country(2, "Italy")
+        s.create(listOf(greece, italy))
+        val athens = City(1, "Athens", greece)
+        val patras = City(2, "Patras", greece)
+        val rome = City(3, "Rome", italy)
+        s.create(listOf(athens, patras, rome))
+        s.create(listOf(
+            Person(1, "Alice", athens), Person(2, "Bob", patras),
+            Person(3, "Carlo", rome), Person(4, "Dora", athens)
+        ))
+    }
+
     // --- Basic ---
 
     @Test
     fun testBasicPagedList() = withDb("PAGED-BASIC") { s ->
         setupTable(s, 50)
-        val list = PagedList<TestC>()
+        val list = pagedList<TestC>()
         assertEquals(50, list.size)
         assertEquals("Item1", list[0].name)
         assertEquals("Item50", list[49].name)
@@ -98,7 +125,7 @@ open class PagedListTest {
     @Test
     fun testEmptyList() = withDb("PAGED-EMPTY") { s ->
         setupTable(s, 0)
-        val list = PagedList<TestC>()
+        val list = pagedList<TestC>()
         assertEquals(0, list.size)
         assertTrue(list.isEmpty())
     }
@@ -106,7 +133,7 @@ open class PagedListTest {
     @Test
     fun testSingleElement() = withDb("PAGED-SINGLE") { s ->
         setupTable(s, 1)
-        val list = PagedList<TestC>()
+        val list = pagedList<TestC>()
         assertEquals(1, list.size)
         assertEquals("Item1", list[0].name)
     }
@@ -116,7 +143,7 @@ open class PagedListTest {
     @Test
     fun testPageSize() = withDb("PAGED-PAGESIZE") { s ->
         setupTable(s, 30)
-        val list = PagedList<TestC>()
+        val list = pagedList<TestC>()
         list.pageSize = 10
         assertEquals("Item1", list[0].name)
         assertEquals("Item15", list[14].name)
@@ -127,7 +154,7 @@ open class PagedListTest {
     @Test
     fun testPageSizeValidation() = withDb("PAGED-PAGESIZE-VALIDATE") { s ->
         setupTable(s, 5)
-        val list = PagedList<TestC>()
+        val list = pagedList<TestC>()
         assertFailsWith<IllegalArgumentException> { list.pageSize = 0 }
         assertFailsWith<IllegalArgumentException> { list.pageSize = -1 }
     }
@@ -135,7 +162,7 @@ open class PagedListTest {
     @Test
     fun testPageBoundaries() = withDb("PAGED-BOUNDARIES") { s ->
         setupTable(s, 25)
-        val list = PagedList<TestC>()
+        val list = pagedList<TestC>()
         list.pageSize = 10
         assertEquals("Item1", list[0].name)
         assertEquals("Item10", list[9].name)
@@ -148,7 +175,7 @@ open class PagedListTest {
     @Test
     fun testIndexOutOfBounds() = withDb("PAGED-OOB") { s ->
         setupTable(s, 10)
-        val list = PagedList<TestC>()
+        val list = pagedList<TestC>()
         assertFailsWith<IndexOutOfBoundsException> { list[10] }
         assertFailsWith<IndexOutOfBoundsException> { list[-1] }
         assertFailsWith<IndexOutOfBoundsException> { list[100] }
@@ -159,7 +186,7 @@ open class PagedListTest {
     @Test
     fun testIterator() = withDb("PAGED-ITERATOR") { s ->
         setupTable(s, 5)
-        val list = PagedList<TestC>()
+        val list = pagedList<TestC>()
         list.pageSize = 2
         val names = list.map { it.name }
         assertEquals(listOf("Item1", "Item2", "Item3", "Item4", "Item5"), names)
@@ -170,7 +197,7 @@ open class PagedListTest {
     @Test
     fun testConstraints() = withDb("PAGED-CONSTRAINTS") { s ->
         setupTable(s, 20)
-        val list = PagedList<TestC>()
+        val list = pagedList<TestC>()
         list.setConstraints("test.id > ?", 10)
         assertEquals(10, list.size)
         for (i in 0 until list.size)
@@ -186,7 +213,7 @@ open class PagedListTest {
             "${TestDDL.intPrimaryKey("id")}, name ${TestDDL.textType()}"))
         s.create(listOf(TestC(1, "Alice"), TestC(2, "Bob"), TestC(3, "Alicia"), TestC(4, "Charlie")))
 
-        val list = PagedList<TestC>()
+        val list = pagedList<TestC>()
         val col = list.addFacet("name")
         col.filter = "Al"
 
@@ -201,7 +228,7 @@ open class PagedListTest {
             "${TestDDL.intPrimaryKey("id")}, name ${TestDDL.textType()}"))
         s.create(listOf(TestC(1, "Alice"), TestC(2, "Bob")))
 
-        val list = PagedList<TestC>()
+        val list = pagedList<TestC>()
         val col = list.addFacet("name")
         col.filter = "Alice"
         assertEquals(1, list.size)
@@ -211,13 +238,38 @@ open class PagedListTest {
     }
 
     @Test
+    fun testBlankFilterIsNoFilter() = withDb("PAGED-FILTER-BLANK") { s ->
+        setupTable(s, 5)
+        val list = pagedList<TestC>()
+        val name = list.addFacet("name")
+        val id = list.addFacet("id")
+        for (blank in listOf("", "   ")) {
+            name.filter = "Item2"
+            assertEquals(1, list.size)
+            name.filter = blank
+            assertNull(name.filter)
+            assertEquals(5, list.size)
+            id.filter = blank
+            assertNull(id.filter)
+            assertEquals(5, list.size)
+        }
+        assertEquals(PagedListState(), list.saveState())
+        // A facet that is not filterable accepts a blank filter as "none".
+        id.filter = null
+        val sortOnly = list.addFacet("name")
+        sortOnly.isFilterable = false
+        sortOnly.filter = ""
+        assertNull(sortOnly.filter)
+    }
+
+    @Test
     fun testFilterNull() = withDb("PAGED-FILTER-NULL") { s ->
         TestDDL.dropTable("test")
         s.executeUpdate(TestDDL.createTable("test",
             "${TestDDL.intPrimaryKey("id")}, name ${TestDDL.textType()}"))
         s.create(listOf(TestC(1, "Alice"), TestC(2, null), TestC(3, null)))
 
-        val list = PagedList<TestC>()
+        val list = pagedList<TestC>()
         val col = list.addFacet("name")
         col.filter = "NULL"
         assertEquals(2, list.size)
@@ -232,9 +284,9 @@ open class PagedListTest {
             "${TestDDL.intPrimaryKey("id")}, name ${TestDDL.textType()}"))
         s.create(listOf(TestC(1, "Charlie"), TestC(2, "Alice"), TestC(3, "Bob")))
 
-        val list = PagedList<TestC>()
+        val list = pagedList<TestC>()
         val col = list.addFacet("name")
-        col.sort = Facet.ASCENDING
+        col.sort = SortState.ASCENDING
         assertEquals("Alice", list[0].name)
         assertEquals("Bob", list[1].name)
         assertEquals("Charlie", list[2].name)
@@ -247,9 +299,9 @@ open class PagedListTest {
             "${TestDDL.intPrimaryKey("id")}, name ${TestDDL.textType()}"))
         s.create(listOf(TestC(1, "Charlie"), TestC(2, "Alice"), TestC(3, "Bob")))
 
-        val list = PagedList<TestC>()
+        val list = pagedList<TestC>()
         val col = list.addFacet("name")
-        col.sort = Facet.DESCENDING
+        col.sort = SortState.DESCENDING
         assertEquals("Charlie", list[0].name)
         assertEquals("Bob", list[1].name)
         assertEquals("Alice", list[2].name)
@@ -258,9 +310,9 @@ open class PagedListTest {
     @Test
     fun testClearSort() = withDb("PAGED-SORT-CLEAR") { s ->
         setupTable(s, 5)
-        val list = PagedList<TestC>()
+        val list = pagedList<TestC>()
         val col = list.addFacet("name")
-        col.sort = Facet.DESCENDING
+        col.sort = SortState.DESCENDING
         assertEquals("Item5", list[0].name)
 
         col.clearSort()
@@ -281,7 +333,7 @@ open class PagedListTest {
             CamelEntity(3, "Charlie", "Brown")
         ))
 
-        val list = PagedList<CamelEntity>()
+        val list = pagedList<CamelEntity>()
         // Single column with two fields — OR between them
         val col = list.addFacet("firstName", "lastName")
         col.filter = "Ali"
@@ -299,7 +351,7 @@ open class PagedListTest {
             "${TestDDL.intPrimaryKey("id")}, name ${TestDDL.textType()}"))
         s.create(listOf(TestC(1, "Alice"), TestC(2, "Bob"), TestC(3, "Alicia"), TestC(4, "Charlie")))
 
-        val list = PagedList<TestC>()
+        val list = pagedList<TestC>()
         val nameCol = list.addFacet("name")
         val idCol = list.addFacet("id")
 
@@ -317,11 +369,73 @@ open class PagedListTest {
     fun testForeignKeyFilter() = withDb("PAGED-FK-FILTER") { s ->
         setupParentChild(s)
 
-        val list = PagedList<Child>()
+        val list = pagedList<Child>()
         val col = list.addFacet("parent.name")
         col.filter = "Parent1"
 
         assertEquals(2, list.size)
+    }
+
+    @Test
+    fun testFilterValuesOnUnfilteredForeignKeyPath() = withDb("PAGED-FV-FK-PATH") { s ->
+        setupPersonCityCountry(s)
+        val list = pagedList<Person>()
+        val name = list.addFacet("name")
+        val country = list.addFacet("city.country.name")
+
+        // No filter or sort anywhere: the JOIN chain must still be emitted.
+        assertEquals(listOf("Greece", "Italy"), country.getFilterValues().toList())
+        assertEquals(listOf("Greece" to 3L, "Italy" to 1L),
+            country.getFilterValues().withCounts().map { it.value to it.count })
+
+        // Filter on another facet narrows the values.
+        name.filter = "Carlo"
+        assertEquals(listOf("Italy"), country.getFilterValues().toList())
+        assertEquals(1, list.size)
+    }
+
+    @Test
+    fun testAggregatorOnUnfilteredForeignKeyPath() = withDb("PAGED-AGG-FK-PATH") { s ->
+        setupPersonCityCountry(s)
+        val list = pagedList<Person>()
+        val name = list.addFacet("name")
+        assertEquals(2L, list.getAggregator().countDistinct("city.country.name", "n").execute<Long>())
+        val row = list.getAggregator()
+            .countDistinct("city.name", "cities")
+            .count("city.country.name", "countries")
+            .execute()
+        assertEquals(3L, (row["cities"] as Number).toLong())
+        assertEquals(4L, (row["countries"] as Number).toLong())
+
+        name.filter = "Alice"
+        assertEquals(1L, list.getAggregator().countDistinct("city.country.name", "n").execute<Long>())
+        // The page query itself is unaffected by the aggregate's JOINs.
+        assertEquals(listOf("Alice"), list.map { it.name })
+    }
+
+    /**
+     * Generated aggregate aliases fit the database's identifier limit (30 on Oracle 11,
+     * where `countDistinct_city_country_name` failed with ORA-00972) and stay distinct.
+     */
+    @Test
+    fun testAggregatorAutoAliasFitsTheDialect() = withDb("PAGED-AGG-ALIAS-LIMIT") { s ->
+        setupPersonCityCountry(s)
+        val dialects = listOf(s.sqlDialect) + if (s.sqlDialect == SqlDialect.SQLITE) listOf(SqlDialect.ORACLE_OLD) else emptyList()
+        val original = s.sqlDialect
+        try {
+            for (dialect in dialects) {
+                s.sqlDialect = dialect
+                val row = pagedList<Person>().getAggregator()
+                    .countDistinct("city.country.name")
+                    .count("city.country.name")
+                    .execute()
+                assertEquals(2, row.size, "two distinct aliases on $dialect: ${row.keys}")
+                assertTrue(row.keys.all { it.length <= dialect.maxIdentifierLength }, "aliases on $dialect: ${row.keys}")
+                assertEquals(listOf(2L, 4L), row.values.map { TypeUtils.castTo(Long::class, it) }, "values on $dialect")
+            }
+        } finally {
+            s.sqlDialect = original
+        }
     }
 
     // --- Constraints + filter ---
@@ -333,13 +447,38 @@ open class PagedListTest {
             "${TestDDL.intPrimaryKey("id")}, name ${TestDDL.textType()}"))
         s.create(listOf(TestC(1, "Alice"), TestC(2, "Bob"), TestC(3, "Alicia"), TestC(4, "Charlie")))
 
-        val list = PagedList<TestC>()
+        val list = pagedList<TestC>()
         list.setConstraints("test.id <= ?", 3)
         val col = list.addFacet("name")
         col.filter = "Al"
 
         // id <= 3 AND name LIKE %al%  →  Alice (1), Alicia (3)
         assertEquals(2, list.size)
+    }
+
+    @Test
+    fun testOrConstraintStaysGroupedWithFilters() = withDb("PAGED-OR-CONSTRAINT") { s ->
+        TestDDL.dropTable("test")
+        s.executeUpdate(TestDDL.createTable("test",
+            "${TestDDL.intPrimaryKey("id")}, name ${TestDDL.textType()}"))
+        s.create(listOf(TestC(1, "Alice"), TestC(2, "Bob"), TestC(3, "Alicia"), TestC(4, "Bobby")))
+
+        val list = pagedList<TestC>()
+        list.setConstraints("test.id = ? OR test.id = ?", 1, 2)
+        val name = list.addFacet("name")
+        val id = list.addFacet("id")
+        name.filter = "Bob"
+
+        // (id = 1 OR id = 2) AND name LIKE %bob%  ->  Bob (2) only. Without the
+        // parentheses the filter binds to the second operand and Alice leaks in.
+        assertEquals(1, list.size)
+        assertEquals(listOf(2), list.map { it.id })
+        val streamed = mutableListOf<Int>()
+        list.forEachStreaming { streamed += it.id }
+        assertEquals(listOf(2), streamed)
+        assertEquals(1L, list.getAggregator().count("*").execute<Long>())
+        assertEquals(listOf("2"), id.getFilterValues().toList())
+        assertEquals(1, id.getFilterValues().withCounts().size)
     }
 
     // --- CamelCase property → snake_case column ---
@@ -355,7 +494,7 @@ open class PagedListTest {
             CamelEntity(3, "Alicia", "Brown")
         ))
 
-        val list = PagedList<CamelEntity>()
+        val list = pagedList<CamelEntity>()
         val col = list.addFacet("firstName")
         col.filter = "Ali"
 
@@ -367,11 +506,62 @@ open class PagedListTest {
     @Test
     fun testDistinct() = withDb("PAGED-DISTINCT") { s ->
         setupTable(s, 10)
-        val list = PagedList<TestC>()
+        val list = pagedList<TestC>()
         list.isDistinct = true
         assertEquals(10, list.size)
     }
 
+
+    /**
+     * DISTINCT with a non-unique sort over duplicated rows: every page has its rows and
+     * every distinct row appears once. The ROW_NUMBER dialects (Oracle 11, SQL Server
+     * 2008) page DISTINCT by DENSE_RANK, so they are also forced on SQLite.
+     */
+    @Test
+    fun testDistinctWithNonUniqueSortPagesEveryRow() = withDb("PAGED-DISTINCT-PAGES") { s ->
+        // A table left referencing test(id) stops MySQL from recreating test without a key
+        TestDDL.dropTable("child")
+        TestDDL.dropTable("shared_col_child")
+        TestDDL.dropTable("test")
+        // No primary key constraint: every row is stored twice.
+        s.executeUpdate(TestDDL.createTable("test", "${TestDDL.intColumn("id")}, name ${TestDDL.textType()}"))
+        for (id in 1..30) repeat(2) { s.executeUpdate("INSERT INTO test (id, name) VALUES (?, ?)", id, "Same") }
+        val dialects = listOf(s.sqlDialect) +
+                if (s.sqlDialect == SqlDialect.SQLITE) listOf(SqlDialect.ORACLE_OLD, SqlDialect.SQL_SERVER_OLD) else emptyList()
+        val original = s.sqlDialect
+        try {
+            for (dialect in dialects) {
+                s.sqlDialect = dialect
+                val list = pagedList<TestC>()
+                list.isDistinct = true
+                list.pageSize = 7
+                list.addFacet("name").sort = SortState.ASCENDING
+                assertEquals(30, list.size, "size on $dialect")
+                assertEquals((1..30).toList(), (0 until list.size).map { list[it].id }, "rows on $dialect")
+            }
+        } finally {
+            s.sqlDialect = original
+        }
+    }
+
+    /** `selected` on an entity joined to its own table: the key in ORDER BY is qualified. */
+    @Test
+    fun testSelectedWithSelfJoin() = withDb("PAGED-SELECTED-SELF-JOIN") { s ->
+        TestDDL.dropTable("tree_node")
+        s.executeUpdate(TestDDL.createTable("tree_node",
+            "${TestDDL.intPrimaryKey("id")}, name ${TestDDL.textType()}, " +
+                    "${TestDDL.intColumn("parent")}, ${TestDDL.foreignKey("parent", "tree_node", "id")}"))
+        val root = TreeNode(1, "root")
+        s.create(root)
+        s.create(listOf(TreeNode(2, "b", root), TreeNode(3, "a", root), TreeNode(4, "c", root)))
+
+        val list = pagedList<TreeNode>()
+        list.setConstraints("tree_node.parent IS NOT NULL")    // NULL ordering differs per database
+        list.addFacet("parent.name").sort = SortState.ASCENDING   // joins tree_node to itself
+        list.addFacet("name").sort = SortState.ASCENDING
+        list.selected = s.findById<TreeNode>(4)
+        assertEquals(listOf(4, 3, 2), list.map { it.id })
+    }
 
     // --- Reset ---
 
@@ -382,10 +572,10 @@ open class PagedListTest {
             "${TestDDL.intPrimaryKey("id")}, name ${TestDDL.textType()}"))
         s.create(listOf(TestC(1, "Alice"), TestC(2, "Bob")))
 
-        val list = PagedList<TestC>()
+        val list = pagedList<TestC>()
         val col = list.addFacet("name")
         col.filter = "Alice"
-        col.sort = Facet.DESCENDING
+        col.sort = SortState.DESCENDING
         assertEquals(1, list.size)
 
         list.reset()
@@ -399,7 +589,7 @@ open class PagedListTest {
     @Test
     fun testPagination100() = withDb("PAGED-100") { s ->
         setupTable(s, 100)
-        val list = PagedList<TestC>()
+        val list = pagedList<TestC>()
         list.pageSize = 7
         list.addFacet("name")
 
@@ -425,7 +615,7 @@ open class PagedListTest {
     @Test
     fun testSelectedOnCreateDelete() = withDb("PAGED-SELECTED") { s ->
         setupTable(s, 5)
-        val list = PagedList<TestC>()
+        val list = pagedList<TestC>()
         assertEquals(5, list.size)
 
         // Create and select — appears first, size +1
@@ -451,7 +641,7 @@ open class PagedListTest {
             "${TestDDL.intPrimaryKey("id")}, name ${TestDDL.textType()}"))
         s.create(listOf(TestC(1, "Alice"), TestC(2, "Bob"), TestC(3, "Charlie")))
 
-        val list = PagedList<TestC>()
+        val list = pagedList<TestC>()
         // Enum mapping: display name → DB value
         val nameMap = mapOf("Alice" to "Alice", "Bob" to "Bob", "Charlie" to "Charlie")
         val col = list.addFacet(nameMap, "name")
@@ -468,7 +658,7 @@ open class PagedListTest {
             "${TestDDL.intPrimaryKey("id")}, name ${TestDDL.textType()}"))
         s.create(listOf(TestC(1, "Active"), TestC(2, "Inactive"), TestC(3, "Archived")))
 
-        val list = PagedList<TestC>()
+        val list = pagedList<TestC>()
         val nameMap = mapOf("Active" to "Active", "Inactive" to "Inactive", "Archived" to "Archived")
         val col = list.addFacet(nameMap, "name")
         col.filter = "active"  // case-insensitive → "Active", "Inactive"
@@ -483,7 +673,7 @@ open class PagedListTest {
             "${TestDDL.intPrimaryKey("id")}, name ${TestDDL.textType()}"))
         s.create(listOf(TestC(1, "Alice"), TestC(2, "Bob")))
 
-        val list = PagedList<TestC>()
+        val list = pagedList<TestC>()
         val nameMap = mapOf("Alice" to "Alice", "Bob" to "Bob")
         val col = list.addFacet(nameMap, "name")
         col.filter = "xyz"  // no match → 0 results
@@ -502,7 +692,7 @@ open class PagedListTest {
             EnumEntity(3, PlainStatus.BANNED, CustomStatus.BANNED)
         ))
 
-        val list = PagedList<EnumEntity>()
+        val list = pagedList<EnumEntity>()
         // No explicit type — auto-detects enum, auto-builds enumValues
         val col = list.addFacet("plainStatus")
         col.filter = "BANNED"
@@ -519,7 +709,7 @@ open class PagedListTest {
             "${TestDDL.intPrimaryKey("id")}, name ${TestDDL.textType()}"))
         s.create(listOf(TestC(1, "Alice"), TestC(2, null), TestC(3, "Bob"), TestC(4, null)))
 
-        val list = PagedList<TestC>()
+        val list = pagedList<TestC>()
         val col = list.addFacet("name")
         col.filter = "Alice OR NULL"
         assertEquals(3, list.size) // Alice + 2 nulls
@@ -532,7 +722,7 @@ open class PagedListTest {
             "${TestDDL.intPrimaryKey("id")}, name ${TestDDL.textType()}"))
         s.create(listOf(TestC(1, "Alice"), TestC(2, null), TestC(3, "Bob")))
 
-        val list = PagedList<TestC>()
+        val list = pagedList<TestC>()
         val col = list.addFacet("name")
         col.filter = "-NULL"
         assertEquals(2, list.size) // Alice, Bob (not null)
@@ -541,10 +731,49 @@ open class PagedListTest {
     @Test
     fun testNullNumeric() = withDb("PAGED-NULL-NUM") { s ->
         setupTable(s, 5)
-        val list = PagedList<TestC>()
+        val list = pagedList<TestC>()
         val col = list.addFacet("id")
         col.filter = "NULL"
         assertEquals(0, list.size) // no null ids
+    }
+
+    @Test
+    fun testSymbolNullTokenOnNumericAndDate() = withDb("PAGED-NULL-SYMBOL") { s ->
+        TestDDL.dropTable("nullable_test")
+        s.executeUpdate(TestDDL.createTable("nullable_test",
+            "${TestDDL.intPrimaryKey("id")}, name ${TestDDL.textType()}, " +
+                    "${TestDDL.intColumn("nullable_int")}, nullable_string ${TestDDL.textType()}"))
+        s.create(listOf(NullableEntity(1, "a", -5), NullableEntity(2, "b", null), NullableEntity(3, "c", 7)))
+        setupDateTable(s)
+        s.executeUpdate("INSERT INTO event (id, title) VALUES (6, 'Undated')")
+
+        val oldSyntax = s.filterSyntax
+        try {
+            for (token in listOf("--", "\u2015")) {
+                s.filterSyntax = FilterSyntax(nullToken = token)
+                val numbers = pagedList<NullableEntity>()
+                val num = numbers.addFacet("nullableInt")
+                num.filter = token
+                assertEquals(listOf(2), numbers.map { it.id }, "numeric '$token'")
+                num.filter = "-$token"
+                assertEquals(listOf(1, 3), numbers.map { it.id }, "numeric not '$token'")
+                num.filter = "- $token"
+                assertEquals(listOf(1, 3), numbers.map { it.id }, "numeric spaced not '$token'")
+                num.filter = " $token "
+                assertEquals(listOf(2), numbers.map { it.id }, "numeric padded '$token'")
+                num.filter = "-5"           // a negative number is still a number
+                assertEquals(listOf(1), numbers.map { it.id })
+
+                val events = pagedList<Event>()
+                val date = events.addFacet("eventDate")
+                date.filter = token
+                assertEquals(listOf(6), events.map { it.id }, "date '$token'")
+                date.filter = "-$token"
+                assertEquals(5, events.size, "date not '$token'")
+            }
+        } finally {
+            s.filterSyntax = oldSyntax
+        }
     }
 
     @Test
@@ -554,7 +783,7 @@ open class PagedListTest {
             "${TestDDL.intPrimaryKey("id")}, name ${TestDDL.textType()}"))
         s.create(listOf(TestC(1, "Alice"), TestC(2, null), TestC(3, "Bob")))
 
-        val list = PagedList<TestC>()
+        val list = pagedList<TestC>()
         val col = list.addFacet("name")
         col.filter = "Bob OR NULL"
         assertEquals(2, list.size) // Bob + null
@@ -573,10 +802,43 @@ open class PagedListTest {
                 "${TestDDL.intPrimaryKey("id")}, name ${TestDDL.textType()}"))
             s.create(listOf(TestC(1, "Alice"), TestC(2, "Bob"), TestC(3, "Charlie")))
 
-            val list = PagedList<TestC>()
+            val list = pagedList<TestC>()
             val col = list.addFacet("name")
             col.filter = "Alice | Bob"
             assertEquals(2, list.size) // Alice, Bob
+        } finally {
+            s.filterSyntax = oldSyntax
+        }
+    }
+
+    @Test
+    fun testCustomSyntaxWildcard() = withDb("PAGED-SYNTAX-WILDCARD") { s ->
+        TestDDL.dropTable("test")
+        s.executeUpdate(TestDDL.createTable("test",
+            "${TestDDL.intPrimaryKey("id")}, name ${TestDDL.textType()}"))
+        s.create(listOf(TestC(1, "Alice"), TestC(2, "Alfred"), TestC(3, "Bob"),
+            TestC(4, "A*B"), TestC(5, "50%off"), TestC(6, "x_y")))
+        fun ids(filter: String): List<Int> {
+            val list = pagedList<TestC>()
+            list.addFacet("name").filter = filter
+            return list.map { it.id }
+        }
+        // Default '*': a wildcard; '%' and '_' are literals.
+        assertEquals(listOf(1, 2, 4), ids("A*"))
+        assertEquals(listOf(5), ids("50%"))
+        assertEquals(listOf(6), ids("x_"))
+
+        val oldSyntax = s.filterSyntax
+        try {
+            s.filterSyntax = FilterSyntax(wildcard = '%')
+            assertEquals(listOf(1, 2, 4), ids("A%"))
+            assertEquals(listOf(5), ids("%off"))
+            assertEquals(listOf(4), ids("A*"))     // '*' is now a literal
+            assertEquals(listOf(1, 2), ids("Al%%"))
+            s.filterSyntax = FilterSyntax(wildcard = '_')
+            assertEquals(listOf(1, 2), ids("Al_"))
+            assertEquals(listOf(6), ids("x_y"))     // inner '_' is a wildcard: x...y
+            assertEquals(listOf(6), ids("\"x_y\""))  // a phrase keeps it literal
         } finally {
             s.filterSyntax = oldSyntax
         }
@@ -593,7 +855,7 @@ open class PagedListTest {
                 "${TestDDL.intPrimaryKey("id")}, name ${TestDDL.textType()}"))
             s.create(listOf(TestC(1, "Alice"), TestC(2, "Bob"), TestC(3, "Charlie")))
 
-            val list = PagedList<TestC>()
+            val list = pagedList<TestC>()
             val col = list.addFacet("name")
             col.filter = "!Bob"
             assertEquals(2, list.size) // Alice, Charlie
@@ -613,7 +875,7 @@ open class PagedListTest {
                 "${TestDDL.intPrimaryKey("id")}, name ${TestDDL.textType()}"))
             s.create(listOf(TestC(1, "Alice"), TestC(2, null), TestC(3, "Bob")))
 
-            val list = PagedList<TestC>()
+            val list = pagedList<TestC>()
             val col = list.addFacet("name")
             col.filter = "--"
             assertEquals(1, list.size) // null row only
@@ -631,7 +893,7 @@ open class PagedListTest {
             "${TestDDL.intPrimaryKey("id")}, name ${TestDDL.textType()}"))
         s.create(listOf(TestC(1, "Active"), TestC(2, "Inactive"), TestC(3, "Archived"), TestC(4, "Pending")))
 
-        val list = PagedList<TestC>()
+        val list = pagedList<TestC>()
         val nameMap = mapOf("Active" to "Active", "Inactive" to "Inactive", "Archived" to "Archived", "Pending" to "Pending")
         val col = list.addFacet(nameMap, "name")
         col.filter = "Active OR Pending"
@@ -646,7 +908,7 @@ open class PagedListTest {
             "${TestDDL.intPrimaryKey("id")}, name ${TestDDL.textType()}"))
         s.create(listOf(TestC(1, "Active"), TestC(2, "Inactive"), TestC(3, "Archived")))
 
-        val list = PagedList<TestC>()
+        val list = pagedList<TestC>()
         val nameMap = mapOf("Active" to "Active", "Inactive" to "Inactive", "Archived" to "Archived")
         val col = list.addFacet(nameMap, "name")
         col.filter = "-Archived"
@@ -661,7 +923,7 @@ open class PagedListTest {
             "${TestDDL.intPrimaryKey("id")}, name ${TestDDL.textType()}"))
         s.create(listOf(TestC(1, "Active"), TestC(2, "Inactive"), TestC(3, "Archived")))
 
-        val list = PagedList<TestC>()
+        val list = pagedList<TestC>()
         val nameMap = mapOf("Active" to "Active", "Inactive" to "Inactive", "Archived" to "Archived")
         val col = list.addFacet(nameMap, "name")
         col.filter = "\"Active\""  // exact phrase: only Active, NOT Inactive
@@ -677,7 +939,7 @@ open class PagedListTest {
             "${TestDDL.intPrimaryKey("id")}, name ${TestDDL.textType()}"))
         s.create(listOf(TestC(1, "Active"), TestC(2, "Inactive"), TestC(3, "Archived"), TestC(4, "Pending")))
 
-        val list = PagedList<TestC>()
+        val list = pagedList<TestC>()
         val nameMap = mapOf("Active" to "Active", "Inactive" to "Inactive", "Archived" to "Archived", "Pending" to "Pending")
         val col = list.addFacet(nameMap, "name")
         col.filter = "active -Inactive"  // contains "active" AND NOT "Inactive" → Active only
@@ -691,8 +953,8 @@ open class PagedListTest {
     @Test
     open fun testSqlFacetNumericComputed() = withDb("PAGED-SQL-NUM") { s ->
         setupTable(s, 10)
-        val list = PagedList<TestC>()
-        val col = list.addSqlFacet("(test.id * 2)", Facet.NUMERIC)
+        val list = pagedList<TestC>()
+        val col = list.addSqlFacet("(test.id * 2)", Facet.Type.NUMERIC)
         col.filter = ">= 16"   // id*2 >= 16 → id ∈ {8,9,10}
         assertEquals(3, list.size)
     }
@@ -700,8 +962,8 @@ open class PagedListTest {
     @Test
     open fun testSqlFacetNumericRange() = withDb("PAGED-SQL-NUM-RANGE") { s ->
         setupTable(s, 10)
-        val list = PagedList<TestC>()
-        val col = list.addSqlFacet("(test.id * 3)", Facet.NUMERIC)
+        val list = pagedList<TestC>()
+        val col = list.addSqlFacet("(test.id * 3)", Facet.Type.NUMERIC)
         col.filter = "9...18"   // id*3 in [9,18] → id ∈ {3,4,5,6}
         assertEquals(4, list.size)
     }
@@ -716,8 +978,8 @@ open class PagedListTest {
             TestC(3, "Boston"), TestC(4, "Los Angeles")
         ))
 
-        val list = PagedList<TestC>()
-        val col = list.addSqlFacet("test.name", Facet.TEXT)
+        val list = pagedList<TestC>()
+        val col = list.addSqlFacet("test.name", Facet.Type.TEXT)
         col.filter = "New -Jersey"  // contains "New" AND NOT "Jersey"
         assertEquals(1, list.size)
         assertEquals("New York", list[0].name)
@@ -727,9 +989,9 @@ open class PagedListTest {
     fun testSqlFacetWithCustomConverter() = withDb("PAGED-SQL-CUSTOM-CONV") { s ->
         setupTable(s, 10)
         val isOracle = s.sqlDialect == SqlDialect.ORACLE_NEW || s.sqlDialect == SqlDialect.ORACLE_OLD
-        val list = PagedList<TestC>()
-        val col = list.addSqlFacet("test.id", Facet.NUMERIC)
-        col.converter = { column, value, _, args ->
+        val list = pagedList<TestC>()
+        val col = list.addSqlFacet("test.id", Facet.Type.NUMERIC)
+        col.converter = Converter { column, value, _, args ->
             val n = value.toIntOrNull() ?: 0
             args.add(n)
             if (isOracle) "MOD($column, ?) = 0" else "$column % ? = 0"
@@ -743,7 +1005,7 @@ open class PagedListTest {
     @Test
     fun testNumericFilterRange() = withDb("PAGED-NUM-RANGE") { s ->
         setupTable(s, 20)
-        val list = PagedList<TestC>()
+        val list = pagedList<TestC>()
         val col = list.addFacet("id")
         col.filter = "5 ... 10"
 
@@ -753,7 +1015,7 @@ open class PagedListTest {
     @Test
     fun testNumericFilterGreaterThan() = withDb("PAGED-NUM-GT") { s ->
         setupTable(s, 10)
-        val list = PagedList<TestC>()
+        val list = pagedList<TestC>()
         val col = list.addFacet("id")
         col.filter = "> 8"
         assertEquals(2, list.size)  // 9, 10
@@ -762,7 +1024,7 @@ open class PagedListTest {
     @Test
     fun testNumericFilterGreaterOrEqual() = withDb("PAGED-NUM-GTE") { s ->
         setupTable(s, 10)
-        val list = PagedList<TestC>()
+        val list = pagedList<TestC>()
         val col = list.addFacet("id")
         col.filter = ">= 8"
         assertEquals(3, list.size)  // 8, 9, 10
@@ -771,7 +1033,7 @@ open class PagedListTest {
     @Test
     fun testNumericFilterLessThan() = withDb("PAGED-NUM-LT") { s ->
         setupTable(s, 10)
-        val list = PagedList<TestC>()
+        val list = pagedList<TestC>()
         val col = list.addFacet("id")
         col.filter = "< 3"
         assertEquals(2, list.size)  // 1, 2
@@ -780,7 +1042,7 @@ open class PagedListTest {
     @Test
     fun testNumericFilterLessOrEqual() = withDb("PAGED-NUM-LTE") { s ->
         setupTable(s, 10)
-        val list = PagedList<TestC>()
+        val list = pagedList<TestC>()
         val col = list.addFacet("id")
         col.filter = "<= 3"
         assertEquals(3, list.size)  // 1, 2, 3
@@ -795,7 +1057,7 @@ open class PagedListTest {
             "${TestDDL.intPrimaryKey("id")}, name ${TestDDL.textType()}"))
         s.create(listOf(TestC(1, "Alice"), TestC(2, "Bob"), TestC(3, "Malice")))
 
-        val list = PagedList<TestC>()
+        val list = pagedList<TestC>()
         val col = list.addFacet("name")
         col.filter = "*lice"  // ends with "lice"
 
@@ -809,7 +1071,7 @@ open class PagedListTest {
             "${TestDDL.intPrimaryKey("id")}, name ${TestDDL.textType()}"))
         s.create(listOf(TestC(1, "Alice"), TestC(2, "Alicia")))
 
-        val list = PagedList<TestC>()
+        val list = pagedList<TestC>()
         val col = list.addFacet("name")
         col.filter = "\"alice\""  // exact match, case-insensitive
 
@@ -832,7 +1094,7 @@ open class PagedListTest {
     @Test
     fun testBooleanAndImplicit() = withDb("BOOL-AND") { s ->
         setupBooleanTestData(s)
-        val list = PagedList<TestC>()
+        val list = pagedList<TestC>()
         val col = list.addFacet("name")
         col.filter = "new york"
         assertEquals(1, list.size)
@@ -842,7 +1104,7 @@ open class PagedListTest {
     @Test
     fun testBooleanOr() = withDb("BOOL-OR") { s ->
         setupBooleanTestData(s)
-        val list = PagedList<TestC>()
+        val list = pagedList<TestC>()
         val col = list.addFacet("name")
         col.filter = "Alice OR Bob"
         assertEquals(2, list.size) // Alice, Bob
@@ -851,7 +1113,7 @@ open class PagedListTest {
     @Test
     fun testBooleanNot() = withDb("BOOL-NOT") { s ->
         setupBooleanTestData(s)
-        val list = PagedList<TestC>()
+        val list = pagedList<TestC>()
         val col = list.addFacet("name")
         col.filter = "-Bob"
         assertEquals(5, list.size) // all except Bob
@@ -860,7 +1122,7 @@ open class PagedListTest {
     @Test
     fun testBooleanNotPhrase() = withDb("BOOL-NOT-PHRASE") { s ->
         setupBooleanTestData(s)
-        val list = PagedList<TestC>()
+        val list = pagedList<TestC>()
         val col = list.addFacet("name")
         col.filter = "-\"New\""
         assertEquals(4, list.size) // all except "New York" and "New Jersey"
@@ -869,7 +1131,7 @@ open class PagedListTest {
     @Test
     fun testBooleanPhraseWithSpace() = withDb("BOOL-PHRASE") { s ->
         setupBooleanTestData(s)
-        val list = PagedList<TestC>()
+        val list = pagedList<TestC>()
         val col = list.addFacet("name")
         col.filter = "\"New Y\""
         assertEquals(1, list.size)
@@ -879,7 +1141,7 @@ open class PagedListTest {
     @Test
     fun testBooleanComplex() = withDb("BOOL-COMPLEX") { s ->
         setupBooleanTestData(s)
-        val list = PagedList<TestC>()
+        val list = pagedList<TestC>()
         val col = list.addFacet("name")
         col.filter = "(Alice OR Bob) -Alicia"
         assertEquals(2, list.size) // Alice, Bob (not Alicia)
@@ -888,7 +1150,7 @@ open class PagedListTest {
     @Test
     fun testBooleanWildcardInAnd() = withDb("BOOL-WILD-AND") { s ->
         setupBooleanTestData(s)
-        val list = PagedList<TestC>()
+        val list = pagedList<TestC>()
         val col = list.addFacet("name")
         col.filter = "Ali* -Alicia"
         assertEquals(1, list.size)
@@ -898,7 +1160,7 @@ open class PagedListTest {
     @Test
     fun testBooleanAllNegated() = withDb("BOOL-ALL-NEG") { s ->
         setupBooleanTestData(s)
-        val list = PagedList<TestC>()
+        val list = pagedList<TestC>()
         val col = list.addFacet("name")
         col.filter = "-Alice -Bob -Alicia"
         assertEquals(3, list.size) // Charlie, New York, New Jersey
@@ -913,7 +1175,7 @@ open class PagedListTest {
             "${TestDDL.intPrimaryKey("id")}, name ${TestDDL.textType()}"))
         s.create(listOf(TestC(1, "ALICE"), TestC(2, "alice"), TestC(3, "Alice"), TestC(4, "Bob")))
 
-        val list = PagedList<TestC>()
+        val list = pagedList<TestC>()
         val col = list.addFacet("name")
         col.filter = "aLiCe"
 
@@ -933,7 +1195,7 @@ open class PagedListTest {
             "${TestDDL.intPrimaryKey("id")}, name ${TestDDL.textType()}"))
         s.create(listOf(TestC(1, "ALICE"), TestC(2, "alice"), TestC(3, "Alice"), TestC(4, "Bob")))
 
-        val list = PagedList<TestC>()
+        val list = pagedList<TestC>()
         val col = list.addFacet("name")
         col.isCaseSensitive = true
         col.filter = "Alice"
@@ -955,11 +1217,11 @@ open class PagedListTest {
             CamelEntity(3, "Alice", "Brown")
         ))
 
-        val list = PagedList<CamelEntity>()
+        val list = pagedList<CamelEntity>()
         val lastCol = list.addFacet("lastName")
         val firstCol = list.addFacet("firstName")
-        lastCol.sort = Facet.ASCENDING
-        firstCol.sort = Facet.ASCENDING
+        lastCol.sort = SortState.ASCENDING
+        firstCol.sort = SortState.ASCENDING
 
         // Sort by lastName ASC, then firstName ASC
         assertEquals("Brown", list[0].lastName)     // Alice Brown
@@ -974,7 +1236,7 @@ open class PagedListTest {
     @Test
     fun testSelectedEntityFirst() = withDb("PAGED-SELECTED") { s ->
         setupTable(s, 5)
-        val list = PagedList<TestC>()
+        val list = pagedList<TestC>()
         val item3 = s.read<TestC>("SELECT * FROM test WHERE id = ?", 3).first()
         list.selected = item3
 
@@ -987,7 +1249,7 @@ open class PagedListTest {
     @Test
     fun testSilentRecount() = withDb("PAGED-RECOUNT") { s ->
         setupTable(s, 10)
-        val list = PagedList<TestC>()
+        val list = pagedList<TestC>()
         list.pageSize = 5
 
         assertEquals(10, list.size)
@@ -1010,12 +1272,63 @@ open class PagedListTest {
             "${TestDDL.intPrimaryKey("id")}, name ${TestDDL.textType()}"))
         s.create(listOf(TestC(1, "Alice"), TestC(2, "Bob"), TestC(3, "Alice"), TestC(4, "Charlie")))
 
-        val list = PagedList<TestC>()
+        val list = pagedList<TestC>()
         val col = list.addFacet("name")
         val values = col.getFilterValues()
 
         // Distinct names: Alice, Bob, Charlie
         assertEquals(3, values.size)
+    }
+
+    @Test
+    fun testFilterValuesWithNull() = withDb("PAGED-FV-NULL") { s ->
+        TestDDL.dropTable("test")
+        s.executeUpdate(TestDDL.createTable("test",
+            "${TestDDL.intPrimaryKey("id")}, name ${TestDDL.textType()}"))
+        s.create(listOf(TestC(1, "Bob"), TestC(2, null), TestC(3, "Alice"), TestC(4, null), TestC(5, "Bob")))
+
+        val list = pagedList<TestC>()
+        val col = list.addFacet("name")
+        val values = col.getFilterValues()
+        values.pageSize = 2
+        // Distinct values plus the NULL group, which is always last and shown
+        // as the null token, whatever the database's own NULL ordering.
+        assertEquals(3, values.size)
+        assertEquals(listOf("Alice", "Bob", "NULL"), values.toList())
+        assertEquals(listOf("Alice" to 1L, "Bob" to 2L, "NULL" to 2L),
+            values.withCounts().map { it.value to it.count })
+        assertEquals(3, values.withCounts().size)
+
+        // Picking the token back as a filter selects the NULL rows.
+        col.filter = values.last()
+        assertEquals(listOf(2, 4), list.map { it.id })
+
+        // The configured null token is used for display.
+        s.filterSyntax = FilterSyntax(nullToken = "--")
+        try {
+            val tokenList = pagedList<TestC>()
+            val tokenCol = tokenList.addFacet("name")
+            assertEquals(listOf("Alice", "Bob", "--"), tokenCol.getFilterValues().toList())
+            tokenCol.filter = "--"
+            assertEquals(2, tokenList.size)
+        } finally {
+            s.filterSyntax = FilterSyntax()
+        }
+    }
+
+    @Test
+    fun testFilterValuesNumericWithNull() = withDb("PAGED-FV-NULL-NUM") { s ->
+        TestDDL.dropTable("nullable_test")
+        s.executeUpdate(TestDDL.createTable("nullable_test",
+            "${TestDDL.intPrimaryKey("id")}, name ${TestDDL.textType()}, " +
+                    "${TestDDL.intColumn("nullable_int")}, nullable_string ${TestDDL.textType()}"))
+        s.create(listOf(NullableEntity(1, "a", 20), NullableEntity(2, "b", null), NullableEntity(3, "c", 10)))
+
+        val list = pagedList<NullableEntity>()
+        val col = list.addFacet("nullableInt")
+        assertEquals(listOf("10", "20", "NULL"), col.getFilterValues().toList())
+        col.filter = "NULL"
+        assertEquals(listOf(2), list.map { it.id })
     }
 
     @Test
@@ -1030,7 +1343,7 @@ open class PagedListTest {
             CamelEntity(4, "Charlie", "Jones")
         ))
 
-        val list = PagedList<CamelEntity>()
+        val list = pagedList<CamelEntity>()
         val lastNameCol = list.addFacet("lastName")
         val firstNameCol = list.addFacet("firstName")
 
@@ -1051,7 +1364,7 @@ open class PagedListTest {
             "${TestDDL.intPrimaryKey("id")}, name ${TestDDL.textType()}"))
         s.create((1..20).map { TestC(it, "Name${it.toString().padStart(2, '0')}") })
 
-        val list = PagedList<TestC>()
+        val list = pagedList<TestC>()
         val col = list.addFacet("name")
         val values = col.getFilterValues()
         values.pageSize = 5
@@ -1069,7 +1382,7 @@ open class PagedListTest {
             "${TestDDL.intPrimaryKey("id")}, name ${TestDDL.textType()}"))
         s.create(listOf(TestC(1, "Alice"), TestC(2, "Bob"), TestC(3, "Charlie")))
 
-        val list = PagedList<TestC>()
+        val list = pagedList<TestC>()
         val col = list.addFacet("name")
         val idCol = list.addFacet("id")
 
@@ -1086,8 +1399,8 @@ open class PagedListTest {
     @Test
     fun testRawColumnFilter() = withDb("PAGED-RAW") { s ->
         setupTable(s, 10)
-        val list = PagedList<TestC>()
-        val col = list.addSqlFacet("test.id", Facet.NUMERIC)
+        val list = pagedList<TestC>()
+        val col = list.addSqlFacet("test.id", Facet.Type.NUMERIC)
         col.filter = "> 7"
 
         assertEquals(3, list.size) // 8, 9, 10
@@ -1100,9 +1413,9 @@ open class PagedListTest {
             "${TestDDL.intPrimaryKey("id")}, name ${TestDDL.textType()}"))
         s.create(listOf(TestC(1, "Charlie"), TestC(2, "Alice"), TestC(3, "Bob")))
 
-        val list = PagedList<TestC>()
-        val col = list.addSqlFacet("test.name", Facet.TEXT)
-        col.sort = Facet.ASCENDING
+        val list = pagedList<TestC>()
+        val col = list.addSqlFacet("test.name", Facet.Type.TEXT)
+        col.sort = SortState.ASCENDING
 
         assertEquals("Alice", list[0].name)
         assertEquals("Bob", list[1].name)
@@ -1114,7 +1427,7 @@ open class PagedListTest {
     @Test
     fun testInvalidNumericInput() = withDb("PAGED-INVALID-NUM") { s ->
         setupTable(s, 10)
-        val list = PagedList<TestC>()
+        val list = pagedList<TestC>()
         val col = list.addFacet("id")
         col.filter = "abc"  // invalid number → 0 results, no crash
 
@@ -1124,7 +1437,7 @@ open class PagedListTest {
     @Test
     fun testInvalidDateInput() = withDb("PAGED-INVALID-DATE") { s ->
         setupDateTable(s)
-        val list = PagedList<Event>()
+        val list = pagedList<Event>()
         val col = list.addFacet("eventDate")
         col.filter = "not-a-date"
 
@@ -1134,10 +1447,10 @@ open class PagedListTest {
     @Test
     fun testRawColumnCustomConverter() = withDb("PAGED-RAW-CUSTOM") { s ->
         setupTable(s, 10)
-        val list = PagedList<TestC>()
+        val list = pagedList<TestC>()
         val isOracle = s.sqlDialect == SqlDialect.ORACLE_NEW || s.sqlDialect == SqlDialect.ORACLE_OLD
-        val col = list.addSqlFacet("test.id", Facet.NUMERIC)
-        col.converter = { column, value, _, args ->
+        val col = list.addSqlFacet("test.id", Facet.Type.NUMERIC)
+        col.converter = Converter { column, value, _, args ->
             val mod = value.toIntOrNull() ?: 0
             args.add(mod)
             if (isOracle) "MOD($column, ?) = 0" else "$column % ? = 0"
@@ -1152,10 +1465,10 @@ open class PagedListTest {
     @Test
     fun testInputParserPerColumn() = withDb("PAGED-PARSER-COL") { s ->
         setupTable(s, 20)
-        val list = PagedList<TestC>()
+        val list = pagedList<TestC>()
         val col = list.addFacet("id")
         // Simulate Greek locale: "1.000" means 1000, not 1.000
-        col.inputParser = { input, _ -> input.replace(".", "") }
+        col.inputParser = InputParser { input, _ -> input.replace(".", "") }
         col.filter = "> 1.000"
 
         // Without parser: "> 1.000" → "> 1.000" (error or wrong result)
@@ -1167,9 +1480,9 @@ open class PagedListTest {
     @Test
     fun testInputParserPerList() = withDb("PAGED-PARSER-LIST") { s ->
         setupTable(s, 20)
-        val list = PagedList<TestC>()
-        list.inputParser = { input, type ->
-            if (type == Facet.NUMERIC) input.replace(".", "") else input
+        val list = pagedList<TestC>()
+        list.inputParser = InputParser { input, type ->
+            if (type == Facet.Type.NUMERIC) input.replace(".", "") else input
         }
         val col = list.addFacet("id")
         col.filter = "> 1.5"  // "1.5" → "15" after parser
@@ -1182,11 +1495,11 @@ open class PagedListTest {
         val oldParser = s.inputParser
         try {
             // Simulate locale where dot is thousand separator
-            s.inputParser = { input, type ->
-                if (type == Facet.NUMERIC) input.replace(".", "") else input
+            s.inputParser = InputParser { input, type ->
+                if (type == Facet.Type.NUMERIC) input.replace(".", "") else input
             }
             setupTable(s, 20)
-            val list = PagedList<TestC>()
+            val list = pagedList<TestC>()
             val col = list.addFacet("id")
             col.filter = "> 1.8"  // "1.8" → "18"
 
@@ -1201,16 +1514,16 @@ open class PagedListTest {
         val oldParser = s.inputParser
         try {
             // Stormify-level: replace comma
-            s.inputParser = { input, _ -> input.replace(",", ".") }
+            s.inputParser = InputParser { input, _ -> input.replace(",", ".") }
 
             setupTable(s, 20)
-            val list = PagedList<TestC>()
+            val list = pagedList<TestC>()
             // List: replace dot
-            list.inputParser = { input, _ -> input.replace(".", "") }
+            list.inputParser = InputParser { input, _ -> input.replace(".", "") }
 
             val col = list.addFacet("id")
             // Facet parser wins over list parser
-            col.inputParser = { input, _ -> input.replace("X", "1") }
+            col.inputParser = InputParser { input, _ -> input.replace("X", "1") }
             col.filter = "> X8"  // column parser: "X8" → "18"
 
             assertEquals(2, list.size) // ids 19, 20
@@ -1221,7 +1534,7 @@ open class PagedListTest {
 
     // --- Date InputParser ---
 
-    private val dateParser: InputParser = { input, _ ->
+    private val dateParser: InputParser = InputParser { input, _ ->
         // InputParser receives individual values only (no operators)
         // Convert dd/MM/yyyy → yyyy-MM-dd
         val parts = input.split("/")
@@ -1244,7 +1557,7 @@ open class PagedListTest {
     @Test
     fun testDateFilterGreaterThan() = withDb("PAGED-DATE-GT") { s ->
         setupDateTable(s)
-        val list = PagedList<Event>()
+        val list = pagedList<Event>()
         val col = list.addFacet("eventDate")
         col.inputParser = dateParser
         col.filter = "> 01/06/2026"
@@ -1255,10 +1568,10 @@ open class PagedListTest {
     @Test
     fun testInputParserReceivesCorrectFacetTypeForTypedDate() = withDb("PAGED-DATE-INPUTPARSER") { s ->
         setupDateTable(s)
-        val list = PagedList<Event>()
+        val list = pagedList<Event>()
         val col = list.addFacet("eventDate")
         val capturedTypes = mutableListOf<Facet.Type>()
-        col.inputParser = { input, type ->
+        col.inputParser = InputParser { input, type ->
             capturedTypes.add(type)
             val parts = input.split("/")
             if (parts.size == 3) "${parts[2]}-${parts[1]}-${parts[0]}" else input
@@ -1273,7 +1586,7 @@ open class PagedListTest {
     @Test
     fun testDateFilterLessThan() = withDb("PAGED-DATE-LT") { s ->
         setupDateTable(s)
-        val list = PagedList<Event>()
+        val list = pagedList<Event>()
         val col = list.addFacet("eventDate")
         col.inputParser = dateParser
         col.filter = "< 01/06/2026"
@@ -1284,7 +1597,7 @@ open class PagedListTest {
     @Test
     fun testDateFilterRange() = withDb("PAGED-DATE-RANGE") { s ->
         setupDateTable(s)
-        val list = PagedList<Event>()
+        val list = pagedList<Event>()
         val col = list.addFacet("eventDate")
         col.inputParser = dateParser
         col.filter = "01/03/2026 ... 30/09/2026"
@@ -1295,7 +1608,7 @@ open class PagedListTest {
     @Test
     fun testDateFilterExact() = withDb("PAGED-DATE-EXACT") { s ->
         setupDateTable(s)
-        val list = PagedList<Event>()
+        val list = pagedList<Event>()
         val col = list.addFacet("eventDate")
         col.inputParser = dateParser
         col.filter = "20/03/2026"
@@ -1304,18 +1617,80 @@ open class PagedListTest {
         assertEquals("Spring", list[0].title)
     }
 
-    // --- Composite primary key error ---
+    // --- Composite primary key ---
 
     @Test
-    fun testCompositeKeyRequiresExplicitSort() = withDb("PAGED-COMPOSITE-PK") { s ->
+    fun testCompositeKeyOrdersByAllKeyColumns() = withDb("PAGED-COMPOSITE-PK") { s ->
         TestDDL.dropTable("dual_key")
         s.executeUpdate(TestDDL.createTable("dual_key",
             "${TestDDL.intColumn("id1")}, ${TestDDL.intColumn("id2")}, data ${TestDDL.textType()}, PRIMARY KEY (id1, id2)"))
-        s.create(listOf(DualKey(1, 1, "a"), DualKey(1, 2, "b")))
+        s.create(listOf(DualKey(2, 1, "c"), DualKey(1, 2, "b"), DualKey(1, 1, "a"), DualKey(2, 2, "d")))
 
-        val list = PagedList<DualKey>()
-        // No explicit sort → should fail when fetching data (sortingPart is called)
-        assertFailsWith<IllegalStateException> { list[0] }
+        // No explicit sort: ordered by every key column, in declaration order.
+        val list = pagedList<DualKey>()
+        list.pageSize = 3
+        assertEquals(listOf("a", "b", "c", "d"), list.map { it.data })
+
+        // A sort on a non-unique column is broken by the full composite key.
+        val sorted = pagedList<DualKey>()
+        sorted.pageSize = 3
+        sorted.addFacet("id2").sort = SortState.DESCENDING
+        assertEquals(listOf("b", "d", "a", "c"), sorted.map { it.data })
+    }
+
+    // --- Primary key as tie-breaker ---
+
+    @Test
+    fun testSortTieBrokenByPrimaryKey() = withDb("PAGED-SORT-TIE") { s ->
+        TestDDL.dropTable("test")
+        s.executeUpdate(TestDDL.createTable("test",
+            "${TestDDL.intPrimaryKey("id")}, name ${TestDDL.textType()}"))
+        // Inserted out of key order, every row with the same sort value.
+        s.create((30 downTo 1).map { TestC(it, "Same") })
+
+        val list = pagedList<TestC>()
+        list.pageSize = 7
+        list.addFacet("name").sort = SortState.ASCENDING
+        val selects = s.captureSelects {
+            val ids = (0 until list.size).map { list[it].id }
+            assertEquals((1..30).toList(), ids)
+        }
+        assertTrue(selects.any { it.contains(", test.id") }, "Primary key missing from ORDER BY: $selects")
+
+        // Descending facet sort: the key still breaks ties (ascending by default).
+        list.getFacet(0).sort = SortState.DESCENDING
+        assertEquals((1..30).toList(), list.map { it.id })
+
+        // A facet sorting on the key itself is not repeated in ORDER BY.
+        val byId = pagedList<TestC>()
+        byId.pageSize = 7
+        byId.addFacet("id").sort = SortState.DESCENDING
+        assertEquals((30 downTo 1).toList(), byId.map { it.id })
+    }
+
+    @Test
+    fun testKeySortDescending() = withDb("PAGED-KEY-SORT") { s ->
+        TestDDL.dropTable("test")
+        s.executeUpdate(TestDDL.createTable("test",
+            "${TestDDL.intPrimaryKey("id")}, name ${TestDDL.textType()}"))
+        s.create((1..20).map { TestC(it, if (it % 2 == 0) "Even" else "Odd") })
+
+        val list = pagedList<TestC>()
+        list.pageSize = 7
+        assertEquals(SortState.ASCENDING, list.keySort)
+        list.keySort = SortState.DESCENDING
+        // No facet sort: the key alone, descending.
+        assertEquals((20 downTo 1).toList(), list.map { it.id })
+
+        // Facet sort first, then the key descending as tie-breaker.
+        val name = list.addFacet("name")
+        name.sort = SortState.ASCENDING
+        assertEquals((20 downTo 1).filter { it % 2 == 0 } + (20 downTo 1).filter { it % 2 == 1 },
+            list.map { it.id })
+
+        // Structural: not captured by saveState.
+        assertEquals(PagedListState(sorts = mapOf(name.alias to SortState.ASCENDING), pageSize = 7),
+            list.saveState())
     }
 
     @Test
@@ -1325,8 +1700,8 @@ open class PagedListTest {
             "${TestDDL.intColumn("id1")}, ${TestDDL.intColumn("id2")}, data ${TestDDL.textType()}, PRIMARY KEY (id1, id2)"))
         s.create(listOf(DualKey(1, 1, "a"), DualKey(1, 2, "b")))
 
-        val list = PagedList<DualKey>()
-        list.addFacet("id1").sort = Facet.ASCENDING
+        val list = pagedList<DualKey>()
+        list.addFacet("id1").sort = SortState.ASCENDING
         // With explicit sort it should work
         assertEquals(2, list.size)
     }
@@ -1339,8 +1714,8 @@ open class PagedListTest {
             skipTest(SkipReason.LIBRARY_LIMITATION,
                 "SQLite stores LocalDate as epoch ms (kdbc choice) — raw ISO comparison mismatches")
         setupDateTable(s)
-        val list = PagedList<Event>()
-        val col = list.addSqlFacet("event.event_date", Facet.DATE)
+        val list = pagedList<Event>()
+        val col = list.addSqlFacet("event.event_date", Facet.Type.DATE)
         col.inputParser = dateParser
         // Use >= to avoid noon-vs-midnight edge case on Oracle (DATE includes time)
         col.filter = ">= 02/06/2026"  // Sep 10, Dec 25 (strictly after June 1)
@@ -1382,8 +1757,8 @@ open class PagedListTest {
                 "SQLite stores temporals as epoch ms — raw ISO comparison mismatches")
         setupWideEventTable(s)
 
-        val list = PagedList<Event>()
-        val col = list.addSqlFacet("event.event_ts", Facet.TIMESTAMP)
+        val list = pagedList<Event>()
+        val col = list.addSqlFacet("event.event_ts", Facet.Type.TIMESTAMP)
         col.filter = ">= 2026-06-01T00:00:00"
 
         assertEquals(2, list.size)
@@ -1399,8 +1774,8 @@ open class PagedListTest {
                 "Oracle has no native TIME type — the castToTime fallback is best-effort")
         setupWideEventTable(s)
 
-        val list = PagedList<Event>()
-        val col = list.addSqlFacet("event.event_tm", Facet.TIME)
+        val list = pagedList<Event>()
+        val col = list.addSqlFacet("event.event_tm", Facet.Type.TIME)
         col.filter = ">= 12:00:00"
 
         assertEquals(2, list.size)
@@ -1411,9 +1786,9 @@ open class PagedListTest {
     @Test
     fun testSelectedWithSortAndFilter() = withDb("PAGED-SEL-SORT-FILTER") { s ->
         setupTable(s, 10)
-        val list = PagedList<TestC>()
+        val list = pagedList<TestC>()
         val col = list.addFacet("name")
-        col.sort = Facet.DESCENDING
+        col.sort = SortState.DESCENDING
         col.filter = "Item"
 
         val item5 = s.read<TestC>("SELECT * FROM test WHERE id = ?", 5).first()
@@ -1435,7 +1810,7 @@ open class PagedListTest {
         // Store enum names directly in the TEXT column
         s.create(listOf(TestC(1, "ACTIVE"), TestC(2, "INACTIVE"), TestC(3, "BANNED")))
 
-        val list = PagedList<TestC>()
+        val list = pagedList<TestC>()
         // Map: HumanReadable display name → DB value (enum name)
         // The user types "Ενερ" — reverse substring lookup finds "Ενεργή" → "ACTIVE"
         // Note: "Ενερ" also matches "Ανενεργή" (contains "ενερ"), so we get 2 results
@@ -1460,7 +1835,7 @@ open class PagedListTest {
             EnumEntity(3, PlainStatus.BANNED, CustomStatus.BANNED)    // custom_status = 99
         ))
 
-        val list = PagedList<EnumEntity>()
+        val list = pagedList<EnumEntity>()
         // Auto-detect — for CustomStatus the map should be { name → dbValue(Int) }
         val col = list.addFacet("customStatus")
         col.filter = "BANNED"
@@ -1474,9 +1849,66 @@ open class PagedListTest {
     // --- refresh ---
 
     @Test
+    fun testEnumAsStringFacet() = withDb("PAGED-ENUM-AS-STRING") { s ->
+        TestDDL.dropTable("enum_string_test")
+        s.executeUpdate(TestDDL.createTable("enum_string_test",
+            "${TestDDL.intPrimaryKey("id")}, status ${TestDDL.textType()}, ${TestDDL.intColumn("priority")}"))
+        s.create(listOf(
+            EnumStringEntity(1, PlainStatus.ACTIVE, PlainStatus.BANNED),
+            EnumStringEntity(2, PlainStatus.BANNED, PlainStatus.ACTIVE),
+            EnumStringEntity(3, PlainStatus.INACTIVE, PlainStatus.ACTIVE),
+        ))
+
+        val list = pagedList<EnumStringEntity>()
+        // Stored as the enum name: the auto-built map must hold names, not ordinals.
+        val status = list.addFacet("status")
+        status.filter = "BANNED"
+        assertEquals(listOf(2), list.map { it.id })
+        status.filter = "-BANNED"
+        assertEquals(listOf(1, 3), list.map { it.id })
+        status.filter = null
+        assertEquals(listOf("ACTIVE", "BANNED", "INACTIVE"), status.getFilterValues().toList())
+
+        // The ordinal column next to it is unaffected.
+        val priority = list.addFacet("priority")
+        priority.filter = "ACTIVE"
+        assertEquals(listOf(2, 3), list.map { it.id })
+    }
+
+    @Test
+    fun testEnumFilterValuesShowDisplayNames() = withDb("PAGED-ENUM-FV-NAMES") { s ->
+        TestDDL.dropTable("enum_test")
+        s.executeUpdate(TestDDL.createTable("enum_test",
+            "${TestDDL.intPrimaryKey("id")}, ${TestDDL.intColumn("plain_status")}, ${TestDDL.intColumn("custom_status")}"))
+        s.create(listOf(
+            EnumEntity(1, PlainStatus.ACTIVE, CustomStatus.BANNED),
+            EnumEntity(2, PlainStatus.BANNED, CustomStatus.ACTIVE),
+            EnumEntity(3, PlainStatus.BANNED, CustomStatus.ACTIVE),
+            EnumEntity(4, null, null)
+        ))
+        s.executeUpdate("INSERT INTO enum_test (id, plain_status, custom_status) VALUES (5, 1, 55)")
+
+        val list = pagedList<EnumEntity>()
+        // Auto-built map, values stored as DbValue (10, 20, 99); 55 is unknown and kept as is.
+        val custom = list.addFacet("customStatus")
+        assertEquals(listOf("ACTIVE", "55", "BANNED", "NULL"), custom.getFilterValues().toList())
+        assertEquals(listOf("ACTIVE" to 2L, "55" to 1L, "BANNED" to 1L, "NULL" to 1L),
+            custom.getFilterValues().withCounts().map { it.value to it.count })
+
+        // Explicit map with HumanReadable labels over ordinal values.
+        val labels = HRStatus.entries.associate { it.displayName to it.ordinal }
+        val plain = list.addFacet(labels, "plainStatus")
+        assertEquals(listOf("Ενεργή", "Ανενεργή", "Αποκλεισμένη", "NULL"), plain.getFilterValues().toList())
+
+        // A label read back as a filter selects its rows.
+        plain.filter = "\"Αποκλεισμένη\""
+        assertEquals(listOf(2, 3), list.map { it.id })
+    }
+
+    @Test
     fun testRefresh() = withDb("PAGED-REFRESH") { s ->
         setupTable(s, 5)
-        val list = PagedList<TestC>()
+        val list = pagedList<TestC>()
         assertEquals(5, list.size)
 
         // Insert a new row behind the list's back — size is still cached
@@ -1491,7 +1923,7 @@ open class PagedListTest {
     @Test
     fun testRefreshAfterExternalMutation() = withDb("PAGED-REFRESH-MUT") { s ->
         setupTable(s, 5)
-        val list = PagedList<TestC>()
+        val list = pagedList<TestC>()
         assertEquals("Item1", list[0].name)
 
         // Mutate a row via raw SQL outside the list's awareness
@@ -1519,7 +1951,7 @@ open class PagedListTest {
             "${TestDDL.intPrimaryKey("id")}, name ${TestDDL.textType()}"))
         s.create(listOf(TestC(1, "ALICE"), TestC(2, "alice"), TestC(3, "Alice"), TestC(4, "Bob")))
 
-        val list = PagedList<TestC>()
+        val list = pagedList<TestC>()
         val col = list.addFacet("name")
         col.filter = "Alice"
         assertEquals(3, list.size)  // case-insensitive default
@@ -1534,7 +1966,7 @@ open class PagedListTest {
     @Test
     fun testForEachStreaming() = withDb("PAGED-FOREACH") { s ->
         setupTable(s, 100)
-        val list = PagedList<TestC>()
+        val list = pagedList<TestC>()
         list.pageSize = 5
 
         val names = mutableListOf<String?>()
@@ -1548,7 +1980,7 @@ open class PagedListTest {
     @Test
     fun testForEachWithFilter() = withDb("PAGED-FOREACH-FILTER") { s ->
         setupTable(s, 20)
-        val list = PagedList<TestC>()
+        val list = pagedList<TestC>()
         val col = list.addFacet("id")
         col.filter = "> 15"
 
@@ -1569,7 +2001,7 @@ open class PagedListTest {
     @Test
     fun testForEachStreaming200RowsCrossesChunkBoundary() = withDb("PAGED-FOREACH-200") { s ->
         setupTable(s, 200)
-        val list = PagedList<TestC>()
+        val list = pagedList<TestC>()
 
         val seen = mutableListOf<Int>()
         list.forEachStreaming { seen.add(it.id) }
@@ -1593,7 +2025,7 @@ open class PagedListTest {
 
         val names = mutableListOf<String?>()
         val captured = s.captureSelects {
-            PagedList<TestC>().forEachStreaming { names.add(it.name) }
+            pagedList<TestC>().forEachStreaming { names.add(it.name) }
         }
 
         assertEquals(20, names.size)
@@ -1662,7 +2094,7 @@ open class PagedListTest {
         // don't pollute the count.
         var visited = 0
         val captured = s.captureSelects {
-            PagedList<AutoChildEntity>().forEachStreaming { child ->
+            pagedList<AutoChildEntity>().forEachStreaming { child ->
                 val expectedParentId = ((child.id!! - 1) / 4) + 1
                 assertEquals(
                     "data$expectedParentId",
@@ -1691,7 +2123,7 @@ open class PagedListTest {
     @Test
     fun testAggregatorSingleSum() = withDb("PAGED-AGG-SUM") { s ->
         setupTable(s, 10)
-        val list = PagedList<TestC>()
+        val list = pagedList<TestC>()
         val total = list.getAggregator().sum("id").execute<Long>()
         assertEquals(55L, total)  // 1+2+…+10
     }
@@ -1699,7 +2131,7 @@ open class PagedListTest {
     @Test
     fun testAggregatorSingleCount() = withDb("PAGED-AGG-COUNT") { s ->
         setupTable(s, 7)
-        val list = PagedList<TestC>()
+        val list = pagedList<TestC>()
         val count = list.getAggregator().count("*").execute<Long>()
         assertEquals(list.size.toLong(), count)
     }
@@ -1714,7 +2146,7 @@ open class PagedListTest {
             TestC(3, "Bob"), TestC(4, "Charlie")
         ))
 
-        val list = PagedList<TestC>()
+        val list = pagedList<TestC>()
         val distinct = list.getAggregator().countDistinct("name").execute<Long>()
         assertEquals(3L, distinct)  // Alice, Bob, Charlie
     }
@@ -1722,7 +2154,7 @@ open class PagedListTest {
     @Test
     fun testAggregatorSingleMinMax() = withDb("PAGED-AGG-MINMAX") { s ->
         setupTable(s, 10)
-        val list = PagedList<TestC>()
+        val list = pagedList<TestC>()
         val min = list.getAggregator().min("id").execute<Int>()
         val max = list.getAggregator().max("id").execute<Int>()
         assertEquals(1, min)
@@ -1734,7 +2166,7 @@ open class PagedListTest {
     @Test
     fun testAggregatorMulti() = withDb("PAGED-AGG-MULTI") { s ->
         setupTable(s, 10)
-        val list = PagedList<TestC>()
+        val list = pagedList<TestC>()
         val row = list.getAggregator()
             .sum("id", "total")
             .min("id", "mn")
@@ -1751,7 +2183,7 @@ open class PagedListTest {
     @Test
     fun testAggregatorWithFilter() = withDb("PAGED-AGG-FILTER") { s ->
         setupTable(s, 20)
-        val list = PagedList<TestC>()
+        val list = pagedList<TestC>()
         val col = list.addFacet("id")
         col.filter = "<= 5"
 
@@ -1763,7 +2195,7 @@ open class PagedListTest {
     @Test
     fun testAggregatorRaw() = withDb("PAGED-AGG-RAW") { s ->
         setupTable(s, 5)
-        val list = PagedList<TestC>()
+        val list = pagedList<TestC>()
         // SUM(id * id) = 1+4+9+16+25 = 55
         val result = list.getAggregator()
             .raw("SUM(test.id * test.id)")
@@ -1774,7 +2206,7 @@ open class PagedListTest {
     @Test
     fun testAggregatorDuplicateAliasThrows() = withDb("PAGED-AGG-DUP") { s ->
         setupTable(s, 5)
-        val list = PagedList<TestC>()
+        val list = pagedList<TestC>()
         assertFailsWith<IllegalArgumentException> {
             list.getAggregator()
                 .sum("id", "total")
@@ -1788,7 +2220,7 @@ open class PagedListTest {
     @Test
     fun testAggregatorAutoAliasSimple() = withDb("PAGED-AGG-ALIAS-SIMPLE") { s ->
         setupTable(s, 5)
-        val list = PagedList<TestC>()
+        val list = pagedList<TestC>()
         val row = list.getAggregator()
             .sum("id")           // → "sum_id"
             .avg("id")           // → "avg_id"
@@ -1814,7 +2246,7 @@ open class PagedListTest {
     @Test
     fun testAggregatorAutoAliasCollision() = withDb("PAGED-AGG-ALIAS-COLL") { s ->
         setupTable(s, 5)
-        val list = PagedList<TestC>()
+        val list = pagedList<TestC>()
         // Two sum("id") calls should produce "sum_id" and "sum_id_2"
         val row = list.getAggregator()
             .sum("id")
@@ -1829,7 +2261,7 @@ open class PagedListTest {
     @Test
     fun testAggregatorAutoAliasCollisionTriple() = withDb("PAGED-AGG-ALIAS-COLL3") { s ->
         setupTable(s, 3)
-        val list = PagedList<TestC>()
+        val list = pagedList<TestC>()
         val row = list.getAggregator()
             .sum("id")
             .sum("id")
@@ -1843,7 +2275,7 @@ open class PagedListTest {
     @Test
     fun testAggregatorRawAliasNoPrefix() = withDb("PAGED-AGG-ALIAS-RAW") { s ->
         setupTable(s, 5)
-        val list = PagedList<TestC>()
+        val list = pagedList<TestC>()
         // raw() never gets a "raw_" prefix — the expression itself names the function
         val row = list.getAggregator()
             .raw("SUM(test.id)")
@@ -1856,7 +2288,7 @@ open class PagedListTest {
     @Test
     fun testAggregatorRawAliasCollision() = withDb("PAGED-AGG-ALIAS-RAW-COLL") { s ->
         setupTable(s, 3)
-        val list = PagedList<TestC>()
+        val list = pagedList<TestC>()
         val row = list.getAggregator()
             .raw("SUM(test.id)")
             .raw("SUM(test.id)")
@@ -1868,7 +2300,7 @@ open class PagedListTest {
     @Test
     fun testAggregatorRawAliasWithOperators() = withDb("PAGED-AGG-ALIAS-OPS") { s ->
         setupTable(s, 5)
-        val list = PagedList<TestC>()
+        val list = pagedList<TestC>()
         // Operators (*, parens) get sanitized to underscores, coalesced, trimmed
         val row = list.getAggregator()
             .raw("SUM(test.id * test.id)")
@@ -1882,7 +2314,7 @@ open class PagedListTest {
     @Test
     fun testAggregatorRawAliasStarFallback() = withDb("PAGED-AGG-ALIAS-RAW-STAR") { s ->
         setupTable(s, 5)
-        val list = PagedList<TestC>()
+        val list = pagedList<TestC>()
         // raw("COUNT(*)") — parens sanitized → "COUNT"
         val cnt = list.getAggregator()
             .raw("COUNT(*)")
@@ -1903,7 +2335,7 @@ open class PagedListTest {
     @Test
     fun testAggregatorRawAliasDigitFirstGetsPrefix() = withDb("PAGED-AGG-ALIAS-RAW-DIGIT") { s ->
         setupTable(s, 5)
-        val list = PagedList<TestC>()
+        val list = pagedList<TestC>()
         val row = list.getAggregator()
             .raw("1 + SUM(test.id)")       // digit-first — alias "_1_SUM_test_id"
             .raw("2 * COUNT(test.id)")     // digit-first — alias "_2_COUNT_test_id"
@@ -1927,7 +2359,7 @@ open class PagedListTest {
     fun testAggregatorUserSuppliedAliasDigitFirstGetsUnderscore() =
         withDb("PAGED-AGG-ALIAS-USER-DIGIT") { s ->
             setupTable(s, 5)
-            val list = PagedList<TestC>()
+            val list = pagedList<TestC>()
             val row = list.getAggregator()
                 .sum("id", alias = "1total")   // explicit digit-first → "_1total"
                 .count("*", alias = "42rows")  // explicit digit-first → "_42rows"
@@ -1949,7 +2381,7 @@ open class PagedListTest {
     @Test
     fun testAggregatorRawBareDigitLiteralGetsPrefix() = withDb("PAGED-AGG-ALIAS-RAW-BARE") { s ->
         setupTable(s, 1)
-        val list = PagedList<TestC>()
+        val list = pagedList<TestC>()
         val value = list.getAggregator()
             .raw("1")                // degenerate case — alias "_1"
             .execute<Long>()
@@ -1967,7 +2399,7 @@ open class PagedListTest {
     fun testAggregatorUserSuppliedAliasUnderscoreFirstPreserved() =
         withDb("PAGED-AGG-ALIAS-USER-UNDERSCORE") { s ->
             setupTable(s, 5)
-            val list = PagedList<TestC>()
+            val list = pagedList<TestC>()
             val row = list.getAggregator()
                 .sum("id", alias = "_total")   // leading `_` — preserved as-is
                 .count("*", alias = "_cnt")    // leading `_` — preserved as-is
@@ -1984,7 +2416,7 @@ open class PagedListTest {
     @Test
     fun testAggregatorExplicitAlias() = withDb("PAGED-AGG-ALIAS-EXPLICIT") { s ->
         setupTable(s, 10)
-        val list = PagedList<TestC>()
+        val list = pagedList<TestC>()
         val row = list.getAggregator()
             .sum("id", "grand_total")
             .count("*", "row_count")
@@ -1996,7 +2428,7 @@ open class PagedListTest {
     @Test
     fun testAggregatorMixedExplicitAndAuto() = withDb("PAGED-AGG-ALIAS-MIXED") { s ->
         setupTable(s, 5)
-        val list = PagedList<TestC>()
+        val list = pagedList<TestC>()
         val row = list.getAggregator()
             .sum("id", "total")  // explicit
             .avg("id")           // auto → "avg_id"
@@ -2010,7 +2442,7 @@ open class PagedListTest {
     @Test
     fun testAggregatorExplicitCollidesWithAuto() = withDb("PAGED-AGG-ALIAS-COLLIDE-AUTO") { s ->
         setupTable(s, 5)
-        val list = PagedList<TestC>()
+        val list = pagedList<TestC>()
         // Auto gives "sum_id"; explicit "sum_id" later should collide (fail-fast)
         assertFailsWith<IllegalArgumentException> {
             list.getAggregator()
@@ -2023,7 +2455,7 @@ open class PagedListTest {
     @Test
     fun testAggregatorCountStarAlias() = withDb("PAGED-AGG-COUNT-STAR") { s ->
         setupTable(s, 5)
-        val list = PagedList<TestC>()
+        val list = pagedList<TestC>()
         // count("*") → plain "count" (no "_*" suffix); a second count("*") → "count_2"
         val row = list.getAggregator()
             .count("*")
@@ -2036,7 +2468,7 @@ open class PagedListTest {
     @Test
     fun testAggregatorSingleUsesFirstAlias() = withDb("PAGED-AGG-SINGLE-ALIAS") { s ->
         setupTable(s, 10)
-        val list = PagedList<TestC>()
+        val list = pagedList<TestC>()
         // Single-value execute reads the single column regardless of alias
         val explicit = list.getAggregator().sum("id", "foo").execute<Long>()
         val auto = list.getAggregator().sum("id").execute<Long>()
@@ -2049,7 +2481,7 @@ open class PagedListTest {
     @Test
     fun testAggregatorMultiAllFunctionsOnSameField() = withDb("PAGED-AGG-MULTI-ALL") { s ->
         setupTable(s, 10)
-        val list = PagedList<TestC>()
+        val list = pagedList<TestC>()
         // sum + avg + min + max + count + countDistinct on the same numeric field
         val row = list.getAggregator()
             .sum("id")
@@ -2080,7 +2512,7 @@ open class PagedListTest {
             TestC(6, "Charlie")
         ))
 
-        val list = PagedList<TestC>()
+        val list = pagedList<TestC>()
         val row = list.getAggregator()
             .count("name")                     // all non-null rows → 6
             .countDistinct("name")             // distinct values → 3
@@ -2094,7 +2526,7 @@ open class PagedListTest {
     @Test
     fun testAggregatorMultiMixedRawAndField() = withDb("PAGED-AGG-MULTI-RAW-FIELD") { s ->
         setupTable(s, 5)
-        val list = PagedList<TestC>()
+        val list = pagedList<TestC>()
         val row = list.getAggregator()
             .sum("id")                               // → "sum_id"
             .raw("SUM(test.id * 2)", "doubled")      // explicit alias
@@ -2111,7 +2543,7 @@ open class PagedListTest {
     @Test
     fun testAggregatorMultiRespectsFilterAcrossAll() = withDb("PAGED-AGG-MULTI-FILTER") { s ->
         setupTable(s, 20)
-        val list = PagedList<TestC>()
+        val list = pagedList<TestC>()
         val col = list.addFacet("id")
         col.filter = "5 ... 10"  // 6 rows: 5..10
 
@@ -2130,7 +2562,7 @@ open class PagedListTest {
     @Test
     fun testAggregatorMultiPreservesInsertionOrder() = withDb("PAGED-AGG-MULTI-ORDER") { s ->
         setupTable(s, 5)
-        val list = PagedList<TestC>()
+        val list = pagedList<TestC>()
         val row = list.getAggregator()
             .max("id")
             .min("id")
@@ -2145,7 +2577,7 @@ open class PagedListTest {
     @Test
     fun testAggregatorMultiManyCollisions() = withDb("PAGED-AGG-MULTI-COLL") { s ->
         setupTable(s, 5)
-        val list = PagedList<TestC>()
+        val list = pagedList<TestC>()
         // Four sum("id") in a row — uniqueness via _2, _3, _4 suffix
         val row = list.getAggregator()
             .sum("id")
@@ -2162,7 +2594,7 @@ open class PagedListTest {
     @Test
     fun testAggregatorMultiEmptyResult() = withDb("PAGED-AGG-MULTI-EMPTY") { s ->
         setupTable(s, 5)
-        val list = PagedList<TestC>()
+        val list = pagedList<TestC>()
         val col = list.addFacet("id")
         col.filter = "> 1000"  // no rows match
 
@@ -2182,7 +2614,7 @@ open class PagedListTest {
     fun testAggregatorMultiWithSelectedEntity() = withDb("PAGED-AGG-MULTI-SEL") { s ->
         // Selected entity must not bias the aggregator — it's a cosmetic ordering hint only
         setupTable(s, 10)
-        val list = PagedList<TestC>()
+        val list = pagedList<TestC>()
         val item5 = s.read<TestC>("SELECT * FROM test WHERE id = ?", 5).first()
         list.selected = item5
 
@@ -2204,7 +2636,7 @@ open class PagedListTest {
             TestC(1, "A"), TestC(2, "A"), TestC(3, "B"), TestC(4, "B"), TestC(5, "C")
         ))
 
-        val list = PagedList<TestC>()
+        val list = pagedList<TestC>()
         list.isDistinct = true  // affects list.size via DISTINCT, but NOT aggregates
 
         val row = list.getAggregator()
@@ -2218,7 +2650,7 @@ open class PagedListTest {
     @Test
     fun testAggregatorMultiRawOnly() = withDb("PAGED-AGG-MULTI-RAW-ONLY") { s ->
         setupTable(s, 5)
-        val list = PagedList<TestC>()
+        val list = pagedList<TestC>()
         val row = list.getAggregator()
             .raw("SUM(test.id)")
             .raw("AVG(test.id)")
@@ -2238,7 +2670,7 @@ open class PagedListTest {
     @Test
     fun testAggregatorMultiRawAndMixedCollision() = withDb("PAGED-AGG-MULTI-RAW-MIX-COLL") { s ->
         setupTable(s, 3)
-        val list = PagedList<TestC>()
+        val list = pagedList<TestC>()
         // Three raws that would all produce "SUM_test_id" → _2, _3 suffixes
         val row = list.getAggregator()
             .raw("SUM(test.id)")
@@ -2251,7 +2683,7 @@ open class PagedListTest {
     @Test
     fun testAggregatorMultiQueryField() = withDb("PAGED-AGG-MULTI-QUERY") { s ->
         setupTable(s, 5)
-        val list = PagedList<TestC>()
+        val list = pagedList<TestC>()
         val agg = list.getAggregator()
             .sum("id", "total")
             .count("*", "cnt")
@@ -2276,7 +2708,7 @@ open class PagedListTest {
             TestC(6, "Charlie")
         ))
 
-        val list = PagedList<TestC>()
+        val list = pagedList<TestC>()
         val col = list.addFacet("name")
         val counted = col.getFilterValues().withCounts()
 
@@ -2290,7 +2722,7 @@ open class PagedListTest {
     @Test
     fun testFilterCountedValuesCached() = withDb("PAGED-FILTER-COUNTED-CACHE") { s ->
         setupTable(s, 5)
-        val list = PagedList<TestC>()
+        val list = pagedList<TestC>()
         val col = list.addFacet("name")
         val values = col.getFilterValues()
         val a = values.withCounts()
@@ -2304,12 +2736,12 @@ open class PagedListTest {
     @Test
     fun testSaveRestoreState() = withDb("PAGED-STATE") { s ->
         setupTable(s, 10)
-        val list = PagedList<TestC>()
+        val list = pagedList<TestC>()
         val nameCol = list.addFacet("name")
         val idCol = list.addFacet("id")
 
         nameCol.filter = "Item1"
-        idCol.sort = Facet.DESCENDING
+        idCol.sort = SortState.DESCENDING
         list.pageSize = 7
         list.isDistinct = true
 
@@ -2325,7 +2757,7 @@ open class PagedListTest {
         list.restoreState(saved)
 
         assertEquals("Item1", nameCol.filter)
-        assertEquals(Facet.DESCENDING, idCol.sort)
+        assertEquals(SortState.DESCENDING, idCol.sort)
         assertEquals(7, list.pageSize)
         assertTrue(list.isDistinct)
     }
@@ -2337,10 +2769,10 @@ open class PagedListTest {
             "${TestDDL.intPrimaryKey("id")}, first_name ${TestDDL.textType()}, last_name ${TestDDL.textType()}"))
         s.create(listOf(CamelEntity(1, "Alice", "Smith")))
 
-        val list1 = PagedList<CamelEntity>()
+        val list1 = pagedList<CamelEntity>()
         list1.addFacet("firstName", "lastName").filter = "Ali"
 
-        val list2 = PagedList<CamelEntity>()
+        val list2 = pagedList<CamelEntity>()
         list2.addFacet("lastName", "firstName")  // swapped order
 
         // state key is derived from sorted paths — save/restore across swapped order
@@ -2352,14 +2784,14 @@ open class PagedListTest {
     @Test
     fun testRestoreIgnoresUnknownKeys() = withDb("PAGED-STATE-UNKNOWN") { s ->
         setupTable(s, 5)
-        val list = PagedList<TestC>()
+        val list = pagedList<TestC>()
         val col = list.addFacet("name").also { it.alias = "name" }
         col.filter = "Item1"
         val saved = list.saveState()
 
         // New list with a different (explicit) alias — the saved "name" key has
         // no match on list2 and must be silently ignored.
-        val list2 = PagedList<TestC>()
+        val list2 = pagedList<TestC>()
         list2.addFacet("id").also { it.alias = "id" }
         list2.restoreState(saved)
         assertNull(list2.getFacet(0).filter)
@@ -2368,7 +2800,7 @@ open class PagedListTest {
     @Test
     fun testRestoreEmptyState() = withDb("PAGED-STATE-EMPTY") { s ->
         setupTable(s, 5)
-        val list = PagedList<TestC>()
+        val list = pagedList<TestC>()
         val col = list.addFacet("name")
         col.filter = "Item1"
         list.isDistinct = true
@@ -2385,37 +2817,33 @@ open class PagedListTest {
     @Test
     fun testSavedStateSortsAreAscDescStrings() = withDb("PAGED-STATE-SORT-STR") { s ->
         setupTable(s, 5)
-        val list = PagedList<TestC>()
+        val list = pagedList<TestC>()
         val nameCol = list.addFacet("name")
         val idCol = list.addFacet("id")
 
-        nameCol.sort = Facet.ASCENDING
-        idCol.sort = Facet.DESCENDING
+        nameCol.sort = SortState.ASCENDING
+        idCol.sort = SortState.DESCENDING
 
         val saved = list.saveState()
 
-        // Sorts are stored as plain "ASC" / "DESC" strings — no enum leakage.
+        // One ascending and one descending entry across the two columns
         assertEquals(2, saved.sorts.size)
-        assertTrue(saved.sorts.values.all { it == "ASC" || it == "DESC" })
-        // Exactly one ASC entry and one DESC entry across the two columns.
-        assertEquals(1, saved.sorts.values.count { it == PagedListSort.ASC })
-        assertEquals(1, saved.sorts.values.count { it == PagedListSort.DESC })
-        assertEquals("ASC", PagedListSort.ASC)
-        assertEquals("DESC", PagedListSort.DESC)
+        assertEquals(1, saved.sorts.values.count { it == SortState.ASCENDING })
+        assertEquals(1, saved.sorts.values.count { it == SortState.DESCENDING })
     }
 
     @Test
     fun testRestoreSortFromHandCraftedPlainState() = withDb("PAGED-STATE-SORT-PLAIN") { s ->
         setupTable(s, 5)
-        val list = PagedList<TestC>()
+        val list = pagedList<TestC>()
         val nameCol = list.addFacet("name")
         val idCol = list.addFacet("id")
 
         // Build a reference state from saveState() so we know the keys, then
         // rebuild it from scratch using only plain data types — the shape any
         // serialization framework produces after a JSON round-trip.
-        nameCol.sort = Facet.ASCENDING
-        idCol.sort = Facet.DESCENDING
+        nameCol.sort = SortState.ASCENDING
+        idCol.sort = SortState.DESCENDING
         val reference = list.saveState()
         val handCrafted = PagedListState(
             filters = reference.filters.toMap(),
@@ -2430,38 +2858,21 @@ open class PagedListTest {
         idCol.sort = null
         list.restoreState(handCrafted)
 
-        assertEquals(Facet.ASCENDING, nameCol.sort)
-        assertEquals(Facet.DESCENDING, idCol.sort)
-    }
-
-    @Test
-    fun testRestoreSortIgnoresInvalidDirection() = withDb("PAGED-STATE-SORT-INVALID") { s ->
-        setupTable(s, 5)
-        val list = PagedList<TestC>()
-        val col = list.addFacet("name")
-        col.sort = Facet.ASCENDING
-
-        // Grab the actual key from a save round-trip, then override the value with garbage.
-        val reference = list.saveState()
-        val key = reference.sorts.keys.single()
-        val poisoned = PagedListState(sorts = mapOf(key to "gibberish"))
-        list.restoreState(poisoned)
-
-        // Unknown sort value treated as absent — column sort is cleared.
-        assertNull(col.sort)
+        assertEquals(SortState.ASCENDING, nameCol.sort)
+        assertEquals(SortState.DESCENDING, idCol.sort)
     }
 
     @Test
     fun testPagedListStatePureDataRoundTrip() = withDb("PAGED-STATE-ROUND") { s ->
         setupTable(s, 5)
-        val list = PagedList<TestC>()
+        val list = pagedList<TestC>()
         val nameCol = list.addFacet("name")
         val idCol = list.addFacet("id")
 
         nameCol.filter = "Item"
-        nameCol.sort = Facet.DESCENDING
+        nameCol.sort = SortState.DESCENDING
         nameCol.isCaseSensitive = true
-        idCol.sort = Facet.ASCENDING
+        idCol.sort = SortState.ASCENDING
         list.pageSize = 25
         list.isDistinct = true
 
@@ -2481,20 +2892,20 @@ open class PagedListTest {
         // All sort entries are the sentinel strings, not enum-style values.
         for (value in rebuilt.sorts.values)
             assertTrue(
-                value == PagedListSort.ASC || value == PagedListSort.DESC,
+                value == SortState.ASCENDING || value == SortState.DESCENDING,
                 "unexpected sort value: $value"
             )
 
         // Apply the rebuilt state to a fresh list and verify everything came back.
-        val list2 = PagedList<TestC>()
+        val list2 = pagedList<TestC>()
         val name2 = list2.addFacet("name")
         val id2 = list2.addFacet("id")
         list2.restoreState(rebuilt)
 
         assertEquals("Item", name2.filter)
-        assertEquals(Facet.DESCENDING, name2.sort)
+        assertEquals(SortState.DESCENDING, name2.sort)
         assertTrue(name2.isCaseSensitive)
-        assertEquals(Facet.ASCENDING, id2.sort)
+        assertEquals(SortState.ASCENDING, id2.sort)
         assertEquals(25, list2.pageSize)
         assertTrue(list2.isDistinct)
     }

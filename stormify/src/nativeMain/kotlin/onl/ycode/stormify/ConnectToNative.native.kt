@@ -16,6 +16,8 @@ internal actual class WeakRef<T : Any> actual constructor(referent: T) {
 
 internal actual fun transformResultValue(value: Any?): Any? = value
 
+internal actual fun isBigDecimal(value: Any): Boolean = value is com.ionspin.kotlin.bignum.decimal.BigDecimal
+
 actual val Any.isOtherPrimitive
     get() = this is com.ionspin.kotlin.bignum.BigNumber<*> ||
             this is kotlinx.datetime.LocalDate ||

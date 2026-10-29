@@ -2,6 +2,8 @@
 // (C) Panayotis Katsaloulis
 package onl.ycode.stormify
 
+import kotlin.jvm.JvmField
+
 /**
  * Built-in naming policies for converting Kotlin property/class names to database column/table names.
  *
@@ -14,12 +16,15 @@ package onl.ycode.stormify
  */
 object NamingPolicy {
     /** Keeps names as-is (camelCase). */
+    @JvmField
     val CAMEL_CASE: (String) -> String = { it }
 
     /** Converts camelCase to lower_case_with_underscores (snake_case). This is the default. */
+    @JvmField
     val LOWER_CASE_WITH_UNDERSCORES: (String) -> String = { camelToSnake(it, false) }
 
     /** Converts camelCase to UPPER_CASE_WITH_UNDERSCORES (SCREAMING_SNAKE_CASE). */
+    @JvmField
     val UPPER_CASE_WITH_UNDERSCORES: (String) -> String = { camelToSnake(it, true) }
 }
 

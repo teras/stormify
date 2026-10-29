@@ -43,4 +43,6 @@ internal actual object ActiveTxRegistry {
         }
         return null
     }
+
+    actual fun currentOwner(): Stormify? = stack.lastOrNull()?.owner
 }

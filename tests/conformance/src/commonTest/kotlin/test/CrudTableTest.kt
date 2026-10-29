@@ -12,12 +12,12 @@ import kotlin.test.assertNull
 
 /**
  * Covers [CRUDTable] — the Java-friendly mixin interface whose `create/update/delete`
- * methods delegate to the default Stormify instance. Ambient-transaction tracking
+ * methods delegate to the default Stormify instance and return the entity. Ambient-transaction tracking
  * must make those methods transparently join an enclosing `transaction { }` block.
  */
 open class CrudTableTest {
     private fun withDb(name: String, test: (Stormify) -> Unit) = TestHelper.withDb(name) { s ->
-        s.asDefault { test(s) }
+        s.asDefault(); test(s)
     }
 
     @Test
@@ -26,12 +26,13 @@ open class CrudTableTest {
         s.executeUpdate(TestDDL.createTable("ct_test",
             "${TestDDL.intPrimaryKey("id")}, name ${TestDDL.textType()}"))
 
-        CrudTableRow(1, "Alice").create()
+        val created: CrudTableRow = CrudTableRow(1, "Alice").create()
+        assertEquals(1, created.id)
         assertEquals("Alice", s.readOne<String>("SELECT name FROM ct_test WHERE id = 1"))
 
         val row = s.readOne<CrudTableRow>("SELECT * FROM ct_test WHERE id = 1")!!
         row.name = "Alice Updated"
-        row.update()
+        assertEquals("Alice Updated", row.update().name)
         assertEquals("Alice Updated", s.readOne<String>("SELECT name FROM ct_test WHERE id = 1"))
 
         row.delete()

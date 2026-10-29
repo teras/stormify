@@ -4,58 +4,48 @@
 
 package onl.ycode.stormify.biglist
 
-import onl.ycode.kdbc.SQLException
 import onl.ycode.kdbc.TypeConversion
 import onl.ycode.stormify.NativeBigInteger
 import onl.ycode.stormify.Stormify
-import onl.ycode.stormify.StormifyAware
 import onl.ycode.stormify.TypeUtils
-import kotlin.jvm.Transient
 import kotlin.math.min
 import kotlin.reflect.KClass
 
 /**
- * Abstract base class for [PagedList][AbstractPagedList] — a UI-model façade over the shared
- * [PagedQueryCore] engine. Users do not instantiate this directly; use the
- * platform-specific [PagedList][AbstractPagedList] subclass instead (it provides language-idiomatic
- * constructors for Kotlin and Java).
+ * Facet-based lazy paginated list view of entities of type [T], a UI-model façade
+ * over the shared [PagedQueryCore] engine.
  *
- * A [PagedList][AbstractPagedList] implements [kotlin.collections.AbstractList], so it behaves as a
+ * A [PagedList] implements [kotlin.collections.AbstractList], so it behaves as a
  * normal `List<T>` while loading pages on demand from the database. Filtering and
  * sorting are defined through [Facet] objects set up at configuration time. The
  * list caches the current page and the total size, and supports a "selected"
  * entity that always appears first.
  *
- * ## When to use [PagedList][AbstractPagedList]
+ * ## When to use [PagedList]
  *
- * [PagedList][AbstractPagedList] is intended for **UI consumers** — desktop/embedded grids (ZK,
+ * [PagedList] is intended for **UI consumers** — desktop/embedded grids (ZK,
  * Compose, Swing, JavaFX) where a single long-lived list instance drives a view.
  * It is not appropriate for stateless server-side request handling: its per-column
  * filter/sort state is mutable and shared, and its cached page / size / selected
  * entity have no meaning across independent REST requests.
  *
- * For REST/stateless server use, use [PagedQuery][AbstractPagedQuery] — configure once at startup,
+ * For REST/stateless server use, use [PagedQuery] — configure once at startup,
  * call `execute(spec)` per request.
  *
- * The [Stormify] instance is not passed at construction. It is resolved lazily on
- * first access via (in order):
- *  1. The instance explicitly attached via [Stormify.attach]
- *  2. The registered [Stormify.defaultInstance]
- *
- * If neither is available when the list first needs to touch the database, an
- * error is thrown.
+ A list is created by a [Stormify] instance and works on it: `stormify.pagedList<T>()`,
+ * or `pagedList<T>()` on the instance of the enclosing transaction or the default
+ * instance; from Java, `stormify.pagedList(T.class)`.
  *
  * ## Usage
  * ```kotlin
- * val list = PagedList<Company>()        // no stormify yet
- * stormify.attach(list)                   // binds the instance
+ * val list = stormify.pagedList<Company>()
  * list.addFacet("name")                  // text filter + sort
  * list.addFacet("contactPerson.firstName",
  *                "contactPerson.lastName") // OR filter via FK
- * list.addSqlFacet("SUM(amount)", Facet.NUMERIC)
+ * list.addSqlFacet("SUM(amount)", Facet.Type.NUMERIC)
  *
  * list.getFacet(0).filter = "Acme"
- * list.getFacet(1).sort = Facet.ASCENDING
+ * list.getFacet(1).sort = SortState.ASCENDING
  *
  * val company = list[0]   // triggers page load
  * val total = list.size   // triggers COUNT query
@@ -64,19 +54,10 @@ import kotlin.reflect.KClass
  * @param T The entity type
  * @param classType The KClass of the entity type
  */
-abstract class AbstractPagedList<T : Any> internal constructor(
-    val classType: KClass<T>
-) : AbstractList<T>(), StormifyAware {
-
-    @Transient internal var _stormify: Stormify? = null
-
-    /** Resolves the Stormify instance — explicitly attached, default, or error. */
-    private val stormify: Stormify
-        get() = _stormify ?: Stormify.defaultInstance
-            ?: throw SQLException(
-                "No Stormify instance attached to this PagedList and no default instance " +
-                        "is configured. Call stormify.attach(list) or Stormify.asDefault() first."
-            )
+class PagedList<T : Any> @PublishedApi internal constructor(
+    val classType: KClass<T>,
+    private val stormify: Stormify,
+) : AbstractList<T>() {
 
     internal val core: PagedQueryCore<T> = PagedQueryCore(
         classType = classType,
@@ -91,15 +72,6 @@ abstract class AbstractPagedList<T : Any> internal constructor(
     }
 
     internal val info get() = core.info
-
-    override fun attachTo(stormify: Stormify) {
-        _stormify = stormify
-        // The attached Stormify may have different naming policies or registered entities
-        // than whatever resolved the cached state previously. Drop the cached metadata
-        // and query tree so they get rebuilt on next access.
-        core.invalidateCachedMetadata()
-        refresh()
-    }
 
     // --- Configuration ---
 
@@ -142,6 +114,22 @@ abstract class AbstractPagedList<T : Any> internal constructor(
         }
 
     /**
+     * Direction of the primary key in the generated `ORDER BY`. The key orders
+     * the rows when no facet sorts, and closes every `ORDER BY` as the
+     * tie-breaker after the facet sorts. Default [SortState.ASCENDING].
+     *
+     * Structural, like the facets themselves: not part of [saveState].
+     */
+    var keySort: SortState
+        get() = core.keySort
+        set(value) {
+            if (core.keySort != value) {
+                core.keySort = value
+                refresh()
+            }
+        }
+
+    /**
      * Sets the selected entity, which will appear first in the list.
      */
     var selected: T? = null
@@ -160,7 +148,7 @@ abstract class AbstractPagedList<T : Any> internal constructor(
      * Sets a fixed constraint (WHERE clause) for this list. This constraint is always
      * applied in addition to any column filters.
      */
-    fun setConstraints(query: String, vararg args: Any) {
+    fun setConstraints(query: String, vararg args: Any?) {
         core.setConstraints(query, args)
         refresh()
     }
@@ -242,6 +230,98 @@ abstract class AbstractPagedList<T : Any> internal constructor(
         return column
     }
 
+    // --- Fluent configuration ---
+    //
+    // Chainable counterparts of the setup methods above: each one configures the list
+    // exactly like its `addFacet` / `setConstraints` / `isDistinct` counterpart and
+    // returns the list itself instead of the created facet.
+
+    /** Fluent [addFacet]: one facet over [paths], OR-combined when more than one. */
+    fun facet(vararg paths: ScalarPath): PagedList<T> {
+        addFacet(*paths)
+        return this
+    }
+
+    /** Fluent [addFacet]: one facet over [fieldPaths] (dot notation), OR-combined when more than one. */
+    fun facet(vararg fieldPaths: String): PagedList<T> {
+        addFacet(*fieldPaths)
+        return this
+    }
+
+    /** Fluent [addFacet] with an explicit [type]. */
+    fun facet(type: Facet.Type, vararg paths: ScalarPath): PagedList<T> {
+        addFacet(type, *paths)
+        return this
+    }
+
+    /** Fluent [addFacet] with an explicit [type], using dot-notation paths. */
+    fun facet(type: Facet.Type, vararg fieldPaths: String): PagedList<T> {
+        addFacet(type, *fieldPaths)
+        return this
+    }
+
+    /** Fluent [addFacet] for an [ENUM][Facet.Type.ENUM] facet with a display-name-to-DB-value map. */
+    fun facet(enumValues: Map<String, Any>, vararg paths: ScalarPath): PagedList<T> {
+        addFacet(enumValues, *paths)
+        return this
+    }
+
+    /** Fluent [addFacet] for an [ENUM][Facet.Type.ENUM] facet, using dot-notation paths. */
+    fun facet(enumValues: Map<String, Any>, vararg fieldPaths: String): PagedList<T> {
+        addFacet(enumValues, *fieldPaths)
+        return this
+    }
+
+    /**
+     * Sorts by [path] in the given [direction]. The sort is set on the facet that
+     * covers [path] (see [facetByPath]), whose [Facet.sortPath] becomes [path], so a
+     * facet with several paths sorts by the requested one. When several facets are
+     * sorted, the `ORDER BY` follows the order in which they were sorted, whether
+     * through this method or through [Facet.sort].
+     *
+     * @throws IllegalArgumentException when no facet covers [path]; declare the facet first.
+     */
+    fun sort(path: ScalarPath, direction: SortState): PagedList<T> =
+        sort(path.toString(), direction)
+
+    /** Dot-notation variant of [sort]. */
+    fun sort(fieldPath: String, direction: SortState): PagedList<T> {
+        val facet = requireNotNull(facetByPath(fieldPath)) {
+            "No facet covers '$fieldPath'; add one before sorting by it"
+        }
+        facet.sortPath = fieldPath
+        facet.sort = direction
+        return this
+    }
+
+    /** Fluent [isDistinct]: turns distinct mode on. */
+    fun distinct(): PagedList<T> {
+        isDistinct = true
+        return this
+    }
+
+    /** Fluent [keySort]: sets the direction of the primary key in the `ORDER BY`. */
+    fun keySort(direction: SortState): PagedList<T> {
+        keySort = direction
+        return this
+    }
+
+    /** Fluent [setConstraints]. */
+    fun constraints(query: String, vararg args: Any?): PagedList<T> {
+        setConstraints(query, *args)
+        return this
+    }
+
+    /**
+     * Returns the first facet that has [fieldPath] among its field paths (a facet with
+     * several paths matches any of them), or `null` when none does. SQL facets have no
+     * field paths and never match.
+     */
+    fun facetByPath(fieldPath: String): Facet? = core.facetByPath(FieldPath(fieldPath))
+
+    /** Typed-path variant of [facetByPath]. */
+    fun facetByPath(path: ScalarPath): Facet? = facetByPath(path.toString())
+
     // --- Table refs ---
 
     /**
@@ -320,8 +400,8 @@ abstract class AbstractPagedList<T : Any> internal constructor(
      * batch size, so a foreign-key touch resolves a whole chunk of siblings in
      * one query instead of one per row.
      */
-    fun forEachStreaming(action: (T) -> Unit) {
-        core.forEachStreaming(state = null, selectedId = selectedID, action = action)
+    fun forEachStreaming(action: RowConsumer<T>) {
+        core.forEachStreaming(state = null, selectedId = selectedID, action = action::accept)
     }
 
     /**
@@ -331,38 +411,34 @@ abstract class AbstractPagedList<T : Any> internal constructor(
      */
     fun saveState(): PagedListState {
         val filters = mutableMapOf<String, String>()
-        val sorts = mutableMapOf<String, String>()
+        val sorts = mutableMapOf<String, SortState>()
         val cs = mutableMapOf<String, Boolean>()
         for (column in core.facets) {
             val key = column.stateKey()
             column.filter?.let { filters[key] = it }
-            column.sort?.let {
-                sorts[key] = if (it == SortState.ASCENDING) PagedListSort.ASC
-                else PagedListSort.DESC
-            }
             if (column.isCaseSensitive) cs[key] = true
         }
+        // In sorting order, so that restoring the state restores the ORDER BY
+        for (column in core.facets.filter { it.sort != null }.sortedBy { it.sortOrder })
+            sorts[column.stateKey()] = column.sort!!
         return PagedListState(filters, sorts, cs, pageSize, isDistinct)
     }
 
     /**
      * Re-applies a previously captured [PagedListState]. Keys present in [state]
      * but missing from the current column set are silently ignored (the list's
-     * columns may have changed since the state was saved). Sort entries whose
-     * value is neither [PagedListSort.ASC] nor [PagedListSort.DESC] are treated
-     * as absent.
+     * columns may have changed since the state was saved).
      */
     fun restoreState(state: PagedListState) {
+        val byKey = core.facets.associateBy { it.stateKey() }
         for (column in core.facets) {
             val key = column.stateKey()
             column.filter = state.filters[key]
-            column.sort = when (state.sorts[key]) {
-                PagedListSort.ASC -> SortState.ASCENDING
-                PagedListSort.DESC -> SortState.DESCENDING
-                else -> null
-            }
+            column.sort = null
             column.isCaseSensitive = state.caseSensitive[key] ?: false
         }
+        // Applied in the order of the saved sorts, which is the sorting order they were saved in
+        for ((key, direction) in state.sorts) byKey[key]?.sort = direction
         pageSize = state.pageSize
         isDistinct = state.isDistinct
         refresh()
@@ -404,9 +480,8 @@ abstract class AbstractPagedList<T : Any> internal constructor(
             // Use `<table>.*` so JOINs with duplicate column names don't clobber entity mapping
             val result = stormify.read(
                 null, classType, stormify.sqlDialect.queryFormatter(
-                    columns, core.distinctPart, core.tablesPart, query,
-                    core.sortingPart(selectedID), lowBound, upperBound
-                ), *arguments.toTypedArray(),
+                    columns, core.distinctPart, core.tablesPart, query, core.sortingPart(selectedID)
+                ), *(arguments + stormify.sqlDialect.pageBinds(lowBound, upperBound)).toTypedArray(),
                 customFields = customFields
             )
             val observedViaMerged = useMerged && _size != null

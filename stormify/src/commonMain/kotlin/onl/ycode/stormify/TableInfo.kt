@@ -125,7 +125,12 @@ class TableInfo<T : Any> internal constructor(
         else throw SQLException("Expected exactly one primary key in $tableName, found ${idProps.size}")
     }
 
-    internal fun getIdValues(entity: T): List<Any?> = idProps.map { it.getter(entity) }
+    /**
+     * The primary key values of [entity], in the order of [primaryKeys]: one element for a
+     * single key, several for a composite key. A key not yet assigned is returned as it is
+     * held (`null`, or `0` for a primitive).
+     */
+    fun getIdValues(entity: T): List<Any?> = idProps.map { it.getter(entity) }
 
     // SELECT * is intentional; unmatched DB columns go through Stormify.unmatchedColumnPolicy.
     internal val populateQuery by lazy {
@@ -143,6 +148,17 @@ class TableInfo<T : Any> internal constructor(
         val whereClause = idProps.joinToString(" AND ") { "${it.dbName} = ?" }
         "UPDATE $tableName SET $setClause WHERE $whereClause"
     }
+    // Dynamic update (Stormify.dynamicUpdate): the updatable columns addressed by index
+    internal val updatableCount: Int get() = updatableProps.size
+    internal fun getUpdatableValues(entity: T): List<Any?> = updatableProps.map { it.sqlValue(entity) }
+    /** The updatable properties, in the order of [getUpdatableValues]. */
+    internal val updatableProperties: List<ResolvedProperty<T>> get() = updatableProps
+    internal fun partialUpdateQuery(columns: List<Int>): String {
+        val setClause = columns.joinToString(", ") { "${updatableProps[it].dbName} = ?" }
+        val whereClause = idProps.joinToString(" AND ") { "${it.dbName} = ?" }
+        return "UPDATE $tableName SET $setClause WHERE $whereClause"
+    }
+
     // Values for create/update queries (in query parameter order)
     internal fun getCreateValues(entity: T): List<Any?> = insertableProps.map { it.sqlValue(entity) }
     internal fun getUpdateValues(entity: T): List<Any?> =
@@ -184,6 +200,8 @@ class TableInfo<T : Any> internal constructor(
 
             val hasPkAnnotation = activeProps.any { it.isPrimaryKey }
 
+            activeProps.firstNotNullOfOrNull { it.mappingError }?.let { throw SQLException(it) }
+
             val resolved = activeProps.map { prop ->
                 val dbName = prop.dbNameOverride?.takeIf { it.isNotBlank() }
                     ?: namingPolicy(prop.name)
@@ -195,7 +213,7 @@ class TableInfo<T : Any> internal constructor(
                     enumAsString = prop.enumAsString,
                     isPrimaryKey = isPk,
                     sequence = prop.sequence, isAutoIncrement = prop.isAutoIncrement,
-                    isInsertable = prop.isCreatable,
+                    isInsertable = prop.isInsertable,
                     isUpdatable = prop.isUpdatable,
                     getter = prop.getter, setter = prop.setter
                 )
@@ -225,6 +243,15 @@ internal class ResolvedProperty<T : Any>(
 
     fun sqlValue(entity: T): Any? {
         val value = getter(entity)
+        if (isReference && entity is StormifyEntity) {
+            val dangling = entity._danglingKeys
+            if (dangling != null) {
+                // A dangling reference that still reads null keeps its key in the column;
+                // a reference set since then replaces it.
+                if (value == null) return dangling[name]
+                dangling.remove(name)
+            }
+        }
         if (value is Enum<*>) return if (enumAsString) value.name else enumToInt(value)
         return value
     }

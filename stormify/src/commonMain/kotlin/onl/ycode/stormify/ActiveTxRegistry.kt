@@ -49,4 +49,10 @@ internal expect object ActiveTxRegistry {
      * thread, or `null` if this thread has no active transaction on [owner].
      */
     fun currentFor(owner: Stormify): Connection?
+
+    /**
+     * Returns the [Stormify] of the innermost transaction or connection scope open on
+     * this thread, or `null` if none is open.
+     */
+    fun currentOwner(): Stormify?
 }

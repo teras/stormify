@@ -136,7 +136,7 @@ open class ConfigTest {
         val info = s.getTableInfo(AnnotatedEntity::class)
         assertEquals("custom_col", info.getField("renamedField")?.dbName)
 
-        // creatable=false → not in INSERT
+        // insertable=false → not in INSERT
         s.create(AnnotatedEntity(id = 1, renamedField = "custom", readOnlyOnCreate = "ignored", readOnlyOnUpdate = "saved"))
         val found = s.findById<AnnotatedEntity>(1)!!
         assertEquals("custom", found.renamedField)

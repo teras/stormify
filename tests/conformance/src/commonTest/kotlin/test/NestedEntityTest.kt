@@ -12,9 +12,9 @@ import kotlin.test.assertNotNull
  * both the reflection and the annproc-generated registration paths; on
  * Native / Android it runs the annproc path only (reflection is absent).
  */
-class NestedEntityTest {
+open class NestedEntityTest {
     private fun withDb(name: String, test: (Stormify) -> Unit) = TestHelper.withDb(name) {
-        it.asDefault(test)
+        it.asDefault(); test(it)
     }
 
     @Test

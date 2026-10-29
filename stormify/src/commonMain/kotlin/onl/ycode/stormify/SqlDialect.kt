@@ -21,27 +21,46 @@ private val sequenceMariaDb = { it: String, count: Int -> "SELECT NEXTVAL($it) F
  * This part defines the pagination dialects for different databases. *
  ********************************************************************/
 
-private val formatterLimitOffset: SqlDialect.(String, String, String, String, String, Int, Int) -> String =
-    { columns, distinct, tableName, constraints, sorting, lowBound, upperBound ->
-        "SELECT $distinct$columns FROM $tableName$constraints ORDER BY $sorting LIMIT ${upperBound - lowBound} OFFSET $lowBound"
-    }
+/**
+ * How a dialect pages a query: the SQL, with a `?` for each bound, and the bound values
+ * in the order of those placeholders. The SQL never depends on the page, so every page
+ * runs the same statement.
+ */
+internal class Pagination(
+    val format: SqlDialect.(columns: String, distinct: String, tableName: String, constraints: String, sorting: String) -> String,
+    val binds: (lowBound: Int, upperBound: Int) -> List<Int>,
+)
 
-private val formatterRowsFetch: SqlDialect.(String, String, String, String, String, Int, Int) -> String =
-    { columns, distinct, tableName, constraints, sorting, lowBound, upperBound ->
-        "SELECT $distinct$columns FROM $tableName$constraints ORDER BY $sorting OFFSET $lowBound ROWS FETCH NEXT ${upperBound - lowBound} ROWS ONLY"
-    }
+private val formatterLimitOffset = Pagination(
+    { columns, distinct, tableName, constraints, sorting ->
+        "SELECT $distinct$columns FROM $tableName$constraints ORDER BY $sorting LIMIT ? OFFSET ?"
+    },
+    { lowBound, upperBound -> listOf(upperBound - lowBound, lowBound) }
+)
 
-private val formatterRowNumber: SqlDialect.(String, String, String, String, String, Int, Int) -> String =
-    { columns, distinct, tableName, constraints, sorting, lowBound, upperBound ->
+private val formatterRowsFetch = Pagination(
+    { columns, distinct, tableName, constraints, sorting ->
+        "SELECT $distinct$columns FROM $tableName$constraints ORDER BY $sorting OFFSET ? ROWS FETCH NEXT ? ROWS ONLY"
+    },
+    { lowBound, upperBound -> listOf(lowBound, upperBound - lowBound) }
+)
+
+private val formatterRowNumber = Pagination(
+    { columns, distinct, tableName, constraints, sorting ->
         // Oracle doesn't support `SELECT *, ROW_NUMBER()...` — use base table prefix
         val baseTable = tableName.substringBefore(" ")
         val innerColumns = if (columns == "*") "$baseTable.*" else columns
-        // DISTINCT requires DENSE_RANK: ROW_NUMBER makes every row unique, defeating DISTINCT
+        // DISTINCT requires DENSE_RANK: ROW_NUMBER makes every row unique, defeating DISTINCT.
+        // The sorting always ends with the primary key, so duplicated rows share a rank and
+        // collapse, and distinct rows get distinct ranks. Rows that share a primary key but
+        // differ elsewhere (a view without a real key) would share a rank and a page slot.
         val rankFn = if (distinct.isNotEmpty()) "DENSE_RANK()" else "ROW_NUMBER()"
         val outer = quoteAlias("__strm_p")
         val rn = quoteAlias("__strm_rn")
-        "SELECT * FROM (SELECT $distinct$innerColumns, $rankFn OVER (ORDER BY $sorting) $rn FROM $tableName$constraints) $outer WHERE $rn > $lowBound AND $rn <= $upperBound ORDER BY $rn"
-    }
+        "SELECT * FROM (SELECT $distinct$innerColumns, $rankFn OVER (ORDER BY $sorting) $rn FROM $tableName$constraints) $outer WHERE $rn > ? AND $rn <= ? ORDER BY $rn"
+    },
+    { lowBound, upperBound -> listOf(lowBound, upperBound) }
+)
 
 /***********************************************************************
  * This part defines the order by Id dialects for different databases. *
@@ -138,10 +157,10 @@ enum class SqlDialect(
      */
     val orderByIdDialect: (String, NativeBigInteger?) -> String?,
     /**
-     * A query formatter that generates SQL queries with different pagination methods
-     * (LIMIT/OFFSET, FETCH FIRST, ROWNUM, TOP, etc.) based on the dialect's conventions.
+     * How the dialect pages a query (LIMIT/OFFSET, OFFSET/FETCH, ROW_NUMBER), with the
+     * bounds bound as parameters.
      */
-    private val queryFormatterImpl: SqlDialect.(columns: String, distinct: String, tableName: String, constraints: String, sorting: String, lowBound: Int, upperBound: Int) -> String,
+    private val pagination: Pagination,
     /**
      * The method to create the query, how to retrieve the generated key from the database.
      */
@@ -288,6 +307,20 @@ enum class SqlDialect(
         formatterLimitOffset, GeneratedKeyRetrieval.NONE
     );
 
+    /**
+     * The longest identifier, such as a column alias, this database accepts. Aliases that
+     * Stormify generates stay within it. Oracle before 12.2 allows 30 characters (and an
+     * unknown database is assumed to be as strict); PostgreSQL truncates past 63, which
+     * would make an alias differ from the one asked for.
+     */
+    val maxIdentifierLength: Int
+        get() = when (this) {
+            ORACLE_OLD, ORACLE_NEW, UNKNOWN, FAILSAFE -> 30
+            POSTGRESQL -> 63
+            MYSQL_OLD, MYSQL_NEW, MARIA_DB_OLD, MARIA_DB_NEW -> 64
+            else -> 128
+        }
+
     /** Strategy for retrieving auto-generated keys after an INSERT. */
     enum class GeneratedKeyRetrieval {
         /** Retrieve generated keys by column index (MySQL, MariaDB, SQLite, H2). */
@@ -333,9 +366,19 @@ enum class SqlDialect(
         else -> "ESCAPE '\\'"
     }
 
-    /** Builds a paginated `SELECT` — required wrapper: Kotlin won't auto-bind the extension receiver when `queryFormatterImpl` is invoked as a member property. */
-    fun queryFormatter(columns: String, distinct: String, tableName: String, constraints: String, sorting: String, lowBound: Int, upperBound: Int): String =
-        queryFormatterImpl(columns, distinct, tableName, constraints, sorting, lowBound, upperBound)
+    /**
+     * Builds a paginated `SELECT`, with a `?` placeholder for each page bound. The text is
+     * the same for every page; [pageBinds] gives the values to bind, after the arguments of
+     * [constraints].
+     */
+    fun queryFormatter(columns: String, distinct: String, tableName: String, constraints: String, sorting: String): String =
+        pagination.format(this, columns, distinct, tableName, constraints, sorting)
+
+    /**
+     * The values for the page placeholders of [queryFormatter], in their order, for the rows
+     * from [lowBound] (inclusive) to [upperBound] (exclusive), both zero-based.
+     */
+    fun pageBinds(lowBound: Int, upperBound: Int): List<Int> = pagination.binds(lowBound, upperBound)
 
     /**
      * Quotes a column alias if it would be rejected as an unquoted identifier.

@@ -5,16 +5,22 @@ package onl.ycode.stormify
 import onl.ycode.kdbc.Connection
 
 internal actual object ActiveTxRegistry {
-    private val stacks = ThreadLocal.withInitial { ArrayDeque<Entry>() }
+    // No initial value: a thread that never opens a transaction must not keep a
+    // deque in its ThreadLocalMap. The value is a class of this library's
+    // classloader, so a pooled server thread holding one would pin the whole
+    // web application after undeploy. The deque is created on push and removed
+    // as soon as it empties.
+    private val stacks = ThreadLocal<ArrayDeque<Entry>>()
 
     private class Entry(val owner: Stormify, val conn: Connection)
 
     actual fun push(owner: Stormify, conn: Connection) {
-        stacks.get().addLast(Entry(owner, conn))
+        val stack = stacks.get() ?: ArrayDeque<Entry>().also { stacks.set(it) }
+        stack.addLast(Entry(owner, conn))
     }
 
     actual fun pop(owner: Stormify, conn: Connection) {
-        val stack = stacks.get()
+        val stack = stacks.get() ?: return
         // Fast path: the matching entry is almost always the top, since push/pop
         // is bracketed in try/finally. Fall back to a reversed scan only if the
         // top doesn't match (e.g. exception unwinding left frames out of order).
@@ -34,7 +40,12 @@ internal actual object ActiveTxRegistry {
     }
 
     actual fun currentFor(owner: Stormify): Connection? {
-        val stack = stacks.get()
+        // ThreadLocal.get() stores an entry even when there is no value; drop it, so a
+        // thread that only runs queries outside transactions keeps no entry at all.
+        val stack = stacks.get() ?: run {
+            stacks.remove()
+            return null
+        }
         // Fast path for the common case: one active transaction on this thread,
         // or nested calls all on the same Stormify instance — the top matches.
         val size = stack.size
@@ -46,5 +57,13 @@ internal actual object ActiveTxRegistry {
             if (e.owner === owner) return e.conn
         }
         return null
+    }
+
+    actual fun currentOwner(): Stormify? {
+        val stack = stacks.get() ?: run {
+            stacks.remove()
+            return null
+        }
+        return stack.lastOrNull()?.owner
     }
 }

@@ -4,42 +4,42 @@
 
 package onl.ycode.stormify.biglist
 
-import onl.ycode.kdbc.SQLException
 import onl.ycode.kdbc.TypeConversion
 import onl.ycode.stormify.Stormify
-import onl.ycode.stormify.StormifyAware
 import kotlin.jvm.JvmOverloads
-import kotlin.jvm.Transient
 import kotlin.reflect.KClass
 
 /**
- * Abstract base class for [PagedQuery][AbstractPagedQuery] — a stateless, thread-safe query
- * executor designed for server-side use (REST, RPC, gRPC, any stateless
- * request/response context). Users do not instantiate this directly; use the
- * platform-specific [PagedQuery][AbstractPagedQuery] subclass instead.
+ * Stateless, thread-safe paginated query executor for entities of type [T],
+ * designed for server-side use (REST, RPC, gRPC, any stateless
+ * request/response context).
  *
- * A [PagedQuery][AbstractPagedQuery] holds only column definitions and fixed constraints. It
+ * A query is created by a [Stormify] instance and works on it: `stormify.pagedQuery<T>()`,
+ * or `pagedQuery<T>()` on the instance of the enclosing transaction or the default
+ * instance; from Java, `stormify.pagedQuery(T.class)`.
+ *
+ * A [PagedQuery] holds only column definitions and fixed constraints. It
  * does **not** hold per-request mutable state (no filter/sort on [Facet],
  * no cached page, no selected entity, no [kotlin.collections.AbstractList]
  * surface). All dynamic state flows per request through [execute] via a
  * [PageSpec]; the result of each call is a fresh [Page].
  *
- * Configure a [PagedQuery][AbstractPagedQuery] once (typically at application startup, per
+ * Configure a [PagedQuery] once (typically at application startup, per
  * endpoint / grid) and share the instance across arbitrarily many
  * concurrent [execute] calls.
  *
- * ## When to use [PagedQuery][AbstractPagedQuery] vs [PagedList][AbstractPagedList]
- * - Use [PagedQuery][AbstractPagedQuery] when the caller is stateless (REST handler, RPC method,
+ * ## When to use [PagedQuery] vs [PagedList]
+ * - Use [PagedQuery] when the caller is stateless (REST handler, RPC method,
  *   background job that processes spec'd queries). Facet aliases are the
  *   only identifiers that cross the boundary — no schema, no SQL, no paths.
- * - Use [PagedList][AbstractPagedList] when you're driving a stateful UI grid that keeps
+ * - Use [PagedList] when you're driving a stateful UI grid that keeps
  *   selection, lazy page cache, and per-column filter mutation across user
  *   interactions.
  *
  * ## Usage
  * ```kotlin
  * // One-time setup, ideally at application startup:
- * val customers = PagedQuery<Customer>().apply {
+ * val customers = stormify.pagedQuery<Customer>().apply {
  *     addFacet("search", "name", "email", "city").also {
  *         it.isSortable = false  // search is filter-only
  *     }
@@ -51,36 +51,23 @@ import kotlin.reflect.KClass
  * val page: Page<Customer> = customers.execute(
  *     PageSpec(
  *         filters = mapOf("search" to "acme"),
- *         sorts = mapOf("name" to SortDir.ASC),
+ *         sorts = mapOf("name" to SortState.ASCENDING),
  *         page = 0, pageSize = 25,
  *     )
  * )
  * ```
  */
-abstract class AbstractPagedQuery<T : Any> internal constructor(
+class PagedQuery<T : Any> @PublishedApi internal constructor(
     /** The entity class whose rows this query paginates. */
-    val classType: KClass<T>
-) : StormifyAware {
-
-    @Transient internal var _stormify: Stormify? = null
-
-    private val stormify: Stormify
-        get() = _stormify ?: Stormify.defaultInstance
-            ?: throw SQLException(
-                "No Stormify instance attached to this PagedQuery and no default instance " +
-                        "is configured. Call stormify.attach(query) or Stormify.asDefault() first."
-            )
+    val classType: KClass<T>,
+    private val stormify: Stormify,
+) {
 
     internal val core: PagedQueryCore<T> = PagedQueryCore(
         classType = classType,
         stormifyAccessor = { stormify },
         listInputParserAccessor = { null },
     ).also { it.isStateless = true }
-
-    override fun attachTo(stormify: Stormify) {
-        _stormify = stormify
-        core.invalidateCachedMetadata()
-    }
 
     /**
      * The columns defined on this query. Read-only view; add columns via
@@ -105,12 +92,78 @@ abstract class AbstractPagedQuery<T : Any> internal constructor(
         set(value) { core.isDistinct = value }
 
     /**
+     * Direction of the primary key in the generated `ORDER BY`. The key orders
+     * the rows when the spec has no sort, and closes every `ORDER BY` as the
+     * tie-breaker after the requested sorts. Default [SortState.ASCENDING].
+     * Set at configuration time, like [isDistinct].
+     */
+    var keySort: SortState
+        get() = core.keySort
+        set(value) { core.keySort = value }
+
+    /**
      * Sets a fixed constraint (baseline `WHERE` clause) that is always applied
      * in addition to any per-request filters. Use for server-enforced narrowing
      * that must not be overrideable by the client (e.g., `"tenant_id = ?"`).
      */
-    fun setConstraints(query: String, vararg args: Any) {
+    fun setConstraints(query: String, vararg args: Any?) {
         core.setConstraints(query, args)
+    }
+
+    // --- Fluent declaration ---
+
+    /** Fluent [addFacet]: one facet under [alias] over [paths], OR-combined when more than one. */
+    fun facet(alias: String, vararg paths: ScalarPath): PagedQuery<T> {
+        addFacet(alias, *paths)
+        return this
+    }
+
+    /** Fluent [addFacet] using dot-notation paths. */
+    fun facet(alias: String, vararg fieldPaths: String): PagedQuery<T> {
+        addFacet(alias, *fieldPaths)
+        return this
+    }
+
+    /** Fluent [addFacet] with an explicit [type]. */
+    fun facet(alias: String, type: Facet.Type, vararg paths: ScalarPath): PagedQuery<T> {
+        addFacet(alias, type, *paths)
+        return this
+    }
+
+    /** Fluent [addFacet] with an explicit [type], using dot-notation paths. */
+    fun facet(alias: String, type: Facet.Type, vararg fieldPaths: String): PagedQuery<T> {
+        addFacet(alias, type, *fieldPaths)
+        return this
+    }
+
+    /** Fluent [addFacet] for an [ENUM][Facet.Type.ENUM] facet with a display-name-to-DB-value map. */
+    fun facet(alias: String, enumValues: Map<String, Any>, vararg paths: ScalarPath): PagedQuery<T> {
+        addFacet(alias, enumValues, *paths)
+        return this
+    }
+
+    /** Fluent [addFacet] for an [ENUM][Facet.Type.ENUM] facet, using dot-notation paths. */
+    fun facet(alias: String, enumValues: Map<String, Any>, vararg fieldPaths: String): PagedQuery<T> {
+        addFacet(alias, enumValues, *fieldPaths)
+        return this
+    }
+
+    /** Fluent [isDistinct]: turns distinct mode on. */
+    fun distinct(): PagedQuery<T> {
+        isDistinct = true
+        return this
+    }
+
+    /** Fluent [keySort]: sets the direction of the primary key in the `ORDER BY`. */
+    fun keySort(direction: SortState): PagedQuery<T> {
+        keySort = direction
+        return this
+    }
+
+    /** Fluent [setConstraints]. */
+    fun constraints(query: String, vararg args: Any?): PagedQuery<T> {
+        setConstraints(query, *args)
+        return this
     }
 
     // --- Facet setup (alias-first, explicit) ---
@@ -195,11 +248,11 @@ abstract class AbstractPagedQuery<T : Any> internal constructor(
     /**
      * Executes a single page query against the configured columns and the
      * caller-supplied [spec]. Thread-safe — multiple concurrent calls on the
-     * same [PagedQuery][AbstractPagedQuery] instance serialize only the (cheap) SQL-plan stage
+     * same [PagedQuery] instance serialize only the (cheap) SQL-plan stage
      * and run the database roundtrip in parallel.
      *
      * Aliases in [spec] that do not correspond to any configured column are
-     * silently ignored, mirroring [PagedList.restoreState][AbstractPagedList.restoreState] semantics.
+     * silently ignored, mirroring [PagedList.restoreState] semantics.
      * Filters on columns whose [Facet.isFilterable] is `false`, or sorts on
      * columns whose [Facet.isSortable] is `false`, throw — the server
      * contract is explicit.
@@ -217,11 +270,10 @@ abstract class AbstractPagedQuery<T : Any> internal constructor(
         if (stormify.sqlDialect.supportsWindowFunctions) {
             var observedTotal: Long? = null
             val pageSql = stormify.sqlDialect.queryFormatter(
-                core.windowCountColumns(), plan.distinctPart, plan.tablesPart, plan.wherePart,
-                plan.orderBy, low, high
+                core.windowCountColumns(), plan.distinctPart, plan.tablesPart, plan.wherePart, plan.orderBy
             )
             val rows = stormify.read(
-                null, classType, pageSql, *plan.args.toTypedArray(),
+                null, classType, pageSql, *(plan.args + stormify.sqlDialect.pageBinds(low, high)).toTypedArray(),
                 // Coerced rather than cast: the window count arrives as whatever numeric
                 // type the driver reports it as, and the big-number types are not
                 // `kotlin.Number` on every platform.
@@ -238,11 +290,10 @@ abstract class AbstractPagedQuery<T : Any> internal constructor(
         val rows: List<T> = if (total == 0L || low >= total) emptyList()
         else {
             val pageSql = stormify.sqlDialect.queryFormatter(
-                "${info.tableName}.*",
-                plan.distinctPart, plan.tablesPart, plan.wherePart, plan.orderBy,
-                low, high.toInt().coerceAtMost(total.toInt())
+                "${info.tableName}.*", plan.distinctPart, plan.tablesPart, plan.wherePart, plan.orderBy
             )
-            stormify.read(null, classType, pageSql, *plan.args.toTypedArray())
+            val bounds = stormify.sqlDialect.pageBinds(low, high.toInt().coerceAtMost(total.toInt()))
+            stormify.read(null, classType, pageSql, *(plan.args + bounds).toTypedArray())
         }
         return Page(rows = rows, total = total, page = page, pageSize = pageSize)
     }
@@ -250,7 +301,7 @@ abstract class AbstractPagedQuery<T : Any> internal constructor(
     /**
      * Streams every row matching the filters/sorts/constraints in [spec]
      * through [action] via a database cursor. Uses the same chunked
-     * sibling-batching as [PagedList.forEachStreaming][AbstractPagedList.forEachStreaming]: FK touches
+     * sibling-batching as [PagedList.forEachStreaming]: FK touches
      * inside [action] resolve in batches of
      * [onl.ycode.stormify.SiblingGroup.DEFAULT_BATCH_SIZE], not one-per-row.
      *
@@ -258,10 +309,10 @@ abstract class AbstractPagedQuery<T : Any> internal constructor(
      * iterates every matching row. Caller is responsible for bounding the
      * result via filters / constraints.
      */
-    fun forEachStreaming(spec: PageSpec, action: (T) -> Unit) {
+    fun forEachStreaming(spec: PageSpec, action: RowConsumer<T>) {
         core.isSealed = true
         val state = buildRequestState(spec)
-        core.forEachStreaming(state = state, selectedId = null, action = action)
+        core.forEachStreaming(state = state, selectedId = null, action = action::accept)
     }
 
     /**
@@ -306,7 +357,7 @@ abstract class AbstractPagedQuery<T : Any> internal constructor(
         val (columnExpr, fromWhere, args) = core.planFilterValuesPieces(facet, state)
 
         val total = stormify.readOne<Long>(
-            "SELECT COUNT(DISTINCT $columnExpr) FROM $fromWhere",
+            buildFilterValuesCountSql(stormify.sqlDialect, columnExpr, fromWhere),
             *args.toTypedArray()
         ) ?: 0L
 
@@ -314,11 +365,11 @@ abstract class AbstractPagedQuery<T : Any> internal constructor(
         val high = low + spec.pageSize
         val rows: List<String> = if (total == 0L || low >= total) emptyList()
         else {
-            val sql = stormify.sqlDialect.queryFormatter(
-                columnExpr, "DISTINCT ", fromWhere, "", columnExpr,
-                low, high.coerceAtMost(total.toInt())
-            )
-            stormify.read(null, String::class, sql, *args.toTypedArray())
+            val sql = buildFilterValuesOnlySql(stormify.sqlDialect, columnExpr, fromWhere)
+            val bounds = stormify.sqlDialect.pageBinds(low, high.coerceAtMost(total.toInt()))
+            val nullToken = stormify.filterSyntax.nullToken
+            stormify.readNullableStrings(sql, *(args + bounds).toTypedArray())
+                .map { if (it == null) nullToken else facet.displayValue(it) }
         }
         return Page(rows = rows, total = total, page = spec.page, pageSize = spec.pageSize)
     }
@@ -336,7 +387,7 @@ abstract class AbstractPagedQuery<T : Any> internal constructor(
         val (columnExpr, fromWhere, args) = core.planFilterValuesPieces(facet, state)
 
         val total = stormify.readOne<Long>(
-            "SELECT COUNT(DISTINCT $columnExpr) FROM $fromWhere",
+            buildFilterValuesCountSql(stormify.sqlDialect, columnExpr, fromWhere),
             *args.toTypedArray()
         ) ?: 0L
 
@@ -344,15 +395,15 @@ abstract class AbstractPagedQuery<T : Any> internal constructor(
         val high = low + spec.pageSize
         val rows: List<FilterCountedValue> = if (total == 0L || low >= total) emptyList()
         else {
-            val sql = buildFilterValuesSql(
-                stormify.sqlDialect, columnExpr, fromWhere, low, high.coerceAtMost(total.toInt())
-            )
+            val sql = buildFilterValuesSql(stormify.sqlDialect, columnExpr, fromWhere)
+            val bounds = stormify.sqlDialect.pageBinds(low, high.coerceAtMost(total.toInt()))
             @Suppress("UNCHECKED_CAST")
             val raw = stormify.read(
                 null, Map::class as kotlin.reflect.KClass<Map<String, Any?>>,
-                sql, *args.toTypedArray()
+                sql, *(args + bounds).toTypedArray()
             )
-            raw.map { FilterCountedValue.fromRow(it) }
+            val nullToken = stormify.filterSyntax.nullToken
+            raw.map { FilterCountedValue.fromRow(it, nullToken, facet::displayValue) }
         }
         return Page(rows = rows, total = total, page = spec.page, pageSize = spec.pageSize)
     }
@@ -361,6 +412,7 @@ abstract class AbstractPagedQuery<T : Any> internal constructor(
         val aliasIndex = core.facets.associateBy { it.alias }
         val filters = mutableMapOf<String, String>()
         for ((alias, value) in spec.filters) {
+            if (value.isBlank()) continue   // a blank filter is no filter
             val column = aliasIndex[alias] ?: continue
             require(column.isFilterable) { "Facet '$alias' is not filterable" }
             filters[alias] = value
@@ -369,7 +421,7 @@ abstract class AbstractPagedQuery<T : Any> internal constructor(
         for ((alias, dir) in spec.sorts) {
             val column = aliasIndex[alias] ?: continue
             require(column.isSortable) { "Facet '$alias' is not sortable" }
-            sorts[alias] = dir.toSortState()
+            sorts[alias] = dir
         }
         val cs = mutableMapOf<String, Boolean>()
         for ((alias, flag) in spec.caseSensitive) {

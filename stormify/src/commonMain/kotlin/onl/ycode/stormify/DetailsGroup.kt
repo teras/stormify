@@ -2,8 +2,8 @@
 // (C) Panayotis Katsaloulis
 package onl.ycode.stormify
 
-import kotlinx.atomicfu.locks.SynchronizedObject
-import kotlinx.atomicfu.locks.synchronized
+import kotlinx.atomicfu.locks.reentrantLock
+import kotlinx.atomicfu.locks.withLock
 import kotlin.reflect.KClass
 
 /**
@@ -19,26 +19,49 @@ import kotlin.reflect.KClass
  */
 internal class DetailsGroup {
 
-    private val lock = SynchronizedObject()
+    private val lock = reentrantLock()
     private val members = mutableListOf<WeakRef<Any>>()
 
     /**
-     * Slices already fetched, keyed by which children were asked for and then by parent
-     * id. Keyed by id rather than by entity identity because the id is what the grouping
-     * query returns anyway, and identity maps are not available on every target.
+     * Per kind of children (parent class, child class and property): the slices fetched but not yet
+     * handed to their parent, keyed by parent id, and the ids of every parent already
+     * covered by a grouped query. A slice is dropped once its parent takes it — the
+     * parent's delegate keeps it from then on — so the group does not hold the children
+     * of the whole result alive for as long as any one row lives.
+     *
+     * Keyed by id (as [identityKey], so a decimal key matches whatever its scale) rather
+     * than by entity identity because the id is what the grouping query returns anyway,
+     * and identity maps are not available on every target.
      */
-    private val loaded = mutableMapOf<String, Map<Any, List<Any>>>()
+    private class Fetched(members: List<WeakRef<Any>>) {
+        val pending = HashMap<String, List<Any>>()
+        val covered = HashSet<String>()
+        /**
+         * Members not yet examined for a batch. Each batch takes from the front what it
+         * looks at, so a result is walked once in total rather than once per batch.
+         */
+        val queue = ArrayDeque(members)
+    }
+
+    private val fetched = mutableMapOf<String, Fetched>()
 
     fun add(member: Any) {
-        synchronized(lock) { members.add(WeakRef(member)) }
+        lock.withLock {
+            val ref = WeakRef(member)
+            members.add(ref)
+            for (state in fetched.values) state.queue.addLast(ref)
+        }
     }
 
     /**
-     * The children of [owner], fetching the whole group's children on the first call.
+     * The children of [owner]. The first request from a parent not yet covered fetches
+     * the children of that parent together with up to [SiblingGroup.DEFAULT_BATCH_SIZE]
+     * minus one other uncovered rows of the group, so a result of any size is served in
+     * batches and every parent gets its own children.
      *
      * Returns `null` when the batch cannot be formed — a parent without a usable id, or
-     * a group that has been collected down to this one row — and the caller then does
-     * its own single-parent query.
+     * no other uncovered row of the same class — and the caller then does its own
+     * single-parent query.
      */
     fun <D : Any> detailsFor(
         owner: Any,
@@ -46,34 +69,54 @@ internal class DetailsGroup {
         propertyName: String?,
         stormify: Stormify,
     ): List<D>? {
-        val key = "${detailsClass.fullName}|${propertyName ?: ""}"
-        val ownerId = stormify.singleIdOrNull(owner) ?: return null
+        val key = "${owner::class.fullName}|${detailsClass.fullName}|${propertyName ?: ""}"
+        val ownerId = identityKey(stormify.singleIdOrNull(owner) ?: return null)
 
-        val slices = synchronized(lock) {
-            loaded[key]?.let { return@synchronized it }
-
-            val alive = mutableListOf<WeakRef<Any>>()
-            val parents = mutableListOf<Any>()
-            for (ref in members) {
-                val member = ref.get() ?: continue
-                alive.add(ref)
-                if (parents.size < SiblingGroup.DEFAULT_BATCH_SIZE && member::class == owner::class)
-                    parents.add(member)
+        val slice = lock.withLock {
+            val state = fetched.getOrPut(key) { Fetched(members) }
+            if (ownerId in state.covered) {
+                // Covered by an earlier batch: hand over its slice once. A parent asking
+                // again (its delegate failed or was reset) gets a fresh single query.
+                return@withLock state.pending.remove(ownerId) ?: return null
             }
-            members.clear()
-            members.addAll(alive)
+
+            val parents = mutableListOf(owner)
+            val batchIds = mutableSetOf(ownerId)
+            val queue = state.queue
+            while (parents.size < SiblingGroup.DEFAULT_BATCH_SIZE && queue.isNotEmpty()) {
+                val member = queue.removeFirst().get() ?: continue
+                if (member === owner || member::class != owner::class) continue
+                val id = identityKey(stormify.singleIdOrNull(member) ?: continue)
+                if (id in state.covered || !batchIds.add(id)) continue
+                parents.add(member)
+            }
 
             // One parent is not a batch; let the caller take the ordinary path so this
             // never turns a single lookup into two.
             if (parents.size < 2) return null
 
-            val fetched = stormify.getDetailsBatch(null, parents, detailsClass, propertyName)
-                ?: return null
-            loaded[key] = fetched
-            fetched
+            // Not fetched (a failed query, or no batch possible): the other parents go back
+            // to the front of the queue, so a later request can still batch them.
+            fun requeue() {
+                for (i in parents.size - 1 downTo 1) queue.addFirst(WeakRef(parents[i]))
+            }
+            val slices = try {
+                stormify.getDetailsBatch(null, parents, detailsClass, propertyName)
+            } catch (e: Throwable) {
+                requeue()
+                throw e
+            } ?: run {
+                requeue()
+                return null
+            }
+            for ((id, children) in slices) {
+                state.covered.add(id)
+                if (id != ownerId) state.pending[id] = children
+            }
+            slices[ownerId] ?: emptyList()
         }
 
         @Suppress("UNCHECKED_CAST")
-        return (slices[ownerId] ?: emptyList<Any>()) as List<D>
+        return slice as List<D>
     }
 }

@@ -64,16 +64,17 @@ expect sealed class Sp() {
     }
 
     /**
-     * INOUT parameter. The [input] value is sent to the procedure. After the
+     * INOUT parameter. The [input] value is sent to the procedure; `null` sends
+     * SQL `NULL`, with [type] still declaring the parameter's type. After the
      * call returns, [value] holds whatever the procedure left there (which may
      * differ from [input]).
      */
-    class InOut<T : Any>(type: KClass<T>, input: T) : Sp {
+    class InOut<T : Any>(type: KClass<T>, input: T?) : Sp {
         /** The declared Kotlin type of the parameter. */
         val type: KClass<T>
 
-        /** The initial value sent to the procedure. Retained for reference after execute. */
-        val input: T
+        /** The initial value sent to the procedure, or `null` for SQL `NULL`. Retained for reference after execute. */
+        val input: T?
 
         /** The current value — initially [input], updated after execute. */
         val value: T?
@@ -105,7 +106,7 @@ expect sealed class Sp() {
          * Kotlin callers typically prefer the reified [spInOut] helper. On JVM
          * and Android a `java.lang.Class<T>` overload is also available.
          */
-        fun <T : Any> inOutParam(type: KClass<T>, value: T): InOut<T>
+        fun <T : Any> inOutParam(type: KClass<T>, value: T?): InOut<T>
     }
 }
 
@@ -118,5 +119,8 @@ fun spIn(value: Any?): Sp.In = Sp.In(value)
 /** Reified Kotlin helper for an OUT parameter. Equivalent to `Sp.Out(T::class)`. */
 inline fun <reified T : Any> spOut(): Sp.Out<T> = Sp.Out(T::class)
 
-/** Reified Kotlin helper for an INOUT parameter. Equivalent to `Sp.InOut(T::class, value)`. */
-inline fun <reified T : Any> spInOut(value: T): Sp.InOut<T> = Sp.InOut(T::class, value)
+/**
+ * Reified Kotlin helper for an INOUT parameter. Equivalent to `Sp.InOut(T::class, value)`.
+ * Pass `null` with an explicit type argument (`spInOut<Int>(null)`) to send SQL `NULL`.
+ */
+inline fun <reified T : Any> spInOut(value: T?): Sp.InOut<T> = Sp.InOut(T::class, value)

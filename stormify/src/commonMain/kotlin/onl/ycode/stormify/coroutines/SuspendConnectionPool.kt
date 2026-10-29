@@ -3,6 +3,7 @@
 package onl.ycode.stormify.coroutines
 
 import onl.ycode.kdbc.Connection
+import onl.ycode.kdbc.SQLException
 
 /**
  * A suspend-aware connection pool.
@@ -58,7 +59,7 @@ internal interface SuspendConnectionPool {
 }
 
 /** Thrown by [SuspendConnectionPool.use] when the pool has been [SuspendConnectionPool.close]d. */
-class PoolClosedException(message: String = "Connection pool is closed") : IllegalStateException(message)
+class PoolClosedException(message: String = "Connection pool is closed") : SQLException(message)
 
 /** Thrown by [SuspendConnectionPool.use] when [PoolConfig.acquireTimeout] elapses. */
-class PoolAcquireTimeoutException(message: String) : RuntimeException(message)
+class PoolAcquireTimeoutException(message: String) : SQLException(message)

@@ -7,7 +7,7 @@ package onl.ycode.stormify.biglist
 import kotlin.jvm.JvmOverloads
 
 /**
- * Entry point for the aggregation DSL on a [PagedList][AbstractPagedList].
+ * Entry point for the aggregation DSL on a [PagedList].
  *
  * Each builder method registers one aggregate and returns a [SingleAggregator]
  * — a view that can either be executed immediately for a single scalar value
@@ -20,8 +20,7 @@ import kotlin.jvm.JvmOverloads
  * `isDistinct` flag is ignored for aggregates.
  *
  * ```kotlin
- * val list = PagedList<Company>()
- * stormify.attach(list)
+ * val list = stormify.pagedList<Company>()
  * list.addFacet("industry").filter = "Tech"
  *
  * // Single value

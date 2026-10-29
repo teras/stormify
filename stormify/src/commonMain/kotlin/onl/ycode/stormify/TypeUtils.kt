@@ -44,20 +44,6 @@ object TypeUtils {
         }
         return TypeConversion.castScalar(targetClass, value)
     }
-
-    /** Throws a [SQLException] indicating that field [name] in class [cls] cannot be null. Used by generated code. */
-    fun err(name: String, cls: String): Nothing = throw SQLException("$name cannot be null in class $cls")
-
-    /**
-     * Registers a custom type conversion function from [sourceClass] to [targetClass].
-     * Delegates to [TypeConversion.register]. Call at startup, before any concurrent
-     * query traffic — the registry is not synchronized.
-     */
-    fun <F : Any, T : Any> register(
-        sourceClass: KClass<F>,
-        targetClass: KClass<T>,
-        converter: (Any) -> Any
-    ) = TypeConversion.register(sourceClass, targetClass, converter)
 }
 
 /**
@@ -105,6 +91,27 @@ internal fun scanPlaceholders(sql: String, onPlaceholder: (Int) -> Unit) {
             else -> i++
         }
     }
+}
+
+/**
+ * Text form of a key value for identity maps (batch hydration, the per-result
+ * reference cache). Equal decimals give equal keys whatever their scale or
+ * notation (`100`, `100.00`, `1E+2`); every other value keys by `toString()`.
+ */
+internal fun identityKey(value: Any?): String =
+    if (value != null && isBigDecimal(value)) canonicalDecimal(value.toString()) else value.toString()
+
+private val DECIMAL_FORM = Regex("([+-]?)(\\d*)(?:\\.(\\d*))?(?:[eE]([+-]?\\d+))?")
+
+/** Significant digits without leading or trailing zeros, plus the exponent: `100.00` -> `1e2`. */
+internal fun canonicalDecimal(text: String): String {
+    val match = DECIMAL_FORM.matchEntire(text) ?: return text
+    val (sign, intPart, fracPart, expPart) = match.destructured
+    val digits = (intPart + fracPart).trimStart('0')
+    if (digits.isEmpty()) return "0"
+    val significant = digits.trimEnd('0')
+    val exponent = expPart.ifEmpty { "0" }.toInt() - fracPart.length + (digits.length - significant.length)
+    return (if (sign == "-") "-" else "") + significant + "e" + exponent
 }
 
 internal fun nCopies(base: String, delimiter: String, count: Int) =

@@ -67,7 +67,7 @@ kotlin {
     sourceSets {
         val commonMain by getting {
             dependencies {
-                implementation(project(":logger"))
+                api(project(":logger"))
                 api(project(":kdbc"))
                 // kotlinx.coroutines is used only by the optional suspend API in the
                 // `onl.ycode.stormify.coroutines` subpackage. Marked compileOnly so
@@ -83,6 +83,8 @@ kotlin {
                 implementation(kotlin("test"))
                 // ScalarTypesTest references kotlinx.datetime types when verifying type buckets.
                 implementation("org.jetbrains.kotlinx:kotlinx-datetime:0.7.1")
+                // IdentityKeyTest keys ionspin decimals on every target.
+                implementation("com.ionspin.kotlin:bignum:0.3.9")
             }
         }
 

@@ -1,9 +1,15 @@
 package onl.ycode.stormify
 
+import onl.ycode.stormify.biglist.SortState
 import onl.ycode.kdbc.DataSource
 import onl.ycode.kdbc.JdbcDataSource
 import onl.ycode.kdbc.SQLException
+import onl.ycode.stormify.biglist.FilterSyntax
+import onl.ycode.stormify.biglist.InputParser
+import onl.ycode.stormify.biglist.PagedList
+import onl.ycode.stormify.biglist.PagedQuery
 import onl.ycode.stormify.biglist.ReferencePath
+import onl.ycode.stormify.biglist.TextFolding
 import java.util.function.Consumer
 
 /**
@@ -16,9 +22,16 @@ import java.util.function.Consumer
  * User u = stormify.findById(User.class, 1);
  * ```
  *
- * From Kotlin code, use [Stormify] directly.
+ * From Kotlin code, use [Stormify] directly; the two share their instances through
+ * [stormify] and the [StormifyJ] constructor that takes a [Stormify].
  */
-class StormifyJ(dataSource: DataSource, vararg registrars: EntityRegistrar) {
+class StormifyJ(
+    /** The [Stormify] instance this wrapper works on. */
+    val stormify: Stormify,
+) {
+    /** Creates the [Stormify] instance of [dataSource], registering [registrars]. */
+    constructor(dataSource: DataSource, vararg registrars: EntityRegistrar) : this(Stormify(dataSource, *registrars))
+
     /** Convenience constructor that accepts any [javax.sql.DataSource] (HikariCP, plain JDBC driver, etc.). */
     constructor(jdbcDataSource: javax.sql.DataSource, vararg registrars: EntityRegistrar) : this(JdbcDataSource(jdbcDataSource), *registrars)
 
@@ -32,10 +45,17 @@ class StormifyJ(dataSource: DataSource, vararg registrars: EntityRegistrar) {
     /** Single-argument [javax.sql.DataSource] overload — see the primary one-arg constructor for the rationale. */
     constructor(jdbcDataSource: javax.sql.DataSource) : this(JdbcDataSource(jdbcDataSource), *emptyArray())
 
-    private val stormify = Stormify(dataSource, *registrars)
+    /** The data source this instance runs its queries on. See [Stormify.dataSource]. */
+    val dataSource: DataSource get() = stormify.dataSource
 
-    /** The auto-detected SQL dialect for this data source. See [Stormify.sqlDialect]. */
-    val sqlDialect get() = stormify.sqlDialect
+    /**
+     * The SQL dialect, auto-detected from the data source on first access. Set it
+     * manually when detection cannot see the real database, for example behind a
+     * proxy or a pool that hides the driver metadata. See [Stormify.sqlDialect].
+     */
+    var sqlDialect: SqlDialect
+        get() = stormify.sqlDialect
+        set(value) { stormify.sqlDialect = value }
 
     /** Executes a SELECT and returns the rows as a list of [baseClass] instances. */
     @Throws(SQLException::class)
@@ -58,6 +78,26 @@ class StormifyJ(dataSource: DataSource, vararg registrars: EntityRegistrar) {
         customFields = customFields.mapValues { (_, c) -> { v: Any? -> c.accept(v) } }
     )
 
+    /**
+     * Executes a SELECT and returns every row as an array of its column values, by position,
+     * so columns with the same label all come back. See [Stormify.readRows].
+     */
+    @Throws(SQLException::class)
+    fun readRows(query: String, vararg params: Any?): List<Array<Any?>> = stormify.readRows(query, *params)
+
+    /** Streams every row to [consumer] as an array of its column values. See [Stormify.readRowsCursor]. */
+    @Throws(SQLException::class)
+    fun readRowsCursor(query: String, consumer: Consumer<Array<Any?>>, vararg params: Any?): Int =
+        stormify.readRowsCursor(query, *params) { consumer.accept(it) }
+
+    /**
+     * [readRowsCursor] fetching [fetchSize] rows per round trip instead of [cursorFetchSize];
+     * `0` reads the whole result without a cursor. See [Stormify.readRowsCursor].
+     */
+    @Throws(SQLException::class)
+    fun readRowsCursor(query: String, fetchSize: Int, consumer: Consumer<Array<Any?>>, vararg params: Any?): Int =
+        stormify.readRowsCursor(query, *params, fetchSize = fetchSize) { consumer.accept(it) }
+
     /** Executes a SELECT and returns the first row as a [baseClass] instance, or `null` if empty. */
     @Throws(SQLException::class)
     fun <T : Any> readOne(baseClass: Class<T>, query: String, vararg params: Any?) =
@@ -67,6 +107,14 @@ class StormifyJ(dataSource: DataSource, vararg registrars: EntityRegistrar) {
     @Throws(SQLException::class)
     fun <T : Any> readCursor(baseClass: Class<T>, query: String, consumer: Consumer<T>, vararg params: Any?) =
         stormify.readCursor(null, baseClass.kotlin, query, *params, consumer = { consumer.accept(it) })
+
+    /**
+     * [readCursor] fetching [fetchSize] rows per round trip instead of [cursorFetchSize];
+     * `0` reads the whole result without a cursor.
+     */
+    @Throws(SQLException::class)
+    fun <T : Any> readCursor(baseClass: Class<T>, query: String, fetchSize: Int, consumer: Consumer<T>, vararg params: Any?) =
+        stormify.readCursor(null, baseClass.kotlin, query, *params, fetchSize = fetchSize, consumer = { consumer.accept(it) })
 
     /**
      * Streaming variant that captures values from columns named in [customFields] via the supplied
@@ -90,7 +138,7 @@ class StormifyJ(dataSource: DataSource, vararg registrars: EntityRegistrar) {
     @Throws(SQLException::class)
     fun executeUpdate(query: String, vararg params: Any?) = stormify.executeUpdate(null, query, *params)
 
-    /** Refreshes [entity] from the database by its primary key. Used internally by [AutoTable]. */
+    /** Refreshes [entity] from the database by its primary key. */
     @Throws(SQLException::class)
     fun <T : Any> refresh(entity: T) = stormify.refresh(null, entity)
 
@@ -130,7 +178,7 @@ class StormifyJ(dataSource: DataSource, vararg registrars: EntityRegistrar) {
 
     /**
      * Type-safe variant of [getDetails] that accepts an annotation-processor-generated
-     * reference path (e.g. `Paths.AuditEntry_.createdBy()`) instead of a string.
+     * reference path (e.g. `Tables.AuditEntry_.createdBy`) instead of a string.
      * The compiler guarantees the referenced property exists on the child type, so
      * typos and renames surface at build time rather than on first query.
      */
@@ -175,7 +223,7 @@ class StormifyJ(dataSource: DataSource, vararg registrars: EntityRegistrar) {
 
     /** Returns the [TableInfo] metadata for [baseClass], building it on first access. */
     @Throws(SQLException::class)
-    fun getTableInfo(baseClass: Class<*>) = stormify.resolveTableInfo(baseClass.kotlin)
+    fun <T : Any> getTableInfo(baseClass: Class<T>): TableInfo<T> = stormify.getTableInfo(baseClass.kotlin)
 
     /** Current [NamingPolicy]. See [Stormify.namingPolicy]. */
     var namingPolicy: (String) -> String
@@ -195,95 +243,104 @@ class StormifyJ(dataSource: DataSource, vararg registrars: EntityRegistrar) {
         get() = stormify.unmatchedColumnPolicy
         set(value) { stormify.unmatchedColumnPolicy = value }
 
+    /** What a reference to a missing row does. See [Stormify.danglingReferences]. */
+    var danglingReferences: DanglingReferences
+        get() = stormify.danglingReferences
+        set(value) { stormify.danglingReferences = value }
+
     /** The logger used by the underlying [Stormify] instance. */
     var logger
         get() = stormify.logger
         set(value) { stormify.logger = value }
 
+    /** Rows buffered by the driver per round trip in streaming reads. See [Stormify.cursorFetchSize]. */
+    var cursorFetchSize: Int
+        get() = stormify.cursorFetchSize
+        set(value) { stormify.cursorFetchSize = value }
+
+    /** Filter syntax of the facets of lists attached to this instance. See [Stormify.filterSyntax]. */
+    var filterSyntax: FilterSyntax
+        get() = stormify.filterSyntax
+        set(value) { stormify.filterSyntax = value }
+
     /**
-     * Registers the underlying [Stormify] instance as the library-wide default **and**
-     * caches this wrapper in [StormifyJ.getDefault], so Java callers can retrieve the
-     * Java-friendly wrapper (not just the raw [Stormify]) via a single static call.
-     * Returns this wrapper for fluent chaining.
+     * Default input parser for facet filter values of lists attached to this instance,
+     * or `null` for none. See [Stormify.inputParser].
+     *
+     * ```java
+     * stormify.setInputParser((input, type) -> type == Facet.Type.NUMERIC ? input.replace(",", ".") : input);
+     * ```
+     */
+    var inputParser: InputParser?
+        get() = stormify.inputParser
+        set(value) { stormify.inputParser = value }
+
+    /** Text folding of case-insensitive facet filters. See [Stormify.textFolding]. */
+    var textFolding: TextFolding
+        get() = stormify.textFolding
+        set(value) { stormify.textFolding = value }
+
+    /** Whether [update] writes only the changed columns. See [Stormify.dynamicUpdate]. */
+    var dynamicUpdate: Boolean
+        get() = stormify.dynamicUpdate
+        set(value) { stormify.dynamicUpdate = value }
+
+    /**
+     * Registers the underlying [Stormify] instance as the library-wide default, the one
+     * [getDefault] wraps. Returns this wrapper for fluent chaining.
      */
     fun asDefault(): StormifyJ {
         stormify.asDefault()
-        defaultWrapper = this
         return this
     }
 
     /**
-     * Runs [block] with this wrapper as the default, restoring the previous default
-     * when the block exits. Use for scoped overrides such as per-request tenants.
+     * Attaches the underlying Stormify instance to the entity [target], so it lazy-loads and
+     * writes through this instance. Entities this instance reads are attached already.
+     * Returns [target] for fluent chaining.
      *
      * ```java
-     * stormifyJ.asDefault(() -> {
-     *     User u = stormifyJ.attach(new User());
-     *     u.setId(42);
-     *     System.out.println(u.getName());
-     * });
-     * ```
-     */
-    fun asDefault(block: java.util.function.Consumer<StormifyJ>) = asDefault<Unit> { block.accept(this) }
-
-    /** Returning variant of [asDefault] — see the [Consumer] overload for semantics. */
-    fun <R> asDefault(block: java.util.function.Function<StormifyJ, R>): R = asDefault<R> { block.apply(this) }
-
-    // Shared implementation: delegate Stormify.defaultInstance management to the
-    // scoped Stormify.asDefault(block) and only track the StormifyJ wrapper cache here.
-    private inline fun <R> asDefault(crossinline body: () -> R): R {
-        val prevWrapper = defaultWrapper
-        defaultWrapper = this
-        return try {
-            stormify.asDefault { body() }
-        } finally {
-            defaultWrapper = prevWrapper
-        }
-    }
-
-    /**
-     * Attaches the underlying Stormify instance to [target] so the target can use it for
-     * database operations without receiving it as an explicit parameter.
-     *
-     * Works for any [StormifyAware] — entity / [AutoTable] subclasses and
-     * [onl.ycode.stormify.biglist.PagedList] instances. Returns [target] for fluent chaining.
-     *
-     * ```java
-     * // Manual stub — user knows the ID, lets Stormify lazy-load the rest
+     * // Manual stub: the id is known, the rest loads on first access
      * User user = stormify.attach(new User());
      * user.setId(42);
      * System.out.println(user.getName());  // triggers SELECT
-     *
-     * // Paged list — attach before use (or rely on Stormify.defaultInstance)
-     * PagedList<Company> list = stormify.attach(new PagedList<>(Company.class));
-     * list.addFacet("name");
      * ```
      */
-    fun <T : StormifyAware> attach(target: T): T = stormify.attach(target)
+    fun <T : StormifyEntity> attach(target: T): T = stormify.attach(target)
 
-    /** Accessors for the library-wide default [StormifyJ] wrapper. */
+    /**
+     * Creates a [PagedList] of [entityClass] working on this instance, ready to be configured.
+     *
+     * ```java
+     * PagedList<Company> list = stormify.pagedList(Company.class)
+     *         .facet(Company_.name)
+     *         .sort(Company_.name, SortState.ASCENDING);
+     * ```
+     */
+    fun <T : Any> pagedList(entityClass: Class<T>): PagedList<T> = PagedList(entityClass.kotlin, stormify)
+
+    /**
+     * Creates a [PagedQuery] of [entityClass] working on this instance, ready to be configured.
+     *
+     * ```java
+     * PagedQuery<Customer> customers = stormify.pagedQuery(Customer.class);
+     * customers.addFacet("name", Customer_.name);
+     * ```
+     */
+    fun <T : Any> pagedQuery(entityClass: Class<T>): PagedQuery<T> = PagedQuery(entityClass.kotlin, stormify)
+
+    /** Access to the library-wide default instance from Java. */
     companion object {
         /**
-         * The cached wrapper set by the most recent call to [StormifyJ.asDefault]. Java
-         * callers typically access it via the [getDefault] static accessor below rather
-         * than this field directly.
-         */
-        @Volatile
-        private var defaultWrapper: StormifyJ? = null
-
-        /**
-         * Returns the current default [StormifyJ] wrapper, or `null` if none has been
-         * registered yet. The default is set by calling [StormifyJ.asDefault] on a
-         * `StormifyJ` instance during application startup.
+         * A wrapper of the library-wide default instance, set by [StormifyJ.asDefault] or
+         * [Stormify.asDefault].
+         *
+         * @throws SQLException if no default instance is set
          */
         @JvmStatic
-        fun getDefault(): StormifyJ? = defaultWrapper
-
-        /**
-         * Drops the cached wrapper. Called directly by [StormifyLifecycle.clear] so
-         * that a shared-classpath webapp undeploy doesn't retain a reference to the
-         * webapp's `StormifyJ` (and, through it, the entire entity ClassLoader).
-         */
-        internal fun clearDefaultWrapper() { defaultWrapper = null }
+        fun getDefault(): StormifyJ = StormifyJ(
+            Stormify.defaultInstance
+                ?: throw SQLException("No default Stormify instance. Call stormify.asDefault() first.")
+        )
     }
 }

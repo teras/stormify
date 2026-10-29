@@ -30,7 +30,9 @@ internal class NodeField(
     internal val columnHandler: String,
     type: KClass<*>,
     parent: Node?,
-    internal val isEnum: Boolean = false
+    internal val isEnum: Boolean = false,
+    /** The enum is stored as its name rather than its ordinal / `DbValue`. */
+    internal val isEnumAsString: Boolean = false,
 ) : Node(type, parent) {
     override val children = emptyMap<String, Node>()
     override fun findChild(fieldName: String, tableCounter: () -> Int) =
@@ -57,7 +59,7 @@ internal class NodeTable(
         val field = tableInfo.getField(fieldName)
             ?: throw IllegalArgumentException("Field '$fieldName' not found in ${tableInfo.tableName}")
         val node = if (TypeConversion.isKnownScalar(field.type) || field.isEnum)
-            NodeField("$tableHandler.${field.dbName}", field.type, this, field.isEnum)
+            NodeField("$tableHandler.${field.dbName}", field.type, this, field.isEnum, field.enumAsString)
         else
             NodeTable("t${tableCounter()}", field.dbName, field.type, this, stormify)
         children[fieldName] = node

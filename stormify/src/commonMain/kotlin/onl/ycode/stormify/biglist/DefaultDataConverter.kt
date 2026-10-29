@@ -13,12 +13,13 @@ internal object DefaultDataConverter {
         type: Facet.Type,
         dialect: SqlDialect,
         syntax: FilterSyntax,
-        enumValues: Map<String, Any>? = null
+        enumValues: Map<String, Any>? = null,
+        folding: TextFolding = TextFolding.DEFAULT
     ): Converter = when (type) {
-        Facet.Type.TEXT -> textConverter(dialect, syntax) { false }
+        Facet.Type.TEXT -> textConverter(dialect, syntax, folding) { false }
         Facet.Type.NUMERIC -> orderedConverter(Number::class, Facet.Type.NUMERIC, syntax)
         Facet.Type.DATE, Facet.Type.TIME, Facet.Type.TIMESTAMP -> rawConverterWithCast(type, dialect, syntax)
-        Facet.Type.ENUM -> enumConverter(enumValues, syntax)
+        Facet.Type.ENUM -> enumConverter(enumValues, syntax, folding)
     }
 
     fun guessConverterForNode(
@@ -27,10 +28,11 @@ internal object DefaultDataConverter {
         dialect: SqlDialect,
         syntax: FilterSyntax,
         caseSensitive: () -> Boolean,
-        enumValues: Map<String, Any>? = null
+        enumValues: Map<String, Any>? = null,
+        folding: TextFolding = TextFolding.DEFAULT
     ): Converter = when (type) {
-        Facet.Type.TEXT -> textConverter(dialect, syntax, caseSensitive)
-        Facet.Type.ENUM -> enumConverter(enumValues, syntax)
+        Facet.Type.TEXT -> textConverter(dialect, syntax, folding, caseSensitive)
+        Facet.Type.ENUM -> enumConverter(enumValues, syntax, folding)
         Facet.Type.NUMERIC,
         Facet.Type.DATE,
         Facet.Type.TIME,
@@ -49,34 +51,42 @@ internal object DefaultDataConverter {
     private fun textConverter(
         dialect: SqlDialect,
         syntax: FilterSyntax,
+        folding: TextFolding,
         caseSensitive: () -> Boolean
-    ): Converter = { col, input, _, args ->
-        TextQuery.parseAndRender(input, col, dialect, caseSensitive(), args, syntax)
+    ): Converter = Converter { col, input, _, args ->
+        TextQuery.parseAndRender(input, col, dialect, caseSensitive(), args, syntax, folding)
             ?: IMPOSSIBLE
     }
 
     private fun enumConverter(
         enumValues: Map<String, Any>?,
-        syntax: FilterSyntax
+        syntax: FilterSyntax,
+        folding: TextFolding
     ): Converter {
         if (enumValues.isNullOrEmpty()) {
-            return { column, input, _, args ->
+            return Converter { column, input, _, args ->
                 args.add(input)
                 "$column = ?"
             }
         }
-        // Precompute lowercased keys once — filters repeatedly lowercased keys and
+        // Precompute folded keys once — filters repeatedly folded keys and
         // search text on every atom, producing N × K String allocations per parse.
         val entries = enumValues.entries.map { it.key to it.value }
-        val lowercaseEntries = entries.map { (k, v) -> k.lowercase() to v }
-        return conv@{ column, input, _, args ->
+        val foldedEntries = entries.map { (k, v) -> folding.value(k) to v }
+        // The default folding keeps the historical ignore-case comparison of a quoted
+        // name; a custom folding compares the folded texts.
+        val phraseMatches: (String, String) -> Boolean =
+            if (folding === TextFolding.DEFAULT) { key, text -> key.equals(text, ignoreCase = true) }
+            else { foldedKey, text -> foldedKey == folding.value(text) }
+        val phraseEntries = if (folding === TextFolding.DEFAULT) entries else foldedEntries
+        return Converter conv@{ column, input, _, args ->
             val ast = TextQuery.parse(input, syntax) ?: return@conv IMPOSSIBLE
             TextQuery.renderAst(ast, column) { text, isPhrase ->
                 val matched = if (isPhrase) {
-                    entries.filter { (k, _) -> k.equals(text, ignoreCase = true) }.map { it.second }
+                    phraseEntries.filter { (k, _) -> phraseMatches(k, text) }.map { it.second }
                 } else {
-                    val needle = text.lowercase()
-                    lowercaseEntries.filter { (k, _) -> k.contains(needle) }.map { it.second }
+                    val needle = folding.value(text)
+                    foldedEntries.filter { (k, _) -> k.contains(needle) }.map { it.second }
                 }
                 when {
                     matched.isEmpty() -> IMPOSSIBLE
@@ -94,7 +104,7 @@ internal object DefaultDataConverter {
         type: KClass<*>,
         columnType: Facet.Type,
         syntax: FilterSyntax
-    ): Converter = { column, input, parser, args ->
+    ): Converter = Converter { column, input, parser, args ->
         orderedWithBoolean(input, column, parser, columnType, syntax) { value ->
             args.add(castOrFail(type, value))
         }
@@ -106,7 +116,7 @@ internal object DefaultDataConverter {
         syntax: FilterSyntax
     ): Converter {
         val castedPlaceholder = dialectCastFor(columnType, dialect)("?")
-        return { column, input, parser, args ->
+        return Converter { column, input, parser, args ->
             val sql = orderedWithBoolean(input, column, parser, columnType, syntax) { value ->
                 args.add(value)
             }
@@ -123,6 +133,14 @@ internal object DefaultDataConverter {
         addArg: (String) -> Unit
     ): String {
         val trimmed = input.trim()
+        // A null token without letters (`--`, `―`) would take the ordered shortcut
+        // below and fail to parse as a value. Matched whole, together with its
+        // negation, so negative numbers and dates are never mistaken for it.
+        if (syntax.nullToken.none { it.isLetter() }) {
+            val compact = trimmed.filterNot { it.isWhitespace() }
+            if (compact == syntax.nullToken) return "$column IS NULL"
+            if (compact == syntax.not + syntax.nullToken) return "NOT ($column IS NULL)"
+        }
         // Ordered expression (operator prefix or no letters) — skip boolean parsing
         // to preserve spaces in `"> 5"` which TextQuery would split on.
         if (trimmed.startsWith(">") || trimmed.startsWith("<")

@@ -181,10 +181,33 @@ tasks.matching { it.name == "kspCommonMainKotlinMetadata" }.configureEach {
     outputs.upToDateWhen { false }
 }
 
+// SLF4J jars that the logger backend detection test loads into isolated classloaders,
+// one combination at a time. They are not on any test classpath: a binding there
+// would switch the logging of every other test to SLF4J.
+// One configuration per SLF4J version, so conflict resolution keeps both.
+val slf4jProbe = listOf("1.7.36", "2.0.17").map { version ->
+    configurations.create("slf4jProbe${version.replace(".", "")}") { isTransitive = false }.also { conf ->
+        for (artifact in listOf("slf4j-api", "slf4j-simple", "slf4j-nop"))
+            dependencies.add(conf.name, "org.slf4j:$artifact:$version")
+    }
+}
+
 tasks.withType<Test> {
+    val probeJars = files(slf4jProbe)
+    inputs.files(probeJars)
+    jvmArgumentProviders.add(CommandLineArgumentProvider {
+        listOf("-Dstormify.test.slf4jJars=" + probeJars.files.joinToString(File.pathSeparator))
+    })
+    // ActiveTxRegistryLeakTest reads Thread.threadLocals, closed to reflection from Java 9.
+    jvmArgumentProviders.add(CommandLineArgumentProvider {
+        if (javaLauncher.get().metadata.languageVersion.asInt() >= 9)
+            listOf("--add-opens", "java.base/java.lang=ALL-UNNAMED")
+        else emptyList()
+    })
     val testDb = System.getProperty("stormify.test.db") ?: "sqlite"
     systemProperty("stormify.test.db", testDb)
     systemProperty("stormify.test.config", System.getProperty("stormify.test.config") ?: "")
+    systemProperty("stormify.probe", System.getProperty("stormify.probe") ?: "")
     systemProperty("oracle.jdbc.timezoneAsRegion", "false")
 }
 

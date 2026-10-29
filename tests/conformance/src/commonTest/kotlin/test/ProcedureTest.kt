@@ -2,6 +2,7 @@
 // (C) Panayotis Katsaloulis
 package test
 
+import onl.ycode.kdbc.SQLException
 import onl.ycode.stormify.Sp
 import onl.ycode.stormify.Stormify
 import onl.ycode.stormify.spIn
@@ -9,7 +10,9 @@ import onl.ycode.stormify.spInOut
 import onl.ycode.stormify.spOut
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertNotNull
+import kotlin.test.assertNull
 
 /**
  * Tests the `stormify.procedure(...)` API on a simple test procedure
@@ -122,6 +125,31 @@ open class ProcedureTest {
 
                 assertEquals(16, z.value)      // 8 * 2
                 assertEquals(28, w.value)      // 20 + 8
+            } finally {
+                cleanupProcedure()
+            }
+        }
+    }
+
+    /** An INOUT parameter can start as SQL NULL; the procedure's `w + a` keeps it NULL. */
+    @Test
+    fun testProcedureInOutNull() {
+        withDb("PROCEDURE-INOUT-NULL") { s ->
+            if (!TestDDL.supportsStoredProcedures()) skipStoredProcedures(s)
+            setupProcedure(s)
+            try {
+                val z = spOut<Int>()
+                val w = spInOut<Int>(null)
+                assertNull(w.input)
+                s.procedure(procName, 4, "null", z, w)
+                assertEquals(8, z.value)
+                assertNull(w.value)
+                assertFailsWith<SQLException> { w.required }
+
+                // Same through the factory Java callers use.
+                val w2 = Sp.inOutParam(Int::class, null)
+                s.procedure(procName, 1, "null", spOut<Int>(), w2)
+                assertNull(w2.value)
             } finally {
                 cleanupProcedure()
             }

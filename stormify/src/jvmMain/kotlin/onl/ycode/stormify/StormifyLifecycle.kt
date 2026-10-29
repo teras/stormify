@@ -63,9 +63,9 @@ package onl.ycode.stormify
  */
 object StormifyLifecycle {
     /** Clears all registered library-wide shared state. See the class KDoc for when to call. */
+    @JvmStatic
     fun clear() {
         Stormify.clearDefault()
-        StormifyJ.clearDefaultWrapper()
         EntityMeta.clearRegistry()
         EnumRegistry.clearRegistry()
     }

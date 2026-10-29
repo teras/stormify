@@ -26,7 +26,7 @@ fun interface EntityRegistrar {
  * @property isPrimaryKey whether this property is part of the primary key
  * @property sequence the database sequence name for auto-generation, or null
  * @property isAutoIncrement whether the database auto-generates this value (IDENTITY columns)
- * @property isCreatable whether this property is included in INSERT statements
+ * @property isInsertable whether this property is included in INSERT statements
  * @property isUpdatable whether this property is included in UPDATE statements
  * @property isTransient whether this property should be excluded from all database operations
  * @property isEnum whether the property type is a Kotlin/Java enum
@@ -42,12 +42,19 @@ class PropertyMeta<T : Any>(
     val isPrimaryKey: Boolean,
     val sequence: String?,
     val isAutoIncrement: Boolean = false,
-    val isCreatable: Boolean = true,
+    val isInsertable: Boolean = true,
     val isUpdatable: Boolean = true,
     val isTransient: Boolean = false,
     val isEnum: Boolean = false,
     val enumAsString: Boolean = false,
-)
+) {
+    /**
+     * Set when this property cannot be mapped to a column (a read-only property backed by
+     * a delegate other than `db`, found by reflection). [TableInfo] reports it when the
+     * entity's metadata is built, unless the property is transient or blacklisted.
+     */
+    internal var mappingError: String? = null
+}
 
 /**
  * Compile-time metadata for a mapped entity class. Holds the class reference, a constructor lambda,

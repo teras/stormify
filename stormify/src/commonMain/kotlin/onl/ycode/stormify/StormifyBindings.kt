@@ -5,65 +5,88 @@
 package onl.ycode.stormify
 
 import onl.ycode.kdbc.SQLException
+import onl.ycode.stormify.biglist.PagedList
+import onl.ycode.stormify.biglist.PagedQuery
 import onl.ycode.stormify.biglist.ReferencePath
+import kotlin.jvm.JvmSynthetic
 import kotlin.properties.ReadWriteProperty
 import kotlin.reflect.KClass
 import kotlin.reflect.KProperty
 
+@JvmSynthetic
 @PublishedApi
 internal fun stormify(): Stormify =
-    Stormify.defaultInstance
+    Stormify.current()
         ?: throw SQLException("No default Stormify instance. Call stormify.asDefault() first.")
 
 // --- String extensions ---
 
 /** Executes this SQL string as an UPDATE/INSERT/DELETE and returns the number of affected rows. */
+@JvmSynthetic
 fun String.executeUpdate(vararg args: Any?) = stormify().executeUpdate(this, *args)
 
 /** Executes this SQL string as a SELECT and returns all results as a list. */
+@JvmSynthetic
 inline fun <reified T : Any> String.read(vararg args: Any?): List<T> =
     stormify().read(this, *args)
 
 /** Executes this SQL string as a SELECT and returns a single result, or null if none found. */
+@JvmSynthetic
 inline fun <reified T : Any> String.readOne(vararg args: Any?): T? =
     stormify().readOne(this, *args)
 
 /** Executes this SQL string as a SELECT and processes results row-by-row via [consumer]. Returns the row count. */
+@JvmSynthetic
 inline fun <reified T : Any> String.readCursor(vararg args: Any?, noinline consumer: (T) -> Unit): Int =
     stormify().readCursor(this, *args, consumer = consumer)
 
 // --- Entity extensions ---
 
 /** Inserts this entity into the database and returns it with generated values populated. */
+@JvmSynthetic
 fun <T : Any> T.create(): T =
     ((this as? StormifyEntity)?._stormify ?: stormify()).create(this)
 
 /** Updates this entity in the database based on its primary key. */
+@JvmSynthetic
 fun <T : Any> T.update(): T =
     ((this as? StormifyEntity)?._stormify ?: stormify()).update(this)
 
 /** Deletes this entity from the database based on its primary key. */
+@JvmSynthetic
 fun <T : Any> T.delete() =
     ((this as? StormifyEntity)?._stormify ?: stormify()).delete(this)
 
 // --- Query helpers ---
 
 /** Finds all entities of type [T], optionally filtered by a [whereClause]. */
+@JvmSynthetic
 inline fun <reified T : Any> findAll(whereClause: String = "", vararg args: Any?): List<T> =
     stormify().findAll(whereClause, *args)
 
 /** Finds a single entity of type [T] by its primary key [id], or null if not found. */
+@JvmSynthetic
 inline fun <reified T : Any> findById(id: Any): T? =
     stormify().findById(id)
 
+/** Creates a [PagedList] of [T], like [Stormify.pagedList], on the instance a call without one uses. */
+@JvmSynthetic
+inline fun <reified T : Any> pagedList(): PagedList<T> = stormify().pagedList()
+
+/** Creates a [PagedQuery] of [T], like [Stormify.pagedQuery], on the instance a call without one uses. */
+@JvmSynthetic
+inline fun <reified T : Any> pagedQuery(): PagedQuery<T> = stormify().pagedQuery()
+
 /** Returns all detail (child) entities of type [D] related to this parent through a foreign key. */
+@JvmSynthetic
 inline fun <reified D : Any> Any.details(propertyName: String? = null): List<D> =
     stormify().getDetails(this, propertyName)
 
 /**
  * Type-safe variant of [details] that accepts an annotation-processor-generated
- * reference path (e.g. `Paths.AuditEntry_.createdBy`) instead of a string.
+ * reference path (e.g. `Tables.AuditEntry_.createdBy`) instead of a string.
  */
+@JvmSynthetic
 inline fun <reified D : Any> Any.details(referenceField: ReferencePath): List<D> =
     stormify().getDetails(this, referenceField)
 
@@ -72,14 +95,16 @@ inline fun <reified D : Any> Any.details(referenceField: ReferencePath): List<D>
 /**
  * Executes [block] as a transaction on the default [Stormify] instance.
  * Inside the block, any convenience call (top-level extensions, [CRUDTable],
- * lazy-loaders, `PagedList`, …) runs on the transaction's connection.
+ * lazy-loaders) runs on the transaction's connection.
  * Nested calls become savepoints automatically — see [Stormify.transaction].
  */
+@JvmSynthetic
 fun <R> transaction(block: () -> R): R = stormify().transaction(block)
 
 // --- Stored procedures ---
 
 /** Calls the stored procedure named by this string. OUT/INOUT parameters use [Sp.Out]/[Sp.InOut]. */
+@JvmSynthetic
 fun String.procedure(vararg args: Any?) = stormify().procedure(this, *args)
 
 /**
@@ -87,13 +112,23 @@ fun String.procedure(vararg args: Any?) = stormify().procedure(this, *args)
  * Use with [AutoTable] entities: properties delegated to `db` will lazily load
  * the entity's data when read or written for the first time.
  *
+ * The delegate is [PlatformSerializable] (the compiler stores it in a field of the
+ * entity), so it serializes with the entity when the value it holds does.
+ *
  * ```kotlin
  * class User : AutoTable() {
  *     var name: String by db("")
  * }
  * ```
  */
-class db<T>(private val defaultValue: T) : ReadWriteProperty<Any?, T> {
+class db<T>(defaultValue: T) : ReadWriteProperty<Any?, T>, PlatformSerializable {
+
+    // Fixed serialization version, so instances serialized by one release can be read
+    // by the next as long as the serialized state is compatible.
+    @Suppress("unused")
+    private companion object {
+        private const val serialVersionUID: Long = 1L
+    }
     private var prop: T = defaultValue
 
     /**
@@ -119,6 +154,9 @@ class db<T>(private val defaultValue: T) : ReadWriteProperty<Any?, T> {
         val entity = thisRef as? AutoTable
         entity?.hydrateIfNeeded()
         prop = value
+        // The value set here is what the column gets, also null: a dangling key
+        // remembered for this property (see DanglingReferences.NULL) is forgotten.
+        (thisRef as? StormifyEntity)?._danglingKeys?.remove(property.name)
     }
 }
 
@@ -146,19 +184,20 @@ class db<T>(private val defaultValue: T) : ReadWriteProperty<Any?, T> {
  * }
  * ```
  */
+@JvmSynthetic
 inline fun <reified T : Any> lazyDetails(propertyName: String = ""): ReadWriteProperty<Any?, List<T>> =
     LazyDetailsProperty(T::class, propertyName)
 
 /**
  * Type-safe variant of [lazyDetails] that accepts an annotation-processor-generated
- * reference path (e.g. `Paths.AuditEntry_.modifiedBy`) instead of a magic string. The
+ * reference path (e.g. `Tables.AuditEntry_.modifiedBy`) instead of a magic string. The
  * compiler guarantees that the referenced property actually exists on the child type,
  * so typos and renames are caught at build time instead of first query execution.
  *
  * The runtime value passed to the underlying lookup is identical to the plain-string
- * form — `lazyDetails(Paths.AuditEntry_.modifiedBy)` resolves to the same field lookup
+ * form — `lazyDetails(Tables.AuditEntry_.modifiedBy)` resolves to the same field lookup
  * as `lazyDetails("modifiedBy")`. Only direct reference fields on the child class are
- * accepted; chained paths (e.g. `Paths.AuditEntry_.modifiedBy.somethingElse`) produce
+ * accepted; chained paths (e.g. `Tables.AuditEntry_.modifiedBy.somethingElse`) produce
  * a [onl.ycode.stormify.biglist.ScalarPath] which the overload resolution rejects at
  * compile time, and any lingering trailing `.` from the path builder is stripped
  * before the lookup runs.
@@ -167,39 +206,35 @@ inline fun <reified T : Any> lazyDetails(propertyName: String = ""): ReadWritePr
  * class User : AutoTable() {
  *     @DbField(primaryKey = true)
  *     var id: Int? = null
- *     var createdEntries: List<AuditEntry> by lazyDetails(Paths.AuditEntry_.createdBy)
- *     var modifiedEntries: List<AuditEntry> by lazyDetails(Paths.AuditEntry_.modifiedBy)
+ *     var createdEntries: List<AuditEntry> by lazyDetails(Tables.AuditEntry_.createdBy)
+ *     var modifiedEntries: List<AuditEntry> by lazyDetails(Tables.AuditEntry_.modifiedBy)
  * }
  * ```
  */
+@JvmSynthetic
 inline fun <reified T : Any> lazyDetails(referenceField: ReferencePath): ReadWriteProperty<Any?, List<T>> =
     LazyDetailsProperty(T::class, referenceField.toString().trimEnd('.'))
 
+/**
+ * The delegate behind [lazyDetails]. Serializable on JVM and Android together with the
+ * entity that holds it, when the loaded children are, which is why the child type is
+ * kept per platform: a `KClass` cannot be serialized, a Java `Class` can.
+ */
 @PublishedApi
-internal class LazyDetailsProperty<T : Any>(
-    private val cls: KClass<T>,
-    private val propertyName: String
-) : ReadWriteProperty<Any?, List<T>> {
-    private var initialized = false
-    private var value: List<T> = emptyList()
+internal expect class LazyDetailsProperty<T : Any>(cls: KClass<T>, propertyName: String) : ReadWriteProperty<Any?, List<T>> {
+    override fun getValue(thisRef: Any?, property: KProperty<*>): List<T>
+    override fun setValue(thisRef: Any?, property: KProperty<*>, value: List<T>)
+}
 
-    override fun getValue(thisRef: Any?, property: KProperty<*>): List<T> {
-        if (!initialized) {
-            initialized = true
-            val s = (thisRef as? StormifyEntity)?._stormify ?: stormify()
-            val name = propertyName.ifBlank { null }
-            // When this entity arrived as one row of a result, fetch the children of
-            // every row in that result at once — the alternative is a query per row,
-            // which is the N+1 this delegate would otherwise walk straight into.
-            val batched = (thisRef as? StormifyEntity)?._detailsGroup
-                ?.detailsFor(thisRef, cls, name, s)
-            value = batched ?: s.getDetails(null, thisRef!!, cls, name)
-        }
-        return value
-    }
-
-    override fun setValue(thisRef: Any?, property: KProperty<*>, value: List<T>) {
-        initialized = true
-        this.value = value
-    }
+/** Loads the children of type [cls] of the entity [thisRef], for [LazyDetailsProperty]. */
+@JvmSynthetic
+internal fun <T : Any> loadLazyDetails(thisRef: Any?, cls: KClass<T>, propertyName: String): List<T> {
+    val s = (thisRef as? StormifyEntity)?._stormify ?: stormify()
+    val name = propertyName.ifBlank { null }
+    // When this entity arrived as one row of a result, fetch the children of
+    // every row in that result at once — the alternative is a query per row,
+    // which is the N+1 this delegate would otherwise walk straight into.
+    val batched = (thisRef as? StormifyEntity)?._detailsGroup
+        ?.detailsFor(thisRef, cls, name, s)
+    return batched ?: s.getDetails(null, thisRef!!, cls, name)
 }

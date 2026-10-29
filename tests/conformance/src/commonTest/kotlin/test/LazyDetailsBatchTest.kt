@@ -95,6 +95,28 @@ open class LazyDetailsBatchTest {
         assertEquals(1, queries, "expected one grouped query for the whole page, got $queries")
     }
 
+    /**
+     * A result larger than one batch: every parent still gets its children, in as many
+     * grouped queries as there are batches, whichever parent is asked first.
+     */
+    @Test
+    fun moreParentsThanOneBatch() = withDb("LazyDetailsBatchLarge") { s ->
+        schema(s, parents = 40, childrenEach = 1)
+
+        val parents = s.findAll<AutoParentEntity>().sortedBy { it.id }
+        assertEquals(40, parents.size)
+        val queries = countingSelects(s, "auto_child") {
+            for (parent in parents)
+                assertEquals(listOf("child ${parent.id}.0"), parent.children.map { it.data }, "parent ${parent.id}")
+        }
+        assertEquals(2, queries, "expected two grouped queries for forty parents, got $queries")
+
+        // Starting beyond the first batch: the parent asked first must be in the batch.
+        val reversed = s.findAll<AutoParentEntity>().sortedByDescending { it.id }
+        for (parent in reversed)
+            assertEquals(listOf("child ${parent.id}.0"), parent.children.map { it.data }, "parent ${parent.id}")
+    }
+
     /** Every parent must receive its own children, not another parent's and not all of them. */
     @Test
     fun eachParentGetsItsOwnChildren() = withDb("LazyDetailsBatchSlices") { s ->

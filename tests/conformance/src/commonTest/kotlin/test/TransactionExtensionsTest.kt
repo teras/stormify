@@ -25,7 +25,7 @@ open class TransactionExtensionsTest {
         // Top-level extensions (create, findById, readOne, transaction, …) go
         // through `Stormify.defaultInstance`; register this instance for the
         // duration of the test and restore afterwards.
-        s.asDefault { test(s) }
+        s.asDefault(); test(s)
     }
 
     @Test

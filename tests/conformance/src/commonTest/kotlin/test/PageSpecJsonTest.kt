@@ -1,12 +1,12 @@
 package test
 
 import onl.ycode.stormify.biglist.PageSpec
-import onl.ycode.stormify.biglist.SortDir
+import onl.ycode.stormify.biglist.SortState
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFails
 
-class PageSpecJsonTest {
+open class PageSpecJsonTest {
 
     // ========== Happy paths ==========
 
@@ -27,7 +27,7 @@ class PageSpecJsonTest {
         """.trimIndent())
         assertEquals(2, s.page); assertEquals(25, s.pageSize)
         assertEquals(mapOf("name" to "acme", "city" to "Athens"), s.filters)
-        assertEquals(mapOf("name" to SortDir.ASC), s.sorts)
+        assertEquals(mapOf("name" to SortState.ASCENDING), s.sorts)
         assertEquals(mapOf("name" to true), s.caseSensitive)
     }
 
@@ -288,11 +288,11 @@ class PageSpecJsonTest {
 
     @Test fun unknownSortValueDropped() {
         val s = PageSpec.fromJson("""{"sorts":{"a":"ASC","b":"SIDEWAYS","c":"DESC"}}""")
-        assertEquals(mapOf("a" to SortDir.ASC, "c" to SortDir.DESC), s.sorts)
+        assertEquals(mapOf("a" to SortState.ASCENDING, "c" to SortState.DESCENDING), s.sorts)
     }
 
     @Test fun lowercaseSortValueDropped() {
-        // SortDir.valueOf is case-sensitive, so "asc" does not match ASC.
+        // SortState.valueOf is case-sensitive, so "asc" does not match ASC.
         val s = PageSpec.fromJson("""{"sorts":{"a":"asc"}}""")
         assertEquals(emptyMap(), s.sorts)
     }

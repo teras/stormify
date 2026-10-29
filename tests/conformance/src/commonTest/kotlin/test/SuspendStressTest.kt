@@ -21,7 +21,7 @@ import kotlin.test.assertEquals
  * available. SQLite is skipped via [TestDDL.supportsHighConcurrency], same as the blocking variant.
  */
 @OptIn(ExperimentalAtomicApi::class)
-class SuspendStressTest {
+open class SuspendStressTest {
     @Test
     fun testSuspendStress() = TestHelper.withDb("SUSPEND-STRESS") { s ->
         if (!TestDDL.supportsHighConcurrency()) { println("Skipping"); return@withDb }

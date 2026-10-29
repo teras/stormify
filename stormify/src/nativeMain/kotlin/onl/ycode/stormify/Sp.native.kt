@@ -28,7 +28,7 @@ actual sealed class Sp actual constructor() {
         override fun toString() = "OUT<${type.simpleName}>:${_value}"
     }
 
-    actual class InOut<T : Any> actual constructor(actual val type: KClass<T>, actual val input: T) : Sp() {
+    actual class InOut<T : Any> actual constructor(actual val type: KClass<T>, actual val input: T?) : Sp() {
         private var _value: T? = input
 
         @Suppress("UNCHECKED_CAST")
@@ -48,6 +48,6 @@ actual sealed class Sp actual constructor() {
     actual companion object {
         actual fun inParam(value: Any?): In = In(value)
         actual fun <T : Any> outParam(type: KClass<T>): Out<T> = Out(type)
-        actual fun <T : Any> inOutParam(type: KClass<T>, value: T): InOut<T> = InOut(type, value)
+        actual fun <T : Any> inOutParam(type: KClass<T>, value: T?): InOut<T> = InOut(type, value)
     }
 }

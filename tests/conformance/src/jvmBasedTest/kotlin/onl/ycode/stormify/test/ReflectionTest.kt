@@ -7,6 +7,7 @@ import test.TestHelper
 import test.skipTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 
@@ -350,6 +351,223 @@ open class ReflectionTest {
         assertEquals(0, s.readOne<Int>("SELECT COUNT(*) FROM jpa_users WHERE user_id = ? AND inserted_at IS NOT NULL", 1))
     }
 
+    // Read-only association next to the raw foreign key column: the classic JPA
+    // mapping where the column is written through the scalar and read through the
+    // reference. @JoinColumn(insertable/updatable = false) must keep the column out
+    // of INSERT and UPDATE, otherwise it is listed twice and most databases reject
+    // the statement.
+    @Test
+    fun jpaReadOnlyJoinColumnViaReflection() = withDb("REFL-JPA-JOINCOLUMN") { s ->
+        TestDDL.dropTable("jpa_ro_child")
+        TestDDL.dropTable("ref_parent")
+        s.executeUpdate(TestDDL.createTable("ref_parent",
+            "${TestDDL.intPrimaryKey("id")}, name ${TestDDL.textType()}"))
+        s.executeUpdate(TestDDL.createTable("jpa_ro_child",
+            "${TestDDL.intPrimaryKey("id")}, ${TestDDL.intColumn("parent_id")}"))
+        s.create(RefParent().apply { id = 1; name = "Alice" })
+        s.create(RefParent().apply { id = 2; name = "Bob" })
+
+        val info = s.getTableInfo(JpaReadOnlyJoinChild::class)
+        val parentColumns = info.fieldInfos.filter { it.dbName == "parent_id" }
+        assertEquals(listOf("parentId"), parentColumns.filter { it.isInsertable }.map { it.name })
+        assertEquals(listOf("parentId"), parentColumns.filter { it.isUpdatable }.map { it.name })
+
+        s.create(JpaReadOnlyJoinChild().apply { id = 10; parentId = 1; parent = RefParent().apply { id = 2 } })
+        assertEquals(1, s.readOne<Int>("SELECT parent_id FROM jpa_ro_child WHERE id = ?", 10))
+
+        val loaded = s.findById<JpaReadOnlyJoinChild>(10)!!
+        assertEquals("Alice", loaded.parent?.name)
+        loaded.parentId = 2
+        loaded.parent = null
+        s.update(loaded)
+        assertEquals(2, s.readOne<Int>("SELECT parent_id FROM jpa_ro_child WHERE id = ?", 10))
+    }
+
+    // Only properties that store a value are columns. A computed `val x get() = ...` has
+    // no field and no delegate, and a `by lazy` with @delegate:Transient is transient,
+    // so neither may appear in SQL: with no such column every statement would fail.
+    @Test
+    fun computedAndTransientLazyPropertiesAreNotColumns() = withDb("REFL-COMPUTED") { s ->
+        TestDDL.dropTable("computed_plain")
+        TestDDL.dropTable("computed_auto")
+        s.executeUpdate(TestDDL.createTable("computed_plain", "${TestDDL.intPrimaryKey("id")}, name ${TestDDL.textType()}"))
+        s.executeUpdate(TestDDL.createTable("computed_auto", "${TestDDL.intPrimaryKey("id")}, name ${TestDDL.textType()}"))
+
+        assertEquals(listOf("id", "name"), s.getTableInfo(ComputedPlain::class).fieldInfos.map { it.name }.sorted())
+        assertEquals(listOf("id", "name"), s.getTableInfo(ComputedAuto::class).fieldInfos.map { it.name }.sorted())
+
+        s.create(ComputedPlain().apply { id = 1; name = "plain" })
+        val plain = s.findById<ComputedPlain>(1)!!
+        assertEquals("PLAIN", plain.upper)
+        assertEquals("lazy-1", plain.cached)
+        plain.name = "plain2"
+        s.update(plain)
+        assertEquals("PLAIN2", s.findAll<ComputedPlain>().single().upper)
+
+        s.create(ComputedAuto().apply { id = 2; name = "auto" })
+        val auto = s.findById<ComputedAuto>(2)!!
+        assertEquals("AUTO", auto.upper)
+        assertEquals("lazy-2", auto.cached)
+        auto.name = "auto2"
+        s.update(auto)
+        assertEquals("AUTO2", s.findAll<ComputedAuto>().single().upper)
+    }
+
+    // A read-only property with a backing field (a `val`, a `var` with a private setter)
+    // is a normal column: written through its getter, and loaded through its field, so an
+    // UPDATE after a load writes back what the database holds and nothing is lost.
+    @Test
+    fun readOnlyPropertiesLoadThroughTheirField() = withDb("REFL-READONLY-PROPS") { s ->
+        TestDDL.dropTable("readonly_val")
+        s.executeUpdate(TestDDL.createTable("readonly_val",
+            "${TestDDL.intPrimaryKey("id")}, name ${TestDDL.textType()}, stamp ${TestDDL.textType()}, " +
+                    "guarded ${TestDDL.textType()}"))
+
+        val fields = s.getTableInfo(ReadOnlyValEntity::class).fieldInfos.associateBy { it.name }
+        assertEquals(setOf("id", "name", "stamp", "guarded"), fields.keys)
+        assertEquals(true, fields.getValue("stamp").isInsertable)
+        assertEquals(true, fields.getValue("stamp").isUpdatable)
+
+        s.create(ReadOnlyValEntity("written").apply { id = 1; name = "a" })
+        assertEquals("written", s.readOne<String>("SELECT stamp FROM readonly_val WHERE id = ?", 1))
+        assertEquals("guarded", s.readOne<String>("SELECT guarded FROM readonly_val WHERE id = ?", 1))
+        s.executeUpdate("UPDATE readonly_val SET stamp = 'db-stamp', guarded = 'db-guarded' WHERE id = 1")
+
+        val loaded = s.findById<ReadOnlyValEntity>(1)!!
+        assertEquals("a", loaded.name)
+        assertEquals("db-stamp", loaded.stamp)
+        assertEquals("db-guarded", loaded.guarded)
+        assertEquals("A", loaded.upper)
+        assertEquals("lazy-1", loaded.cached)
+
+        loaded.name = "b"
+        s.update(loaded)
+        assertEquals("b", s.readOne<String>("SELECT name FROM readonly_val WHERE id = ?", 1))
+        assertEquals("db-stamp", s.readOne<String>("SELECT stamp FROM readonly_val WHERE id = ?", 1))
+        assertEquals("db-guarded", s.readOne<String>("SELECT guarded FROM readonly_val WHERE id = ?", 1))
+    }
+
+    // A `val` primary key is loaded through its field like any read-only property,
+    // whether it is annotated or found by a primary key resolver.
+    @Test
+    fun valPrimaryKeyIsLoaded() = withDb("REFL-VAL-PK") { s ->
+        TestDDL.dropTable("val_pk")
+        s.executeUpdate(TestDDL.createTable("val_pk", "${TestDDL.intPrimaryKey("id")}, name ${TestDDL.textType()}"))
+        s.create(ValPkAnnotated(1).apply { name = "a" })
+        s.create(ValPkResolved(2).apply { name = "b" })
+
+        val annotated = s.findById<ValPkAnnotated>(1)!!
+        assertEquals(1, annotated.id)
+        assertEquals("a", annotated.name)
+        annotated.name = "a2"
+        s.update(annotated)
+        assertEquals("a2", s.readOne<String>("SELECT name FROM val_pk WHERE id = ?", 1))
+
+        val resolved = s.findById<ValPkResolved>(2)!!
+        assertEquals(2, resolved.id)
+        assertEquals("b", resolved.name)
+    }
+
+    // A read-only property backed by a delegate other than `db` (here `by lazy`) has
+    // nowhere to store a loaded value. Unless it is transient, the class is rejected
+    // when its metadata is built, before any SQL runs.
+    @Test
+    fun readOnlyDelegateWithoutTransientIsRejected() = withDb("REFL-LAZY-NOT-TRANSIENT") { s ->
+        val e = assertFailsWith<onl.ycode.kdbc.SQLException> { s.getTableInfo(LazyColumnEntity::class) }
+        assertEquals(
+            "Property lazyCol of LazyColumnEntity uses a delegate and cannot be mapped to a column: " +
+                    "mark it @delegate:Transient or use by db()", e.message
+        )
+        assertFailsWith<onl.ycode.kdbc.SQLException> { s.findById<LazyColumnEntity>(1) }
+    }
+
+    // A read-only property is loaded through its field, so it must be written through its
+    // field too: a custom getter that transforms the value would otherwise turn every
+    // load followed by an update into a silent change of the stored data.
+    @Test
+    fun readOnlyWithCustomGetterWritesItsField() = withDb("REFL-RO-CUSTOM-GETTER") { s ->
+        TestDDL.dropTable("ro_custom_getter")
+        s.executeUpdate(TestDDL.createTable("ro_custom_getter",
+            "${TestDDL.intPrimaryKey("id")}, code ${TestDDL.textType()}"))
+        s.create(RoCustomGetter().apply { id = 1 })
+        assertEquals("abc", s.readOne<String>("SELECT code FROM ro_custom_getter WHERE id = ?", 1))
+
+        s.executeUpdate("UPDATE ro_custom_getter SET code = 'xyz' WHERE id = 1")
+        val loaded = s.findById<RoCustomGetter>(1)!!
+        assertEquals("XYZ", loaded.code)   // the getter still applies for the caller
+        s.update(loaded)
+        assertEquals("xyz", s.readOne<String>("SELECT code FROM ro_custom_getter WHERE id = ?", 1))
+    }
+
+    // `val x by db()`: the db delegate holds the value, but only a var's setter can put a
+    // loaded value there. Rejected when the metadata is built, with the fix to make.
+    @Test
+    fun valByDbIsRejected() = withDb("REFL-VAL-BY-DB") { s ->
+        val e = assertFailsWith<onl.ycode.kdbc.SQLException> { s.getTableInfo(ValByDbEntity::class) }
+        assertEquals("Property name of ValByDbEntity is a val by db(): it must be a var to be loaded", e.message)
+    }
+
+    // `var x by db()` with a private setter: the message names the actual problem.
+    @Test
+    fun dbDelegateWithPrivateSetterIsRejected() = withDb("REFL-DB-PRIVATE-SET") { s ->
+        val e = assertFailsWith<onl.ycode.kdbc.SQLException> { s.getTableInfo(PrivateSetByDbEntity::class) }
+        assertEquals("Property name of PrivateSetByDbEntity has no public setter: make its setter public to be loaded", e.message)
+    }
+
+    // In JPA the generator name and the database sequence are different things:
+    // `sequenceName` is the sequence, `name` only identifies the generator. A
+    // generator without `sequenceName` still uses its name as the sequence.
+    @Test
+    fun jpaSequenceNameViaReflection() = withDb("REFL-JPA-SEQUENCE") { s ->
+        if (!TestDDL.supportsSequences()) skipTest(SkipReason.FEATURE_NA, "no CREATE SEQUENCE")
+        TestDDL.dropTable("jpa_seq")
+        TestDDL.dropSequence("jpa_seq_real")
+        TestDDL.dropSequence("jpa_seq_gen")
+        TestDDL.createSequence("jpa_seq_real")
+        TestDDL.createSequence("jpa_seq_gen")
+        // Move the generator-named sequence away from the other one, so a value
+        // drawn from the wrong sequence cannot match by accident.
+        repeat(5) { s.readOne<Long>(s.sqlDialect.sequenceDialect("jpa_seq_gen", 1)!!) }
+        s.executeUpdate(TestDDL.createTable("jpa_seq",
+            "${TestDDL.intPrimaryKey("id")}, name ${TestDDL.textType()}"))
+
+        assertEquals("jpa_seq_real", s.getTableInfo(JpaSequenceEntity::class).primaryKey.sequence)
+        assertEquals("jpa_seq_gen", s.getTableInfo(JpaGeneratorOnlyEntity::class).primaryKey.sequence)
+
+        val created = s.create(JpaSequenceEntity().apply { name = "a" })
+        assertEquals(1, created.id)
+        val generatorOnly = s.create(JpaGeneratorOnlyEntity().apply { name = "b" })
+        assertEquals(6, generatorOnly.id)
+
+        TestDDL.dropTable("jpa_seq")
+        TestDDL.dropSequence("jpa_seq_real")
+        TestDDL.dropSequence("jpa_seq_gen")
+    }
+
+    // @DbField and JPA annotations on the same property are merged, not overridden:
+    // @DbField(name) together with @Id is still the primary key, and a JPA
+    // insertable/updatable = false is honored next to a @DbField with defaults.
+    // @Entity(name) is the table name when there is no @Table, as in JPA.
+    @Test
+    fun dbFieldAndJpaAnnotationsMergeViaReflection() = withDb("REFL-JPA-MERGE") { s ->
+        TestDDL.dropTable("jpa_merged")
+        s.executeUpdate(TestDDL.createTable("jpa_merged",
+            "${TestDDL.intPrimaryKey("merged_id")}, label ${TestDDL.textType()}, stamp ${TestDDL.textType()}"))
+
+        val info = s.getTableInfo(JpaMergedEntity::class)
+        assertEquals("jpa_merged", info.tableName)
+        assertEquals(listOf("merged_id"), info.primaryKeys.map { it.dbName })
+        assertEquals(listOf("label", "merged_id"), info.fieldInfos.filter { it.isInsertable }.map { it.dbName }.sorted())
+        assertEquals(listOf("label"), info.fieldInfos.filter { it.isUpdatable && !it.isPrimaryKey }.map { it.dbName })
+
+        s.create(JpaMergedEntity().apply { id = 1; label = "a"; stamp = "NOT-INSERTABLE" })
+        assertEquals(0, s.readOne<Int>("SELECT COUNT(*) FROM jpa_merged WHERE merged_id = ? AND stamp IS NOT NULL", 1))
+        val loaded = s.findById<JpaMergedEntity>(1)!!
+        loaded.label = "b"
+        s.update(loaded)
+        assertEquals("b", s.readOne<String>("SELECT label FROM jpa_merged WHERE merged_id = ?", 1))
+    }
+
 }
 
 // --- Enum test entities (reflection-only, no annproc) ---
@@ -391,6 +609,117 @@ class JpaReflUser {
 
     @javax.persistence.Transient
     var scratch: String? = null
+}
+
+// Raw foreign key column written through `parentId`, read through the read-only
+// `parent` association.
+@javax.persistence.Table(name = "jpa_ro_child")
+class JpaReadOnlyJoinChild {
+    @javax.persistence.Id
+    var id: Int? = null
+
+    @javax.persistence.Column(name = "parent_id")
+    var parentId: Int? = null
+
+    @javax.persistence.JoinColumn(name = "parent_id", insertable = false, updatable = false)
+    var parent: RefParent? = null
+}
+
+// Read-only columns loaded through their field: `stamp` is a val with a backing field,
+// `guarded` a var with a private setter. `upper` is computed and `cached` is a transient
+// lazy delegate, so neither is a column.
+@DbTable(name = "readonly_val")
+class ReadOnlyValEntity(val stamp: String? = "default") {
+    @DbField(primaryKey = true) var id: Int? = null
+    var name: String? = null
+    var guarded: String? = "guarded"
+        private set
+    val upper: String? get() = name?.uppercase()
+    @delegate:Transient val cached: String by lazy { "lazy-$id" }
+}
+
+@DbTable(name = "val_pk")
+class ValPkAnnotated(@DbField(primaryKey = true) val id: Int = 0) {
+    var name: String? = null
+}
+
+// No annotation: the test primary key resolver picks `id`.
+@DbTable(name = "val_pk")
+class ValPkResolved(val id: Int = 0) {
+    var name: String? = null
+}
+
+@DbTable(name = "ro_custom_getter")
+class RoCustomGetter {
+    @DbField(primaryKey = true) var id: Int? = null
+    val code: String = "abc"
+        get() = field.uppercase()
+}
+
+@DbTable(name = "private_set_by_db")
+class PrivateSetByDbEntity : onl.ycode.stormify.AutoTable() {
+    @DbField(primaryKey = true) var id: Int? = null
+    var name: String? by onl.ycode.stormify.db(null)
+        private set
+}
+
+@DbTable(name = "val_by_db")
+class ValByDbEntity : onl.ycode.stormify.AutoTable() {
+    @DbField(primaryKey = true) var id: Int? = null
+    val name: String? by onl.ycode.stormify.db(null)
+}
+
+@DbTable(name = "lazy_column")
+class LazyColumnEntity {
+    @DbField(primaryKey = true) var id: Int? = null
+    val lazyCol: String by lazy { "lazy" }
+}
+
+@DbTable(name = "computed_plain")
+class ComputedPlain {
+    @DbField(primaryKey = true) var id: Int? = null
+    var name: String? = null
+    val upper: String? get() = name?.uppercase()
+    @delegate:Transient val cached: String by lazy { "lazy-$id" }
+}
+
+@DbTable(name = "computed_auto")
+class ComputedAuto : AutoTable() {
+    @DbField(primaryKey = true) var id: Int? = null
+    var name: String? by db(null)
+    val upper: String? get() = name?.uppercase()
+    @delegate:Transient val cached: String by lazy { "lazy-$id" }
+}
+
+@javax.persistence.Table(name = "jpa_seq")
+class JpaSequenceEntity {
+    @javax.persistence.Id
+    @javax.persistence.SequenceGenerator(name = "jpa_seq_gen", sequenceName = "jpa_seq_real")
+    @javax.persistence.GeneratedValue(generator = "jpa_seq_gen")
+    var id: Int? = null
+    var name: String? = null
+}
+
+@javax.persistence.Table(name = "jpa_seq")
+class JpaGeneratorOnlyEntity {
+    @javax.persistence.Id
+    @javax.persistence.SequenceGenerator(name = "jpa_seq_gen")
+    var id: Int? = null
+    var name: String? = null
+}
+
+@javax.persistence.Entity(name = "jpa_merged")
+class JpaMergedEntity {
+    @DbField(name = "merged_id")
+    @javax.persistence.Id
+    var id: Int = 0
+
+    @DbField
+    var label: String? = null
+
+    @DbField
+    @javax.persistence.Column(insertable = false, updatable = false)
+    var stamp: String? = null
 }
 
 // --- Test entity classes ---

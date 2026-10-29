@@ -11,7 +11,6 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.runTest
-import onl.ycode.kdbc.SQLException
 import onl.ycode.stormify.Stormify
 import onl.ycode.stormify.coroutines.PoolConfig
 import onl.ycode.stormify.coroutines.SuspendStormify
@@ -144,13 +143,13 @@ open class SuspendWithConnectionTest {
         if (!::runner.isInitialized) return@runTest
 
         runner.withConnection {
-            val wrapped = assertFailsWith<SQLException> {
+            val thrown = assertFailsWith<RuntimeException> {
                 runner.transaction {
                     insert(30, "inner-rolled-back")
                     throw RuntimeException("inner-boom")
                 }
             }
-            assertEquals("inner-boom", wrapped.cause?.message)
+            assertEquals("inner-boom", thrown.message)
             // Auto-commit must be restored and the connection healthy after the rollback.
             insert(31, "after-rollback")
         }
@@ -248,7 +247,7 @@ open class SuspendWithConnectionTest {
                     insert(41, "inner-fail")
                     throw RuntimeException("inner-boom")
                 }
-            } catch (_: SQLException) {
+            } catch (_: RuntimeException) {
                 // expected
             }
             insert(42, "after-inner")

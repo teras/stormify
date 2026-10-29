@@ -17,7 +17,7 @@ import kotlin.test.*
  * (property name) instead of `setField(idDbNames[0], …)` (column name), crashing on
  * any entity whose property name differed from its column name (e.g. `t01Id` → `t01_id`).
  */
-class PrimaryKeyMappingTest {
+open class PrimaryKeyMappingTest {
     private fun withDb(name: String, test: (Stormify) -> Unit) = TestHelper.withDb(name, test)
 
     // --- Sequence path (the actual bug regression — line 675 of Stormify.kt) ---
@@ -38,6 +38,27 @@ class PrimaryKeyMappingTest {
         assertNotNull(found); assertEquals("row1", found.name)
 
         TestDDL.dropTable("pk_simple"); TestDDL.dropSequence("pk_simple_seq")
+    }
+
+    @Test
+    fun sequenceFillsAPrimitiveKeyLeftAtZero() = withDb("PK-SEQ-PRIMITIVE") { s ->
+        if (!TestDDL.supportsSequences()) skipTest(SkipReason.FEATURE_NA, "no CREATE SEQUENCE")
+        for (t in listOf("pk_seq_long", "pk_seq_int")) {
+            TestDDL.dropTable(t); TestDDL.dropSequence("${t}_seq")
+            TestDDL.createSequence("${t}_seq")
+            s.executeUpdate(TestDDL.createTable(t, "id ${TestDDL.bigIntType()} PRIMARY KEY, name ${TestDDL.textType()}"))
+        }
+
+        val longs = s.create(listOf(PkSeqLong(name = "a"), PkSeqLong(name = "b"), PkSeqLong(id = 1000, name = "c")))
+        assertTrue(longs[0].id > 0 && longs[1].id > 0 && longs[0].id != longs[1].id, "ids ${longs.map { it.id }}")
+        assertEquals(1000L, longs[2].id, "an assigned key is kept")
+        assertEquals("b", s.findById<PkSeqLong>(longs[1].id)?.name)
+
+        val int = s.create(PkSeqInt(name = "x"))
+        assertTrue(int.id > 0, "id ${int.id}")
+        assertEquals("x", s.findById<PkSeqInt>(int.id)?.name)
+
+        for (t in listOf("pk_seq_long", "pk_seq_int")) { TestDDL.dropTable(t); TestDDL.dropSequence("${t}_seq") }
     }
 
     @Test
@@ -218,5 +239,13 @@ class PrimaryKeyMappingTest {
         assertNotNull(found); assertEquals(7L, found.customPk)
 
         TestDDL.dropTable("pk_manual_renamed")
+    }
+
+    @Test
+    fun idValuesFollowThePrimaryKeyOrder() = withDb("PK-ID-VALUES") { s ->
+        assertEquals(listOf<Any?>(3, 7), s.getTableInfo(DualKey::class).getIdValues(DualKey(id1 = 3, id2 = 7)))
+        assertEquals(listOf("id1", "id2"), s.getTableInfo(DualKey::class).primaryKeys.map { it.name })
+        assertEquals(listOf<Any?>(5L), s.getTableInfo(PkSimple::class).getIdValues(PkSimple(id = 5L, name = "x")))
+        assertEquals(listOf<Any?>(null), s.getTableInfo(PkSimple::class).getIdValues(PkSimple(name = "x")))
     }
 }

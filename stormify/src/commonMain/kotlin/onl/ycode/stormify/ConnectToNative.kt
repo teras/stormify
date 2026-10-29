@@ -12,6 +12,12 @@ expect val Any.isOtherPrimitive: Boolean
 
 internal expect fun transformResultValue(value: Any?): Any?
 
+/**
+ * Whether [value] is an arbitrary-precision decimal (`java.math.BigDecimal`, the
+ * ionspin `BigDecimal`), whose text form carries a scale: `100` and `100.00`.
+ */
+internal expect fun isBigDecimal(value: Any): Boolean
+
 internal expect class WeakRef<T : Any>(referent: T) {
     fun get(): T?
 }

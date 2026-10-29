@@ -1,5 +1,7 @@
 package test
 
+import onl.ycode.stormify.biglist.SortState
+import onl.ycode.stormify.pagedList
 import onl.ycode.stormify.generated.Tables.TestC_
 import onl.ycode.stormify.generated.Tables.CamelEntity_
 import onl.ycode.stormify.generated.Tables.AutoChildEntity_
@@ -23,7 +25,7 @@ class PagedListPathTest {
             "${TestDDL.intPrimaryKey("id")}, name ${TestDDL.textType()}"))
         s.create(listOf(TestC(1, "Alice"), TestC(2, "Bob"), TestC(3, "Alicia")))
 
-        val list = PagedList<TestC>()
+        val list = pagedList<TestC>()
         val col = list.addFacet(TestC_.name)
         col.filter = "Ali"
 
@@ -41,7 +43,7 @@ class PagedListPathTest {
             CamelEntity(3, "Charlie", "Brown")
         ))
 
-        val list = PagedList<CamelEntity>()
+        val list = pagedList<CamelEntity>()
         val col = list.addFacet(CamelEntity_.firstName, CamelEntity_.lastName)
         col.filter = "Ali"
 
@@ -63,7 +65,7 @@ class PagedListPathTest {
         s.executeUpdate("INSERT INTO auto_child (id, data, parent) VALUES (?, ?, ?)", 2, "Child2", 1)
         s.executeUpdate("INSERT INTO auto_child (id, data, parent) VALUES (?, ?, ?)", 3, "Child3", 2)
 
-        val list = PagedList<AutoChildEntity>()
+        val list = pagedList<AutoChildEntity>()
         // Type-safe FK path: AutoChildEntity_.parent.data → "parent.data"
         val col = list.addFacet(AutoChildEntity_.parent.data)
         col.filter = "Parent1"
@@ -78,9 +80,9 @@ class PagedListPathTest {
             "${TestDDL.intPrimaryKey("id")}, name ${TestDDL.textType()}"))
         s.create(listOf(TestC(1, "Charlie"), TestC(2, "Alice"), TestC(3, "Bob")))
 
-        val list = PagedList<TestC>()
+        val list = pagedList<TestC>()
         val col = list.addFacet(TestC_.name)
-        col.sort = Facet.ASCENDING
+        col.sort = SortState.ASCENDING
 
         assertEquals("Alice", list[0].name)
         assertEquals("Bob", list[1].name)
@@ -121,7 +123,7 @@ class PagedListPathTest {
         s.executeUpdate("INSERT INTO tree_node (id, name, parent) VALUES (?, ?, ?)", 2, "child", 1)
         s.executeUpdate("INSERT INTO tree_node (id, name, parent) VALUES (?, ?, ?)", 3, "grandchild", 2)
 
-        val list = PagedList<TreeNode>()
+        val list = pagedList<TreeNode>()
         // Filter: grandchild → parent(child) → parent(root).name = "root"
         val col = list.addFacet(TreeNode_.parent.parent.name)
         col.filter = "root"

@@ -63,12 +63,11 @@ open class AutoTableLazyLoadTest {
     @Test
     fun freshConstructWithDefaultStormifyAttached() = withDb("AUTO-LAZY-FRESH-DEFAULT") { s ->
         s.createAutoSchema()
-        s.asDefault {
-            val p = AutoParentEntity().apply { id = 999; data = "hello" }
-            assertEquals(999, p.id)
-            assertEquals("hello", p.data)
-            assertNull(p.other)
-        }
+        s.asDefault()
+        val p = AutoParentEntity().apply { id = 999; data = "hello" }
+        assertEquals(999, p.id)
+        assertEquals("hello", p.data)
+        assertNull(p.other)
     }
 
     private fun Stormify.createAutoSchema() {

@@ -86,4 +86,37 @@ open class TransactionTest {
         } catch (_: Exception) {}
         assertEquals(3, s.readOne<Int>("SELECT COUNT(*) FROM tx_ret") ?: -1)
     }
+
+    /** The block's own exception reaches the caller as it is, from a transaction and a savepoint. */
+    @Test
+    fun theBlockExceptionPropagatesUnchanged() = withDb("TX-EXCEPTION-UNCHANGED") { s ->
+        TestDDL.dropTable("tx_exc")
+        s.executeUpdate(TestDDL.createTable("tx_exc", "${TestDDL.intPrimaryKey("id")}"))
+        try {
+            val outer = IllegalStateException("outer")
+            assertSame(outer, assertFailsWith<IllegalStateException> {
+                s.transaction {
+                    s.executeUpdate("INSERT INTO tx_exc (id) VALUES (?)", 1)
+                    throw outer
+                }
+            })
+            val inner = IllegalArgumentException("inner")
+            s.transaction {
+                s.executeUpdate("INSERT INTO tx_exc (id) VALUES (?)", 2)
+                assertSame(inner, assertFailsWith<IllegalArgumentException> {
+                    s.transaction {
+                        s.executeUpdate("INSERT INTO tx_exc (id) VALUES (?)", 3)
+                        throw inner
+                    }
+                })
+            }
+            assertEquals(listOf(2), s.read<Int>("SELECT id FROM tx_exc ORDER BY id"))
+            // A database error stays an SQLException
+            assertFailsWith<onl.ycode.kdbc.SQLException> {
+                s.transaction { s.executeUpdate("INSERT INTO tx_exc_missing (id) VALUES (1)") }
+            }
+        } finally {
+            TestDDL.dropTable("tx_exc")
+        }
+    }
 }

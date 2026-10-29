@@ -12,6 +12,7 @@ import onl.ycode.stormify.Stormify
 import onl.ycode.stormify.TableInfo
 import onl.ycode.stormify.enumEntries
 import onl.ycode.stormify.enumToInt
+import onl.ycode.stormify.scanPlaceholders
 import kotlin.reflect.KClass
 
 // Internal SQL aliases — emitted via `SqlDialect.quoteAlias` to stay valid on Oracle.
@@ -21,23 +22,68 @@ internal const val FV_CNT_ALIAS = "__strm_fv_c"
 private const val FV_SUB_ALIAS = "__strm_fv_s"
 private const val COUNT_SUB_ALIAS = "__strm_ds"
 
+// NULLS LAST is not portable (MySQL, SQL Server, older SQLite): order the NULL
+// group last explicitly, whatever the database's own NULL ordering.
+private fun nullsLast(expr: String) = "CASE WHEN $expr IS NULL THEN 1 ELSE 0 END, $expr"
+
 internal fun buildFilterValuesSql(
     dialect: SqlDialect,
     columnExpr: String,
     fromWhere: String,
-    low: Int,
-    high: Int,
 ): String {
     val v = dialect.quoteAlias(FV_VAL_ALIAS)
     val c = dialect.quoteAlias(FV_CNT_ALIAS)
     val s = dialect.quoteAlias(FV_SUB_ALIAS)
     val inner = "SELECT $columnExpr AS $v, COUNT(*) AS $c FROM $fromWhere GROUP BY $columnExpr"
-    return dialect.queryFormatter("$v, $c", "", "($inner) $s", "", v, low, high)
+    return dialect.queryFormatter("$v, $c", "", "($inner) $s", "", nullsLast(v))
 }
 
 /**
+ * One page of the distinct values of [columnExpr], the NULL group included and
+ * ordered last. A grouped subquery rather than `SELECT DISTINCT`, because
+ * PostgreSQL rejects an `ORDER BY` expression that is not in a DISTINCT list.
+ */
+internal fun buildFilterValuesOnlySql(
+    dialect: SqlDialect,
+    columnExpr: String,
+    fromWhere: String,
+): String {
+    val v = dialect.quoteAlias(FV_VAL_ALIAS)
+    val s = dialect.quoteAlias(FV_SUB_ALIAS)
+    val inner = "SELECT $columnExpr AS $v FROM $fromWhere GROUP BY $columnExpr"
+    return dialect.queryFormatter(v, "", "($inner) $s", "", nullsLast(v))
+}
+
+/** Number of distinct values of [columnExpr], counting the NULL group as one value. */
+internal fun buildFilterValuesCountSql(dialect: SqlDialect, columnExpr: String, fromWhere: String): String {
+    val v = dialect.quoteAlias(FV_VAL_ALIAS)
+    val s = dialect.quoteAlias(FV_SUB_ALIAS)
+    return "SELECT COUNT(*) FROM (SELECT $columnExpr AS $v FROM $fromWhere GROUP BY $columnExpr) $s"
+}
+
+/**
+ * `SELECT DISTINCT` of every expression in [exprs] over [fromWhere], joined with
+ * `UNION` so a value present under several expressions appears once.
+ */
+internal fun buildRawValuesUnion(dialect: SqlDialect, exprs: List<String>, fromWhere: String): String {
+    val v = dialect.quoteAlias(FV_VAL_ALIAS)
+    return exprs.joinToString(" UNION ") { "SELECT DISTINCT $it AS $v FROM $fromWhere" }
+}
+
+/** One page of the values of [union], ordered by value with `NULL` last ([nullsLast]). */
+internal fun buildRawValuesPageSql(dialect: SqlDialect, union: String): String {
+    val v = dialect.quoteAlias(FV_VAL_ALIAS)
+    val s = dialect.quoteAlias(FV_SUB_ALIAS)
+    return dialect.queryFormatter(v, "", "($union) $s", "", nullsLast(v))
+}
+
+/** Number of values of [union], `NULL` counted as one. */
+internal fun buildRawValuesCountSql(dialect: SqlDialect, union: String): String =
+    "SELECT COUNT(*) FROM ($union) ${dialect.quoteAlias(FV_SUB_ALIAS)}"
+
+/**
  * Stateless SQL-generation engine shared by the UI-model façade
- * ([PagedList][AbstractPagedList]) and the stateless query executor façade ([PagedQuery][AbstractPagedQuery]).
+ * ([PagedList]) and the stateless query executor façade ([PagedQuery]).
  * Holds column definitions, constraints, the JOIN-tree and all SQL-building
  * logic — but owns no per-request mutable view state (no cached page, no
  * selected entity, no AbstractList surface).
@@ -56,12 +102,6 @@ internal class PagedQueryCore<T : Any>(
     internal val info: TableInfo<T>
         get() = _info ?: @Suppress("UNCHECKED_CAST") (stormify.resolveTableInfo(classType) as TableInfo<T>)
             .also { _info = it }
-
-    internal fun invalidateCachedMetadata() {
-        _info = null
-        _root = null
-        treeIsDirty = true
-    }
 
     private val tableCounter = atomic(0)
     private var _root: NodeTable? = null
@@ -122,11 +162,16 @@ internal class PagedQueryCore<T : Any>(
     /**
      * Lock held around SQL-plan generation in stateless mode. Building the
      * plan mutates per-node active flags; without serialization, concurrent
-     * `execute()` calls on a shared [PagedQuery][AbstractPagedQuery] instance would corrupt
+     * `execute()` calls on a shared [PagedQuery] instance would corrupt
      * each other's JOIN activation. UI mode does not take this lock — it
      * runs single-threaded by convention.
      */
     private val queryLock = reentrantLock()
+
+    private var sortCounter = 0L
+
+    /** Next position in the sorting order; see [Facet.sortOrder]. */
+    internal fun nextSortOrder() = ++sortCounter
 
     private var _isDistinct = false
     internal var isDistinct: Boolean
@@ -136,10 +181,17 @@ internal class PagedQueryCore<T : Any>(
             _isDistinct = value
         }
 
-    private var constraintClause = ""
-    private var constraintArgs: Array<out Any> = emptyArray()
+    /** Direction of the primary key columns in `ORDER BY`; see [PagedList.keySort]. */
+    internal var keySort: SortState = SortState.ASCENDING
+        set(value) {
+            checkMutable()
+            field = value
+        }
 
-    internal fun setConstraints(query: String, args: Array<out Any>) {
+    private var constraintClause = ""
+    private var constraintArgs: Array<out Any?> = emptyArray()
+
+    internal fun setConstraints(query: String, args: Array<out Any?>) {
         checkMutable()
         constraintClause = query.trim()
         constraintArgs = args
@@ -158,7 +210,7 @@ internal class PagedQueryCore<T : Any>(
         paths.forEach { resolveFieldPath(it) } // validate + build tree
         val resolvedType = type ?: detectType(paths.first())
         val resolvedEnumValues = enumValues ?: if (resolvedType == Facet.Type.ENUM)
-            buildEnumValues(resolveFieldPath(paths.first()).type) else null
+            resolveFieldPath(paths.first()).let { buildEnumValues(it.type, it.isEnumAsString) } else null
         val resolvedAlias = resolveAliasForNewFacet(alias)
         val column = Facet(this, paths, resolvedType, resolvedEnumValues, null, null, resolvedAlias)
         _facets.add(column)
@@ -177,6 +229,8 @@ internal class PagedQueryCore<T : Any>(
         _facets.add(column)
         return column
     }
+
+    internal fun facetByPath(path: FieldPath): Facet? = _facets.firstOrNull { path in it.fields }
 
     // --- Table refs (handles to join-tree nodes for raw SQL access) ---
 
@@ -237,7 +291,7 @@ internal class PagedQueryCore<T : Any>(
             return out.toString()
         }
 
-    internal fun buildConstraintPart(excludeFacet: Facet?): Pair<String, List<Any>> =
+    internal fun buildConstraintPart(excludeFacet: Facet?): Pair<String, List<Any?>> =
         buildConstraintPartImpl(excludeFacet, null)
 
     /**
@@ -267,7 +321,7 @@ internal class PagedQueryCore<T : Any>(
     // --- Stateless plan (spec-driven, thread-safe) ---
 
     /**
-     * Captures the per-request filter/sort state passed through [PagedQuery.execute][AbstractPagedQuery.execute]
+     * Captures the per-request filter/sort state passed through [PagedQuery.execute]
      * so the engine can build SQL without touching per-column mutable state.
      */
     internal class RequestState(
@@ -281,11 +335,11 @@ internal class PagedQueryCore<T : Any>(
         val tablesPart: String,
         val wherePart: String,
         val orderBy: String,
-        val args: List<Any>,
+        val args: List<Any?>,
     )
 
     /**
-     * Produces a full SQL plan for a single [PagedQuery.execute][AbstractPagedQuery.execute] call.
+     * Produces a full SQL plan for a single [PagedQuery.execute] call.
      * Serialized via the per-core lock because it mutates the join tree's
      * active flags during tree resolution.
      */
@@ -302,16 +356,19 @@ internal class PagedQueryCore<T : Any>(
     /**
      * Produces the (sql, args) for an aggregate query whose `SELECT` list is
      * [selectClause] and whose `FROM`/`WHERE` mirror the facet configuration
-     * plus optional per-request [state]. Serialized via the core lock when
+     * plus optional per-request [state]. [joinNodes] are the field nodes the
+     * aggregate expressions read; their JOINs are emitted even when no facet
+     * filters or sorts on them. Serialized via the core lock when
      * [state] is non-null so concurrent stateless callers do not corrupt
      * the join-tree activation; UI mode (null state) runs lock-free.
      */
     internal fun planAggregate(
         selectClause: String,
         state: RequestState?,
-    ): Pair<String, List<Any>> {
-        val build: () -> Pair<String, List<Any>> = {
-            resolveCurrentTree(state)
+        joinNodes: Collection<Node> = emptyList(),
+    ): Pair<String, List<Any?>> {
+        val build: () -> Pair<String, List<Any?>> = {
+            resolveCurrentTree(state, joinNodes)
             val tablesOut = StringBuilder(info.tableName)
             root.appendJoins(tablesOut)
             val (where, args) = buildConstraintPartImpl(null, state)
@@ -329,9 +386,12 @@ internal class PagedQueryCore<T : Any>(
     internal fun planFilterValuesPieces(
         facet: Facet,
         state: RequestState?,
-    ): Triple<String, String, List<Any>> {
-        val build: () -> Triple<String, String, List<Any>> = {
-            resolveCurrentTree(state)
+    ): Triple<String, String, List<Any?>> {
+        val build: () -> Triple<String, String, List<Any?>> = {
+            // The facet's own path must be joined even when it has no filter or sort.
+            val facetNode = if (facet.rawExpression == null && facet.fields.isNotEmpty())
+                listOf(resolveFieldPath(facet.fields.first())) else emptyList()
+            resolveCurrentTree(state, facetNode)
             val tablesOut = StringBuilder(info.tableName)
             root.appendJoins(tablesOut)
             val columnExpr = resolveFacetExpression(facet)
@@ -340,6 +400,31 @@ internal class PagedQueryCore<T : Any>(
         }
         return if (state != null) queryLock.withLock(build) else build()
     }
+
+    /**
+     * Produces the `UNION` of the distinct values of every path of [facet] (or of its
+     * SQL expression), filtered by the other facets and the constraints (and [state]
+     * when stateless), and its arguments. The JOINs of all the facet's paths are
+     * emitted for this statement only, like [planFilterValuesPieces].
+     */
+    internal fun planFilterRawValues(facet: Facet, state: RequestState? = null): Pair<String, List<Any?>> {
+        val build: () -> Pair<String, List<Any?>> = {
+            val nodes = if (facet.rawExpression == null) facet.fields.map { resolveFieldPath(it) } else emptyList()
+            resolveCurrentTree(state, nodes)
+            // Joins first: building the constraints rebuilds the tree without the extra nodes.
+            val tablesOut = StringBuilder(info.tableName)
+            root.appendJoins(tablesOut)
+            val exprs = facet.rawExpression?.let { listOf(it) } ?: nodes.map { it.columnHandler }
+            val (where, args) = buildConstraintPartImpl(facet, state)
+            val union = buildRawValuesUnion(stormify.sqlDialect, exprs, "$tablesOut$where")
+            union to List(exprs.size) { args }.flatten()
+        }
+        return if (state != null) queryLock.withLock(build) else build()
+    }
+
+    /** The field type of the paths of [facet] (all the same, see [Facet.getFilterRawValues]), or `null` for SQL facets. */
+    internal fun rawValueType(facet: Facet): KClass<*>? =
+        facet.fields.firstOrNull()?.let { resolveFieldPath(it).type }
 
     // --- Cursor-based streaming ---
 
@@ -360,7 +445,7 @@ internal class PagedQueryCore<T : Any>(
         action: (T) -> Unit,
     ) {
         val sql: String
-        val args: List<Any>
+        val args: List<Any?>
         if (state != null) {
             val plan = planQuery(state, selectedId)
             sql = "SELECT ${plan.distinctPart}${info.tableName}.* FROM " +
@@ -396,12 +481,16 @@ internal class PagedQueryCore<T : Any>(
 
     private fun buildSortingPart(selectedId: NativeBigInteger?, state: RequestState?): String {
         resolveCurrentTree(state)
-        val facetSorts = _facets
-            .filter { facetSort(it, state) != null }
+        // Sorted facets in the order they were sorted: by the position recorded when
+        // the facet's sort was set, or by the order of the sorts in the request state.
+        val sortedFacets =
+            if (state != null) state.sorts.keys.mapNotNull { alias -> _facets.firstOrNull { it.alias == alias } }
+            else _facets.filter { it.sort != null }.sortedBy { it.sortOrder }
+        val facetSorts = sortedFacets
             .flatMap { col ->
                 val direction = if (facetSort(col, state) == SortState.DESCENDING) " DESC" else ""
                 if (col.fields.isNotEmpty())
-                    listOf(resolveFieldPath(col.fields.first()).columnHandler + direction)
+                    listOf(resolveFieldPath(col.sortField).columnHandler + direction)
                 else if (col.rawExpression != null)
                     listOf(col.rawExpression + direction)
                 else
@@ -409,31 +498,43 @@ internal class PagedQueryCore<T : Any>(
             }
 
         val singlePk = info.primaryKeys.singleOrNull()?.dbName
+        // Qualified with the root table: a join to the same table (a self-reference) has a
+        // column of the same name, which an unqualified key would make ambiguous.
         val selectedPrefix = if (singlePk != null && selectedId != null)
-            stormify.sqlDialect.orderByIdDialect(singlePk, selectedId)?.let { "$it, " } ?: ""
+            stormify.sqlDialect.orderByIdDialect("${info.tableName}.$singlePk", selectedId)?.let { "$it, " } ?: ""
         else ""
 
-        if (facetSorts.isNotEmpty())
-            return selectedPrefix + facetSorts.joinToString(", ")
-
-        val pk = singlePk ?: throw IllegalStateException(
+        // Every primary key column closes the ORDER BY, so rows that tie on the
+        // facet sorts still have one fixed order and paging neither repeats nor
+        // skips them. Columns a facet already sorts on are not repeated (SQL
+        // Server rejects a column listed twice in ORDER BY).
+        val sortedExpressions = facetSorts.map { it.removeSuffix(" DESC") }.toSet()
+        val keyDirection = if (keySort == SortState.DESCENDING) " DESC" else ""
+        val keySorts = info.primaryKeys
+            .map { "${info.tableName}.${it.dbName}" }
+            .filter { it !in sortedExpressions }
+            .map { it + keyDirection }
+        val allSorts = facetSorts + keySorts
+        if (allSorts.isEmpty()) throw IllegalStateException(
             "PagedList for ${info.tableName} requires explicit sorting via column.sort = " +
-                    "because the entity has a composite primary key"
+                    "because the entity has no primary key"
         )
-        return selectedPrefix + info.tableName + "." + pk
+        return selectedPrefix + allSorts.joinToString(", ")
     }
 
     private fun buildConstraintPartImpl(
         excludeFacet: Facet?,
         state: RequestState?,
-    ): Pair<String, List<Any>> {
+    ): Pair<String, List<Any?>> {
         resolveCurrentTree(state)
         val andOut = StringBuilder()
         val args = constraintArgs.toMutableList()
         val argsCollector = SqlArgsCollector { args.add(it) }
 
+        // Parenthesized so a constraint containing OR cannot absorb the AND of the facet filters.
+        // The parenthesis closes on its own line, past any trailing line comment.
         if (constraintClause.isNotEmpty())
-            andOut.append(constraintClause)
+            andOut.append("(").append(constraintClause).append("\n)")
 
         for (column in _facets) {
             if (column === excludeFacet) continue
@@ -443,11 +544,14 @@ internal class PagedQueryCore<T : Any>(
             val orParts = mutableListOf<String>()
 
             fun wrapUserConverter(conv: Converter): Converter =
-                { col, input, p, a ->
+                Converter { col, input, p, a ->
                     val before = args.size
                     val fragment = conv(col, input, p, a)
                     val pushed = args.size - before
-                    val placeholders = fragment.count { it == '?' }
+                    // Same scanner as the statement binder: '?' inside literals,
+                    // quoted identifiers and comments is not a placeholder.
+                    var placeholders = 0
+                    scanPlaceholders(fragment) { placeholders++ }
                     require(placeholders == pushed) {
                         "Facet '${column.alias}' converter emitted $placeholders placeholders but pushed $pushed args"
                     }
@@ -456,7 +560,9 @@ internal class PagedQueryCore<T : Any>(
 
             if (column.rawExpression != null) {
                 val conv = column.converter?.let(::wrapUserConverter)
-                    ?: DefaultDataConverter.guessConverter(column.type, stormify.sqlDialect, stormify.filterSyntax, column.enumValues)
+                    ?: DefaultDataConverter.guessConverter(
+                        column.type, stormify.sqlDialect, stormify.filterSyntax, column.enumValues, stormify.textFolding
+                    )
                 orParts.add(conv(column.rawExpression, filterVal, parser, argsCollector))
             } else {
                 for (fieldPath in column.fields) {
@@ -464,7 +570,7 @@ internal class PagedQueryCore<T : Any>(
                     val conv = column.converter?.let(::wrapUserConverter)
                         ?: DefaultDataConverter.guessConverterForNode(
                             node, column.type, stormify.sqlDialect, stormify.filterSyntax,
-                            { caseSensitive }, column.enumValues
+                            { caseSensitive }, column.enumValues, stormify.textFolding
                         )
                     orParts.add(conv(node.columnHandler, filterVal, parser, argsCollector))
                 }
@@ -484,11 +590,11 @@ internal class PagedQueryCore<T : Any>(
 
     // --- Tree / path resolution ---
 
-    private fun resolveCurrentTree(state: RequestState?) {
+    private fun resolveCurrentTree(state: RequestState?, extra: Collection<Node> = emptyList()) {
         // UI mode: use the treeIsDirty flag as a short-circuit cache — columns'
         // active sets only change when a setter fires, which clears the flag.
         // Stateless mode: always re-resolve (the spec provides the state).
-        if (state == null && !treeIsDirty) return
+        if (state == null && !treeIsDirty && extra.isEmpty()) return
         treeIsDirty = false
         root.deactivate()
         root.activate()
@@ -500,6 +606,12 @@ internal class PagedQueryCore<T : Any>(
                 resolveFieldPath(fieldPath).activate()
         }
         for (ref in _tableRefs) ref.tryActivate()
+        // Extra nodes serve a single statement (filter values, aggregates): the
+        // next plain build must start from a clean tree without their JOINs.
+        if (extra.isNotEmpty()) {
+            for (node in extra) node.activate()
+            treeIsDirty = true
+        }
     }
 
     internal fun resolveFieldPath(fieldPath: FieldPath): NodeField {
@@ -516,12 +628,8 @@ internal class PagedQueryCore<T : Any>(
         return resolveFieldPath(column.fields.first()).columnHandler
     }
 
-    internal fun resolveAggregateExpression(path: String): String {
-        val node = resolveFieldPath(FieldPath(path))
-        node.activate()
-        treeIsDirty = true // ensures tablesPart regenerates joins on next access
-        return node.columnHandler
-    }
+    /** Resolves an aggregate's field path; its JOINs are activated by [planAggregate]. */
+    internal fun resolveAggregateNode(path: String): NodeField = resolveFieldPath(FieldPath(path))
 
     private fun detectType(fieldPath: FieldPath): Facet.Type {
         val node = resolveFieldPath(fieldPath)
@@ -529,15 +637,16 @@ internal class PagedQueryCore<T : Any>(
         return ScalarTypes.categoryOf(node.type) ?: Facet.Type.TEXT
     }
 
-    private fun buildEnumValues(enumType: KClass<*>): Map<String, Any>? {
+    /** Display name to stored value: the enum name for [asString] columns, else ordinal / `DbValue`. */
+    private fun buildEnumValues(enumType: KClass<*>, asString: Boolean): Map<String, Any>? {
         val entries = enumEntries(enumType) ?: return null
         return entries.associate { e ->
             val display = if (e is HumanReadable) e.displayName else e.name
-            display to enumToInt(e)
+            display to (if (asString) e.name else enumToInt(e))
         }
     }
 
     internal fun resolveInputParser(column: Facet): InputParser =
         column.inputParser ?: listInputParserAccessor()
-            ?: stormify.inputParser ?: { s, _ -> s }
+            ?: stormify.inputParser ?: InputParser { s, _ -> s }
 }

@@ -1,5 +1,7 @@
 package test
 
+import onl.ycode.stormify.pagedList
+import onl.ycode.stormify.pagedQuery
 import onl.ycode.stormify.Stormify
 import onl.ycode.stormify.biglist.Facet
 import onl.ycode.stormify.biglist.PageSpec
@@ -12,9 +14,9 @@ import kotlin.test.assertFails
 import kotlin.test.assertNotEquals
 import kotlin.test.assertTrue
 
-class TableRefTest {
+open class TableRefTest {
     private fun withDb(name: String, test: (Stormify) -> Unit) = TestHelper.withDb(name) {
-        it.asDefault(test)
+        it.asDefault(); test(it)
     }
 
     private fun setupParentChild(s: Stormify) {
@@ -42,7 +44,7 @@ class TableRefTest {
     @Test
     fun rootRefGivesEntityTableName() = withDb("TREF-ROOT") { s ->
         setupParentChild(s)
-        val query = PagedQuery<TestC>()
+        val query = pagedQuery<TestC>()
         val root = query.addTableRef()
         assertEquals("test", root.alias)
         assertEquals("test", root.toString())  // string interpolation uses toString
@@ -51,7 +53,7 @@ class TableRefTest {
     @Test
     fun fkRefGetsEngineAlias() = withDb("TREF-FK") { s ->
         setupParentChild(s)
-        val query = PagedQuery<Child>()
+        val query = pagedQuery<Child>()
         val parent = query.addTableRef("parent")
         // Alias is engine-assigned (e.g. "t1"), not the table name.
         assertNotEquals("test", parent.alias)
@@ -61,7 +63,7 @@ class TableRefTest {
     @Test
     fun duplicatePathReturnsSameAlias() = withDb("TREF-DUPE") { s ->
         setupParentChild(s)
-        val query = PagedQuery<Child>()
+        val query = pagedQuery<Child>()
         val a = query.addTableRef("parent")
         val b = query.addTableRef("parent")
         // Two separate TableRef objects but pointing to the same underlying node.
@@ -71,12 +73,12 @@ class TableRefTest {
     @Test
     fun rootRefInSqlFacet() = withDb("TREF-ROOT-SQL") { s ->
         setupParentChild(s)
-        val query = PagedQuery<TestC>().apply {
+        val query = pagedQuery<TestC>().apply {
             val root = addTableRef()
             addFacet("name", "name")
             addSqlFacet("childCount",
                 "(SELECT COUNT(*) FROM child WHERE child.parent = $root.id)",
-                Facet.NUMERIC)
+                Facet.Type.NUMERIC)
         }
         // Filter by child count threshold
         val page = query.execute(PageSpec(filters = mapOf("childCount" to ">= 2")))
@@ -87,7 +89,7 @@ class TableRefTest {
     @Test
     fun fkRefInConstraints() = withDb("TREF-FK-CONSTR") { s ->
         setupParentChild(s)
-        val query = PagedQuery<Child>().apply {
+        val query = pagedQuery<Child>().apply {
             val parent = addTableRef("parent")
             addFacet("childName", "name")
             setConstraints("$parent.name = ?", "ParentA")
@@ -99,7 +101,7 @@ class TableRefTest {
     @Test
     fun pathToScalarIsRejected() = withDb("TREF-SCALAR") { s ->
         setupParentChild(s)
-        val query = PagedQuery<Child>()
+        val query = pagedQuery<Child>()
         // "name" is a scalar field, not a reference — must throw at registration.
         assertFails { query.addTableRef("name") }
     }
@@ -107,7 +109,7 @@ class TableRefTest {
     @Test
     fun inactiveRefDropsItsJoin() = withDb("TREF-INACTIVE") { s ->
         setupParentChild(s)
-        val query = PagedQuery<Child>().apply {
+        val query = pagedQuery<Child>().apply {
             val parent = addTableRef("parent")
             parent.isActive = false    // suppressed from every subsequent build
             addFacet("childName", "name")
@@ -120,11 +122,19 @@ class TableRefTest {
     @Test
     fun tableRefInteropWithPagedList() = withDb("TREF-PAGEDLIST") { s ->
         setupParentChild(s)
-        val list = PagedList<Child>()
+        val list = pagedList<Child>()
         val parent = list.addTableRef("parent")
         list.addFacet("name")
         list.setConstraints("$parent.name = ?", "ParentB")
         assertEquals(1, list.size)
         assertEquals("ChildB1", list[0].name)
+    }
+
+    /** A generated reference class builds the root path without an argument. */
+    @Test
+    fun aReferenceClassDefaultsToTheRootPath() {
+        val root = onl.ycode.stormify.generated.ChildRef()
+        assertEquals(onl.ycode.stormify.generated.Tables.Child_.toString(), root.toString())
+        assertEquals(onl.ycode.stormify.generated.Tables.Child_.parent.name.toString(), root.parent.name.toString())
     }
 }

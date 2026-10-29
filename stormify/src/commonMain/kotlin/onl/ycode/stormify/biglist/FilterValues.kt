@@ -4,6 +4,7 @@
 
 package onl.ycode.stormify.biglist
 
+import onl.ycode.stormify.TypeUtils
 import kotlin.math.min
 import kotlin.reflect.KClass
 
@@ -34,18 +35,21 @@ abstract class FilterValuesBase<E> internal constructor(
 
     /**
      * Number of distinct values for the owning column under the parent list's current
-     * filter state (excluding the owning column's own filter).
+     * filter state (excluding the owning column's own filter). SQL `NULL`, when
+     * present, counts as one value.
      */
     override val size: Int
-        get() = _size ?: run {
-            val stormify = core.stormify
-            val columnExpr = core.resolveFacetExpression(column)
-            val (where, args) = core.buildConstraintPart(excludeFacet = column)
-            (stormify.readOne<Int>(
-                "SELECT COUNT(DISTINCT $columnExpr) FROM ${core.tablesPart}$where",
-                *args.toTypedArray()
-            ) ?: 0).also { _size = it }
-        }
+        get() = _size ?: countValues().also { _size = it }
+
+    /** Counts the distinct values, the `NULL` group as one; [size] caches the result. */
+    internal open fun countValues(): Int {
+        val stormify = core.stormify
+        val (columnExpr, fromWhere, args) = core.planFilterValuesPieces(column, null)
+        return stormify.readOne<Int>(
+            buildFilterValuesCountSql(stormify.sqlDialect, columnExpr, fromWhere),
+            *args.toTypedArray()
+        ) ?: 0
+    }
 
     /**
      * Returns the value at [index]. Out-of-range indices propagate the underlying
@@ -82,6 +86,16 @@ abstract class FilterValuesBase<E> internal constructor(
  * filtered by the active filters of **other** columns and the list constraints,
  * so the user only sees values that would produce results.
  *
+ * SQL `NULL`, when present, is the last value and appears as the configured
+ * [FilterSyntax.nullToken], so setting it back as the facet's filter selects
+ * the `NULL` rows.
+ *
+ * Known limit: a stored text equal to the null token (for example the string
+ * `"NULL"` with the default token) is listed as well, so the token then
+ * appears twice, once for that text and once, last, for SQL `NULL`; both
+ * select only the `NULL` rows when chosen as the filter. Choose a null token
+ * that cannot occur in the data (such as `--`) if this matters.
+ *
  * Values are loaded in pages on demand — not all at once.
  *
  * Obtained via [Facet.getFilterValues]. For value + count pairs (facet picker
@@ -96,13 +110,11 @@ class FilterValues internal constructor(
 
     override fun loadPage(low: Int, high: Int): List<String> {
         val stormify = core.stormify
-        val columnExpr = core.resolveFacetExpression(column)
-        val (where, args) = core.buildConstraintPart(excludeFacet = column)
-        val sql = stormify.sqlDialect.queryFormatter(
-            columnExpr, "DISTINCT ", core.tablesPart, where, columnExpr,
-            low, high
-        )
-        return stormify.read<String>(null, String::class, sql, *args.toTypedArray())
+        val (columnExpr, fromWhere, args) = core.planFilterValuesPieces(column, null)
+        val sql = buildFilterValuesOnlySql(stormify.sqlDialect, columnExpr, fromWhere)
+        val nullToken = stormify.filterSyntax.nullToken
+        return stormify.readNullableStrings(sql, *(args + stormify.sqlDialect.pageBinds(low, high)).toTypedArray())
+            .map { if (it == null) nullToken else column.displayValue(it) }
     }
 
     /**
@@ -130,6 +142,54 @@ class FilterValues internal constructor(
 }
 
 /**
+ * A lazy-loading paginated list of the distinct values of a [Facet] as they come from
+ * the database, not converted to text. The counterpart of [FilterValues] for callers
+ * that format the values themselves (amounts, dates, codes mapped to labels).
+ *
+ * - A facet with several field paths lists the values of **all** its paths, each
+ *   distinct value once (SQL `UNION`).
+ * - SQL `NULL`, when present, is one `null` element, always last.
+ * - Values are converted to the field type of the facet's paths (an enum field gives
+ *   enum constants, a `Short` field gives `Short`s), so they are the same classes on
+ *   every platform. All paths must have the same field type. For SQL facets values
+ *   are what the driver returns.
+ * - Values of an [ENUM][Facet.Type.ENUM] facet with a display-name map are the stored
+ *   values, not the display names.
+ *
+ * Like [FilterValues], the values follow the active filters of the **other** facets
+ * and the list constraints, are ordered by value and are loaded page by page.
+ * Obtained via [Facet.getFilterRawValues].
+ */
+class FilterRawValues internal constructor(
+    core: PagedQueryCore<*>,
+    column: Facet
+) : FilterValuesBase<Any?>(core, column) {
+
+    override fun countValues(): Int {
+        val stormify = core.stormify
+        val (union, args) = core.planFilterRawValues(column)
+        return stormify.readOne<Int>(buildRawValuesCountSql(stormify.sqlDialect, union), *args.toTypedArray()) ?: 0
+    }
+
+    override fun loadPage(low: Int, high: Int): List<Any?> {
+        val stormify = core.stormify
+        val (union, args) = core.planFilterRawValues(column)
+        @Suppress("UNCHECKED_CAST")
+        val rows = stormify.read(
+            null,
+            Map::class as KClass<Map<String, Any?>>,
+            buildRawValuesPageSql(stormify.sqlDialect, union),
+            *(args + stormify.sqlDialect.pageBinds(low, high)).toTypedArray()
+        )
+        val type = core.rawValueType(column)
+        return rows.map { row ->
+            val value = row[FV_VAL_ALIAS]
+            if (value == null || type == null) value else TypeUtils.castTo(type, value, stormify)
+        }
+    }
+}
+
+/**
  * A lazy-loading paginated list of distinct values for a [Facet] together with
  * the row count of each value under the parent list's current filter state
  * (excluding the owning column's own filter). Obtained via
@@ -142,21 +202,19 @@ class FilterCountedValues internal constructor(
 
     override fun loadPage(low: Int, high: Int): List<FilterCountedValue> {
         val stormify = core.stormify
-        val columnExpr = core.resolveFacetExpression(column)
-        val (where, args) = core.buildConstraintPart(excludeFacet = column)
+        val (columnExpr, fromWhere, args) = core.planFilterValuesPieces(column, null)
         // Use a subquery so LIMIT/OFFSET apply to the grouped output and the
         // dialect formatter can wrap it like any other paginated SELECT.
-        val sql = buildFilterValuesSql(
-            stormify.sqlDialect, columnExpr, "${core.tablesPart}$where", low, high
-        )
+        val sql = buildFilterValuesSql(stormify.sqlDialect, columnExpr, fromWhere)
         @Suppress("UNCHECKED_CAST")
         val rows = stormify.read(
             null,
             Map::class as KClass<Map<String, Any?>>,
             sql,
-            *args.toTypedArray()
+            *(args + stormify.sqlDialect.pageBinds(low, high)).toTypedArray()
         )
-        return rows.map { FilterCountedValue.fromRow(it) }
+        val nullToken = stormify.filterSyntax.nullToken
+        return rows.map { FilterCountedValue.fromRow(it, nullToken, column::displayValue) }
     }
 
     /**
@@ -174,17 +232,20 @@ class FilterCountedValues internal constructor(
  * [FilterCountedValues].
  */
 data class FilterCountedValue(
-    /** The distinct column value (stringified, as with [FilterValues]). */
+    /**
+     * The distinct column value (stringified, as with [FilterValues]); SQL
+     * `NULL` appears as the configured [FilterSyntax.nullToken].
+     */
     val value: String,
     /** Number of rows in the parent list that match this value. */
     val count: Long
 ) {
     internal companion object {
-        fun fromRow(row: Map<String, Any?>): FilterCountedValue {
+        fun fromRow(row: Map<String, Any?>, nullToken: String, display: (String) -> String): FilterCountedValue {
             val rawValue = row[FV_VAL_ALIAS]
             val rawCount = row[FV_CNT_ALIAS] ?: 0L
             return FilterCountedValue(
-                value = rawValue?.toString() ?: "",
+                value = rawValue?.toString()?.let(display) ?: nullToken,
                 count = when (rawCount) {
                     is Long -> rawCount
                     is Number -> rawCount.toLong()
