@@ -20,7 +20,7 @@ package onl.ycode.kdbc
  * platform exposes them (for example, JDBC's `java.sql.SQLException`). For platforms
  * or drivers that do not surface these values, the properties are `null`.
  */
-class SQLException : RuntimeException {
+open class SQLException : RuntimeException {
     /**
      * The SQLSTATE code reported by the underlying driver, or `null` if the driver
      * does not provide one or no driver-level cause is attached. SQLSTATE is a

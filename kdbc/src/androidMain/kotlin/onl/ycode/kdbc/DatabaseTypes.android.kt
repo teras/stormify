@@ -3,7 +3,9 @@
 package onl.ycode.kdbc
 
 import android.database.Cursor
+import android.database.sqlite.SQLiteCursor
 import android.database.sqlite.SQLiteDatabase
+import android.database.sqlite.SQLiteProgram
 import android.database.sqlite.SQLiteStatement
 import java.math.BigDecimal
 import java.math.BigInteger
@@ -15,8 +17,8 @@ import kotlin.reflect.KClass
  * Wraps a platform SQLite database into the KDBC [DataSource] interface so the
  * Stormify ORM (and any other KDBC consumer) can run unchanged on Android. The
  * implementation uses native SQLite primitives throughout: [SQLiteStatement] for
- * INSERT/UPDATE/DELETE with proper typed bindings, [SQLiteDatabase.rawQuery] for
- * SELECTs, savepoints via raw SQL for nested transactions, and the real
+ * INSERT/UPDATE/DELETE and [SQLiteDatabase.rawQueryWithFactory] for SELECTs, both with
+ * typed bindings, savepoints via raw SQL for nested transactions, and the real
  * `sqlite_version()` reported through [DatabaseMetaData].
  *
  * ## Usage
@@ -165,23 +167,6 @@ private class AndroidConnection(
 }
 
 /**
- * Map of KMP types to their JDBC-equivalent class names. Used as a sentinel by
- * [toAndroidValue] to convert KMP-only types (kotlinx-datetime, ionspin BigDecimal/
- * BigInteger) into representations that SQLite can store. We coerce dates/timestamps
- * to ISO-8601 strings (compatible with SQLite's date/time functions) and BigDecimal/
- * BigInteger to strings for full precision retention.
- */
-private val kmpTypeNames = setOf(
-    "com.ionspin.kotlin.bignum.decimal.BigDecimal",
-    "com.ionspin.kotlin.bignum.integer.BigInteger",
-    "kotlinx.datetime.LocalDate",
-    "kotlinx.datetime.LocalDateTime",
-    "kotlinx.datetime.LocalTime",
-    "kotlinx.datetime.Instant",
-    "kotlin.time.Instant",
-)
-
-/**
  * Convert a value to a SQLite-storable form. SQLite's storage classes are NULL,
  * INTEGER, REAL, TEXT, and BLOB — everything else has to map to one of those.
  */
@@ -192,9 +177,14 @@ private fun toAndroidValue(value: Any?): Any? {
         is Number, is String, is ByteArray -> value
         is java.sql.Date, is java.sql.Time, is java.sql.Timestamp,
         is java.util.Date -> value.toString()
-        else -> {
-            val name = value::class.qualifiedName
-            if (name in kmpTypeNames) value.toString() else value.toString()
+        else -> when (value::class.qualifiedName) {
+            // As plain decimals ("100", not ionspin's "1.0E+2"), bound below as on the JVM,
+            // so they match the text of a decimal column, which SQLite keeps as TEXT
+            "com.ionspin.kotlin.bignum.decimal.BigDecimal" ->
+                TypeConversion.castScalar(BigDecimal::class, value)
+            "com.ionspin.kotlin.bignum.integer.BigInteger" ->
+                TypeConversion.castScalar(BigInteger::class, value)
+            else -> value.toString()
         }
     }
 }
@@ -257,18 +247,14 @@ private class AndroidStatement(
     }
 
     override fun executeQuery(): ResultSet {
-        // SQLite's bind API for SELECT statements goes through SQLiteQuery, but the
-        // public Android API only exposes String[] selectionArgs. SQLite is
-        // dynamically typed, so coercing all args to strings is safe — it's how
-        // android.database.sqlite.SQLiteQueryBuilder operates internally too.
-        val args: Array<String?> = Array(bindings.size) { idx ->
-            // bindings is a sortedMap on Int keys (1..N), so iterate in order.
-            val raw = bindings.values.elementAtOrNull(idx)
-            raw?.toString()
-        }
-        // SQLite ignores null in selectionArgs, but Stormify always passes typed
-        // bindings — there is no `IS ?` ambiguity here. Use a placeholder when null.
-        val cursor = db.rawQuery(sql, args.map { it ?: "" }.toTypedArray())
+        // Bound with their types, as the writes are: selectionArgs would make every
+        // argument text, which SQLite compares as greater than any number wherever
+        // no column affinity converts it (`ROW_NUMBER() ... > ?`, `COUNT(*) > ?`).
+        // The cursor factory hands over the query before it runs, to bind it.
+        val cursor = db.rawQueryWithFactory({ _, driver, editTable, query ->
+            bindToStatement(query, bindings)
+            SQLiteCursor(driver, editTable, query)
+        }, sql, null, null)
         return AndroidResultSet(cursor)
     }
 
@@ -279,7 +265,7 @@ private class AndroidStatement(
         return SingleValueResultSet("ROWID", lastInsertRowId)
     }
 
-    private fun bindToStatement(stmt: SQLiteStatement, params: Map<Int, Any?>) {
+    private fun bindToStatement(stmt: SQLiteProgram, params: Map<Int, Any?>) {
         for ((index, value) in params) {
             when (value) {
                 null -> stmt.bindNull(index)

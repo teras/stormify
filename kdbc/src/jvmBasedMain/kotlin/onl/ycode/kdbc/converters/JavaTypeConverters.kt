@@ -11,6 +11,7 @@ import java.nio.ByteBuffer
 import java.time.Instant
 import java.time.OffsetDateTime
 import java.time.OffsetTime
+import java.time.ZoneId
 import java.time.ZoneOffset
 import java.time.ZonedDateTime
 import java.time.format.DateTimeFormatter
@@ -65,7 +66,9 @@ internal object JavaTypeConverters {
     private fun registerJavaMath(registry: MutableMap<KClass<*>, MutableMap<KClass<*>, (Any) -> Any>>) {
         val toBigDecimal = mutableMapOf<KClass<*>, (Any) -> Any>().also { registry[BigDecimal::class] = it }
         int.forEach { t -> toBigDecimal[t] = { BigDecimal((it as Number).toLong()) } }
-        dec.forEach { t -> toBigDecimal[t] = { BigDecimal((it as Number).toDouble()) } }
+        // By the shortest text that reads back as the value: 0.1, not the binary expansion
+        // 0.1000000000000000055511151231257827... that BigDecimal(double) gives
+        dec.forEach { t -> toBigDecimal[t] = { BigDecimal(it.toString()) } }
         toBigDecimal[BigInteger::class] = { (it as BigInteger).toBigDecimal() }
         toBigDecimal[Boolean::class] = { if (it as Boolean) BigDecimal.ONE else BigDecimal.ZERO }
 
@@ -144,6 +147,90 @@ internal object JavaTypeConverters {
         // path wherever one exists. Bug-fixes disguised as structural changes:
         // no timezone traversal, no noon hack, no non-determinism.
         registerJavaTimeDirectConverters(registry, supportsKotlinxTime)
+        registerWallClockPairs(registry, supportsKotlinxTime)
+    }
+
+    private enum class WallKind { DATE, DATETIME, TIME }
+
+    /**
+     * The pairs between the types holding a wall time in the JVM's zone (`java.sql.*`,
+     * `java.util.Date`) or as text (SQLite stores temporal values as text) and every
+     * wall-clock type, through `java.time.LocalDateTime`. The UTC epoch pivot would
+     * shift them by the zone's offset. A date and a time do not convert to each other.
+     */
+    private fun registerWallClockPairs(
+        registry: MutableMap<KClass<*>, MutableMap<KClass<*>, (Any) -> Any>>,
+        supportsKotlinxTime: Boolean
+    ) {
+        class Wall(val kind: WallKind, val toHub: (Any) -> java.time.LocalDateTime, val fromHub: ((java.time.LocalDateTime) -> Any)?)
+
+        fun via(target: KClass<*>, source: KClass<*>) = registry[target]?.get(source)
+            ?: throw IllegalStateException("No direct converter from $source to $target")
+        val sqlDateToLocal = via(java.time.LocalDate::class, java.sql.Date::class)
+        val localToSqlDate = via(java.sql.Date::class, java.time.LocalDate::class)
+        val timestampToLocal = via(java.time.LocalDateTime::class, java.sql.Timestamp::class)
+        val localToTimestamp = via(java.sql.Timestamp::class, java.time.LocalDateTime::class)
+        val sqlTimeToLocal = via(java.time.LocalTime::class, java.sql.Time::class)
+        val localToSqlTime = via(java.sql.Time::class, java.time.LocalTime::class)
+
+        val zoned = mapOf<KClass<*>, Wall>(
+            java.sql.Timestamp::class to Wall(WallKind.DATETIME, { timestampToLocal(it) as java.time.LocalDateTime }, { localToTimestamp(it) }),
+            java.sql.Date::class to Wall(WallKind.DATE,
+                { (sqlDateToLocal(it) as java.time.LocalDate).atStartOfDay() }, { localToSqlDate(it.toLocalDate()) }),
+            java.sql.Time::class to Wall(WallKind.TIME,
+                { (sqlTimeToLocal(it) as java.time.LocalTime).atDate(EPOCH_DATE) }, { localToSqlTime(it.toLocalTime()) }),
+            java.util.Date::class to Wall(WallKind.DATETIME,
+                { java.time.LocalDateTime.ofInstant((it as java.util.Date).toInstant(), ZoneId.systemDefault()) },
+                { java.util.Date.from(it.atZone(ZoneId.systemDefault()).toInstant()) }),
+            // Text is a source only: rendering a value as text has its own converters.
+            String::class to Wall(WallKind.DATETIME, { parseWallClock(it as String) }, null),
+        )
+        val local = mutableMapOf<KClass<*>, Wall>(
+            java.time.LocalDate::class to Wall(WallKind.DATE, { (it as java.time.LocalDate).atStartOfDay() }, { it.toLocalDate() }),
+            java.time.LocalDateTime::class to Wall(WallKind.DATETIME, { it as java.time.LocalDateTime }, { it }),
+            java.time.LocalTime::class to Wall(WallKind.TIME, { (it as java.time.LocalTime).atDate(EPOCH_DATE) }, { it.toLocalTime() }),
+        )
+        if (supportsKotlinxTime) {
+            local[kotlinx.datetime.LocalDate::class] = Wall(WallKind.DATE,
+                { (it as kotlinx.datetime.LocalDate).toJavaLocalDate().atStartOfDay() }, { it.toLocalDate().toKotlinLocalDate() })
+            local[kotlinx.datetime.LocalDateTime::class] = Wall(WallKind.DATETIME,
+                { (it as kotlinx.datetime.LocalDateTime).toJavaLocalDateTime() }, { it.toKotlinLocalDateTime() })
+            local[kotlinx.datetime.LocalTime::class] = Wall(WallKind.TIME,
+                { (it as kotlinx.datetime.LocalTime).toJavaLocalTime().atDate(EPOCH_DATE) }, { it.toLocalTime().toKotlinLocalTime() })
+        }
+
+        val all = zoned + local
+        for ((source, from) in all) for ((target, to) in all) {
+            if (source == target || (source !in zoned && target !in zoned)) continue
+            val fromHub = to.fromHub ?: continue
+            if ((from.kind == WallKind.DATE && to.kind == WallKind.TIME) || (from.kind == WallKind.TIME && to.kind == WallKind.DATE))
+                continue
+            direct(registry, target, source) { fromHub(from.toHub(it)) }
+        }
+    }
+
+    /**
+     * A point in time written as text: ISO with an offset or a zone, or else a wall time
+     * (see [parseWallClock]) in the JVM's zone, as a `java.sql.Timestamp` is read.
+     */
+    private fun parseZoned(text: String): ZonedDateTime = try {
+        ZonedDateTime.parse(text)
+    } catch (_: java.time.format.DateTimeParseException) {
+        parseWallClock(text).atZone(ZoneId.systemDefault())
+    }
+
+    /**
+     * A wall time written as text: a date and a time separated by `T` or a space, a date
+     * alone (at midnight), or a time alone (on the epoch date).
+     */
+    private fun parseWallClock(text: String): java.time.LocalDateTime {
+        val t = text.trim()
+        return when {
+            t.length == 10 -> java.time.LocalDate.parse(t).atStartOfDay()
+            t.length > 10 && t[10] == ' ' -> java.time.LocalDateTime.parse(t.substring(0, 10) + "T" + t.substring(11))
+            t.length >= 3 && t[2] == ':' -> java.time.LocalTime.parse(t).atDate(EPOCH_DATE)
+            else -> java.time.LocalDateTime.parse(t)
+        }
     }
 
     /**
@@ -201,9 +288,8 @@ internal object JavaTypeConverters {
         ).forEach { t -> direct(registry, String::class, t) { it.toString() } }
 
         // String → java.time via ISO `.parse()` — no timezone, no epoch pivot.
-        direct(registry, java.time.LocalDate::class, String::class) { java.time.LocalDate.parse(it as String) }
-        direct(registry, java.time.LocalDateTime::class, String::class) { java.time.LocalDateTime.parse(it as String) }
-        direct(registry, java.time.LocalTime::class, String::class) { java.time.LocalTime.parse(it as String) }
+        // (String → java.time wall clocks: registerWallClockPairs, which also takes a space
+        // between date and time, as SQLite stores it.)
 
         // java.time.Instant direct paths
         bidi<java.sql.Timestamp, Instant>(
@@ -217,7 +303,7 @@ internal object JavaTypeConverters {
             { java.util.Date.from(it) }
         )
         direct(registry, String::class, Instant::class) { it.toString() }
-        direct(registry, Instant::class, String::class) { Instant.parse(it as String) }
+        direct(registry, Instant::class, String::class) { parseZoned(it as String).toInstant() }
 
         // OffsetDateTime / ZonedDateTime: ↔ Instant pins to UTC (Instant carries no
         // offset/zone), ↔ String is lossless via ISO. Timestamp/Date routes go
@@ -258,14 +344,22 @@ internal object JavaTypeConverters {
             { java.util.Date.from(it.toInstant()) }
         )
         direct(registry, String::class, OffsetDateTime::class) { it.toString() }
-        direct(registry, OffsetDateTime::class, String::class) { OffsetDateTime.parse(it as String) }
+        direct(registry, OffsetDateTime::class, String::class) { parseZoned(it as String).toOffsetDateTime() }
         direct(registry, String::class, ZonedDateTime::class) { it.toString() }
-        direct(registry, ZonedDateTime::class, String::class) { ZonedDateTime.parse(it as String) }
+        direct(registry, ZonedDateTime::class, String::class) { parseZoned(it as String) }
 
         // OffsetTime: lossless via String (ISO with offset). ↔ LocalTime/sql.Time
         // drops the offset; ↔ Time anchors the LocalTime portion at the JVM default.
         direct(registry, String::class, OffsetTime::class) { it.toString() }
-        direct(registry, OffsetTime::class, String::class) { OffsetTime.parse(it as String) }
+        direct(registry, OffsetTime::class, String::class) {
+            // A time without an offset (a TIME column stored as text) is a wall time in the
+            // JVM's zone, as a java.sql.Time read from a TIME column is
+            val text = it as String
+            try { OffsetTime.parse(text) } catch (_: java.time.format.DateTimeParseException) {
+                val time = registry[java.sql.Time::class]!![java.time.LocalTime::class]!!(java.time.LocalTime.parse(text.trim()))
+                registry[OffsetTime::class]!![java.sql.Time::class]!!(time)
+            }
+        }
         direct(registry, java.time.LocalTime::class, OffsetTime::class) { (it as OffsetTime).toLocalTime() }
         direct(registry, OffsetTime::class, java.time.LocalTime::class) { (it as java.time.LocalTime).atOffset(ZoneOffset.UTC) }
 

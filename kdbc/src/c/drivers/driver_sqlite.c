@@ -606,13 +606,8 @@ static int sq_rs_get_timestamp(kdbc_result *rs, int col,
                                int *hour, int *minute, int *second, int *usec) {
     const char *txt = sq_rs_get_string(rs, col);
     if (!txt) { RS_ERR(rs, "SQLite: NULL timestamp value"); return KDBC_ERROR; }
-    *usec = 0;
-    int n = sscanf(txt, "%d-%d-%d %d:%d:%d.%d",
-                   year, month, day, hour, minute, second, usec);
-    if (n < 6)
-        n = sscanf(txt, "%d-%d-%dT%d:%d:%d.%d",
-                   year, month, day, hour, minute, second, usec);
-    if (n >= 6) return KDBC_OK;
+    if (kdbc_parse_timestamp_text(txt, year, month, day, hour, minute, second, usec) == KDBC_OK)
+        return KDBC_OK;
     RS_ERR(rs, "SQLite: cannot parse timestamp '%s'", txt);
     return KDBC_ERROR;
 }
@@ -630,9 +625,7 @@ static int sq_rs_get_time(kdbc_result *rs, int col,
                           int *hour, int *minute, int *second, int *usec) {
     const char *txt = sq_rs_get_string(rs, col);
     if (!txt) { RS_ERR(rs, "SQLite: NULL time value"); return KDBC_ERROR; }
-    *usec = 0;
-    int n = sscanf(txt, "%d:%d:%d.%d", hour, minute, second, usec);
-    if (n >= 3) return KDBC_OK;
+    if (kdbc_parse_time_text(txt, hour, minute, second, usec)) return KDBC_OK;
     RS_ERR(rs, "SQLite: cannot parse time '%s'", txt);
     return KDBC_ERROR;
 }

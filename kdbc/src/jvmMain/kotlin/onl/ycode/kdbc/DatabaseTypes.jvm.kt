@@ -41,6 +41,10 @@ private val kmpToJdbcTarget = mapOf<String, KClass<*>>(
  * asymmetric shift. `java.sql.Timestamp` is accepted by every driver and is
  * zone-symmetric with [toJdbcValue]; [TypeConversion] finishes the conversion.
  *
+ * `java.util.Date` is not a JDBC type either: pgjdbc rejects it, but the MariaDB
+ * driver answers with a `java.sql.Date` and drops the time of day. A
+ * `java.sql.Timestamp` is a `java.util.Date` and keeps it.
+ *
  * `CharArray` is here for a blunter reason: `char[]` is not a JDBC type, so asking
  * for it throws on every driver and costs a caught exception per cell before the
  * fallback arrives at the text anyway.
@@ -49,6 +53,7 @@ private val jdbcReadTarget: Map<String, KClass<*>> = kmpToJdbcTarget + mapOf(
     "java.time.Instant" to java.sql.Timestamp::class,
     "java.time.OffsetDateTime" to java.sql.Timestamp::class,
     "java.time.ZonedDateTime" to java.sql.Timestamp::class,
+    "java.util.Date" to java.sql.Timestamp::class,
     "kotlin.CharArray" to String::class,
 )
 
@@ -76,6 +81,95 @@ private val jdbcUntrustedReads = setOf("kotlin.Boolean")
 private fun jdbcReadType(type: KClass<*>): Class<*> =
     jdbcReadTarget[type.qualifiedName]?.java ?: type.javaObjectType
 
+/**
+ * The Java class to request from the driver for [type] on a column of JDBC type [sqlType].
+ *
+ * A driver is only sure to produce the column's own class: pgjdbc refuses a `Long` from
+ * an `int4` or a `String` from a number, ojdbc a `BigInteger` or a `Character`, every
+ * driver a `UUID` or a `Character` from a `VARCHAR`. A refusal is caught and read again
+ * untyped, but the driver, or the pool wrapping it, may log it first, and it costs a
+ * thrown exception per cell. So for a column of numbers, text or bytes the column's own
+ * class is asked for, and [TypeConversion] makes it the declared type. Temporal types
+ * are asked for as declared ([jdbcReadTarget]), which keeps the precision and the zone
+ * handling of the driver, unless the column holds another kind of temporal value (a
+ * date read from a timestamp), which is asked for as the column's own.
+ */
+private fun jdbcReadType(type: KClass<*>, sqlType: Int): Class<*> {
+    val kind = temporalKind[type.qualifiedName]
+    if (kind != null) {
+        val columnKind = when (sqlType) {
+            java.sql.Types.DATE -> TemporalKind.DATE
+            java.sql.Types.TIME -> TemporalKind.TIME
+            java.sql.Types.TIMESTAMP -> TemporalKind.DATETIME
+            // A temporal value kept as text is read as the text, and parsed
+            else -> return if (columnClass(sqlType) == String::class.java) String::class.java else jdbcReadType(type)
+        }
+        return if (columnKind == kind) jdbcReadType(type) else columnKind.sqlClass
+    }
+    return columnClass(sqlType) ?: jdbcReadType(type)
+}
+
+private enum class TemporalKind(val sqlClass: Class<*>) {
+    DATE(java.sql.Date::class.java), TIME(java.sql.Time::class.java), DATETIME(java.sql.Timestamp::class.java)
+}
+
+/** The kind of temporal value each temporal type holds. */
+private val temporalKind: Map<String, TemporalKind> = mapOf(
+    "java.sql.Date" to TemporalKind.DATE,
+    "java.time.LocalDate" to TemporalKind.DATE,
+    "kotlinx.datetime.LocalDate" to TemporalKind.DATE,
+    "java.sql.Time" to TemporalKind.TIME,
+    "java.time.LocalTime" to TemporalKind.TIME,
+    "java.time.OffsetTime" to TemporalKind.TIME,
+    "kotlinx.datetime.LocalTime" to TemporalKind.TIME,
+    "java.sql.Timestamp" to TemporalKind.DATETIME,
+    "java.util.Date" to TemporalKind.DATETIME,
+    "java.time.LocalDateTime" to TemporalKind.DATETIME,
+    "java.time.Instant" to TemporalKind.DATETIME,
+    "java.time.OffsetDateTime" to TemporalKind.DATETIME,
+    "java.time.ZonedDateTime" to TemporalKind.DATETIME,
+    "kotlinx.datetime.LocalDateTime" to TemporalKind.DATETIME,
+    "kotlin.time.Instant" to TemporalKind.DATETIME,
+)
+
+/** The class every driver produces for a column of numbers, text or bytes, or null for any other column. */
+private fun columnClass(sqlType: Int): Class<*>? = when (sqlType) {
+    java.sql.Types.TINYINT, java.sql.Types.SMALLINT, java.sql.Types.INTEGER -> Int::class.javaObjectType
+    java.sql.Types.BIGINT -> Long::class.javaObjectType
+    java.sql.Types.NUMERIC, java.sql.Types.DECIMAL -> java.math.BigDecimal::class.java
+    java.sql.Types.REAL -> Float::class.javaObjectType
+    java.sql.Types.FLOAT, java.sql.Types.DOUBLE -> Double::class.javaObjectType
+    java.sql.Types.CHAR, java.sql.Types.VARCHAR, java.sql.Types.LONGVARCHAR, java.sql.Types.NCHAR,
+    java.sql.Types.NVARCHAR, java.sql.Types.LONGNVARCHAR, java.sql.Types.CLOB, java.sql.Types.NCLOB -> String::class.java
+    java.sql.Types.BINARY, java.sql.Types.VARBINARY, java.sql.Types.LONGVARBINARY, java.sql.Types.BLOB -> ByteArray::class.java
+    else -> null
+}
+
+private val temporalColumns = setOf(java.sql.Types.DATE, java.sql.Types.TIME, java.sql.Types.TIMESTAMP)
+
+private val binaryColumns = setOf(
+    java.sql.Types.BINARY, java.sql.Types.VARBINARY, java.sql.Types.LONGVARBINARY, java.sql.Types.BLOB
+)
+
+/**
+ * True when [type] is text, read with `getString`, which every driver answers for every
+ * column but bytes, with its own rendering of the value.
+ */
+private fun readsAsText(type: KClass<*>, sqlType: Int): Boolean =
+    (type == String::class || type == Char::class || type == CharArray::class) && sqlType !in binaryColumns
+
+/**
+ * The value read as [type]: converted by [TypeConversion] when the driver gave the column's
+ * own class. A `java.util.Date` is handed over as one, not as the `java.sql.Date` or
+ * `java.sql.Time` the driver may give, whose `toInstant()` throws.
+ */
+private fun fitDeclared(type: KClass<*>, value: Any?): Any? = when {
+    value == null -> null
+    type == java.util.Date::class && (value is java.sql.Date || value is java.sql.Time) -> java.util.Date((value as java.util.Date).time)
+    type.isInstance(value) || !TypeConversion.isKnownScalar(type) -> materializeLob(value)
+    else -> TypeConversion.castScalar(type, materializeLob(value))
+}
+
 /** True when [type] must be read untyped and coerced by [TypeConversion]. */
 private fun readsUntyped(type: KClass<*>): Boolean =
     type == Any::class || type.qualifiedName in jdbcUntrustedReads
@@ -94,10 +188,16 @@ private fun materializeLob(value: Any?): Any? = when (value) {
     else -> value
 }
 
-/** Read column/parameter [index] untyped via [get] and coerce it to [type]. */
+/**
+ * Read column/parameter [index] untyped via [get] and coerce it to [type].
+ *
+ * A type kdbc has no converter for is handed back as read, as the native drivers do,
+ * and left to the caller's own conversion.
+ */
 private fun coerceUntyped(type: KClass<*>, index: Int, get: (Int) -> Any?): Any? {
     val raw = materializeLob(get(index))
-    return if (type == Any::class) raw else TypeConversion.castScalar(type, raw)
+    return if (type == Any::class || !TypeConversion.isKnownScalar(type)) raw
+    else TypeConversion.castScalar(type, raw)
 }
 
 /**
@@ -140,6 +240,42 @@ private fun toJdbcValue(value: Any?): Any? {
     return try { TypeConversion.castScalar(targetClass, value) } catch (_: Throwable) { value }
 }
 
+/**
+ * The statement a connection is running, which [Connection.cancel] stops from another
+ * thread. A query stays running while its rows are read, until its result set or
+ * statement is closed; an update ends when it returns.
+ */
+private class RunningStatement {
+    @Volatile private var current: java.sql.Statement? = null
+
+    inline fun <R> update(statement: java.sql.Statement, block: () -> R): R {
+        current = statement
+        try {
+            return block()
+        } finally {
+            done(statement)
+        }
+    }
+
+    inline fun <R> query(statement: java.sql.Statement, block: () -> R): R {
+        current = statement
+        return try {
+            block()
+        } catch (e: Throwable) {
+            done(statement)
+            throw e
+        }
+    }
+
+    fun done(statement: java.sql.Statement?) {
+        if (statement != null && current === statement) current = null
+    }
+
+    fun cancel() {
+        current?.let { runCatching { it.cancel() } }
+    }
+}
+
 // Wrapper class for PreparedStatement with lazy preparation.
 // If setObject() is never called (no params), executeUpdate/executeQuery
 // use direct execution via more efficient jdbc.createStatement()
@@ -148,6 +284,8 @@ private class JdbcStatement(
     private val sql: String,
     private val returnGeneratedKeys: Boolean,
     private val columnNames: Array<String>?,
+    private val temporalUntyped: Lazy<Boolean>,
+    private val running: RunningStatement,
 ) : Statement {
     private var preparedStatement: PreparedStatement? = null
     private var directStatement: java.sql.Statement? = null
@@ -198,28 +336,33 @@ private class JdbcStatement(
         ensurePrepared().setObject(parameterIndex, toJdbcValue(value))
     }
 
-    override fun executeUpdate(): Int =
-        preparedStatement?.executeUpdate()
-            ?: ensureDirect().let { s ->
-                if (returnGeneratedKeys) s.executeUpdate(sql, RETURN_GENERATED_KEYS)
-                else if (!columnNames.isNullOrEmpty()) s.executeUpdate(sql, columnNames)
-                else s.executeUpdate(sql)
-            }
+    override fun executeUpdate(): Int {
+        val ps = preparedStatement
+        if (ps != null) return running.update(ps) { ps.executeUpdate() }
+        val s = ensureDirect()
+        return running.update(s) {
+            if (returnGeneratedKeys) s.executeUpdate(sql, RETURN_GENERATED_KEYS)
+            else if (!columnNames.isNullOrEmpty()) s.executeUpdate(sql, columnNames)
+            else s.executeUpdate(sql)
+        }
+    }
 
-    override fun executeQuery(): ResultSet =
-        JdbcResultSet(
-            preparedStatement?.executeQuery()
-                ?: ensureDirect().executeQuery(sql)
-        )
+    override fun executeQuery(): ResultSet {
+        val ps = preparedStatement
+        val s = ps ?: ensureDirect()
+        val rs = running.query(s) { ps?.executeQuery() ?: s.executeQuery(sql) }
+        return JdbcResultSet(rs, temporalUntyped) { running.done(s) }
+    }
 
     override fun getGeneratedKeys(): ResultSet =
         JdbcResultSet(
             (preparedStatement ?: directStatement)?.generatedKeys
-                ?: throw SQLException("Generated keys not available")
+                ?: throw SQLException("Generated keys not available"),
+            temporalUntyped
         )
 
     override fun addBatch() = ensurePrepared().addBatch()
-    override fun executeBatch(): IntArray = ensurePrepared().executeBatch()
+    override fun executeBatch(): IntArray = ensurePrepared().let { ps -> running.update(ps) { ps.executeBatch() } }
 
     override fun reset() {
         preparedStatement?.let {
@@ -236,6 +379,8 @@ private class JdbcStatement(
     }
 
     override fun close() {
+        running.done(preparedStatement)
+        running.done(directStatement)
         preparedStatement?.close()
         directStatement?.close()
     }
@@ -269,25 +414,44 @@ private fun toSqlType(type: KClass<*>): Int = when (type) {
 }
 
 // Standard JDBC CallableStatement wrapper — used by MySQL, MariaDB, Oracle, SQL Server.
-private class JdbcCallableStatement(private val jdbc: java.sql.CallableStatement) : CallableStatement {
-    override fun setObject(parameterIndex: Int, value: Any?) = jdbc.setObject(parameterIndex, toJdbcValue(value))
-    override fun executeUpdate(): Int = jdbc.executeUpdate()
-    override fun executeQuery(): ResultSet = JdbcResultSet(jdbc.executeQuery())
-    override fun getGeneratedKeys(): ResultSet = JdbcResultSet(jdbc.generatedKeys)
+private class JdbcCallableStatement(
+    private val jdbc: java.sql.CallableStatement,
+    private val running: RunningStatement,
+) : CallableStatement {
+    /** SQL type of every parameter registered as OUT, so an INOUT can be sent a typed NULL. */
+    private val outSqlTypes = HashMap<Int, Int>()
+
+    override fun setObject(parameterIndex: Int, value: Any?) {
+        // An untyped NULL on an INOUT parameter conflicts with its registered OUT
+        // type on Oracle ("Parameter Type Conflict"): send NULL of that type.
+        val outType = if (value == null) outSqlTypes[parameterIndex] else null
+        if (outType != null) jdbc.setNull(parameterIndex, outType)
+        else jdbc.setObject(parameterIndex, toJdbcValue(value))
+    }
+    override fun executeUpdate(): Int = running.update(jdbc) { jdbc.executeUpdate() }
+    override fun executeQuery(): ResultSet =
+        JdbcResultSet(running.query(jdbc) { jdbc.executeQuery() }, lazyOf(false)) { running.done(jdbc) }
+    override fun getGeneratedKeys(): ResultSet = JdbcResultSet(jdbc.generatedKeys, lazyOf(false))
     override fun addBatch() = jdbc.addBatch()
-    override fun executeBatch(): IntArray = jdbc.executeBatch()
-    override fun close() = jdbc.close()
-    override fun registerOutParameter(parameterIndex: Int, type: KClass<*>) =
-        jdbc.registerOutParameter(parameterIndex, toSqlType(type))
+    override fun executeBatch(): IntArray = running.update(jdbc) { jdbc.executeBatch() }
+    override fun close() {
+        running.done(jdbc)
+        jdbc.close()
+    }
+    override fun registerOutParameter(parameterIndex: Int, type: KClass<*>) {
+        val sqlType = toSqlType(type)
+        outSqlTypes[parameterIndex] = sqlType
+        jdbc.registerOutParameter(parameterIndex, sqlType)
+    }
     override fun getObject(parameterIndex: Int, type: KClass<*>): Any? = try {
         if (readsUntyped(type)) coerceUntyped(type, parameterIndex, jdbc::getObject)
         else jdbc.getObject(parameterIndex, jdbcReadType(type))
     } catch (_: Exception) {
         // Same driver-strictness fallback as JdbcResultSet.getObject: read untyped
-        // and let the converter pipeline coerce.
-        materializeLob(jdbc.getObject(parameterIndex))
+        // and coerce.
+        coerceUntyped(type, parameterIndex, jdbc::getObject)
     }
-    override fun execute(): Boolean = jdbc.execute()
+    override fun execute(): Boolean = running.update(jdbc) { jdbc.execute() }
 }
 
 /**
@@ -300,7 +464,8 @@ private class JdbcCallableStatement(private val jdbc: java.sql.CallableStatement
  */
 private class JdbcPgCallableStatement(
     private val jdbc: java.sql.Connection,
-    private val sql: String
+    private val sql: String,
+    private val running: RunningStatement,
 ) : CallableStatement {
     private val stmt: java.sql.PreparedStatement = jdbc.prepareStatement(sql)
     private val outParams = mutableMapOf<Int, KClass<*>>() // 1-based index → type
@@ -316,7 +481,7 @@ private class JdbcPgCallableStatement(
     }
 
     override fun execute(): Boolean {
-        val hasResult = stmt.execute()
+        val hasResult = running.update(stmt) { stmt.execute() }
         if (hasResult) resultRow = stmt.resultSet
         return hasResult
     }
@@ -337,17 +502,19 @@ private class JdbcPgCallableStatement(
             else rs.getObject(colIndex, jdbcReadType(type))
         } catch (_: Exception) {
             // Same driver-strictness fallback as JdbcResultSet.getObject: read untyped
-            // and let the converter pipeline coerce.
-            materializeLob(rs.getObject(colIndex))
+            // and coerce.
+            coerceUntyped(type, colIndex, rs::getObject)
         }
     }
 
-    override fun executeUpdate(): Int = stmt.executeUpdate()
-    override fun executeQuery(): ResultSet = JdbcResultSet(stmt.executeQuery())
-    override fun getGeneratedKeys(): ResultSet = JdbcResultSet(stmt.generatedKeys)
+    override fun executeUpdate(): Int = running.update(stmt) { stmt.executeUpdate() }
+    override fun executeQuery(): ResultSet =
+        JdbcResultSet(running.query(stmt) { stmt.executeQuery() }, lazyOf(false)) { running.done(stmt) }
+    override fun getGeneratedKeys(): ResultSet = JdbcResultSet(stmt.generatedKeys, lazyOf(false))
     override fun addBatch() = stmt.addBatch()
-    override fun executeBatch(): IntArray = stmt.executeBatch()
+    override fun executeBatch(): IntArray = running.update(stmt) { stmt.executeBatch() }
     override fun close() {
+        running.done(stmt)
         resultRow?.close()
         stmt.close()
     }
@@ -386,20 +553,25 @@ private class JdbcConnection(
     private val isPostgres by lazy {
         jdbc.metaData.databaseProductName.lowercase().contains("postgresql")
     }
+    // SQLite keeps a temporal value as text or as epoch milliseconds, and its driver
+    // parses the text into the temporal classes only in the one format it is configured
+    // for: temporal values are read untyped there, and converted here.
+    private val temporalUntyped = lazy { jdbc.metaData.databaseProductName.equals("SQLite", ignoreCase = true) }
     private val psCache = StatementCache(statementCacheSize)
+    private val running = RunningStatement()
 
     override val metaData: DatabaseMetaData
         get() = JdbcDatabaseMetaData(jdbc.metaData)
 
 
     override fun initStatement(sql: String, returnGeneratedKeys: Boolean, columnNames: Array<String>?): Statement =
-        JdbcStatement(jdbc, sql, returnGeneratedKeys, columnNames)
+        JdbcStatement(jdbc, sql, returnGeneratedKeys, columnNames, temporalUntyped, running)
 
     override fun acquirePreparedStatement(sql: String): Statement = psCache.acquire(this, sql)
 
     override fun prepareCall(sql: String): CallableStatement =
-        if (isPostgres) JdbcPgCallableStatement(jdbc, sql)
-        else JdbcCallableStatement(jdbc.prepareCall("{$sql}"))
+        if (isPostgres) JdbcPgCallableStatement(jdbc, sql, running)
+        else JdbcCallableStatement(jdbc.prepareCall("{$sql}"), running)
     override fun commit() = jdbc.commit()
     override fun rollback(savepoint: Savepoint?) {
         if (savepoint != null) {
@@ -415,6 +587,8 @@ private class JdbcConnection(
         jdbc.autoCommit = autoCommit
     }
     override fun getAutoCommit(): Boolean = jdbc.autoCommit
+
+    override fun cancel() = running.cancel()
 
     override fun close() {
         // Release all cached statements before the underlying connection goes away.
@@ -437,20 +611,55 @@ private class JdbcSavepoint(val jdbc: java.sql.Savepoint) : Savepoint {
 }
 
 // Wrapper class for ResultSet
-private class JdbcResultSet(private val jdbc: java.sql.ResultSet) : ResultSet {
+private class JdbcResultSet(
+    private val jdbc: java.sql.ResultSet,
+    private val temporalUntyped: Lazy<Boolean>,
+    private val onClose: (() -> Unit)? = null,
+) : ResultSet {
+    /** The JDBC type of each column, from the metadata, read on the first typed read. */
+    private var columnTypes: IntArray? = null
+
+    private fun columnType(columnIndex: Int): Int {
+        val types = columnTypes ?: jdbc.metaData.let { md -> IntArray(md.columnCount) { md.getColumnType(it + 1) } }
+            .also { columnTypes = it }
+        return types[columnIndex - 1]
+    }
+
+    /** Whether the column's type carries a zone (`timetz`, `time with time zone`), which pgjdbc still reports as TIME. */
+    private fun hasZone(columnIndex: Int): Boolean =
+        jdbc.metaData.getColumnTypeName(columnIndex).lowercase().let { "tz" in it || "zone" in it }
+
     override fun next(): Boolean = jdbc.next()
     override fun getObject(columnIndex: Int, type: KClass<*>): Any? = try {
         if (readsUntyped(type)) coerceUntyped(type, columnIndex, jdbc::getObject)
-        else jdbc.getObject(columnIndex, jdbcReadType(type))
+        else {
+            val sqlType = columnType(columnIndex)
+            val value = when {
+                readsAsText(type, sqlType) -> jdbc.getString(columnIndex)
+                temporalUntyped.value && sqlType in temporalColumns && type.qualifiedName in temporalKind ->
+                    // Epoch milliseconds, as the driver writes a temporal value by default
+                    when (val raw = jdbc.getObject(columnIndex)) {
+                        is Long, is Int -> java.sql.Timestamp((raw as Number).toLong())
+                        else -> raw
+                    }
+                // Most drivers refuse an OffsetTime from a TIME column without a zone
+                type == java.time.OffsetTime::class && sqlType == java.sql.Types.TIME && !hasZone(columnIndex) ->
+                    jdbc.getObject(columnIndex, java.sql.Time::class.java)
+                else -> jdbc.getObject(columnIndex, jdbcReadType(type, sqlType))
+            }
+            fitDeclared(type, value)
+        }
     } catch (_: Exception) {
         // Some drivers throw non-SQLException (pg's getObject(idx, UUID.class) on
-        // a TEXT column raises ClassCastException); fall back to untyped and let
-        // the converter pipeline coerce.
-        materializeLob(jdbc.getObject(columnIndex))
+        // a TEXT column raises ClassCastException); fall back to untyped and coerce.
+        coerceUntyped(type, columnIndex, jdbc::getObject)
     }
 
     override fun getMetaData(): ResultSetMetaData = JdbcResultSetMetaData(jdbc.metaData)
-    override fun close() = jdbc.close()
+    override fun close() {
+        onClose?.invoke()
+        jdbc.close()
+    }
 }
 
 // Wrapper class for ResultSetMetaData

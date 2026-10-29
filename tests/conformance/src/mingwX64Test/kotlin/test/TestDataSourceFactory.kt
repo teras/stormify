@@ -25,6 +25,7 @@ actual fun createTestDatabases(): List<TestDatabase> {
 
     val dbName = (getenv("STORMIFY_TEST_DB")?.toKString() ?: "sqlite").lowercase().ifEmpty { "sqlite" }
     val host = getenv("STORMIFY_TEST_HOST")?.toKString() ?: "localhost"
+    TypeProbe.enabled = getenv("STORMIFY_PROBE")?.toKString().let { it == "1" || it == "true" }
 
     val (displayName, url) = when (dbName) {
         "sqlite" -> {

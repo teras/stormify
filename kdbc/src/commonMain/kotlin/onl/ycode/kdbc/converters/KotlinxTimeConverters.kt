@@ -87,9 +87,31 @@ internal object KotlinxTimeConverters {
         direct(registry, LocalDateTime::class, LocalTime::class) { LocalDateTime(EPOCH_DATE, it as LocalTime) }
         listOf(LocalDate::class, LocalDateTime::class, LocalTime::class)
             .forEach { t -> direct(registry, String::class, t) { it.toString() } }
-        direct(registry, LocalDate::class, String::class) { LocalDate.parse(it as String) }
-        direct(registry, LocalDateTime::class, String::class) { LocalDateTime.parse(it as String) }
-        direct(registry, LocalTime::class, String::class) { LocalTime.parse(it as String) }
+        direct(registry, LocalDate::class, String::class) { parseWallClock(it as String).date }
+        direct(registry, LocalDateTime::class, String::class) { parseWallClock(it as String) }
+        direct(registry, LocalTime::class, String::class) { parseWallClock(it as String).time }
+        // An instant written without an offset is a wall time in the system's zone, as a
+        // timestamp column without a zone is read
+        direct(registry, KtInstant::class, String::class) {
+            val text = it as String
+            try { KtInstant.parse(text) } catch (_: IllegalArgumentException) {
+                parseWallClock(text).toInstant(TimeZone.currentSystemDefault())
+            }
+        }
+    }
+
+    /**
+     * A wall time written as text: a date and a time separated by `T` or a space (as
+     * SQLite stores it), a date alone (at midnight), or a time alone (on the epoch date).
+     */
+    private fun parseWallClock(text: String): LocalDateTime {
+        val t = text.trim()
+        return when {
+            t.length == 10 -> LocalDateTime(LocalDate.parse(t), LocalTime(0, 0))
+            t.length > 10 && t[10] == ' ' -> LocalDateTime.parse(t.substring(0, 10) + "T" + t.substring(11))
+            t.length >= 3 && t[2] == ':' -> LocalDateTime(EPOCH_DATE, LocalTime.parse(t))
+            else -> LocalDateTime.parse(t)
+        }
     }
 
     /** Registers a direct (pair-wise) converter in the registry. Later registrations

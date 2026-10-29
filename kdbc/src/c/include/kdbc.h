@@ -357,8 +357,8 @@ kdbc_driver kdbc_conn_driver(kdbc_conn *conn);
  * - PostgreSQL: `PQcancel`
  * - SQLite: `sqlite3_interrupt`
  * - Oracle: `dpiConn_breakExecution`
- * - MariaDB: `mariadb_cancel`
- * - MSSQL: `ct_cancel`
+ * - MariaDB/MySQL: `mariadb_cancel`, or `KILL QUERY` on a connection of its own with libmysqlclient
+ * - MSSQL: the db-lib interrupt check, which sends the attention from the waiting call
  *
  * @warning **Thread safety**: safe to call concurrently with a blocking KDBC
  *          call on the same connection. **Not** safe to call concurrently

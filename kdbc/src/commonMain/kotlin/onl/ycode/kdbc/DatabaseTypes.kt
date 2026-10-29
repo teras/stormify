@@ -129,10 +129,11 @@ interface Connection : AutoCloseable {
      * connection. NOT safe to call concurrently with [close] — callers must serialize
      * cancellation with connection teardown.
      *
-     * Implementations: JVM delegates to `java.sql.Statement.cancel` on the active statement
-     * (or is a no-op if no active statement is tracked); Native delegates to the kdbc C
-     * layer's `kdbc_cancel` which dispatches to the driver-specific primitive (PQcancel,
-     * sqlite3_interrupt, mariadb_cancel, dpiConn_breakExecution). Default: no-op.
+     * Implementations: JVM delegates to `java.sql.Statement.cancel` on the running
+     * statement (a no-op when none runs); Native delegates to the kdbc C layer's
+     * `kdbc_cancel`, which dispatches to the driver-specific primitive (PQcancel,
+     * sqlite3_interrupt, mariadb_cancel, dpiConn_breakExecution, the db-lib interrupt
+     * check on SQL Server). Default: no-op.
      */
     fun cancel(): Unit = Unit
 

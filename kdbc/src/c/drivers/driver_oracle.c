@@ -1288,14 +1288,37 @@ static const char *ora_format_scalar(const dpiData *data, unsigned int nt,
                                 (unsigned long long)data->value.asUint64);
             return buf;
         case DPI_NATIVE_TYPE_DOUBLE:
-            *out_len = snprintf(buf, buf_size, "%.17g", data->value.asDouble);
+            *out_len = kdbc_format_double(buf, buf_size, data->value.asDouble);
             return buf;
         case DPI_NATIVE_TYPE_FLOAT:
-            *out_len = snprintf(buf, buf_size, "%.7g", (double)data->value.asFloat);
+            *out_len = kdbc_format_float(buf, buf_size, data->value.asFloat);
             return buf;
         case DPI_NATIVE_TYPE_BOOLEAN:
             if (data->value.asBoolean) { *out_len = 4; return "true"; }
             else                       { *out_len = 5; return "false"; }
+        case DPI_NATIVE_TYPE_TIMESTAMP: {
+            /* As the other drivers render it: "2024-03-15 13:45:30.123", the fraction
+             * without trailing zeros and left out when zero, then a non-zero offset. */
+            const dpiTimestamp *ts = &data->value.asTimestamp;
+            int n = snprintf(buf, buf_size, "%04d-%02d-%02d %02d:%02d:%02d",
+                             (int)ts->year, (int)ts->month, (int)ts->day,
+                             (int)ts->hour, (int)ts->minute, (int)ts->second);
+            if (ts->fsecond && n > 0 && (size_t)n < buf_size) {
+                char frac[16];
+                snprintf(frac, sizeof(frac), "%09u", (unsigned)ts->fsecond);
+                int len = 9;
+                while (len > 0 && frac[len - 1] == '0') len--;
+                n += snprintf(buf + n, buf_size - n, ".%.*s", len, frac);
+            }
+            if ((ts->tzHourOffset || ts->tzMinuteOffset) && n > 0 && (size_t)n < buf_size) {
+                int off = ts->tzHourOffset * 60 + ts->tzMinuteOffset;
+                char sign = off < 0 ? '-' : '+';
+                if (off < 0) off = -off;
+                n += snprintf(buf + n, buf_size - n, "%c%02d:%02d", sign, off / 60, off % 60);
+            }
+            *out_len = n;
+            return buf;
+        }
         default:
             *out_len = 0;
             return NULL;

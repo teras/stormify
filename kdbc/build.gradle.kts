@@ -99,7 +99,7 @@ kotlin {
     sourceSets {
         val commonMain by getting {
             dependencies {
-                implementation(project(":logger"))
+                api(project(":logger"))
                 compileOnly("org.jetbrains.kotlinx:kotlinx-datetime:0.7.1")
                 compileOnly("com.ionspin.kotlin:bignum:0.3.9")
             }

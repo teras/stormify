@@ -67,6 +67,9 @@ typedef int          (*fn_dbretlen)(DBPROCESS *, int);
 typedef int          (*fn_dbrettype)(DBPROCESS *, int);
 typedef char        *(*fn_dbretname)(DBPROCESS *, int);
 typedef RETCODE      (*fn_dbcancel)(DBPROCESS *);
+typedef void         (*fn_dbsetinterrupt)(DBPROCESS *, DB_DBCHKINTR_FUNC, DB_DBHNDLINTR_FUNC);
+typedef void         (*fn_dbsetuserdata)(DBPROCESS *, BYTE *);
+typedef BYTE        *(*fn_dbgetuserdata)(DBPROCESS *);
 typedef DBINT        (*fn_dbconvert)(DBPROCESS *, int, const BYTE *, DBINT, int, BYTE *, DBINT);
 typedef RETCODE      (*fn_dbsetopt)(DBPROCESS *, int, const char *, int);
 typedef RETCODE      (*fn_dbdatecrack)(DBPROCESS *, DBDATEREC *, DBDATETIME *);
@@ -123,6 +126,9 @@ static fn_dbretlen      p_dbretlen;
 static fn_dbrettype     p_dbrettype;
 static fn_dbretname     p_dbretname;
 static fn_dbcancel      p_dbcancel;
+static fn_dbsetinterrupt p_dbsetinterrupt;
+static fn_dbsetuserdata p_dbsetuserdata;
+static fn_dbgetuserdata p_dbgetuserdata;
 static fn_dbconvert     p_dbconvert;
 static fn_dbsetopt      p_dbsetopt;
 static fn_dbdatecrack   p_dbdatecrack;
@@ -237,6 +243,10 @@ static int tds_load(void) {
     DB_LOAD(p_dbrettype,     "dbrettype");
     DB_LOAD(p_dbretname,     "dbretname");
     DB_LOAD(p_dbcancel,      "dbcancel");
+    /* The interrupt hooks give the cancel of a running statement; optional. */
+    p_dbsetinterrupt = kdbc_dl_sym(lib_handle, "dbsetinterrupt");
+    p_dbsetuserdata  = kdbc_dl_sym(lib_handle, "dbsetuserdata");
+    p_dbgetuserdata  = kdbc_dl_sym(lib_handle, "dbgetuserdata");
     DB_LOAD(p_dbconvert,     "dbconvert");
     DB_LOAD(p_dbsetopt,      "dbsetopt");
     DB_LOAD(p_dbdatecrack,   "dbdatecrack");
@@ -274,11 +284,43 @@ static int tds_loaded(void) { return lib_handle != NULL; }
 
 typedef struct {
     DBPROCESS *dbproc;
+    /* Set by tds_cancel from another thread, read by the interrupt check db-lib runs
+     * about once a second while it waits for the server. */
+    volatile int cancel_requested;
     int in_transaction;
     int major_version;
     int minor_version;
     char product_version[128];
 } tds_conn;
+
+/* db-lib has no cancel that is safe from another thread: dbcancel reads the reply
+ * on the calling thread, racing the thread that runs the statement. The interrupt
+ * hooks are the supported way: while waiting for the server, db-lib asks chkintr
+ * whether to stop, and on yes hndlintr answers INT_CANCEL, so the waiting thread
+ * itself sends the attention and drains the reply. */
+static int tds_chkintr(void *dbproc) {
+    tds_conn *tc = (tds_conn *)p_dbgetuserdata((DBPROCESS *)dbproc);
+    return tc && tc->cancel_requested;
+}
+
+static int tds_hndlintr(void *dbproc) {
+    tds_conn *tc = (tds_conn *)p_dbgetuserdata((DBPROCESS *)dbproc);
+    if (tc) tc->cancel_requested = 0;
+    return INT_CANCEL;
+}
+
+/* A cancel asked while no statement ran must not stop the next one. */
+static void tds_clear_cancel(DBPROCESS *dbproc) {
+    tds_conn *tc = p_dbgetuserdata ? (tds_conn *)p_dbgetuserdata(dbproc) : NULL;
+    if (tc) tc->cancel_requested = 0;
+}
+
+static int tds_cancel(kdbc_conn *conn) {
+    tds_conn *tc = (tds_conn *)conn->native;
+    if (!tc || !p_dbsetinterrupt) return KDBC_ERROR;
+    tc->cancel_requested = 1;
+    return KDBC_OK;
+}
 
 /* ========================================================================
  * Direct SQL execution helper
@@ -289,6 +331,7 @@ static int tds_exec_simple(DBPROCESS *dbproc, const char *sql,
     g_last_msg[0] = '\0';
     g_last_msgno = 0;
     p_dbcancel(dbproc);
+    tds_clear_cancel(dbproc);
     if (p_dbcmd(dbproc, sql) == FAIL) {
         snprintf(err, err_size, "MSSQL dbcmd: %s",
                  g_last_msg[0] ? g_last_msg : "failed");
@@ -379,6 +422,10 @@ static void *tds_connect(const char *url, const char *user, const char *password
     }
     tc->dbproc = dbproc;
     tc->in_transaction = 0;
+    if (p_dbsetinterrupt && p_dbsetuserdata && p_dbgetuserdata) {
+        p_dbsetuserdata(dbproc, (BYTE *)tc);
+        p_dbsetinterrupt(dbproc, tds_chkintr, tds_hndlintr);
+    }
 
     /* Default TEXTSIZE is 4096 bytes on db-lib, truncating NVARCHAR(MAX) /
      * VARBINARY(MAX) results. Raise to 2GB — the SQL Server max. */
@@ -802,6 +849,21 @@ static int tds_bind_time(kdbc_stmt *stmt, int idx,
  * sp_executesql RPC — the heart of parameterized execution
  * ======================================================================== */
 
+/* The SQL literal a parameter is written as instead of an @pN, or NULL when it is
+ * sent as a parameter. db-lib sends a parameter of datalen 0 as NULL whatever its
+ * type (src/dblib/rpc.c), so an empty string or blob cannot travel as a parameter:
+ * it is inlined, as NULL itself is. */
+static const char *tds_param_literal(const tds_param *p) {
+    if (p->is_null) return "NULL";
+    if (p->bytes_len != 0) return NULL;
+    switch (p->sybtype) {
+        case SYBVARCHAR:
+        case SYBNTEXT: return "N''";
+        case SYBIMAGE: return "0x";
+        default:       return NULL;
+    }
+}
+
 /* Translate SQL with `?` placeholders into `@p1`, `@p2`, ... form so that
  * sp_executesql / sp_execute's inner statement references the named parameters.
  * Uses the shared sql_scan_char state machine so it respects single-quoted
@@ -847,9 +909,12 @@ static char *tds_translate_placeholders_ex(const char *sql, tds_param *params,
             }
             if (live && *q == '?') {
                 param_idx++;
-                if (inline_nulls && param_idx <= param_count && params[param_idx - 1].is_null) {
-                    memcpy(dst + di, "NULL", 4);
-                    di += 4;
+                const char *lit = inline_nulls && param_idx <= param_count
+                                  ? tds_param_literal(&params[param_idx - 1]) : NULL;
+                if (lit) {
+                    size_t ll = strlen(lit);
+                    memcpy(dst + di, lit, ll);
+                    di += ll;
                 } else {
                     di += snprintf(dst + di, cap - di, "@p%d", param_idx);
                 }
@@ -871,8 +936,8 @@ static char *tds_translate_placeholders(const char *sql, tds_param *params,
 }
 
 /* Build the @params declaration string like "@p1 INT, @p2 NVARCHAR(4000)".
- * NULL params are inlined as literal NULL by tds_translate_placeholders and
- * are skipped here so their (unknown) type is never declared. */
+ * NULL params, and empty strings and blobs, are inlined as literals by
+ * tds_translate_placeholders and are skipped here (see tds_param_literal). */
 static char *tds_build_params_decl(tds_stmt_data *sd) {
     size_t cap = (size_t)sd->param_count * 48 + 16;
     char *decl = (char *)malloc(cap);
@@ -880,7 +945,7 @@ static char *tds_build_params_decl(tds_stmt_data *sd) {
     size_t di = 0;
     int emitted = 0;
     for (int i = 0; i < sd->param_count; i++) {
-        if (sd->params[i].is_null) continue;
+        if (tds_param_literal(&sd->params[i])) continue;
         if (emitted > 0) { decl[di++] = ','; decl[di++] = ' '; }
         const char *t = sd->params[i].decl_type ? sd->params[i].decl_type : "NVARCHAR(MAX)";
         int n = snprintf(decl + di, cap - di, "@p%d %s", i + 1, t);
@@ -1092,7 +1157,7 @@ static int tds_send_user_params(tds_stmt_data *sd, int null_via_datalen,
     DBPROCESS *dbproc = sd->tc->dbproc;
     for (int i = 0; i < sd->param_count; i++) {
         tds_param *p = &sd->params[i];
-        if (p->is_null && !null_via_datalen) continue;
+        if (!null_via_datalen && tds_param_literal(p)) continue;
 
         char name[12];
         snprintf(name, sizeof(name), "@p%d", i + 1);
@@ -1158,6 +1223,9 @@ static int tds_can_use_sp_prepare(tds_stmt_data *sd) {
     for (int i = 0; i < sd->param_count; i++) {
         if (sd->params[i].is_null && sd->params[i].decl_type == NULL)
             return 0;
+        /* An empty value has to be inlined, which a prepared statement cannot do */
+        if (!sd->params[i].is_null && tds_param_literal(&sd->params[i]))
+            return 0;
     }
     return 1;
 }
@@ -1205,6 +1273,7 @@ static int tds_send_execute(tds_stmt_data *sd, char *err, size_t err_size) {
     g_last_msg[0] = '\0';
     g_last_msgno = 0;
     p_dbcancel(dbproc);
+    tds_clear_cancel(dbproc);
 
     /* No params → plain language batch. */
     if (sd->param_count == 0) {
@@ -1315,7 +1384,7 @@ static int tds_send_execute(tds_stmt_data *sd, char *err, size_t err_size) {
      * sent as plain SYBVARCHAR which SQL Server NVARCHAR columns reject. */
     for (int i = 0; i < sd->param_count; i++) {
         tds_param *p = &sd->params[i];
-        if (p->is_null) continue;  /* NULLs were inlined into the SQL text */
+        if (tds_param_literal(p)) continue;  /* NULLs and empty values were inlined into the SQL text */
         char name[16];
         snprintf(name, sizeof(name), "@p%d", i + 1);
 
@@ -1605,7 +1674,8 @@ static int tds_rs_is_null(kdbc_result *rs, int col) {
 static const char *tds_rs_col_as_string(tds_result_set *trs, int col) {
     BYTE *data = p_dbdata(trs->dbproc, col);
     DBINT len = p_dbdatlen(trs->dbproc, col);
-    if (!data || len == 0) return NULL;
+    /* NULL has no data pointer; an empty string has one with length 0 */
+    if (!data) return NULL;
 
     int ctype = p_dbcoltype(trs->dbproc, col);
     /* SYBCHAR / SYBVARCHAR / SYBTEXT come back pre-converted to the client
@@ -1616,6 +1686,14 @@ static const char *tds_rs_col_as_string(tds_result_set *trs, int col) {
         if (tds_rs_ensure_cache(trs, col, needed) != 0) return NULL;
         memcpy(trs->str_cache[col - 1], data, len);
         trs->str_cache[col - 1][len] = '\0';
+        return trs->str_cache[col - 1];
+    }
+
+    /* Floating point as the shortest text that reads back as the value, not dbconvert's */
+    if (ctype == SYBFLT8 || ctype == SYBREAL) {
+        if (tds_rs_ensure_cache(trs, col, 32) != 0) return NULL;
+        if (ctype == SYBFLT8) kdbc_format_double(trs->str_cache[col - 1], 32, *(double *)data);
+        else kdbc_format_float(trs->str_cache[col - 1], 32, *(float *)data);
         return trs->str_cache[col - 1];
     }
 
@@ -1677,9 +1755,43 @@ static double tds_rs_get_double(kdbc_result *rs, int col) {
     }
 }
 
+static int tds_rs_get_timestamp(kdbc_result *rs, int col,
+                                int *year, int *month, int *day,
+                                int *hour, int *minute, int *second, int *usec);
+
+/* A date, a time or a date and time as ISO text ("2024-03-15 13:45:30.123", the fraction
+ * without trailing zeros), as the other drivers render them, rather than db-lib's
+ * "Mar 15 2024 12:00:00:AM". NULL for any other column, or one with an offset. */
+static const char *tds_rs_temporal_as_string(kdbc_result *rs, tds_result_set *trs, int col) {
+    int ctype = p_dbcoltype(trs->dbproc, col);
+    if (ctype != SYBDATETIME && ctype != SYBDATETIME4 && ctype != SYBMSDATE &&
+        ctype != SYBMSTIME && ctype != SYBMSDATETIME2) return NULL;
+    int y, mo, d, h, mi, sec, us;
+    if (tds_rs_get_timestamp(rs, col, &y, &mo, &d, &h, &mi, &sec, &us) != KDBC_OK) return NULL;
+    if (tds_rs_ensure_cache(trs, col, 40) != 0) return NULL;
+    char *buf = trs->str_cache[col - 1];
+    int n = 0;
+    if (ctype != SYBMSTIME) n += snprintf(buf, 40, "%04d-%02d-%02d", y, mo, d);
+    if (ctype != SYBMSDATE) {
+        n += snprintf(buf + n, 40 - n, "%s%02d:%02d:%02d", n ? " " : "", h, mi, sec);
+        if (us > 0) {
+            char frac[8];
+            snprintf(frac, sizeof(frac), "%06d", us);
+            int len = 6;
+            while (len > 0 && frac[len - 1] == '0') len--;
+            snprintf(buf + n, 40 - n, ".%.*s", len, frac);
+        }
+    }
+    return buf;
+}
+
 static const char *tds_rs_get_string(kdbc_result *rs, int col) {
     tds_result_set *trs = (tds_result_set *)rs->native;
     rs->last_null = 0;
+    if (p_dbdata(trs->dbproc, col)) {
+        const char *t = tds_rs_temporal_as_string(rs, trs, col);
+        if (t) return t;
+    }
     const char *s = tds_rs_col_as_string(trs, col);
     if (!s) rs->last_null = 1;
     return s;
@@ -1689,7 +1801,8 @@ static const void *tds_rs_get_blob(kdbc_result *rs, int col, size_t *out_len) {
     tds_result_set *trs = (tds_result_set *)rs->native;
     BYTE *data = p_dbdata(trs->dbproc, col);
     DBINT len = p_dbdatlen(trs->dbproc, col);
-    if (!data || len == 0) { rs->last_null = 1; if (out_len) *out_len = 0; return NULL; }
+    /* NULL has no data pointer; an empty value has one with length 0 (as in tds_rs_is_null) */
+    if (!data) { rs->last_null = 1; if (out_len) *out_len = 0; return NULL; }
     rs->last_null = 0;
     if (out_len) *out_len = (size_t)len;
     return data;
@@ -1745,10 +1858,11 @@ static int tds_rs_get_timestamp(kdbc_result *rs, int col,
     /* Last-ditch text parse (for DATETIME2/DATE/TIME on older db-lib). */
     const char *txt = tds_rs_col_as_string(trs, col);
     if (!txt) return KDBC_ERROR;
-    int y = 0, mo = 0, d = 0, h = 0, mi = 0, s = 0, us = 0;
-    if (sscanf(txt, "%d-%d-%d %d:%d:%d.%d", &y, &mo, &d, &h, &mi, &s, &us) >= 3) {
-        *year = y; *month = mo; *day = d;
-        *hour = h; *minute = mi; *second = s; *usec = us;
+    if (kdbc_parse_timestamp_text(txt, year, month, day, hour, minute, second, usec) == KDBC_OK)
+        return KDBC_OK;
+    /* A date alone: midnight */
+    if (sscanf(txt, "%d-%d-%d", year, month, day) >= 3) {
+        *hour = *minute = *second = *usec = 0;
         return KDBC_OK;
     }
     return KDBC_ERROR;
@@ -1852,6 +1966,7 @@ static int tds_call_execute(kdbc_stmt *stmt) {
     g_last_msg[0] = '\0';
     g_last_msgno = 0;
     p_dbcancel(dbproc);
+    tds_clear_cancel(dbproc);
 
     char proc_name[256];
     static const char *const verbs[] = { "EXECUTE", "EXEC" };
@@ -1968,6 +2083,7 @@ static const kdbc_driver_vtable mssql_vtable = {
     .set_autocommit         = tds_set_autocommit,
     .commit                 = tds_commit,
     .rollback               = tds_rollback,
+    .cancel                 = tds_cancel,
     .get_product_name       = tds_get_product_name,
     .get_product_version    = tds_get_product_version,
     .get_major_version      = tds_get_major_version,

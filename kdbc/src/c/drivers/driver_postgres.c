@@ -38,6 +38,7 @@
 #define PG_TIMESTAMP_OID 1114
 #define PG_DATE_OID      1082
 #define PG_TIME_OID      1083
+#define PG_TIMESTAMPTZ_OID 1184
 
 /* ========================================================================
  * Byte-order helpers (network = big-endian)
@@ -1627,6 +1628,22 @@ static double pg_rs_get_double(kdbc_result *rs, int col) {
     return raw ? strtod(raw, NULL) : 0.0;
 }
 
+static int pg_rs_get_date(kdbc_result *rs, int col, int *year, int *month, int *day);
+static int pg_rs_get_time(kdbc_result *rs, int col, int *hour, int *minute, int *second, int *usec);
+static int pg_rs_get_timestamp(kdbc_result *rs, int col, int *year, int *month, int *day,
+                               int *hour, int *minute, int *second, int *usec);
+
+/* Appends ".123" for [usec] microseconds, without trailing zeros, nothing when zero, as
+ * PostgreSQL renders a fraction of a second. Returns the length appended. */
+static int pg_append_fraction(char *buf, size_t size, int usec) {
+    if (usec <= 0) { if (size) buf[0] = '\0'; return 0; }
+    char frac[8];
+    snprintf(frac, sizeof(frac), "%06d", usec);
+    int len = 6;
+    while (len > 0 && frac[len - 1] == '0') len--;
+    return snprintf(buf, size, ".%.*s", len, frac);
+}
+
 static const char *pg_rs_get_string(kdbc_result *rs, int col) {
     pg_result_set *prs = (pg_result_set *)rs->native;
     int ci = col - 1;
@@ -1681,7 +1698,7 @@ static const char *pg_rs_get_string(kdbc_result *rs, int col) {
             if (len == 4) {
                 int32_t bits; memcpy(&bits, raw, 4); bits = pg_be32toh(bits);
                 float f; memcpy(&f, &bits, sizeof(f));
-                snprintf(prs->conv_buf, sizeof(prs->conv_buf), "%.7g", (double)f);
+                kdbc_format_float(prs->conv_buf, sizeof(prs->conv_buf), f);
                 return prs->conv_buf;
             }
             break;
@@ -1690,7 +1707,7 @@ static const char *pg_rs_get_string(kdbc_result *rs, int col) {
             if (len == 8) {
                 int64_t bits; memcpy(&bits, raw, 8); bits = pg_be64toh(bits);
                 double d; memcpy(&d, &bits, sizeof(d));
-                snprintf(prs->conv_buf, sizeof(prs->conv_buf), "%.17g", d);
+                kdbc_format_double(prs->conv_buf, sizeof(prs->conv_buf), d);
                 return prs->conv_buf;
             }
             break;
@@ -1714,6 +1731,33 @@ static const char *pg_rs_get_string(kdbc_result *rs, int col) {
                 if (n >= 0) return rs->str_buf;
             }
             break;
+
+        case PG_DATE_OID: {
+            int y, mo, d;
+            if (pg_rs_get_date(rs, col, &y, &mo, &d) != KDBC_OK) break;
+            snprintf(prs->conv_buf, sizeof(prs->conv_buf), "%04d-%02d-%02d", y, mo, d);
+            return prs->conv_buf;
+        }
+
+        case PG_TIME_OID: {
+            int h, mi, sec, us;
+            if (pg_rs_get_time(rs, col, &h, &mi, &sec, &us) != KDBC_OK) break;
+            int n = snprintf(prs->conv_buf, sizeof(prs->conv_buf), "%02d:%02d:%02d", h, mi, sec);
+            pg_append_fraction(prs->conv_buf + n, sizeof(prs->conv_buf) - n, us);
+            return prs->conv_buf;
+        }
+
+        case PG_TIMESTAMP_OID:
+        case PG_TIMESTAMPTZ_OID: {
+            /* As PostgreSQL renders it; a timestamptz in binary is UTC, so it says so */
+            int y, mo, d, h, mi, sec, us;
+            if (pg_rs_get_timestamp(rs, col, &y, &mo, &d, &h, &mi, &sec, &us) != KDBC_OK) break;
+            int n = snprintf(prs->conv_buf, sizeof(prs->conv_buf), "%04d-%02d-%02d %02d:%02d:%02d",
+                             y, mo, d, h, mi, sec);
+            n += pg_append_fraction(prs->conv_buf + n, sizeof(prs->conv_buf) - n, us);
+            if (oid == PG_TIMESTAMPTZ_OID) snprintf(prs->conv_buf + n, sizeof(prs->conv_buf) - n, "+00");
+            return prs->conv_buf;
+        }
 
         case PG_BYTEA_OID:
             /* Return hex representation for bytea as string */
@@ -1757,6 +1801,11 @@ static const void *pg_rs_get_blob(kdbc_result *rs, int col, size_t *out_len) {
 }
 
 /* Date/time result retrieval: PG binary format */
+/* Whether column [ci] holds a timestamp, with or without a zone. */
+static int pg_is_timestamp_col(pg_result_set *prs, int ci) {
+    return prs->col_types[ci] == PG_TIMESTAMP_OID || prs->col_types[ci] == PG_TIMESTAMPTZ_OID;
+}
+
 static int pg_rs_get_timestamp(kdbc_result *rs, int col,
                                int *year, int *month, int *day,
                                int *hour, int *minute, int *second, int *usec) {
@@ -1787,11 +1836,13 @@ static int pg_rs_get_timestamp(kdbc_result *rs, int col,
         *usec = us;
         return KDBC_OK;
     }
+    if (fmt == 1 && prs->col_types[ci] == PG_DATE_OID) {
+        /* A date read as a timestamp: midnight of that day */
+        *hour = *minute = *second = *usec = 0;
+        return pg_rs_get_date(rs, col, year, month, day);
+    }
     /* Text fallback */
-    *usec = 0;
-    if (sscanf(raw, "%d-%d-%d %d:%d:%d.%d", year, month, day, hour, minute, second, usec) >= 6)
-        return KDBC_OK;
-    if (sscanf(raw, "%d-%d-%dT%d:%d:%d.%d", year, month, day, hour, minute, second, usec) >= 6)
+    if (kdbc_parse_timestamp_text(raw, year, month, day, hour, minute, second, usec) == KDBC_OK)
         return KDBC_OK;
     RS_ERR(rs, "PostgreSQL: cannot parse timestamp value");
     return KDBC_ERROR;
@@ -1806,6 +1857,11 @@ static int pg_rs_get_date(kdbc_result *rs, int col, int *year, int *month, int *
     int len = p_getlength(prs->res, prs->current_row, ci);
     int fmt = p_fformat(prs->res, ci);
 
+    if (fmt == 1 && pg_is_timestamp_col(prs, ci)) {
+        /* A timestamp read as a date: its day */
+        int h, mi, s, us;
+        return pg_rs_get_timestamp(rs, col, year, month, day, &h, &mi, &s, &us);
+    }
     if (fmt == 1 && len == 4) {
         /* Binary: int32 days since 2000-01-01 */
         int32_t pg_days;
@@ -1827,6 +1883,11 @@ static int pg_rs_get_time(kdbc_result *rs, int col,
     int len = p_getlength(prs->res, prs->current_row, ci);
     int fmt = p_fformat(prs->res, ci);
 
+    if (fmt == 1 && pg_is_timestamp_col(prs, ci)) {
+        /* A timestamp read as a time: its time of day (the binary layouts are both 8 bytes) */
+        int y, mo, d;
+        return pg_rs_get_timestamp(rs, col, &y, &mo, &d, hour, minute, second, usec);
+    }
     if (fmt == 1 && len == 8) {
         /* Binary: int64 microseconds since midnight */
         int64_t time_usec;
@@ -1839,8 +1900,7 @@ static int pg_rs_get_time(kdbc_result *rs, int col,
         *second = total_sec % 60;
         return KDBC_OK;
     }
-    *usec = 0;
-    return (sscanf(raw, "%d:%d:%d.%d", hour, minute, second, usec) >= 3) ? KDBC_OK : KDBC_ERROR;
+    return kdbc_parse_time_text(raw, hour, minute, second, usec) ? KDBC_OK : KDBC_ERROR;
 }
 
 static void pg_rs_close(void *native_rs) {

@@ -652,7 +652,7 @@ int kdbc_bind_blob(kdbc_stmt *stmt, int idx, const void *data, size_t len) {
 
     /* Take ownership of a copy */
     free(stmt->params[idx - 1].owned);
-    void *copy = malloc(len);
+    void *copy = malloc(len ? len : 1);   /* malloc(0) may return NULL */
     if (!copy) { STMT_ERR(stmt, "Out of memory"); return KDBC_ERROR; }
     memcpy(copy, data, len);
     stmt->params[idx - 1].owned = copy;
@@ -1185,11 +1185,8 @@ int kdbc_get_timestamp(kdbc_result *rs, int col,
     /* Fallback: parse ISO-8601 string */
     const char *txt = rs->conn->vt->rs_get_string(rs, col);
     if (!txt) { RS_ERR(rs, "NULL timestamp value"); return KDBC_ERROR; }
-    *usec = 0;
-    int n = sscanf(txt, "%d-%d-%d %d:%d:%d.%d", year, month, day, hour, minute, second, usec);
-    if (n < 6)
-        n = sscanf(txt, "%d-%d-%dT%d:%d:%d.%d", year, month, day, hour, minute, second, usec);
-    if (n >= 6) return KDBC_OK;
+    if (kdbc_parse_timestamp_text(txt, year, month, day, hour, minute, second, usec) == KDBC_OK)
+        return KDBC_OK;
     RS_ERR(rs, "Cannot parse timestamp '%s'", txt);
     return KDBC_ERROR;
 }
@@ -1213,8 +1210,7 @@ int kdbc_get_time(kdbc_result *rs, int col,
         return rs->conn->vt->rs_get_time(rs, col, hour, minute, second, usec);
     const char *txt = rs->conn->vt->rs_get_string(rs, col);
     if (!txt) { RS_ERR(rs, "NULL time value"); return KDBC_ERROR; }
-    *usec = 0;
-    if (sscanf(txt, "%d:%d:%d.%d", hour, minute, second, usec) >= 3) return KDBC_OK;
+    if (kdbc_parse_time_text(txt, hour, minute, second, usec)) return KDBC_OK;
     RS_ERR(rs, "Cannot parse time '%s'", txt);
     return KDBC_ERROR;
 }

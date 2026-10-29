@@ -24,6 +24,7 @@ typedef my_bool     my_bool_t; /* may already be defined */
 typedef int          (*fn_mysql_library_init)(int, char **, char **);
 typedef MYSQL       *(*fn_mysql_init)(MYSQL *);
 typedef int          (*fn_mariadb_cancel)(MYSQL *);
+typedef unsigned long(*fn_mysql_thread_id)(MYSQL *);
 typedef MYSQL       *(*fn_mysql_real_connect)(MYSQL *, const char *, const char *,
                                               const char *, const char *,
                                               unsigned int, const char *, unsigned long);
@@ -72,6 +73,7 @@ static kdbc_lib_handle lib_handle = NULL;
 
 static fn_mysql_library_init          p_library_init;
 static fn_mariadb_cancel              p_mariadb_cancel; /* optional - NULL on MySQL libmysqlclient */
+static fn_mysql_thread_id             p_thread_id;      /* optional - for the KILL QUERY cancel */
 static fn_mysql_init                  p_init;
 static fn_mysql_real_connect          p_real_connect;
 static fn_mysql_close                 p_close;
@@ -190,6 +192,7 @@ static void my_load_impl(void) {
      * libmysqlclient. Resolve via dlsym and allow it to be NULL — the
      * cancel wrapper checks before calling. */
     p_mariadb_cancel = (fn_mariadb_cancel)kdbc_dl_sym(lib_handle, "mariadb_cancel");
+    p_thread_id = (fn_mysql_thread_id)kdbc_dl_sym(lib_handle, "mysql_thread_id");
 
     my_load_ok = 1;
 }
@@ -272,6 +275,26 @@ typedef struct {
  * Connection
  * ======================================================================== */
 
+/* The connection, with what a cancel needs to reach the server on a connection of
+ * its own when the client library has no mariadb_cancel (Oracle's libmysqlclient). */
+typedef struct {
+    MYSQL *mysql;
+    char host[256];
+    unsigned int port;
+    char *user;
+    char *password;
+} my_conn;
+
+#define MYSQL_OF(native) (((my_conn *)(native))->mysql)
+
+static char *my_strdup(const char *s) {
+    if (!s) s = "";
+    size_t n = strlen(s) + 1;
+    char *d = (char *)malloc(n);
+    if (d) memcpy(d, s, n);
+    return d;
+}
+
 static void *my_connect(const char *url, const char *user, const char *password,
                         char *err, size_t err_size) {
     MYSQL *mysql = p_init(NULL);
@@ -348,28 +371,70 @@ static void *my_connect(const char *url, const char *user, const char *password,
 
     /* Default autocommit on */
     p_autocommit(mysql, 1);
-    return mysql;
+
+    my_conn *c = (my_conn *)calloc(1, sizeof(my_conn));
+    if (c) {
+        c->user = my_strdup(user);
+        c->password = my_strdup(password);
+    }
+    if (!c || !c->user || !c->password) {
+        if (c) { free(c->user); free(c->password); free(c); }
+        snprintf(err, err_size, "Out of memory");
+        p_close(mysql);
+        return NULL;
+    }
+    c->mysql = mysql;
+    snprintf(c->host, sizeof(c->host), "%s", host);
+    c->port = port;
+    return c;
 }
 
 static void my_close_conn(void *native) {
-    if (native) p_close((MYSQL *)native);
+    if (!native) return;
+    my_conn *c = (my_conn *)native;
+    p_close(c->mysql);
+    free(c->user);
+    free(c->password);
+    free(c);
 }
 
-/* Async cancel of the currently-executing query on this connection.
- * mariadb_cancel sends an interrupt through a separate channel and is
- * safe to call from any thread. Only available with libmariadb — with
- * Oracle's libmysqlclient the symbol is absent and cancel is a no-op. */
+/* Async cancel of the currently-executing query on this connection, safe to call
+ * from any thread. libmariadb's mariadb_cancel aborts it through the connection's
+ * socket; Oracle's libmysqlclient has no such call, so the cancel opens a connection
+ * of its own and sends KILL QUERY for this connection's thread, as Connector/J does. */
 static int my_cancel(kdbc_conn *conn) {
     if (!conn || !conn->native) return KDBC_ERROR;
-    if (!p_mariadb_cancel) {
-        CONN_ERR(conn, "MariaDB cancel not supported by this client library");
+    my_conn *c = (my_conn *)conn->native;
+    if (p_mariadb_cancel) {
+        if (p_mariadb_cancel(c->mysql) != 0) {
+            CONN_ERR(conn, "MariaDB cancel failed: %s", p_error(c->mysql));
+            return KDBC_ERROR;
+        }
+        return KDBC_OK;
+    }
+    if (!p_thread_id) {
+        CONN_ERR(conn, "MySQL cancel not supported by this client library");
         return KDBC_ERROR;
     }
-    if (p_mariadb_cancel((MYSQL *)conn->native) != 0) {
-        CONN_ERR(conn, "MariaDB cancel failed: %s", p_error((MYSQL *)conn->native));
+    MYSQL *killer = p_init(NULL);
+    if (!killer) {
+        CONN_ERR(conn, "MySQL cancel: failed to init");
         return KDBC_ERROR;
     }
-    return KDBC_OK;
+    int rc = KDBC_OK;
+    if (!p_real_connect(killer, c->host, c->user, c->password, NULL, c->port, NULL, 0)) {
+        CONN_ERR(conn, "MySQL cancel: %s", p_error(killer));
+        rc = KDBC_ERROR;
+    } else {
+        char sql[64];
+        snprintf(sql, sizeof(sql), "KILL QUERY %lu", p_thread_id(c->mysql));
+        if (p_query(killer, sql)) {
+            CONN_ERR(conn, "MySQL cancel: %s", p_error(killer));
+            rc = KDBC_ERROR;
+        }
+    }
+    p_close(killer);
+    return rc;
 }
 
 /* ========================================================================
@@ -378,7 +443,7 @@ static int my_cancel(kdbc_conn *conn) {
  * ======================================================================== */
 
 static int my_exec_direct(kdbc_conn *conn, const char *sql) {
-    MYSQL *mysql = (MYSQL *)conn->native;
+    MYSQL *mysql = MYSQL_OF(conn->native);
     if (p_query(mysql, sql)) {
         CONN_ERR_V(conn, p_sqlstate(mysql), (int)p_errno_(mysql),
                    "MariaDB: %s", p_error(mysql));
@@ -398,7 +463,7 @@ static int my_set_autocommit(kdbc_conn *conn, int enabled) {
      * autocommit=1 the entire time; explicit START TRANSACTION / COMMIT /
      * ROLLBACK frame each transaction. Kept as a defensive fallback for any
      * code path that bypasses the core helpers. */
-    MYSQL *mysql = (MYSQL *)conn->native;
+    MYSQL *mysql = MYSQL_OF(conn->native);
     if (p_autocommit(mysql, enabled ? 1 : 0)) {
         CONN_ERR_V(conn, p_sqlstate(mysql), (int)p_errno_(mysql),
                    "MariaDB: %s", p_error(mysql));
@@ -421,7 +486,7 @@ static int my_begin_tx(kdbc_conn *conn) {
 }
 
 static int my_commit_tx(kdbc_conn *conn) {
-    MYSQL *mysql = (MYSQL *)conn->native;
+    MYSQL *mysql = MYSQL_OF(conn->native);
     if (p_commit(mysql)) {
         CONN_ERR_V(conn, p_sqlstate(mysql), (int)p_errno_(mysql),
                    "MariaDB: %s", p_error(mysql));
@@ -431,7 +496,7 @@ static int my_commit_tx(kdbc_conn *conn) {
 }
 
 static int my_rollback_tx(kdbc_conn *conn) {
-    MYSQL *mysql = (MYSQL *)conn->native;
+    MYSQL *mysql = MYSQL_OF(conn->native);
     if (p_rollback(mysql)) {
         CONN_ERR_V(conn, p_sqlstate(mysql), (int)p_errno_(mysql),
                    "MariaDB: %s", p_error(mysql));
@@ -445,7 +510,7 @@ static int my_rollback_tx(kdbc_conn *conn) {
  * ======================================================================== */
 
 static void my_get_product_name(void *native, char *buf, size_t sz) {
-    MYSQL *m = (MYSQL *)native;
+    MYSQL *m = MYSQL_OF(native);
     const char *info = p_get_server_info(m);
     /* MariaDB includes "MariaDB" in version string; MySQL doesn't */
     if (info && strstr(info, "MariaDB"))
@@ -455,16 +520,16 @@ static void my_get_product_name(void *native, char *buf, size_t sz) {
 }
 
 static void my_get_product_version(void *native, char *buf, size_t sz) {
-    snprintf(buf, sz, "%s", p_get_server_info((MYSQL *)native));
+    snprintf(buf, sz, "%s", p_get_server_info(MYSQL_OF(native)));
 }
 
 static int my_get_major_version(void *native) {
-    unsigned long v = p_get_server_version((MYSQL *)native);
+    unsigned long v = p_get_server_version(MYSQL_OF(native));
     return (int)(v / 10000);
 }
 
 static int my_get_minor_version(void *native) {
-    unsigned long v = p_get_server_version((MYSQL *)native);
+    unsigned long v = p_get_server_version(MYSQL_OF(native));
     return (int)((v % 10000) / 100);
 }
 
@@ -514,7 +579,7 @@ static void *my_prepare(kdbc_conn *conn, const char *native_sql,
                         char *err, size_t err_size) {
     (void)ret_cols; (void)n_ret_cols; (void)generated_keys_requested;
     /* MariaDB uses mysql_stmt_insert_id — no per-statement handling needed. */
-    MYSQL *mysql = (MYSQL *)conn->native;
+    MYSQL *mysql = MYSQL_OF(conn->native);
 
     my_stmt_data *sd = (my_stmt_data *)calloc(1, sizeof(my_stmt_data));
     if (!sd) { snprintf(err, err_size, "Out of memory"); return NULL; }
@@ -1179,10 +1244,10 @@ static const char *my_rs_get_string(kdbc_result *rs, int col) {
             snprintf(mrs->conv_buf, sizeof(mrs->conv_buf), "%lld", (long long)c->num.i64);
             return mrs->conv_buf;
         case MYSQL_TYPE_FLOAT:
-            snprintf(mrs->conv_buf, sizeof(mrs->conv_buf), "%.7g", (double)c->num.f);
+            kdbc_format_float(mrs->conv_buf, sizeof(mrs->conv_buf), c->num.f);
             return mrs->conv_buf;
         case MYSQL_TYPE_DOUBLE:
-            snprintf(mrs->conv_buf, sizeof(mrs->conv_buf), "%.17g", c->num.d);
+            kdbc_format_double(mrs->conv_buf, sizeof(mrs->conv_buf), c->num.d);
             return mrs->conv_buf;
         case MYSQL_TYPE_DATETIME:
         case MYSQL_TYPE_TIMESTAMP:
@@ -1277,11 +1342,8 @@ static int my_rs_get_timestamp(kdbc_result *rs, int col,
      * holding a stringified timestamp from a user-written SELECT). */
     const char *txt = my_rs_get_string(rs, col);
     if (!txt) { RS_ERR(rs, "MariaDB: NULL timestamp value"); return KDBC_ERROR; }
-    *usec = 0;
-    int n = sscanf(txt, "%d-%d-%d %d:%d:%d.%d", year, month, day, hour, minute, second, usec);
-    if (n < 6)
-        n = sscanf(txt, "%d-%d-%dT%d:%d:%d.%d", year, month, day, hour, minute, second, usec);
-    if (n >= 6) return KDBC_OK;
+    if (kdbc_parse_timestamp_text(txt, year, month, day, hour, minute, second, usec) == KDBC_OK)
+        return KDBC_OK;
     RS_ERR(rs, "MariaDB: cannot parse timestamp '%s'", txt);
     return KDBC_ERROR;
 }
@@ -1323,8 +1385,7 @@ static int my_rs_get_time(kdbc_result *rs, int col,
 
     const char *txt = my_rs_get_string(rs, col);
     if (!txt) { RS_ERR(rs, "MariaDB: NULL time value"); return KDBC_ERROR; }
-    *usec = 0;
-    if (sscanf(txt, "%d:%d:%d.%d", hour, minute, second, usec) >= 3) return KDBC_OK;
+    if (kdbc_parse_time_text(txt, hour, minute, second, usec)) return KDBC_OK;
     RS_ERR(rs, "MariaDB: cannot parse time '%s'", txt);
     return KDBC_ERROR;
 }

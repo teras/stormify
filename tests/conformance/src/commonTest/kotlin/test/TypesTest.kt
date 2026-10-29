@@ -92,7 +92,10 @@ open class TypesTest {
         s.create(NullableEntity(id = 10, name = "empty_test", nullableString = ""))
         val found = s.findById<NullableEntity>(10)!!
         val v = found.nullableString
-        assertTrue(v == null || v.isEmpty(), "Should be null or empty, got: $v")
+        // Oracle stores an empty string as NULL; everywhere else it stays empty
+        if (TestDDL.dialect == SqlDialect.ORACLE_NEW || TestDDL.dialect == SqlDialect.ORACLE_OLD)
+            assertTrue(v == null || v.isEmpty(), "Should be null or empty, got: $v")
+        else assertEquals("", v)
     }
 
     @Test
@@ -130,7 +133,7 @@ open class TypesTest {
 
     @Test
     fun testCustomTypeConversion() = withDb("CUSTOM-CONV") { s ->
-        onl.ycode.stormify.TypeUtils.register(String::class, Int::class) { (it as String).toInt() }
+        onl.ycode.kdbc.TypeConversion.register(String::class, Int::class) { (it as String).toInt() }
 
         TestDDL.dropTable("conversion_test")
         s.executeUpdate(TestDDL.createTable("conversion_test",
@@ -179,6 +182,23 @@ open class TypesTest {
         assertNull(nulled.blobData)
         assertNull(nulled.clobAsChars)
         assertNull(nulled.clobAsString)
+    }
+
+    @Test
+    fun testEmptyBlobRoundtrip() = withDb("BLOB-EMPTY") { s ->
+        TestDDL.dropTable("blob_test")
+        s.executeUpdate(TestDDL.createTable("blob_test",
+            "${TestDDL.intPrimaryKey("id")}, blob_data ${TestDDL.blobType()}, clob_as_chars ${TestDDL.textType()}, clob_as_string ${TestDDL.textType()}"))
+
+        s.create(BlobEntity(id = 3, blobData = ByteArray(0)))
+        val found = s.findById<BlobEntity>(3)!!
+        // Oracle stores an empty BLOB as NULL; everywhere else it stays empty, written and read
+        if (TestDDL.dialect == SqlDialect.ORACLE_NEW || TestDDL.dialect == SqlDialect.ORACLE_OLD) {
+            assertTrue(found.blobData == null || found.blobData!!.isEmpty())
+        } else {
+            assertEquals(0, s.readOne<Int>("SELECT COUNT(*) FROM blob_test WHERE blob_data IS NULL"), "stored as NULL")
+            assertEquals(0, found.blobData!!.size)
+        }
     }
 
     @Test

@@ -377,6 +377,9 @@ private class NativeCallableStatement(
 
     override fun getObject(parameterIndex: Int, type: KClass<*>): Any? {
         ensureOpen()
+        // Every driver reports a NULL OUT value as a missing string; the numeric
+        // getter would read it as 0, so answer null before dispatching on type.
+        if (kdbc_call_get_string(handle, parameterIndex) == null) return null
         return when (type) {
             String::class -> kdbc_call_get_string(handle, parameterIndex)?.toKString()
             Byte::class -> kdbc_call_get_long(handle, parameterIndex).toByte()
@@ -497,7 +500,9 @@ private class NativeResultSet(
 
     private fun readBlob(col: Int): ByteArray? = memScoped {
         val lenVar = alloc<ULongVar>()
-        val ptr = kdbc_get_blob(handle, col, lenVar.ptr) ?: return null
+        // Callers have ruled out SQL NULL; a zero-length value may still come without
+        // a data pointer (SQLite).
+        val ptr = kdbc_get_blob(handle, col, lenVar.ptr) ?: return ByteArray(0)
         val len = lenVar.value.toInt()
         if (len == 0) return ByteArray(0)
         ByteArray(len).also { arr ->
@@ -654,13 +659,10 @@ private fun bindValue(stmt: CPointer<kdbc_stmt>, idx: Int, value: Any?) {
 }
 
 private fun bindBlob(stmt: CPointer<kdbc_stmt>, idx: Int, bytes: ByteArray): Int {
-    if (bytes.isEmpty()) {
-        // Use a 1-byte no-op pointer; some drivers reject NULL data with len=0
-        return bytes.usePinned { pinned ->
-            kdbc_bind_blob(stmt, idx, pinned.addressOf(0), 0u)
-        }
-    }
-    return bytes.usePinned { pinned ->
+    // An empty array has no address to pin, and a NULL pointer would bind SQL NULL:
+    // pass a 1-byte buffer with length 0.
+    val data = if (bytes.isEmpty()) ByteArray(1) else bytes
+    return data.usePinned { pinned ->
         kdbc_bind_blob(stmt, idx, pinned.addressOf(0), bytes.size.toULong())
     }
 }

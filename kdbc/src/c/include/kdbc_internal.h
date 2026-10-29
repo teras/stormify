@@ -640,4 +640,55 @@ static inline int kdbc_ensure_strbuf(kdbc_result *rs, size_t needed) {
     return 0;
 }
 
+/* The shortest text that reads back as [v], "0.1" rather than the "0.10000000000000001"
+ * of %.17g, as the drivers that send text and the JVM render it. Returns its length. */
+static inline int kdbc_format_double(char *buf, size_t size, double v) {
+    int n = 0;
+    for (int prec = 15; prec <= 17; prec++) {
+        n = snprintf(buf, size, "%.*g", prec, v);
+        if (strtod(buf, NULL) == v) break;
+    }
+    return n;
+}
+
+/* As kdbc_format_double, for a float: "0.1" for 0.1f, up to the 9 digits a float can need. */
+static inline int kdbc_format_float(char *buf, size_t size, float v) {
+    int n = 0;
+    for (int prec = 6; prec <= 9; prec++) {
+        n = snprintf(buf, size, "%.*g", prec, (double)v);
+        if (strtof(buf, NULL) == v) break;
+    }
+    return n;
+}
+
+/* Parses a time of day "HH:MM:SS[.fraction]" from the start of [txt]. The fraction
+ * is a decimal fraction of a second, so ".123" is 123000 microseconds; digits past
+ * the sixth are dropped. Returns the number of characters read, or 0 when there is
+ * no time there. */
+static inline int kdbc_parse_time_text(const char *txt, int *hour, int *minute, int *second, int *usec) {
+    int n = 0;
+    if (sscanf(txt, "%d:%d:%d%n", hour, minute, second, &n) < 3) return 0;
+    *usec = 0;
+    if (txt[n] == '.') {
+        int digits = 0;
+        n++;
+        while (isdigit((unsigned char)txt[n])) {
+            if (digits < 6) { *usec = *usec * 10 + (txt[n] - '0'); digits++; }
+            n++;
+        }
+        while (digits++ < 6) *usec *= 10;
+    }
+    return n;
+}
+
+/* Parses "YYYY-MM-DD HH:MM:SS[.fraction]", with a space or a T between date and time
+ * (see kdbc_parse_time_text for the fraction). Returns KDBC_OK or KDBC_ERROR. */
+static inline int kdbc_parse_timestamp_text(const char *txt, int *year, int *month, int *day,
+                                            int *hour, int *minute, int *second, int *usec) {
+    int n = 0;
+    if (sscanf(txt, "%d-%d-%d%n", year, month, day, &n) < 3) return KDBC_ERROR;
+    if (txt[n] != ' ' && txt[n] != 'T') return KDBC_ERROR;
+    return kdbc_parse_time_text(txt + n + 1, hour, minute, second, usec) ? KDBC_OK : KDBC_ERROR;
+}
+
 #endif /* KDBC_INTERNAL_H */

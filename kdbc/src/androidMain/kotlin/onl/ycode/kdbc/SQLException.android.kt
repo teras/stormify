@@ -43,9 +43,8 @@ internal actual fun extractDriverMetadata(cause: Throwable?): Pair<String?, Int?
 
 /**
  * Maps an `android.database.sqlite.SQLiteException` subclass to the SQLite
- * primary result code it represents. Returns `null` when [t] is not one of
- * the recognised subclasses (including the bare `SQLiteException` base, where
- * the code is not derivable from the type alone).
+ * primary result code it represents, or the code in the message of the bare
+ * `SQLiteException` base. Returns `null` when [t] is not an `SQLiteException`.
  */
 private fun sqliteSubclassCode(t: Throwable): Int? = when (t) {
     is SQLiteAccessPermException -> 3                       // SQLITE_PERM
@@ -63,5 +62,11 @@ private fun sqliteSubclassCode(t: Throwable): Int? = when (t) {
     is SQLiteDatatypeMismatchException -> 20                // SQLITE_MISMATCH
     is SQLiteMisuseException -> 21                          // SQLITE_MISUSE
     is SQLiteBindOrColumnIndexOutOfRangeException -> 25     // SQLITE_RANGE
+    // The bare base class (e.g. "no such table"): the code Android writes into the
+    // message, "(code 1 SQLITE_ERROR)", or else SQLITE_ERROR, the generic error
+    is android.database.sqlite.SQLiteException ->
+        t.message?.let { CODE_IN_MESSAGE.find(it)?.groupValues?.get(1)?.toIntOrNull() } ?: 1
     else -> null
 }
+
+private val CODE_IN_MESSAGE = Regex("""\(code (\d+)""")
