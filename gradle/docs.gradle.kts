@@ -272,12 +272,11 @@ HTML
                 if (content.contains("{{DOCS_VERSION}}"))
                     f.writeText(content.replace("{{DOCS_VERSION}}", ver))
             }
-        // 3. Generate a sitemap index pointing to the current released docs sitemap.
-        //    MkDocs Material emits per-version sitemaps at /docs/<ver>/sitemap.xml(.gz);
-        //    this index lets search engines find the landing page and the canonical version
-        //    without any per-version edits to robots.txt.
+        // 3. Generate a sitemap index: the landing page in a sitemap of its own, and the
+        //    sitemap MkDocs Material emits for the released version at /docs/<ver>/sitemap.xml,
+        //    so search engines find every page without per-version edits to robots.txt.
         val today = java.time.LocalDate.now().toString()
-        val sitemap = """
+        val landingSitemap = """
             <?xml version="1.0" encoding="UTF-8"?>
             <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
               <url>
@@ -285,12 +284,21 @@ HTML
                 <lastmod>$today</lastmod>
                 <priority>1.0</priority>
               </url>
-              <url>
-                <loc>https://stormify.org/docs/$ver/</loc>
-                <lastmod>$today</lastmod>
-                <priority>0.9</priority>
-              </url>
             </urlset>
+        """.trimIndent() + "\n"
+        file("$landingDir/sitemap-landing.xml").writeText(landingSitemap)
+        val sitemap = """
+            <?xml version="1.0" encoding="UTF-8"?>
+            <sitemapindex xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+              <sitemap>
+                <loc>https://stormify.org/sitemap-landing.xml</loc>
+                <lastmod>$today</lastmod>
+              </sitemap>
+              <sitemap>
+                <loc>https://stormify.org/docs/$ver/sitemap.xml</loc>
+                <lastmod>$today</lastmod>
+              </sitemap>
+            </sitemapindex>
         """.trimIndent() + "\n"
         file("$landingDir/sitemap.xml").writeText(sitemap)
         // 4. Rsync landing to web root (exclude /docs so version folders are untouched)

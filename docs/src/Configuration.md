@@ -149,39 +149,39 @@ attached instance of its own) picks up this one. Construct as many `Stormify`
 instances as you need for explicit use; only the most recent `asDefault()` call
 wins for the library-wide default.
 
-### Scoped Default
+### Which Instance a Call Uses
 
-For scenarios where the default should apply only for a limited region of code —
-per-request tenants, background jobs that temporarily target a different database,
-or fixtures that don't want to leak state — call `asDefault` with a block. The
-previous default is restored automatically on exit, even if the block throws.
+A call that names no instance (the top-level functions such as `findById<T>()`,
+`entity.create()` and `pagedList<T>()`, the lazy load of an entity no instance read)
+resolves it in this order:
+
+1. The instance the entity is attached to, when it has one.
+2. The instance of the innermost `transaction { }` or `suspending.withConnection { }`
+   open on this thread or coroutine.
+3. The default instance.
+
+So the work of a second database goes through its own transaction, without changing
+the default:
 
 === "Kotlin"
 
     ```kotlin
-    tenantStormify.asDefault { s ->
-        s.read<Order>("SELECT * FROM orders WHERE active = true")
+    tenantStormify.transaction {
+        Order(customer = "Acme").create()      // tenantStormify, in its transaction
+        findAll<Order>("WHERE active = 1")     // the same
     }
-    // library-wide default is whatever it was before the block
     ```
 
 === "Java"
 
     ```java
-    tenantStormify.asDefault(s -> {
-        List<Order> orders = s.read(Order.class,
-            "SELECT * FROM orders WHERE active = true");
-        // ...
+    tenantStormify.transaction(() -> {
+        tenantStormify.create(new Order("Acme"));
+        tenantStormify.findAll(Order.class, "WHERE active = 1");
     });
-
-    // returning variant
-    int count = tenantStormify.asDefault(s ->
-        s.readOne(Integer.class, "SELECT COUNT(*) FROM orders"));
     ```
 
-The scoped form nests safely — an inner `asDefault` block restores to the outer
-default, not to the base one — so mixing permanent and scoped defaults in the
-same application is well-defined.
+Outside a transaction, call the instance itself: `tenantStormify.findAll<Order>()`.
 
 ## Logging Configuration
 
@@ -349,4 +349,4 @@ Register a single lifecycle listener that calls `StormifyLifecycle.clear()`:
 
     Only needed when the Spring Boot application is deployed **as a WAR** to an external server. Fat-jar Spring Boot apps don't have a redeploy lifecycle and don't need this.
 
-After `clear()` returns, Stormify is back in its initial state. If the same JVM hosts a new webapp deployment immediately afterwards, the next call to `new Stormify(...).asDefault()` re-initialises everything normally — the annproc-generated entity registrations are reapplied when the new webapp's classes are first touched.
+After `clear()` returns, Stormify is back in its initial state. If the same JVM hosts a new webapp deployment immediately afterwards, the next call to `new StormifyJ(...).asDefault()` re-initialises everything normally — the annproc-generated entity registrations are reapplied when the new webapp's classes are first touched.

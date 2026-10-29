@@ -10,7 +10,7 @@ They are also wired into the main Stormify repository as a git submodule under `
 Clone the examples repository and step into the folder you are interested in:
 
 ```bash
-git clone -b 2.6.0 https://github.com/teras/stormify-examples.git
+git clone -b 3.0.1 https://github.com/teras/stormify-examples.git
 cd stormify-examples/<example-folder>
 ```
 
@@ -23,13 +23,13 @@ git submodule update --init --recursive
 cd examples
 ```
 
-Every example targets Stormify `2.6.0` and uses SQLite as the default database (no server required), with the exception of the REST/frontend combo which can point at any configured backend. Each subfolder is a self-contained Gradle/Maven/npm project with its own `README.md` detailing entities, setup, and any platform-specific notes.
+Every example targets Stormify `3.0.1` and uses SQLite as the default database (no server required), the REST/frontend combo included. Each subfolder is a self-contained Gradle/Maven/npm project with its own `README.md` detailing entities, setup, and any platform-specific notes.
 
 ## Available examples
 
-### [kotlin-jvm](https://github.com/teras/stormify-examples/tree/main/kotlin-jvm)
+### [kotlin-jvm](https://github.com/teras/stormify-examples/tree/3.0.1/kotlin-jvm)
 
-The shortest path to a working Stormify app on the JVM. A single Kotlin file wires SQLite via JDBC, defines a `Task` entity extending `AutoTable` with `by db()` and `by lazyDetails()` delegates alongside a deliberately plain `User` class — the contrast is the point, since the plain one needs an explicit `refresh()` where the `AutoTable` one lazy-loads on first read. It then runs a full CRUD scenario (create/find/update/delete) plus a transaction with rollback and a raw SQL JOIN query. Good starting point if you want to see idiomatic Kotlin Stormify code with no platform ceremony.
+The shortest path to a working Stormify app on the JVM. A single Kotlin file wires SQLite via JDBC, defines a `Task` entity extending `AutoTable` with `by db()` delegates alongside a deliberately plain `User` class — the contrast is the point, since the plain one needs an explicit `refresh()` where the `AutoTable` one lazy-loads on first read. It then runs a full CRUD scenario (create/find/update/delete) plus a transaction with rollback and a raw SQL JOIN query. Good starting point if you want to see idiomatic Kotlin Stormify code with no platform ceremony.
 
 Run:
 
@@ -38,7 +38,7 @@ cd kotlin-jvm
 gradle run
 ```
 
-### [kotlin-linux](https://github.com/teras/stormify-examples/tree/main/kotlin-linux)
+### [kotlin-linux](https://github.com/teras/stormify-examples/tree/3.0.1/kotlin-linux)
 
 A standalone Kotlin/Native Linux binary (`linuxX64`) — no JVM needed at runtime — using Stormify's native SQLite driver via KDBC. Entity metadata is generated at compile time by the KSP annotation processor. The sample intentionally uses both an `AutoTable` entity (with `by db()` auto-hydration) and a plain-class entity (requiring explicit `stormify.refresh(entity)`), so you can see both styles side by side.
 
@@ -49,18 +49,25 @@ cd kotlin-linux
 gradle runDebugExecutableLinuxX64
 ```
 
-### [kotlin-windows](https://github.com/teras/stormify-examples/tree/main/kotlin-windows)
+### [kotlin-windows](https://github.com/teras/stormify-examples/tree/3.0.1/kotlin-windows)
 
 Same shape again, this time a standalone Kotlin/Native Windows binary (`mingwX64`) using the native SQLite driver via KDBC. No JVM required at runtime. Builds on Linux with a MinGW toolchain; can be run natively on Windows or under Wine.
 
-Run (on Windows, or under Wine):
+Run on Windows:
 
 ```bash
 cd kotlin-windows
 gradle runDebugExecutableMingwX64
 ```
 
-### [kotlin-macos](https://github.com/teras/stormify-examples/tree/main/kotlin-macos)
+On Linux, link the executable and run it under Wine, with `sqlite3.dll` next to it (see the example's README):
+
+```bash
+gradle linkDebugExecutableMingwX64
+wine build/bin/mingwX64/debugExecutable/stormify-kotlin-windows-demo.exe
+```
+
+### [kotlin-macos](https://github.com/teras/stormify-examples/tree/3.0.1/kotlin-macos)
 
 Same shape as `kotlin-linux`, but a standalone Kotlin/Native macOS binary for both `macosArm64` (Apple Silicon) and `macosX64` (Intel), sharing code through the `macosMain` intermediate source set. Uses native SQLite via KDBC. Build requires macOS.
 
@@ -71,9 +78,9 @@ cd kotlin-macos
 gradle runDebugExecutableMacosArm64   # or MacosX64
 ```
 
-### [kotlin-multiplatform](https://github.com/teras/stormify-examples/tree/main/kotlin-multiplatform)
+### [kotlin-multiplatform](https://github.com/teras/stormify-examples/tree/3.0.1/kotlin-multiplatform)
 
-The most comprehensive example: the **same business logic** in `commonMain` runs on JVM, Linux (`linuxX64`, `linuxArm64`), Windows (`mingwX64`), and macOS (`macosArm64`, `macosX64`). Only the DataSource creation is platform-specific — JVM uses SQLite via JDBC, native targets use `KdbcDataSource`. Both entities extend `AutoTable` with `by db()` and `by lazyDetails()` delegates. The one to study once you want to share persistence code across every target Stormify supports.
+The most comprehensive example: the **same business logic** in `commonMain` runs on JVM, Linux (`linuxX64`, `linuxArm64`), Windows (`mingwX64`), and macOS (`macosArm64`, `macosX64`). Only the DataSource creation is platform-specific — JVM uses SQLite via JDBC, native targets use `KdbcDataSource`. `Task` extends `AutoTable` with `by db()` delegates, while `User` stays a plain class. The one to study once you want to share persistence code across every target Stormify supports.
 
 Run on any available target:
 
@@ -85,7 +92,7 @@ gradle runDebugExecutableMacosArm64       # macOS Apple Silicon
 gradle runDebugExecutableMingwX64         # Windows
 ```
 
-### [java-pom](https://github.com/teras/stormify-examples/tree/main/java-pom)
+### [java-pom](https://github.com/teras/stormify-examples/tree/3.0.1/java-pom)
 
 The same CRUD/transactions scenario as `kotlin-jvm`, written in plain Java and built with Maven. Its distinctive feature is **mix-and-match annotations**: one entity uses standard JPA (`@Id`, `@GeneratedValue`) while another uses Stormify's own (`@DbTable`, `@DbField`) — both interoperate in the same project. Entity metadata is discovered via reflection at runtime.
 
@@ -96,9 +103,9 @@ cd java-pom
 mvn compile exec:java
 ```
 
-### [java-gradle](https://github.com/teras/stormify-examples/tree/main/java-gradle)
+### [java-gradle](https://github.com/teras/stormify-examples/tree/3.0.1/java-gradle)
 
-Same Java scenario as [`java-pom`](https://github.com/teras/stormify-examples/tree/main/java-pom) but built with Gradle and the Stormify plugin. The plugin runs the annotation processor at compile time and emits the `Tables` object, so Java code can use **type-safe paths** (`Tables.Task_.user.name`) — refactor-safe references that stop compiling if the underlying property is renamed or removed.
+Same Java scenario as [`java-pom`](https://github.com/teras/stormify-examples/tree/3.0.1/java-pom) but built with Gradle and the Stormify plugin. The plugin runs the annotation processor at compile time and emits the `Tables` object, so Java code can use **type-safe paths** (`Tables.Task_.user().name`) — refactor-safe references that stop compiling if the underlying property is renamed or removed.
 
 Run:
 
@@ -107,9 +114,9 @@ cd java-gradle
 gradle run
 ```
 
-### [android](https://github.com/teras/stormify-examples/tree/main/android)
+### [android](https://github.com/teras/stormify-examples/tree/3.0.1/android)
 
-A minimal Compose app (two entities, one ViewModel, one screen — readable in five minutes) that uses Android's built-in SQLite through the `Stormify(SQLiteDatabase)` convenience constructor. It demonstrates the KSP-generated `TableInfo` (mandatory on Android, since full reflection isn't available), CRUD operations, a transaction with rollback, lazy references via `AutoTable`, and enum-as-int storage via `DbValue` so enum order changes don't corrupt data. Min SDK 26.
+A minimal Compose app (two entities, one ViewModel, one screen — readable in five minutes) that uses Android's built-in SQLite through the `Stormify(SQLiteDatabase)` convenience constructor. It registers the entities the annotation processor generates (`GeneratedEntities`) and demonstrates CRUD operations, a transaction, lazy references via `AutoTable`, and enum-as-int storage via `DbValue` so enum order changes don't corrupt data. Min SDK 26.
 
 Run: open the `android/` folder in Android Studio, or from the command line:
 
@@ -118,24 +125,24 @@ cd android
 gradle :app:installDebug
 ```
 
-### [ios](https://github.com/teras/stormify-examples/tree/main/ios)
+### [ios](https://github.com/teras/stormify-examples/tree/3.0.1/ios)
 
 A SwiftUI app backed by a Kotlin Multiplatform shared module. The Kotlin side owns entities and demo logic; Swift calls into the generated framework. Uses platform SQLite via `KdbcDataSource` with Kotlin/Native cinterop, and KSP for entity metadata (required on native). A practical template if you want to share persistence logic with an existing Kotlin codebase while keeping a native SwiftUI frontend. Requires macOS and Xcode.
 
 Run: open `ios/iosApp/iosApp.xcodeproj` in Xcode and launch on a simulator or device.
 
-### [kotlin-rest](https://github.com/teras/stormify-examples/tree/main/kotlin-rest)
+### [kotlin-rest](https://github.com/teras/stormify-examples/tree/3.0.1/kotlin-rest)
 
 A Ktor REST server backed by Stormify over SQLite. It shows how Stormify fits into a realistic web-service layout — entity model, DTOs, service layer, routes, seed data — and exposes `POST /search` endpoints that take Stormify `PageSpec` payloads for paged/filtered/sorted queries. This is the one to look at when you want to see Stormify beyond a toy `main()` and inside the kind of structure a production service would have.
 
-The companion [`frontend-react`](https://github.com/teras/stormify-examples/tree/main/frontend-react) folder contains a React + TypeScript admin UI (Vite, MUI, AG Grid, TanStack Query, React Router) that consumes this backend through the same `PageSpec`/`PagedResponse` contract — useful if you want to see what a real client for these paged endpoints looks like.
+The companion [`frontend-react`](https://github.com/teras/stormify-examples/tree/3.0.1/frontend-react) folder contains a React + TypeScript admin UI (Vite, MUI, AG Grid, TanStack Query, React Router) that consumes this backend through the same `PageSpec`/`PagedResponse` contract — useful if you want to see what a real client for these paged endpoints looks like.
 
 Run the backend (Kotlin/Native — pick the executable for your host):
 
 ```bash
 cd kotlin-rest
 gradle runDebugExecutableLinuxX64         # Linux x64
-gradle runDebugExecutableMingwX64         # Windows (or under Wine)
+gradle runDebugExecutableMingwX64         # Windows
 gradle runDebugExecutableMacosArm64       # macOS Apple Silicon (build on macOS)
 ```
 

@@ -18,10 +18,11 @@ through the same `Stormify` instance inside the block (including top-level
 extensions and [`CRUDTable`](CRUD.md)-implementing entities) automatically joins
 the transaction. The same call works identically inside or outside a transaction.
 
-Failures are always reported as `SQLException` with the original throwable kept
-as `cause` — whether the failure came from the database or from your own code
-inside the block. (Coroutine cancellation in the suspend API is the one
-exception: it propagates unwrapped.)
+A failure rolls the transaction back and reaches the caller unchanged: a database
+error as the `SQLException` the driver reported, your own exception as the exception
+you threw. The transaction's own failures (opening the connection or a savepoint,
+the commit) are `SQLException`s too. A cancelled coroutine in the suspend API ends in
+a `CancellationException`.
 
 ### Basic Transaction Example
 
@@ -103,18 +104,26 @@ In Java the value-returning overload takes a `Supplier<R>`; the `Runnable` overl
 
 Nested calls to `transaction` on the same `Stormify` instance become savepoints automatically — a failure inside the inner block rolls back only its work, not the outer transaction.
 
+The rollback to the savepoint does not swallow the failure: the inner `transaction` call still throws, and if nothing catches it, the outer block fails too and the whole transaction is rolled back. To keep the outer transaction going, catch the failure around the inner call.
+
+Every failure that leaves a `transaction` block, nested or not, is rethrown as it is, after the rollback: catch `SQLException` for a database error and your own exception types for your own failures. The samples below catch the database error of the inner block.
+
 === "Kotlin"
 
     ```kotlin
     stormify.transaction {
         stormify.create(record1)
 
-        stormify.transaction {          // Becomes a savepoint
-            stormify.create(record2)
-            // If this fails, only record2 is rolled back
+        try {
+            stormify.transaction {      // Becomes a savepoint
+                stormify.create(record2)
+                // If this fails, only record2 is rolled back
+            }
+        } catch (e: SQLException) {
+            // The failure still propagates: catch it to let the outer block go on
         }
 
-        stormify.create(record3)        // Still executes
+        stormify.create(record3)        // Executes, because the failure was caught
     }
     ```
 
@@ -124,12 +133,16 @@ Nested calls to `transaction` on the same `Stormify` instance become savepoints 
     stormify.transaction(() -> {
         stormify.create(record1);
 
-        stormify.transaction(() -> {    // Becomes a savepoint
-            stormify.create(record2);
-            // If this fails, only record2 is rolled back
-        });
+        try {
+            stormify.transaction(() -> {    // Becomes a savepoint
+                stormify.create(record2);
+                // If this fails, only record2 is rolled back
+            });
+        } catch (SQLException e) {
+            // The failure still propagates: catch it to let the outer block go on
+        }
 
-        stormify.create(record3);       // Still executes
+        stormify.create(record3);           // Executes, because the failure was caught
     });
     ```
 
@@ -275,8 +288,8 @@ async.withConnection {
 ```
 
 Application-level exceptions inside `withConnection` (validation errors, not-found,
-constraint violations in auto-commit) reach the caller unwrapped — no `SQLException`
-wrapping on this path — and the borrowed connection returns to the pool healthy.
+constraint violations in auto-commit) reach the caller unchanged, as from `transaction`,
+and the borrowed connection returns to the pool healthy.
 Only coroutine cancellation evicts a connection.
 
 Scopes nest in every combination on the same coroutine lineage:
@@ -324,13 +337,15 @@ which maps to the driver's native async-cancel primitive:
 |----------|-----------------|
 | Native (PostgreSQL) | `PQcancel` |
 | Native (SQLite) | `sqlite3_interrupt` |
-| Native (MariaDB) | `mariadb_cancel` |
+| Native (MariaDB/MySQL) | `mariadb_cancel`, or `KILL QUERY` on a connection of its own with Oracle's `libmysqlclient` |
 | Native (Oracle) | `dpiConn_breakExecution` |
-| Native (MSSQL) | `dbcancel` |
-| JVM | `Statement.cancel()` (JDBC) |
+| Native (MSSQL) | db-lib interrupt check (`dbsetinterrupt`), polled about once a second |
+| JVM | `Statement.cancel()` (JDBC) on the running statement |
+| Android | none: the statement runs to its end |
 
 The blocked query returns with an error, the transaction rolls back, and the connection
-is evicted from the pool.
+is evicted from the pool. The coroutine ends in a `CancellationException`, with the error of
+the interrupted statement as its cause, so it counts as cancelled and not as failed.
 
 ### Pool Configuration
 

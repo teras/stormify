@@ -514,7 +514,7 @@
         </a>
       </div>
       <div class="meta-row">
-        <span><strong>8</strong> platforms</span>
+        <span><strong>6</strong> platforms</span>
         <span><strong>5</strong> databases natively</span>
         <span><strong>0</strong> required annotations</span>
       </div>
@@ -531,7 +531,8 @@
     <span class="kw">@DbField</span>(primaryKey = <span class="kw">true</span>)
     <span class="kw">var</span> id: <span class="type">Int</span> = <span class="num">0</span>,
     <span class="kw">var</span> email: <span class="type">String</span> = <span class="str">""</span>,
-    <span class="kw">var</span> name: <span class="type">String</span> = <span class="str">""</span>
+    <span class="kw">var</span> name: <span class="type">String</span> = <span class="str">""</span>,
+    <span class="kw">var</span> age: <span class="type">Int</span> = <span class="num">0</span>
 )
 
 <span class="kw">val</span> stormify = <span class="fn">Stormify</span>(dataSource)</pre></div>
@@ -547,11 +548,11 @@ stormify.<span class="fn">update</span>(user)
 stormify.<span class="fn">delete</span>(user)</pre></div>
       <div class="code-panel" data-panel="tx"><pre><span class="com">// Nested transactions via savepoints</span>
 stormify.<span class="fn">transaction</span> {
-    <span class="kw">val</span> user = <span class="fn">create</span>(<span class="fn">User</span>(email = <span class="str">"ada@example.com"</span>))
-    <span class="fn">create</span>(<span class="fn">Profile</span>(userId = user.id))
+    <span class="kw">val</span> user = stormify.<span class="fn">create</span>(<span class="fn">User</span>(email = <span class="str">"ada@example.com"</span>))
+    stormify.<span class="fn">create</span>(<span class="fn">Profile</span>(userId = user.id))
 
-    <span class="fn">transaction</span> {
-        <span class="fn">create</span>(<span class="fn">AuditLog</span>(<span class="str">"signup"</span>, user.id))
+    stormify.<span class="fn">transaction</span> {
+        stormify.<span class="fn">create</span>(<span class="fn">AuditLog</span>(<span class="str">"signup"</span>, user.id))
         <span class="com">// rollback-safe savepoint</span>
     }
 }</pre></div>
@@ -736,7 +737,7 @@ stormify.<span class="fn">transaction</span> {
     <span class="str">"WHERE status = ?"</span>, <span class="str">"active"</span>)
 
 <span class="fn">transaction</span> {
-    <span class="fn">create</span>(<span class="fn">User</span>(email = <span class="str">"ada@example.com"</span>))
+    <span class="fn">User</span>(email = <span class="str">"ada@example.com"</span>).<span class="fn">create</span>()
 }</pre></div>
           <div class="code-slot" data-group="query" data-value="ext" data-lang="kotlin"><pre><span class="com">// String extension — the query string itself is the receiver</span>
 <span class="kw">val</span> one = <span class="str">"SELECT * FROM user WHERE id = ?"</span>
@@ -756,7 +757,7 @@ stormify.<span class="fn">transaction</span> {
         </div>
       </div>
 
-      <p class="qs-footnote">Installation lives in the <a href="docs/{{DOCS_VERSION}}/">Getting Started guide</a>.</p>
+      <p class="qs-footnote">Installation lives in the <a href="docs/{{DOCS_VERSION}}/Installation/">Getting Started guide</a>.</p>
 
     </div>
   </div>
@@ -787,7 +788,7 @@ stormify.<span class="fn">transaction</span> {
       <div class="usage-card">
         <h4>PagedQuery · stateless REST</h4>
         <div class="lang-slot active" data-lang-scope="paged" data-lang="kotlin">
-<pre><span class="kw">val</span> customers = <span class="fn">PagedQuery</span>&lt;<span class="type">Customer</span>&gt;().<span class="fn">apply</span> {
+<pre><span class="kw">val</span> customers = stormify.<span class="fn">pagedQuery</span>&lt;<span class="type">Customer</span>&gt;().<span class="fn">apply</span> {
     <span class="fn">addFacet</span>(<span class="str">"search"</span>, <span class="type">Customer_</span>.name, <span class="type">Customer_</span>.email).isSortable = <span class="kw">false</span>
     <span class="fn">addFacet</span>(<span class="str">"name"</span>, <span class="type">Customer_</span>.name)
     <span class="fn">setConstraints</span>(<span class="str">"tenant_id = ?"</span>, tenantId)
@@ -796,13 +797,13 @@ stormify.<span class="fn">transaction</span> {
 <span class="com">// Per request — thread-safe, shares engine</span>
 <span class="kw">val</span> page = customers.<span class="fn">execute</span>(<span class="fn">PageSpec</span>(
     filters = <span class="fn">mapOf</span>(<span class="str">"search"</span> <span class="kw">to</span> req.q),
-    sorts   = <span class="fn">mapOf</span>(<span class="str">"name"</span> <span class="kw">to</span> <span class="type">SortDir</span>.ASC),
+    sorts   = <span class="fn">mapOf</span>(<span class="str">"name"</span> <span class="kw">to</span> <span class="type">SortState</span>.ASCENDING),
     page = req.page, pageSize = <span class="num">25</span>,
 ))
 <span class="fn">Json</span>(<span class="str">"items"</span> <span class="kw">to</span> page.rows, <span class="str">"total"</span> <span class="kw">to</span> page.total)</pre>
         </div>
         <div class="lang-slot" data-lang-scope="paged" data-lang="java">
-<pre><span class="type">PagedQuery</span>&lt;<span class="type">Customer</span>&gt; customers = <span class="kw">new</span> <span class="fn">PagedQuery</span>&lt;&gt;(<span class="type">Customer</span>.<span class="kw">class</span>);
+<pre><span class="type">PagedQuery</span>&lt;<span class="type">Customer</span>&gt; customers = stormify.<span class="fn">pagedQuery</span>(<span class="type">Customer</span>.<span class="kw">class</span>);
 customers.<span class="fn">addFacet</span>(<span class="str">"search"</span>, <span class="type">Customer_</span>.name, <span class="type">Customer_</span>.email).<span class="fn">setSortable</span>(<span class="kw">false</span>);
 customers.<span class="fn">addFacet</span>(<span class="str">"name"</span>, <span class="type">Customer_</span>.name);
 customers.<span class="fn">setConstraints</span>(<span class="str">"tenant_id = ?"</span>, tenantId);
@@ -810,8 +811,8 @@ customers.<span class="fn">setConstraints</span>(<span class="str">"tenant_id = 
 <span class="com">// Per request — thread-safe, shares engine</span>
 <span class="type">Page</span>&lt;<span class="type">Customer</span>&gt; page = customers.<span class="fn">execute</span>(<span class="kw">new</span> <span class="fn">PageSpec</span>(
     req.<span class="fn">page</span>(), <span class="num">25</span>,
-    <span class="type">Map</span>.<span class="fn">of</span>(<span class="str">"search"</span>, req.<span class="fn">q</span>()),
-    <span class="type">Map</span>.<span class="fn">of</span>(<span class="str">"name"</span>, <span class="type">SortDir</span>.ASC)
+    <span class="type">Collections</span>.<span class="fn">singletonMap</span>(<span class="str">"search"</span>, req.<span class="fn">q</span>()),
+    <span class="type">Collections</span>.<span class="fn">singletonMap</span>(<span class="str">"name"</span>, <span class="type">SortState</span>.ASCENDING)
 ));
 <span class="type">Json</span>.<span class="fn">of</span>(<span class="str">"items"</span>, page.<span class="fn">getRows</span>(), <span class="str">"total"</span>, page.<span class="fn">getTotal</span>());</pre>
         </div>
@@ -819,15 +820,15 @@ customers.<span class="fn">setConstraints</span>(<span class="str">"tenant_id = 
       <div class="usage-card">
         <h4>PagedList · UI grid model</h4>
         <div class="lang-slot active" data-lang-scope="paged" data-lang="kotlin">
-<pre><span class="kw">val</span> list = <span class="fn">PagedList</span>&lt;<span class="type">Company</span>&gt;()
+<pre><span class="kw">val</span> list = stormify.<span class="fn">pagedList</span>&lt;<span class="type">Company</span>&gt;()
 
 list.<span class="fn">addFacet</span>(<span class="type">Company_</span>.name)
 list.<span class="fn">addFacet</span>(<span class="type">Company_</span>.contactPerson.firstName,
               <span class="type">Company_</span>.contactPerson.lastName)
-list.<span class="fn">addSqlFacet</span>(<span class="str">"SUM(order_total)"</span>, <span class="type">Facet</span>.NUMERIC)
+list.<span class="fn">addSqlFacet</span>(<span class="str">"SUM(order_total)"</span>, <span class="type">Facet</span>.Type.NUMERIC)
 
 list.<span class="fn">getFacet</span>(<span class="num">0</span>).filter = <span class="str">"Acme"</span>
-list.<span class="fn">getFacet</span>(<span class="num">1</span>).sort = <span class="type">Facet</span>.ASCENDING
+list.<span class="fn">getFacet</span>(<span class="num">1</span>).sort = <span class="type">SortState</span>.ASCENDING
 
 <span class="com">// Consume as a normal List — loads pages lazily</span>
 <span class="kw">val</span> first = list[<span class="num">0</span>]
@@ -835,15 +836,15 @@ list.<span class="fn">getFacet</span>(<span class="num">1</span>).sort = <span c
 <span class="kw">for</span> (c <span class="kw">in</span> list) <span class="fn">println</span>(c.name)</pre>
         </div>
         <div class="lang-slot" data-lang-scope="paged" data-lang="java">
-<pre><span class="type">PagedList</span>&lt;<span class="type">Company</span>&gt; list = <span class="kw">new</span> <span class="fn">PagedList</span>&lt;&gt;(<span class="type">Company</span>.<span class="kw">class</span>);
+<pre><span class="type">PagedList</span>&lt;<span class="type">Company</span>&gt; list = stormify.<span class="fn">pagedList</span>(<span class="type">Company</span>.<span class="kw">class</span>);
 
 list.<span class="fn">addFacet</span>(<span class="type">Company_</span>.name);
 list.<span class="fn">addFacet</span>(<span class="type">Company_</span>.<span class="fn">contactPerson</span>().firstName,
               <span class="type">Company_</span>.<span class="fn">contactPerson</span>().lastName);
-list.<span class="fn">addSqlFacet</span>(<span class="str">"SUM(order_total)"</span>, <span class="type">Facet</span>.NUMERIC);
+list.<span class="fn">addSqlFacet</span>(<span class="str">"SUM(order_total)"</span>, <span class="type">Facet</span>.Type.NUMERIC);
 
 list.<span class="fn">getFacet</span>(<span class="num">0</span>).<span class="fn">setFilter</span>(<span class="str">"Acme"</span>);
-list.<span class="fn">getFacet</span>(<span class="num">1</span>).<span class="fn">setSort</span>(<span class="type">Facet</span>.ASCENDING);
+list.<span class="fn">getFacet</span>(<span class="num">1</span>).<span class="fn">setSort</span>(<span class="type">SortState</span>.ASCENDING);
 
 <span class="com">// Consume as a normal List — loads pages lazily</span>
 <span class="type">Company</span> first = list.<span class="fn">get</span>(<span class="num">0</span>);
@@ -867,17 +868,18 @@ list.<span class="fn">getFacet</span>(<span class="num">1</span>).<span class="f
     <div class="usage-grid">
       <div class="usage-card">
         <h4>Suspend + pool</h4>
-<pre><span class="kw">val</span> async = stormify.<span class="fn">suspending</span>(<span class="fn">PoolConfig</span>(
+<pre><span class="kw">val</span> stormify = <span class="fn">Stormify</span>(dataSource, poolConfig = <span class="fn">PoolConfig</span>(
     minConnections = <span class="num">2</span>,
     maxConnections = <span class="num">10</span>,
 ))
+<span class="kw">val</span> async = stormify.suspending
 
 async.<span class="fn">transaction</span> {
-    <span class="kw">val</span> user = <span class="fn">create</span>(<span class="fn">User</span>(email = <span class="str">"ada@example.com"</span>))
-    <span class="fn">create</span>(<span class="fn">Profile</span>(userId = user.id))
+    <span class="kw">val</span> user = stormify.<span class="fn">create</span>(<span class="fn">User</span>(email = <span class="str">"ada@example.com"</span>))
+    stormify.<span class="fn">create</span>(<span class="fn">Profile</span>(userId = user.id))
 
-    <span class="fn">transaction</span> { <span class="com">// nested → savepoint</span>
-        <span class="fn">create</span>(<span class="fn">AuditLog</span>(<span class="str">"signup"</span>, user.id))
+    async.<span class="fn">transaction</span> { <span class="com">// nested → savepoint</span>
+        stormify.<span class="fn">create</span>(<span class="fn">AuditLog</span>(<span class="str">"signup"</span>, user.id))
     }
 }</pre>
       </div>
@@ -887,7 +889,7 @@ async.<span class="fn">transaction</span> {
     async.<span class="fn">transaction</span> {
         <span class="com">// Long-running query — cancelling the coroutine</span>
         <span class="com">// triggers libpq PQcancel / OCIBreak / sqlite3_interrupt</span>
-        <span class="fn">read</span>&lt;<span class="type">Order</span>&gt;(<span class="str">"SELECT ... FROM huge_table"</span>)
+        stormify.<span class="fn">read</span>&lt;<span class="type">Order</span>&gt;(<span class="str">"SELECT ... FROM huge_table"</span>)
     }
 }
 
@@ -915,23 +917,23 @@ job.<span class="fn">cancel</span>() <span class="com">// connection aborts at t
     <div class="usage-grid">
       <div class="usage-card">
         <h4><code>by db()</code> — single entity, loaded once</h4>
-<pre><span class="kw">class</span> <span class="type">Order</span> {
+<pre><span class="kw">class</span> <span class="type">Order</span> : <span class="type">AutoTable</span>() {
     <span class="kw">@DbField</span>(primaryKey = <span class="kw">true</span>) <span class="kw">var</span> id: <span class="type">Int</span> = <span class="num">0</span>
     <span class="kw">var</span> total: <span class="type">Double</span> <span class="kw">by</span> <span class="fn">db</span>(<span class="num">0.0</span>)
-    <span class="kw">var</span> customer: <span class="type">Customer</span> <span class="kw">by</span> <span class="fn">db</span>()     <span class="com">// FK → parent</span>
+    <span class="kw">var</span> customer: <span class="type">Customer</span>? <span class="kw">by</span> <span class="fn">db</span>(<span class="kw">null</span>) <span class="com">// FK → parent</span>
 }
 
-<span class="kw">val</span> order = stormify.<span class="fn">findById</span>&lt;<span class="type">Order</span>&gt;(<span class="num">1</span>)
-<span class="fn">println</span>(order.customer.name)  <span class="com">// loads on access</span></pre>
+<span class="kw">val</span> order = stormify.<span class="fn">findById</span>&lt;<span class="type">Order</span>&gt;(<span class="num">1</span>)!!
+<span class="fn">println</span>(order.customer?.name)  <span class="com">// loads on access</span></pre>
       </div>
       <div class="usage-card">
         <h4><code>by lazyDetails()</code> — child collection</h4>
-<pre><span class="kw">class</span> <span class="type">Order</span> {
+<pre><span class="kw">class</span> <span class="type">Order</span> : <span class="type">AutoTable</span>() {
     <span class="kw">@DbField</span>(primaryKey = <span class="kw">true</span>) <span class="kw">var</span> id: <span class="type">Int</span> = <span class="num">0</span>
     <span class="kw">var</span> items: <span class="type">List</span>&lt;<span class="type">OrderItem</span>&gt; <span class="kw">by</span> <span class="fn">lazyDetails</span>()
 }
 
-<span class="kw">val</span> order = stormify.<span class="fn">findById</span>&lt;<span class="type">Order</span>&gt;(<span class="num">1</span>)
+<span class="kw">val</span> order = stormify.<span class="fn">findById</span>&lt;<span class="type">Order</span>&gt;(<span class="num">1</span>)!!
 order.items.<span class="fn">forEach</span> { <span class="fn">println</span>(it.sku) }
 <span class="com">// SELECT * FROM order_item WHERE order_id = ?</span></pre>
       </div>

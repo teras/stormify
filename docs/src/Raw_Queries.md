@@ -46,6 +46,30 @@ The direct methods take a query string and bind parameters positionally:
     "DELETE FROM users WHERE age < ?".executeUpdate(18)
     ```
 
+### Rows by position
+
+`readRows` returns each row as an array of its column values, in column order. It suits
+queries whose columns share a label, such as `SELECT a.id, b.id ...`, which a
+`Map<String, Any?>` read would merge into one key. Values are converted as for a `Map`
+read, SQL `NULL` is `null`, and the query runs on the active transaction's connection
+like every other read. `readRowsCursor` streams the rows instead.
+
+=== "Kotlin"
+
+    ```kotlin
+    val rows: List<Array<Any?>> = stormify.readRows(
+        "SELECT o.id, c.id FROM orders o JOIN customers c ON c.id = o.customer_id WHERE o.total > ?", 100)
+    stormify.readRowsCursor("SELECT id, name FROM users") { row -> println("${row[0]} ${row[1]}") }
+    ```
+
+=== "Java"
+
+    ```java
+    List<Object[]> rows = stormify.readRows(
+        "SELECT o.id, c.id FROM orders o JOIN customers c ON c.id = o.customer_id WHERE o.total > ?", 100);
+    stormify.readRowsCursor("SELECT id, name FROM users", row -> System.out.println(row[0] + " " + row[1]));
+    ```
+
 ## Null Semantics
 
 `readOne` returns `null` only when **no row matches**. If a row exists but the
@@ -141,9 +165,14 @@ Parameter types:
 
 | Type | Kotlin | Java |
 |------|--------|------|
-| Input | `spIn(value)` or raw value | `Sp.In(value)` or raw value |
+| Input | `spIn(value)` or raw value | `Sp.inParam(value)` or raw value |
 | Output | `spOut<T>()` | `Sp.outParam(Type.class)` |
 | Bidirectional | `spInOut(value)` | `Sp.inOutParam(Type.class, value)` |
+
+An INOUT parameter may start as SQL `NULL`: `spInOut<Int>(null)` in Kotlin,
+`Sp.inOutParam(Integer.class, null)` in Java. The type argument still declares the
+parameter, and the `NULL` is sent with that type. An OUT or INOUT value the
+procedure leaves `NULL` reads back as `null` on every platform.
 
 ## Microsoft SQL Server NULL into VARBINARY
 

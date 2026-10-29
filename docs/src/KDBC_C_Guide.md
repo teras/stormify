@@ -527,9 +527,9 @@ Each driver uses its native cancellation primitive:
 |--------|----------------------|
 | SQLite | `sqlite3_interrupt` |
 | PostgreSQL | `PQcancel` |
-| MariaDB | `mariadb_cancel` |
+| MariaDB/MySQL | `mariadb_cancel`, or `KILL QUERY` with `libmysqlclient` |
 | Oracle | `dpiConn_breakExecution` |
-| MSSQL | `dbcancel` |
+| MSSQL | db-lib interrupt check (`dbsetinterrupt`) |
 
 !!! warning "Cancel vs Close"
     Do not call `kdbc_cancel` concurrently with `kdbc_close` on the same connection.

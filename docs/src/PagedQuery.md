@@ -18,10 +18,10 @@ instance across arbitrarily many concurrent requests.
     import onl.ycode.stormify.biglist.Facet
     import onl.ycode.stormify.biglist.PageSpec
     import onl.ycode.stormify.biglist.PagedQuery
-    import onl.ycode.stormify.biglist.SortDir
+    import onl.ycode.stormify.biglist.SortState
 
     // One-time setup (startup, DI container, etc.)
-    val customers = PagedQuery<Customer>().apply {
+    val customers = stormify.pagedQuery<Customer>().apply {
         addFacet("search", "name", "email", "city").isSortable = false   // search is filter-only
         addFacet("name", "name")                                         // filter + sort
         addFacet("city", "city")
@@ -33,7 +33,7 @@ instance across arbitrarily many concurrent requests.
         val page = customers.execute(
             PageSpec(
                 filters = mapOf("search" to req.q),
-                sorts = mapOf("name" to SortDir.ASC),
+                sorts = mapOf("name" to SortState.ASCENDING),
                 page = req.page,
                 pageSize = req.size,
             )
@@ -53,10 +53,10 @@ instance across arbitrarily many concurrent requests.
     import onl.ycode.stormify.biglist.Facet;
     import onl.ycode.stormify.biglist.PageSpec;
     import onl.ycode.stormify.biglist.PagedQuery;
-    import onl.ycode.stormify.biglist.SortDir;
+    import onl.ycode.stormify.biglist.SortState;
 
     // One-time setup (startup, DI container, etc.)
-    PagedQuery<Customer> customers = new PagedQuery<>(Customer.class);
+    PagedQuery<Customer> customers = stormify.pagedQuery(Customer.class);   // attached to this StormifyJ
     customers.addFacet("search", "name", "email", "city").setSortable(false);   // search is filter-only
     customers.addFacet("name", "name");                                          // filter + sort
     customers.addFacet("city", "city");
@@ -67,7 +67,7 @@ instance across arbitrarily many concurrent requests.
         Page<Customer> page = customers.execute(new PageSpec(
             req.page(), req.size(),
             Map.of("search", req.q()),
-            Map.of("name", SortDir.ASC)
+            Map.of("name", SortState.ASCENDING)
         ));
         return HttpResponse.json(Map.of(
             "items", page.getRows().stream().map(Customer::toDto).toList(),
@@ -80,12 +80,10 @@ instance across arbitrarily many concurrent requests.
 
 ## Stormify instance
 
-`PagedQuery` resolves its `Stormify` instance from
-[the default instance](Configuration.md#default-instance) on first access. If you
-run multiple `Stormify` instances in the same process, bind the query explicitly at
-configuration time with `stormify.attach(query)`. With neither an attached nor a
-default instance, any data access throws a `SQLException` telling you to call
-`stormify.attach(query)` or `Stormify.asDefault()` first.
+`stormify.pagedQuery<T>()` (Java: `stormify.pagedQuery(T.class)`) creates a query that
+works on that `Stormify` instance. `pagedQuery<T>()` creates one on the instance of the
+enclosing transaction, else on [the default instance](Configuration.md#default-instance),
+and fails with an `SQLException` when there is neither.
 
 ## Aliases are the whole contract
 
@@ -149,14 +147,14 @@ data class PageSpec(
     val page: Int,
     val pageSize: Int,
     val filters: Map<String, String> = emptyMap(),
-    val sorts: Map<String, SortDir> = emptyMap(),
+    val sorts: Map<String, SortState> = emptyMap(),
     val caseSensitive: Map<String, Boolean> = emptyMap(),
 ) {
     // Non-paginated overload — delegates to PageSpec(0, 15, filters, sorts, caseSensitive).
     // Use for forEachStreaming / getAggregator where pagination is ignored anyway.
     constructor(
         filters: Map<String, String> = emptyMap(),
-        sorts: Map<String, SortDir> = emptyMap(),
+        sorts: Map<String, SortState> = emptyMap(),
         caseSensitive: Map<String, Boolean> = emptyMap(),
     )
 }
@@ -176,9 +174,9 @@ matches its needs — `new PageSpec(page, pageSize, filters, …)` for paginated
 queries or `new PageSpec(filters, …)` for non-paginated use cases — without
 having to spell out the other defaults.
 
-Aliases not present in the configured facet set are silently dropped from `filters`,
-`sorts`, and `caseSensitive`. A sort whose value is neither `SortDir.ASC` nor
-`SortDir.DESC` cannot be constructed (the enum prevents it).
+A blank filter value counts as no filter. Aliases not present in the configured facet set are silently dropped from `filters`,
+`sorts`, and `caseSensitive`. A sort whose value is neither `SortState.ASCENDING` nor
+`SortState.DESCENDING` cannot be constructed (the enum prevents it).
 
 An incoming JSON request body matching the shape above can be deserialized
 into a `PageSpec` directly via `PageSpec.fromJson(String)`.
@@ -215,14 +213,14 @@ server-side and addressed by alias only:
 === "Kotlin"
 
     ```kotlin
-    query.addSqlFacet("total", "SUM(order_total)", Facet.NUMERIC)
+    query.addSqlFacet("total", "SUM(order_total)", Facet.Type.NUMERIC)
     // client filter `{"total": ">=1000"}` becomes SUM(order_total) >= 1000
     ```
 
 === "Java"
 
     ```java
-    query.addSqlFacet("total", "SUM(order_total)", Facet.NUMERIC);
+    query.addSqlFacet("total", "SUM(order_total)", Facet.Type.NUMERIC);
     // client filter `{"total": ">=1000"}` becomes SUM(order_total) >= 1000
     ```
 
@@ -329,7 +327,8 @@ counts, facet-navigation style.
     ```
 
 The `page` and `pageSize` fields of the supplied spec paginate the distinct
-values themselves.
+values themselves. A `NULL` group is counted in `total`, comes last and appears
+as the configured null token, exactly as in `PagedList`.
 
 See [PagedList · Filter Values](PagedList.md#filter-values-distinct-per-facet).
 
@@ -343,7 +342,7 @@ use its `alias` so the engine's JOIN aliasing stays opaque to your expressions.
 === "Kotlin"
 
     ```kotlin
-    val query = PagedQuery<Customer>().apply {
+    val query = stormify.pagedQuery<Customer>().apply {
         val root    = addTableRef()                       // the root entity table
         val address = addTableRef("address")              // FK-traversed
         val hq      = addTableRef(Customer_.company.hq)   // KSP typed path
@@ -351,7 +350,7 @@ use its `alias` so the engine's JOIN aliasing stays opaque to your expressions.
         addFacet("name", Customer_.name)
         addSqlFacet("sameCity",
             "CASE WHEN $address.city = $hq.city THEN 1 ELSE 0 END",
-            Facet.NUMERIC)
+            Facet.Type.NUMERIC)
         setConstraints("$root.tenant_id = ?", currentTenantId)
     }
     ```
@@ -359,7 +358,7 @@ use its `alias` so the engine's JOIN aliasing stays opaque to your expressions.
 === "Java"
 
     ```java
-    PagedQuery<Customer> query = new PagedQuery<>(Customer.class);
+    PagedQuery<Customer> query = stormify.pagedQuery(Customer.class);
     TableRef root    = query.addTableRef();                          // the root entity table
     TableRef address = query.addTableRef("address");                 // FK-traversed
     TableRef hq      = query.addTableRef(Customer_.company().hq);    // KSP typed path
@@ -368,7 +367,7 @@ use its `alias` so the engine's JOIN aliasing stays opaque to your expressions.
     query.addSqlFacet("sameCity",
         "CASE WHEN " + address.getAlias() + ".city = "
             + hq.getAlias() + ".city THEN 1 ELSE 0 END",
-        Facet.NUMERIC);
+        Facet.Type.NUMERIC);
     query.setConstraints(root.getAlias() + ".tenant_id = ?", currentTenantId);
     ```
 
@@ -423,4 +422,4 @@ views, sharing nothing but your entity classes.
 [Facet.alias]: api-stormify/stormify/onl.ycode.stormify.biglist/-facet/alias.html
 [PageSpec]: api-stormify/stormify/onl.ycode.stormify.biglist/-page-spec/index.html
 [Page]: api-stormify/stormify/onl.ycode.stormify.biglist/-page/index.html
-[PagedQuery.setConstraints]: api-stormify/stormify/onl.ycode.stormify.biglist/-abstract-paged-query/set-constraints.html
+[PagedQuery.setConstraints]: api-stormify/stormify/onl.ycode.stormify.biglist/-paged-query/set-constraints.html

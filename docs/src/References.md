@@ -182,7 +182,7 @@ the direction of traversal differs.
 
         public List<OrderItem> getItems() {
             if (items == null)
-                items = StormifyJ.getDefault().getDetails(this, OrderItem.class);
+                items = details(OrderItem.class);
             return items;
         }
         // other getters/setters omitted
@@ -249,15 +249,13 @@ overload doesn't exist and the call fails to resolve.
 
         public List<OrderItem> getItems() {
             if (items == null)
-                items = StormifyJ.getDefault().getDetails(
-                    this, OrderItem.class, Tables.OrderItem_.order());
+                items = details(OrderItem.class, Tables.OrderItem_.order());
             return items;
         }
 
         public List<OrderItem> getSplitItems() {
             if (splitItems == null)
-                splitItems = StormifyJ.getDefault().getDetails(
-                    this, OrderItem.class, Tables.OrderItem_.originalOrder());
+                splitItems = details(OrderItem.class, Tables.OrderItem_.originalOrder());
             return splitItems;
         }
     }
@@ -294,15 +292,13 @@ Stormify does the `property → column` translation internally.
 
         public List<OrderItem> getItems() {
             if (items == null)
-                items = StormifyJ.getDefault().getDetails(
-                    this, OrderItem.class, "order");
+                items = details(OrderItem.class, "order");
             return items;
         }
 
         public List<OrderItem> getSplitItems() {
             if (splitItems == null)
-                splitItems = StormifyJ.getDefault().getDetails(
-                    this, OrderItem.class, "originalOrder");
+                splitItems = details(OrderItem.class, "originalOrder");
             return splitItems;
         }
     }
@@ -396,9 +392,81 @@ The optimisation is **fully automatic** — nothing to configure, nothing to ann
 no explicit `JOIN` required. It kicks in for every code path that reads a page of
 entities in one shot and then lets your code traverse their references.
 
-If any of the requested IDs are no longer present in the database at the time of the
-batch load, the whole call fails fast with an `SQLException("No data found for <table>
-with ids [<missing>]")`. This surfaces stale references (rows deleted in another
-session between when you obtained them and when you tried to access them) immediately
-instead of silently leaving affected entities empty — a behaviour that matches the
-"fail loud" philosophy used elsewhere in the library.
+If some of the requested IDs are not in the database at the time of the batch load,
+the references that were found are loaded as usual, and only the missing ones fail:
+each access to one of them throws `SQLException("No data found ...")`, so a stale or
+dangling reference surfaces loudly without breaking its valid siblings. To have such
+references read as `null` instead, see [Dangling References](#dangling-references).
+
+### Dangling References
+
+A foreign key can point at a row that does not exist, typically in a legacy database
+without foreign key constraints. `danglingReferences` on the instance decides what such a
+reference does:
+
+- `DanglingReferences.THROW` (default): the reference is a lazy entity like any other,
+  and loading it throws `SQLException` "No data found", on every access. References to
+  existing rows loaded in the same batch are unaffected.
+- `DanglingReferences.NULL`: the reference reads as `null`, as with JPA. When a read
+  completes (a query, a `refresh`, or the lazy load of a reference), the keys its rows
+  refer to are checked with one query per referenced type, and every property that
+  points at a missing row is set to `null`. The other references stay lazy. Inside a
+  transaction the check runs on its connection, so its own rows count; outside, on a
+  connection of its own.
+  - The entity remembers the key: an INSERT or UPDATE writes it back while the property
+    is still `null`, so reading and saving an entity never turns a dangling foreign key
+    into `NULL` in the database. Setting the property through its `db` delegate, to an
+    entity or to `null`, replaces the key; the next update writes what was set. A plain
+    `var` without the delegate cannot report being set to `null`, and keeps writing the
+    remembered key.
+  - References with a composite key are not checked: they stay lazy and throw when
+    loaded, as under `THROW`.
+  - This applies to entities that extend `StormifyEntity` (and so `AutoTable`), which
+    can remember the key. A plain class keeps the reference object instead, which holds
+    the key and is written back as it is.
+  - A reference obtained some other way (a non-nullable property, a reference read while
+    the policy was `THROW`) loads as an entity with default field values instead of
+    throwing.
+  - A streaming read (`readCursor`, `forEachStreaming`) checks its rows once the
+    cursor is exhausted and hands them to the consumer after that, so the consumer sees
+    the dangling references as `null`. The rows of such a read are therefore all in
+    memory before the first one is consumed.
+
+=== "Kotlin"
+
+    ```kotlin
+    stormify.danglingReferences = DanglingReferences.NULL
+    ```
+
+=== "Java"
+
+    ```java
+    stormify.setDanglingReferences(DanglingReferences.NULL);
+    ```
+
+### Serialization
+
+On JVM and Android, entities that extend `AutoTable` (or `StormifyEntity`) are
+`java.io.Serializable`, together with the `db` and `lazyDetails` delegates that the
+Kotlin compiler stores in them. An entity can therefore be kept where the platform
+serializes objects, such as an HTTP session or an Android `Bundle`, as long as the
+values of its fields are serializable too.
+
+What is serialized is the entity's own state:
+
+- Values already loaded, including `lazyDetails` lists already read, are kept and are
+  not reloaded after deserialization.
+- A shadow reference that was never loaded stays unloaded, and loads its row on first
+  access after deserialization.
+- The `Stormify` instance and the sibling group are not serialized. A deserialized
+  entity is detached, so the loads above go through `Stormify.defaultInstance`, which
+  must be set (see [Configuration](Configuration.md)); an unloaded reference accessed
+  without one throws `SQLException`. The rows of a deserialized page no longer share a
+  group, so each reference loads alone, and a copy of the update reference kept for
+  `dynamicUpdate` is not serialized, so the first update after deserialization writes
+  every column.
+
+Native targets have no built-in object serialization; there the marker interface
+`PlatformSerializable` is empty. `PagedList` and `PagedQuery` are not serializable:
+keep the list in a transient field and rebuild it from its definition and its saved
+state (`saveState()`/`restoreState()`).

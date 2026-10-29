@@ -69,7 +69,7 @@ A complete, five-minute walkthrough from zero to your first query.
 
     ```kotlin
     plugins {
-        id("onl.ycode.stormify") version "2.6.0"
+        id("onl.ycode.stormify") version "3.0.1"
     }
     ```
 
@@ -84,7 +84,7 @@ A complete, five-minute walkthrough from zero to your first query.
     <dependency>
         <groupId>onl.ycode</groupId>
         <artifactId>stormify-jvm</artifactId>
-        <version>2.6.0</version>
+        <version>3.0.1</version>
     </dependency>
     ```
 
@@ -227,6 +227,7 @@ calls use savepoints automatically.
 - **[Schema Sync](Schema_Sync.md)** — companion CLI that reconciles a live
   database with your Kotlin entities, in TUI and headless modes.
 - **[Examples](Examples.md)** — runnable sample projects across every platform.
+- **[Upgrading from 2.x](https://github.com/teras/stormify/blob/main/CHANGELOG.md#migration-from-260)**: the changes of 3.0.1 that can affect existing code.
 - **[Migrating from v1 to v2](Migration_V1_to_V2.md)** — upgrading from Stormify 1.x.
 
 Stormify is licensed under the [Apache License 2.0](https://www.apache.org/licenses/LICENSE-2.0).

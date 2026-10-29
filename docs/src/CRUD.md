@@ -29,15 +29,16 @@ Stormify supports three styles for Create / Read / Update / Delete on entities. 
 
 === "CRUDTable (Java-friendly)"
 
-    Implement the `CRUDTable` marker interface on an entity to expose
+    Implement `CRUDTable<T>`, with the entity class itself as `T`, to expose
     `create()`, `update()`, `delete()` as **instance methods** on the entity
-    itself. This is the idiomatic choice from Java where Kotlin extension
+    itself; `create()` and `update()` return the entity, as `stormify.create(user)`
+    does. This is the idiomatic choice from Java where Kotlin extension
     functions are not available.
 
     === "Java"
 
         ```java
-        public class User implements CRUDTable {
+        public class User implements CRUDTable<User> {
             @DbField(primaryKey = true) private int id;
             private String name;
             // Getters, setters...
@@ -48,7 +49,7 @@ Stormify supports three styles for Create / Read / Update / Delete on entities. 
 
         User u = new User();
         u.setName("Alice");
-        u.create();      // INSERT
+        u = u.create();  // INSERT, returns the entity with its generated key
         u.setName("Bob");
         u.update();      // UPDATE
         u.delete();      // DELETE
@@ -57,12 +58,11 @@ Stormify supports three styles for Create / Read / Update / Delete on entities. 
     === "Kotlin"
 
         ```kotlin
-        class User(var id: Int = 0, var name: String = "") : CRUDTable
+        class User(var id: Int = 0, var name: String = "") : CRUDTable<User>
 
         stormify.asDefault()
 
-        val u = User(name = "Alice")
-        u.create()
+        val u = User(name = "Alice").create()
         u.name = "Bob"
         u.update()
         u.delete()
@@ -131,3 +131,53 @@ Pass a collection to `create`, `update`, or `delete` to operate on many entities
     back to the entity **only if a single item** is inserted. For batch inserts, use
     database sequences (`primarySequence`) instead of auto-increment to ensure keys are
     assigned before insertion.
+
+## Updating Only Changed Columns
+
+By default `update` writes every updatable column of the entity. Set
+`dynamicUpdate` on the instance to write only the columns that changed since the
+entity was loaded:
+
+=== "Kotlin"
+
+    ```kotlin
+    stormify.dynamicUpdate = true
+
+    val user = stormify.findById<User>(42)!!
+    user.email = "new@example.com"
+    stormify.update(user)          // UPDATE users SET email = ? WHERE id = ?
+    stormify.update(user)          // nothing changed since the last update: no statement
+    ```
+
+=== "Java"
+
+    ```java
+    stormify.setDynamicUpdate(true);
+
+    User user = stormify.findById(User.class, 42);
+    user.setEmail("new@example.com");
+    stormify.update(user);         // UPDATE users SET email = ? WHERE id = ?
+    ```
+
+- **Which entities.** Only entities that extend `StormifyEntity` (and so `AutoTable`)
+  keep the loaded values. Other entities, and entities that were never loaded while
+  `dynamicUpdate` was on, get the full `UPDATE`. After an update the written values
+  become the reference for the next one.
+- **Batches.** A batch `update` groups the entities by the set of changed columns and
+  runs one batched statement per group, on one connection.
+- **Mutable values.** The loaded values are copied, so a value changed in place
+  (a byte array, or a `java.util.Date` through `setTime`) counts as a change.
+- **Cost.** Each loaded entity keeps a second copy of its column values.
+- **Transactions.** Inside `transaction { }` the written values become the reference
+  only on commit. When the transaction, or the savepoint of a nested one, rolls back,
+  the entities it updated lose their reference and their next update writes every
+  column, also when `dynamicUpdate` was switched on inside the transaction. On a
+  connection whose transaction is managed outside Stormify, the reference is not
+  replaced, since the statement may still be rolled back there; the next update writes
+  the changed columns again.
+- **Primary key.** An entity whose primary key changed gets the full `UPDATE`.
+- **Partial reads.** The reference is taken from the object as loaded, not from the
+  row. A field that the `SELECT` did not read keeps its default value, and as long as
+  it still equals that default it is not written.
+- **No statement, no check.** An entity with no changed column issues no statement,
+  so nothing checks that its row still exists.

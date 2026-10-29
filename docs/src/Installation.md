@@ -18,7 +18,7 @@ processor, the runtime dependency, and the generated sources.
 
 ```kotlin
 plugins {
-    id("onl.ycode.stormify") version "2.6.0"
+    id("onl.ycode.stormify") version "3.0.1"
 }
 ```
 
@@ -69,12 +69,30 @@ val stormify = Stormify(dataSource)
 <dependency>
     <groupId>onl.ycode</groupId>
     <artifactId>stormify-jvm</artifactId>
-    <version>2.6.0</version>
+    <version>3.0.1</version>
 </dependency>
 ```
 
 Maven projects rely on `kotlin-reflect` for runtime entity discovery. Native,
 Android, and iOS targets require the Gradle plugin above.
+
+### Java 8
+
+The JVM artifacts are Java 8 bytecode and depend on no Java EE API, so they run on
+Java 8 and on Java EE 7 application servers. Three things to check on such projects:
+
+- **Kotlin runtime version.** Stormify needs `kotlin-stdlib` and `kotlin-reflect`
+  of the Kotlin version it was built with (see Requirements) or later. Maven picks
+  the nearest declaration, so an older Kotlin dependency declared directly in your
+  POM wins over the one Stormify brings and fails at runtime with
+  `NoSuchMethodError`. Declare both artifacts at the required version.
+- **JDBC driver.** Stormify reads columns with `ResultSet.getObject(int, Class)`
+  and binds `java.time` values, which need a JDBC 4.2 driver (for Oracle,
+  `ojdbc8` or later). An older driver on the server classpath fails with
+  `AbstractMethodError`.
+- **Examples.** The Java examples in this documentation use `List.of` and
+  `Map.of`, which appear in Java 9. On Java 8 use `Arrays.asList`,
+  `Collections.singletonMap`, or a `HashMap` instead.
 
 ## Supported native databases
 
@@ -181,7 +199,7 @@ The MariaDB Connector/C client library works with both MariaDB and MySQL servers
 ### MS SQL Server / Sybase ASE (via FreeTDS)
 
 FreeTDS implements the TDS protocol used by both Microsoft SQL Server and SAP
-(formerly Sybase) Adaptive Server Enterprise — the same `kdbc-freetds` driver
+(formerly Sybase) Adaptive Server Enterprise — the same FreeTDS driver of kdbc
 connects to either.
 
 === "Linux"

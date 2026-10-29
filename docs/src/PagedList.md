@@ -24,11 +24,9 @@ behind the scenes.
 
 ## Quick Start
 
-Construction takes only the entity type. The [Stormify] instance is resolved from
-[the default instance](Configuration.md#default-instance) on first access, so
-the same class works identically from Kotlin and Java. If you are juggling multiple
-`Stormify` instances in the same process, use `stormify.attach(...)` at construction
-time to bind the list to a specific one.
+`stormify.pagedList<T>()` (Java: `stormify.pagedList(T.class)`) creates a list that works
+on that `Stormify` instance. `pagedList<T>()` creates one on the instance of the enclosing
+transaction, else on [the default instance](Configuration.md#default-instance).
 
 === "Kotlin"
 
@@ -37,16 +35,15 @@ time to bind the list to a specific one.
     import onl.ycode.stormify.biglist.PagedList
     import onl.ycode.stormify.generated.Tables.Company_   // KSP-generated typed paths
 
-    val list = PagedList<Company>()
-    // val list = stormify.attach(PagedList<Company>())    // when not using a default instance
+    val list = stormify.pagedList<Company>()
 
     list.addFacet(Company_.name)                                 // auto-detect TEXT
     list.addFacet(Company_.contactPerson.firstName,              // OR across FK-traversed fields
                    Company_.contactPerson.lastName)
-    list.addSqlFacet("SUM(order_total)", Facet.NUMERIC)
+    list.addSqlFacet("SUM(order_total)", Facet.Type.NUMERIC)
 
     list.getFacet(0).filter = "Acme"
-    list.getFacet(1).sort = Facet.ASCENDING
+    list.getFacet(1).sort = SortState.ASCENDING
 
     // Consume as a normal List
     val firstCompany = list[0]                                    // triggers page load
@@ -61,16 +58,15 @@ time to bind the list to a specific one.
     import onl.ycode.stormify.biglist.PagedList;
     import static onl.ycode.stormify.generated.Tables.Company_;   // KSP-generated typed paths
 
-    PagedList<Company> list = new PagedList<>(Company.class);
-    // PagedList<Company> list = stormify.attach(new PagedList<>(Company.class));  // when not using a default instance
+    PagedList<Company> list = stormify.pagedList(Company.class);   // attached to this StormifyJ
 
     list.addFacet(Company_.name);                                 // auto-detect TEXT
     list.addFacet(Company_.contactPerson().firstName,             // OR across FK-traversed fields
                    Company_.contactPerson().lastName);
-    list.addSqlFacet("SUM(order_total)", Facet.NUMERIC);
+    list.addSqlFacet("SUM(order_total)", Facet.Type.NUMERIC);
 
     list.getFacet(0).setFilter("Acme");
-    list.getFacet(1).setSort(Facet.ASCENDING);
+    list.getFacet(1).setSort(SortState.ASCENDING);
 
     // Consume as a normal List
     Company firstCompany = list.get(0);                            // triggers page load
@@ -102,7 +98,7 @@ A facet is the unit of filtering and sorting. It can be backed by:
     - `addFacet(Order_.notes, Order_.customer.name)` → scalar field + FK path
     - `addFacet(Order_.customer.name, Order_.shippingAddress.city)` → two FK paths
 - **A raw SQL expression** — for calculated facets
-    - `addSqlFacet("SUM(total)", Facet.NUMERIC)`
+    - `addSqlFacet("SUM(total)", Facet.Type.NUMERIC)`
 
 Filters between different facets use AND semantics; multiple paths within the same
 facet use OR.
@@ -110,10 +106,10 @@ facet use OR.
 === "Kotlin"
 
     ```kotlin
-    val list = PagedList<Order>()
+    val list = stormify.pagedList<Order>()
     val nameFacet   = list.addFacet(Order_.customer.name)       // FK traversal
     val statusFacet = list.addFacet(Order_.status)              // scalar
-    val rawFacet    = list.addSqlFacet("total * tax_rate", Facet.NUMERIC)
+    val rawFacet    = list.addSqlFacet("total * tax_rate", Facet.Type.NUMERIC)
 
     nameFacet.filter = "Acme"
     statusFacet.filter = "ACTIVE"
@@ -123,10 +119,10 @@ facet use OR.
 === "Java"
 
     ```java
-    PagedList<Order> list = new PagedList<>(Order.class);
+    PagedList<Order> list = stormify.pagedList(Order.class);
     Facet nameFacet   = list.addFacet(Order_.customer().name);   // FK traversal
     Facet statusFacet = list.addFacet(Order_.status);            // scalar
-    Facet rawFacet    = list.addSqlFacet("total * tax_rate", Facet.NUMERIC);
+    Facet rawFacet    = list.addSqlFacet("total * tax_rate", Facet.Type.NUMERIC);
 
     nameFacet.setFilter("Acme");
     statusFacet.setFilter("ACTIVE");
@@ -136,13 +132,78 @@ facet use OR.
 String paths with dot notation work too (`addFacet("customer.name")`) — useful for
 cross-cutting code where a field is chosen at runtime. Mix both styles freely.
 
+### Fluent declaration
+
+Every setup call also has a chainable form that returns the list itself, so a whole
+list can be declared in one expression. The fluent calls configure the list exactly
+like their counterparts: `facet(...)` is `addFacet(...)`, `distinct()` sets
+`isDistinct`, and `constraints(...)` is `setConstraints(...)`.
+
+| Fluent call | Equivalent |
+|---|---|
+| `facet(paths...)` | `addFacet(paths...)`, one facet, OR across the paths |
+| `facet(type, paths...)` | `addFacet(type, paths...)` |
+| `facet(enumValues, paths...)` | `addFacet(enumValues, paths...)` |
+| `sort(path, direction)` | `sort = direction` on the facet that covers `path` |
+| `distinct()` | `isDistinct = true` |
+| `keySort(direction)` | `keySort = direction` |
+| `constraints(sql, args...)` | `setConstraints(sql, args...)` |
+
+`sort` sets the direction on the facet that has `path` among its paths and makes
+`path` the facet's sort path, so a facet with several paths sorts by the requested
+one. The facet must exist: sorting by a path that no facet covers throws
+`IllegalArgumentException`. SQL facets and converters have no fluent form; use
+`addSqlFacet`, or `addFacet(...)` and set `converter` on the returned facet.
+
+=== "Kotlin"
+
+    ```kotlin
+    val list = stormify.pagedList<Order>()
+        .facet(Order_.number)
+        .facet(Order_.customer.firstName, Order_.customer.lastName)   // OR
+        .facet(mapOf("Open" to 1, "Closed" to 2), Order_.state)       // ENUM over a plain column
+        .facet(Order_.createdAt)
+        .sort(Order_.createdAt, SortState.DESCENDING)
+        .constraints("orders.region_id = ?", regionId)
+    ```
+
+=== "Java"
+
+    ```java
+    PagedList<Order> list = stormify.pagedList(Order.class)
+            .facet(Order_.number)
+            .facet(Order_.customer().firstName, Order_.customer().lastName)   // OR
+            .facet(states, Order_.state)                                      // ENUM over a plain column
+            .facet(Order_.createdAt)
+            .sort(Order_.createdAt, SortState.DESCENDING)
+            .constraints("orders.region_id = ?", regionId);
+    ```
+
+### Finding a facet by path
+
+`facetByPath(path)` returns the facet that has `path` among its field paths, or
+`null`. A facet with several paths is found by any of them. This lets UI code that
+knows only the column path (for example a grid header bound to `customer.lastName`)
+reach the facet without keeping the facet objects or the creation order around. When
+the same path appears in more than one facet, the first one added is returned.
+
+```kotlin
+list.facetByPath(Order_.customer.lastName)?.filter = "Smith"
+list.sort("customer.lastName", SortState.ASCENDING)   // not facet.sort: see below
+```
+
+A facet with several paths filters on all of them but sorts on one, its `sortPath`:
+the first path unless set otherwise. `list.sort(path, direction)` sets `sortPath` to
+the given path, so it sorts by that path even inside a multi-path facet. Setting
+`facet.sort` directly keeps the facet's current `sortPath`.
+
 ## Facet Types and Filter Syntax
 
 Each facet has a `Facet.Type` that controls how the filter string is parsed. The type
 is auto-detected from the field's Kotlin type, or you can set it explicitly via the
 two-argument `addFacet(type, ...)` overload.
 
-### Text (`Facet.TEXT`)
+### Text (`Facet.Type.TEXT`)
 
 Case-insensitive by default. Supports Google-like boolean search syntax with
 wildcards:
@@ -184,6 +245,15 @@ The `NULL` token matches rows where the column is SQL `NULL`:
 
 NULL works across all facet types (TEXT, NUMERIC, DATE, TIME, TIMESTAMP, ENUM).
 
+A negated term follows SQL semantics, so it also excludes rows where the column is
+`NULL`: `-foo` renders as `NOT (col LIKE ?)`, which is not true for a `NULL` column.
+To keep those rows, add the `NULL` token explicitly:
+
+| Filter value       | Meaning |
+|-------------------|---------|
+| `-foo`             | does not contain "foo", and is not null |
+| `-foo OR NULL`     | does not contain "foo", or is null |
+
 #### Configurable tokens
 
 All syntactic tokens can be overridden via `FilterSyntax`:
@@ -216,9 +286,55 @@ instance:
     )
     ```
 
+=== "Java"
+
+    ```java
+    // FilterSyntax(or, not, nullToken, phraseDelimiter, groupOpen, groupClose, wildcard)
+    stormify.setFilterSyntax(new FilterSyntax("|", "!", "--", '"', '(', ')', '*'));
+    ```
+
 Set `facet.isCaseSensitive = true` for a case-sensitive facet.
 
-### Numeric (`Facet.NUMERIC`)
+#### Text folding
+
+Case-insensitive matching goes through the instance's `TextFolding`, which folds the
+column on the database side and the typed text on the client side. The default,
+`TextFolding.DEFAULT`, is `LOWER(column) LIKE ?` with a lowercased value, `ILIKE` on
+PostgreSQL, and the plain `LIKE` on MySQL, MariaDB and SQL Server, whose collations
+already ignore case. Enum facets use the same folding to match display names.
+
+Replace it to also ignore accents or other differences. Both sides must fold the same
+text to the same result, otherwise rows are missed. Case-sensitive facets do not fold.
+
+=== "Kotlin"
+
+    ```kotlin
+    stormify.textFolding = object : TextFolding {
+        override fun column(columnExpr: String, dialect: SqlDialect) =
+            "TRANSLATE(UPPER($columnExpr), 'ÀÁÂÄ', 'AAAA')"
+        override fun value(text: String) =
+            text.uppercase().map { if (it in "ÀÁÂÄ") 'A' else it }.joinToString("")
+    }
+    ```
+
+=== "Java"
+
+    ```java
+    stormify.setTextFolding(new TextFolding() {
+        @Override public String column(String columnExpr, SqlDialect dialect) {
+            return "TRANSLATE(UPPER(" + columnExpr + "), 'ÀÁÂÄ', 'AAAA')";
+        }
+        @Override public String value(String text) {
+            return text.toUpperCase(Locale.ROOT).replaceAll("[ÀÁÂÄ]", "A");
+        }
+    });
+    ```
+
+Two more methods have defaults and rarely need overriding: `likeValue`, the text
+bound to the `LIKE` (default `value`), and `likeOperator` (default `LIKE`). SQLite's `UPPER` and `LOWER` only fold ASCII letters, so a
+folding that relies on them matches only ASCII text there.
+
+### Numeric (`Facet.Type.NUMERIC`)
 
 | Filter value  | Meaning |
 |--------------|---------|
@@ -229,15 +345,15 @@ Set `facet.isCaseSensitive = true` for a case-sensitive facet.
 | `<= 100`      | Less than or equal |
 | `10 ... 20`   | Range (inclusive) |
 
-### Temporal (`Facet.DATE`, `Facet.TIME`, `Facet.TIMESTAMP`)
+### Temporal (`Facet.Type.DATE`, `Facet.Type.TIME`, `Facet.Type.TIMESTAMP`)
 
 Three separate buckets cover the common wall-clock types:
 
 | Bucket            | Kotlin types                                                      | Dialect cast (raw facets)                                                                                                  |
 | ----------------- | ----------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
-| `Facet.DATE`      | `LocalDate`, `java.sql.Date`                                      | `TO_DATE(?, 'YYYY-MM-DD')` on Oracle; `CAST(? AS DATE)` elsewhere                                                          |
-| `Facet.TIME`      | `LocalTime`, `java.sql.Time`                                      | `TO_TIMESTAMP(?, 'HH24:MI:SS')` on Oracle (no native TIME); `CAST(? AS TIME)` elsewhere                                    |
-| `Facet.TIMESTAMP` | `LocalDateTime`, `Instant`, `OffsetDateTime`, `ZonedDateTime`, `Timestamp` | `CAST(? AS DATETIME)` on MySQL/MariaDB; `CAST(? AS DATETIME2)` on MSSQL; `TO_TIMESTAMP(...)` on Oracle; `CAST(? AS TIMESTAMP)` elsewhere |
+| `Facet.Type.DATE`      | `LocalDate`, `java.sql.Date`                                      | `TO_DATE(?, 'YYYY-MM-DD')` on Oracle; `CAST(? AS DATE)` elsewhere                                                          |
+| `Facet.Type.TIME`      | `LocalTime`, `java.sql.Time`                                      | `TO_TIMESTAMP(?, 'HH24:MI:SS')` on Oracle (no native TIME); `CAST(? AS TIME)` elsewhere                                    |
+| `Facet.Type.TIMESTAMP` | `LocalDateTime`, `Instant`, `OffsetDateTime`, `ZonedDateTime`, `Timestamp` | `CAST(? AS DATETIME)` on MySQL/MariaDB; `CAST(? AS DATETIME2)` on MSSQL; `TO_TIMESTAMP(...)` on Oracle; `CAST(? AS TIMESTAMP)` elsewhere |
 
 All three support the same comparison and range syntax as `NUMERIC`. Values are parsed via
 the active [input parser](#input-parsing-and-locale), which runs after the operator/range
@@ -249,20 +365,20 @@ caller picks the bucket explicitly:
 === "Kotlin"
 
     ```kotlin
-    list.addSqlFacet("event.event_ts", Facet.TIMESTAMP)
-    list.addSqlFacet("event.event_tm", Facet.TIME)
-    list.addSqlFacet("event.event_date", Facet.DATE)
+    list.addSqlFacet("event.event_ts", Facet.Type.TIMESTAMP)
+    list.addSqlFacet("event.event_tm", Facet.Type.TIME)
+    list.addSqlFacet("event.event_date", Facet.Type.DATE)
     ```
 
 === "Java"
 
     ```java
-    list.addSqlFacet("event.event_ts", Facet.TIMESTAMP);
-    list.addSqlFacet("event.event_tm", Facet.TIME);
-    list.addSqlFacet("event.event_date", Facet.DATE);
+    list.addSqlFacet("event.event_ts", Facet.Type.TIMESTAMP);
+    list.addSqlFacet("event.event_tm", Facet.Type.TIME);
+    list.addSqlFacet("event.event_date", Facet.Type.DATE);
     ```
 
-### Enum (`Facet.ENUM`)
+### Enum (`Facet.Type.ENUM`)
 
 For enum-backed fields. Auto-detected when the field's Kotlin type is an enum. The filter
 string is matched (case-insensitively, as a substring) against the enum's display names.
@@ -277,7 +393,7 @@ applied as set operations over the resolved enum values.
     ```kotlin
     enum class Status { ACTIVE, INACTIVE, BANNED }
 
-    val list = PagedList<User>()
+    val list = stormify.pagedList<User>()
     list.addFacet(User_.status)            // auto-detects as ENUM
     list.getFacet(0).filter = "active"     // matches ACTIVE and INACTIVE
     ```
@@ -287,7 +403,7 @@ applied as set operations over the resolved enum values.
     ```java
     public enum Status { ACTIVE, INACTIVE, BANNED }
 
-    PagedList<User> list = new PagedList<>(User.class);
+    PagedList<User> list = stormify.pagedList(User.class);
     list.addFacet(User_.status);
     list.getFacet(0).setFilter("active");
     ```
@@ -314,29 +430,43 @@ name, resolved to the enum-facet overload via the first-argument type:
 
 ## Sorting
 
-Set `facet.sort` to `Facet.ASCENDING` or `Facet.DESCENDING`. Any number of facets can
-be active sorts at once; the list sorts by them in the order they were defined:
+Set `facet.sort` to `SortState.ASCENDING` or `SortState.DESCENDING`. Any number of facets can
+be active sorts at once; the list sorts by them in the order their sort was set:
 
 === "Kotlin"
 
     ```kotlin
-    list.getFacet(0).sort = Facet.ASCENDING    // primary
-    list.getFacet(1).sort = Facet.DESCENDING   // secondary
+    list.getFacet(0).sort = SortState.ASCENDING    // primary
+    list.getFacet(1).sort = SortState.DESCENDING   // secondary
     ```
 
 === "Java"
 
     ```java
-    list.getFacet(0).setSort(Facet.ASCENDING);
-    list.getFacet(1).setSort(Facet.DESCENDING);
+    list.getFacet(0).setSort(SortState.ASCENDING);
+    list.getFacet(1).setSort(SortState.DESCENDING);
     ```
 
 `facet.clearSort()` deactivates the sort for a single facet; `list.reset()` clears
 all filters and sorts at once (but keeps constraints — see below).
 
-If no facet has an active sort, rows are ordered by the entity's primary key. This
-requires a single-column PK; for composite keys you must explicitly set a sort on at
-least one facet, otherwise the list throws `IllegalStateException`.
+When several facets sort, the `ORDER BY` lists them in the order their sort was set,
+whether through `sort(path, direction)` or `facet.sort`, so the facet sorted last
+breaks the ties of the ones sorted before it; changing the direction of a sorted facet
+keeps its position, clearing and sorting it again puts it last. A saved state keeps
+this order. On a `PagedQuery` the order is the order of the sorts in the `PageSpec`.
+
+If no facet has an active sort, rows are ordered by the entity's primary key (every
+column of it, for a composite key). When facets do sort, the primary key columns are
+still appended after them as a tie-breaker, so rows with equal sort values keep one
+fixed order and paging never repeats or skips a row. Only an entity without any
+primary key requires an explicit sort; otherwise the list throws
+`IllegalStateException`.
+
+The direction of the key is set by `keySort` (default `SortState.ASCENDING`), on both
+`PagedList` and `PagedQuery`. It applies to the key order when nothing is sorted and
+to the tie-breaker after the facet sorts. Like the facets, it is structural and is not
+part of the saved state.
 
 ## Constraints
 
@@ -362,7 +492,7 @@ cleared by `list.reset()` — they're considered part of the list's fundamental 
 
 Set `list.isDistinct = true` to make the underlying query use `SELECT DISTINCT`. This is
 useful when JOINs cause row duplication. Note that `DISTINCT` affects both `size` (which
-becomes `COUNT(DISTINCT ...)`) and page queries. Aggregations are **not** affected —
+becomes a `COUNT(*)` over the `SELECT DISTINCT`) and page queries. Aggregations are **not** affected —
 `getAggregator()` ignores the flag.
 
 ## Pagination and Caching
@@ -456,6 +586,12 @@ would actually return results under the current filter state.
     distinctStatuses.forEach(System.out::println);
     ```
 
+When the column holds SQL `NULL`, the `NULL` group is one more value: it is always
+the last one, whatever the database's own `NULL` ordering, and it appears as the
+configured null token (`FilterSyntax.nullToken`, default `"NULL"`). Setting that
+value back as the facet's filter selects the `NULL` rows. The same holds for
+`withCounts()` below.
+
 `FilterValues` stays in sync with the parent list — any change to filters or
 constraints is reflected on the next access. For serialization purposes, its
 `toString()` emits a JSON array of the values (`["a","b","c"]`).
@@ -488,6 +624,38 @@ Repeated calls to `withCounts()` on the same `FilterValues` return the same inst
 so you can share it across multiple reads without re-querying. For serialization
 purposes, its `toString()` emits a JSON array of `{"value":"X","count":N}` objects.
 
+### Raw Values (`getFilterRawValues`)
+
+`FilterValues` gives text. When the UI formats the values itself (amounts, dates,
+codes shown through a label map), call `facet.getFilterRawValues()` instead. It returns
+a `FilterRawValues`, a lazy paginated `List<Any?>` with the same filtering and paging,
+whose elements are the values as they come from the database:
+
+- **All paths of the facet.** A facet with several paths lists the values of every
+  path, each distinct value once (SQL `UNION`).
+- **`NULL` included.** SQL `NULL`, when present, is a single `null` element, always last.
+- **Typed.** The values are converted to the field type of the facet's paths: an
+  `Int` field gives `Int`, an enum field gives enum constants. All paths of the facet
+  must have the same field type, since most databases cannot combine text and
+  numbers in one `UNION`; otherwise `getFilterRawValues()` throws. For SQL facets the
+  values are what the driver returns, which can differ per platform.
+- **Stored values.** An enum facet with a display-name map gives the stored values,
+  not the display names.
+
+=== "Kotlin"
+
+    ```kotlin
+    val owner = list.addFacet(Order_.customer.name, Order_.agent.name)
+    val names: List<Any?> = owner.getFilterRawValues()      // customer and agent names, null last
+    ```
+
+=== "Java"
+
+    ```java
+    Facet owner = list.addFacet(Order_.customer().name, Order_.agent().name);
+    FilterRawValues names = owner.getFilterRawValues();      // customer and agent names, null last
+    ```
+
 ## Input Parsing and Locale
 
 Raw user input (e.g., from a text field) often uses locale-specific formats —
@@ -501,19 +669,19 @@ Resolution order: **facet → list → Stormify instance → identity (no transf
 
     ```kotlin
     // Stormify instance — applies to all PagedList instances that use it
-    stormify.inputParser = { input, type ->
+    stormify.inputParser = InputParser { input, type ->
         when (type) {
-            Facet.NUMERIC -> input.replace(".", "").replace(",", ".")
-            Facet.DATE, Facet.TIMESTAMP -> flipDayMonthYear(input)
+            Facet.Type.NUMERIC -> input.replace(".", "").replace(",", ".")
+            Facet.Type.DATE, Facet.Type.TIMESTAMP -> flipDayMonthYear(input)
             else -> input
         }
     }
 
     // Per-list override
-    myList.inputParser = { input, type -> /* ... */ }
+    myList.inputParser = InputParser { input, type -> /* ... */ }
 
     // Per-facet override
-    myList.getFacet(0).inputParser = { input, type -> /* ... */ }
+    myList.getFacet(0).inputParser = InputParser { input, type -> /* ... */ }
     ```
 
 === "Java"
@@ -521,8 +689,8 @@ Resolution order: **facet → list → Stormify instance → identity (no transf
     ```java
     // Stormify instance — applies to all PagedList instances that use it
     stormify.setInputParser((input, type) -> {
-        if (type == Facet.NUMERIC) return input.replace(".", "").replace(",", ".");
-        if (type == Facet.DATE || type == Facet.TIMESTAMP) return flipDayMonthYear(input);
+        if (type == Facet.Type.NUMERIC) return input.replace(".", "").replace(",", ".");
+        if (type == Facet.Type.DATE || type == Facet.Type.TIMESTAMP) return flipDayMonthYear(input);
         return input;
     });
 
@@ -551,16 +719,16 @@ clause based on the type (`LIKE ?` for `TEXT`, `= ?` / `BETWEEN ? AND ?` for
 
     ```kotlin
     list.addSqlFacet("firstName || ' ' || lastName")              // default TEXT → LIKE
-    list.addSqlFacet("SUM(total)", Facet.NUMERIC)                // numeric → = or BETWEEN
-    list.addSqlFacet("YEAR(created_at)", Facet.NUMERIC)
+    list.addSqlFacet("SUM(total)", Facet.Type.NUMERIC)                // numeric → = or BETWEEN
+    list.addSqlFacet("YEAR(created_at)", Facet.Type.NUMERIC)
     ```
 
 === "Java"
 
     ```java
     list.addSqlFacet("firstName || ' ' || lastName");             // default TEXT → LIKE
-    list.addSqlFacet("SUM(total)", Facet.NUMERIC);               // numeric → = or BETWEEN
-    list.addSqlFacet("YEAR(created_at)", Facet.NUMERIC);
+    list.addSqlFacet("SUM(total)", Facet.Type.NUMERIC);               // numeric → = or BETWEEN
+    list.addSqlFacet("YEAR(created_at)", Facet.Type.NUMERIC);
     ```
 
 This covers the majority of raw-SQL-facet needs.
@@ -582,8 +750,8 @@ Use it when you need to:
 === "Kotlin"
 
     ```kotlin
-    val col = list.addSqlFacet("users.id", Facet.NUMERIC)
-    col.converter = { columnRef, filterValue, _, args ->
+    val col = list.addSqlFacet("users.id", Facet.Type.NUMERIC)
+    col.converter = Converter { columnRef, filterValue, _, args ->
         val n = filterValue.toIntOrNull() ?: 0
         args.add(n)
         "$columnRef % ? = 0"    // rows whose id is divisible by n
@@ -594,7 +762,7 @@ Use it when you need to:
 === "Java"
 
     ```java
-    Facet col = list.addSqlFacet("users.id", Facet.NUMERIC);
+    Facet col = list.addSqlFacet("users.id", Facet.Type.NUMERIC);
     col.setConverter((columnRef, filterValue, parser, args) -> {
         int n = Integer.parseInt(filterValue);
         args.add(n);
@@ -630,7 +798,7 @@ them, register a [`TableRef`][TableRef] with `addTableRef(...)` and use its
 === "Kotlin"
 
     ```kotlin
-    val list = PagedList<Customer>()
+    val list = stormify.pagedList<Customer>()
     val root    = list.addTableRef()                       // the root entity table
     val address = list.addTableRef("address")              // FK-traversed
     val hq      = list.addTableRef(Customer_.company.hq)   // KSP typed path
@@ -638,14 +806,14 @@ them, register a [`TableRef`][TableRef] with `addTableRef(...)` and use its
     list.addFacet(Customer_.name)
     list.addSqlFacet(
         "CASE WHEN $address.city = $hq.city THEN 1 ELSE 0 END",
-        Facet.NUMERIC)
+        Facet.Type.NUMERIC)
     list.setConstraints("$root.tenant_id = ?", currentTenantId)
     ```
 
 === "Java"
 
     ```java
-    PagedList<Customer> list = new PagedList<>(Customer.class);
+    PagedList<Customer> list = stormify.pagedList(Customer.class);
     TableRef root    = list.addTableRef();                          // the root entity table
     TableRef address = list.addTableRef("address");                 // FK-traversed
     TableRef hq      = list.addTableRef(Customer_.company().hq);    // KSP typed path
@@ -654,7 +822,7 @@ them, register a [`TableRef`][TableRef] with `addTableRef(...)` and use its
     list.addSqlFacet(
         "CASE WHEN " + address.getAlias() + ".city = "
             + hq.getAlias() + ".city THEN 1 ELSE 0 END",
-        Facet.NUMERIC);
+        Facet.Type.NUMERIC);
     list.setConstraints(root.getAlias() + ".tenant_id = ?", currentTenantId);
     ```
 
@@ -698,6 +866,10 @@ provide localized display names:
 When the enum facet auto-builds its display-name-to-DB-value map, it uses
 `displayName` instead of `name`. This is also what `FilterValues` returns for enum
 facets — so your dropdown shows the localized labels instead of `ACTIVE`/`INACTIVE`/`BANNED`.
+Any enum facet, auto-built or given an explicit map, shows the map's display name for
+every stored value it knows; a stored value missing from the map is shown as is. The
+values keep the order of the stored values, which for an ordinal or `DbValue` column
+is the enum's declaration order.
 
 ## Refreshing After External Changes
 
@@ -905,7 +1077,7 @@ case-sensitivity flags, the page size, and the distinct flag into a plain
     viewModel.savedListState = state
 
     // When coming back
-    val list = PagedList<Company>()
+    val list = stormify.pagedList<Company>()
     list.addFacet(Company_.name)
     list.addFacet(Company_.revenue)
     viewModel.savedListState?.let { list.restoreState(it) }
@@ -919,7 +1091,7 @@ case-sensitivity flags, the page size, and the distinct flag into a plain
     viewModel.savedListState = state;
 
     // When coming back
-    PagedList<Company> list = new PagedList<>(Company.class);
+    PagedList<Company> list = stormify.pagedList(Company.class);
     list.addFacet(Company_.name);
     list.addFacet(Company_.revenue);
     if (viewModel.savedListState != null)

@@ -1,5 +1,7 @@
 site_name: !ENV [STORMIFY_VERSION_NAME, 'Stormify']
 repo_url: https://github.com/teras/stormify
+# Base of the page URLs in the sitemap and the canonical links; publishDocs adds the version
+site_url: https://stormify.org/docs/
 docs_dir: src
 site_dir: build/docs
 

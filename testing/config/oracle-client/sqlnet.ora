@@ -1,0 +1,3 @@
+# The docker port proxy drops TCP urgent data, so the out-of-band break of a cancel
+# never reaches the server: send the break in band
+DISABLE_OOB=ON

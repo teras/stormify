@@ -46,7 +46,7 @@ By setting up custom primary key resolvers, Stormify can accurately identify pri
 
 ## Handling Auto-Increment Fields
 
-Stormify can manage auto-increment fields automatically by leveraging database sequences or letting the database handle the generation of primary key values. You can specify this behavior using the `@DbField` annotation's `primaryKey` and `primarySequence` attributes.
+Stormify can manage auto-increment fields automatically by leveraging database sequences or letting the database handle the generation of primary key values. You can specify this behavior using the `@DbField` annotation's `primaryKey`, `primarySequence` and `autoIncrement` attributes (or JPA's `@GeneratedValue(strategy = GenerationType.IDENTITY)`).
 
 ### Using Sequences
 

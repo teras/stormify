@@ -27,7 +27,7 @@ ensuring consistency across your database schema. By default, the naming policy 
     stormify.setNamingPolicy(NamingPolicy.CAMEL_CASE);
     ```
 
-### NamingPolicy Enum Options
+### NamingPolicy Presets
 
 1. **CAMEL_CASE**
     - Database columns use the same name as Kotlin/Java fields, preserving camel case.

@@ -107,7 +107,7 @@ jobs:
         with:
           gradle-version: '9.3.1'
 
-      - name: Publish JVM/Android/annproc publications to local staging
+      - name: Publish JVM/Android/annproc/Gradle plugin publications to local staging
         env:
           ORG_GRADLE_PROJECT_mavenCentralUsername: ${{ secrets.MAVEN_CENTRAL_USERNAME }}
           ORG_GRADLE_PROJECT_mavenCentralPassword: ${{ secrets.MAVEN_CENTRAL_PASSWORD }}
@@ -123,6 +123,7 @@ jobs:
             :logger:publishJvmPublicationToLocalStagingRepository \
             :logger:publishAndroidReleasePublicationToLocalStagingRepository \
             :annproc:publishAllPublicationsToLocalStagingRepository \
+            :stormify-gradle-plugin:publishAllPublicationsToLocalStagingRepository \
             --no-daemon --stacktrace
 
       - name: Read project version
@@ -343,6 +344,17 @@ jobs:
       - name: Run tests
         run: testing/test.sh jvm ${{ matrix.db }}
 
+      # The annotation processor against JPA annotations, compared with reflection.
+      # Needs no database, so it runs once, with the sqlite leg.
+      - name: Run annproc JPA test
+        if: matrix.db == 'sqlite'
+        run: gradle :annproc-jpa:test --console=plain
+
+      # A registrar of 400 generated entities must compile (JVM method and class limits).
+      - name: Run annproc large registrar test
+        if: matrix.db == 'sqlite'
+        run: gradle :annproc-large:test --console=plain
+
       - name: Stop database
         if: always() && matrix.db != 'sqlite'
         run: testing/test.sh down ${{ matrix.db }}
@@ -427,6 +439,8 @@ jobs:
       - name: Run tests (prebuilt binary)
         env:
           STORMIFY_TEST_DB: ${{ matrix.db }}
+          # Oracle client settings of the tests (in-band break, see the sqlnet.ora)
+          TNS_ADMIN: ${{ github.workspace }}/testing/config/oracle-client
         run: tests/conformance/build/bin/linuxX64/debugTest/test.kexe
 
       - name: Stop database
@@ -530,6 +544,8 @@ jobs:
       - name: Run tests (Wine)
         env:
           STORMIFY_TEST_DB: ${{ matrix.db }}
+          # Oracle client settings of the tests (in-band break, see the sqlnet.ora)
+          TNS_ADMIN: ${{ github.workspace }}/testing/config/oracle-client
           # err+module gives a one-line cause when a DLL fails to load.
           WINEDEBUG: -all,err+module,err+loaddll
         # Headless Wine under xvfb — otherwise Wine may try to open a display.

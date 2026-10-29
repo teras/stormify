@@ -42,7 +42,7 @@ JVM-only V1. This guide covers all breaking changes and how to update your code.
     <dependency>
         <groupId>onl.ycode</groupId>
         <artifactId>stormify-jvm</artifactId>
-        <version>2.6.0</version>
+        <version>3.0.1</version>
     </dependency>
     ```
 
@@ -59,7 +59,7 @@ JVM-only V1. This guide covers all breaking changes and how to update your code.
 
     ```kotlin
     plugins {
-        id("onl.ycode.stormify") version "2.6.0"
+        id("onl.ycode.stormify") version "3.0.1"
     }
     ```
 
@@ -237,8 +237,8 @@ The stored procedure API is redesigned for type safety.
 | V1 | V2 | Purpose |
 |----|----|---------|
 | `SPParam(Mode.IN, value)` | `Sp.In(value)` or `spIn(value)` | Input parameter |
-| `SPParam(Mode.OUT, type)` | `Sp.Out<T>()` or `spOut<T>()` | Output parameter |
-| `SPParam(Mode.IN_OUT, value)` | `Sp.InOut<T>(value)` or `spInOut(value)` | Bidirectional |
+| `SPParam(Mode.OUT, type)` | `Sp.Out(T::class)` or `spOut<T>()` | Output parameter |
+| `SPParam(Mode.IN_OUT, value)` | `Sp.InOut(T::class, value)` or `spInOut(value)` | Bidirectional |
 
 ## Exception Handling
 
@@ -326,13 +326,13 @@ The following V1 APIs no longer exist in V2:
 
 ## Quick Migration Checklist
 
-1. **Update dependencies**: `onl.ycode.stormify:db` → `id("onl.ycode.stormify") version "2.6.0"` (Gradle) or `onl.ycode:stormify-jvm` (Maven)
+1. **Update dependencies**: `onl.ycode.stormify:db` → `id("onl.ycode.stormify") version "3.0.1"` (Gradle) or `onl.ycode:stormify-jvm` (Maven)
 2. **Replace singleton**: `StormifyManager.stormify()` → `Stormify(dataSource)` constructor
 3. **Hold the instance**: pass `Stormify` to services instead of calling static methods
 4. **Update transactions**: `stormify().transaction(() -> …)` → `stormify.transaction { … }`
 5. **Remove Class parameters**: `read(User.class, sql)` → `read<User>(sql)`
 6. **Update exception handling**: `QueryException` → `SQLException`
 7. **Update stored procedures**: `storedProcedure()` → `procedure()`, `SPParam` → `Sp` API
-8. **Add KSP** if targeting native platforms
+8. **Apply the `onl.ycode.stormify` Gradle plugin** if targeting native platforms (it sets up KSP)
 9. **Optional**: adopt coroutine API for async workloads
 

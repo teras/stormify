@@ -3,6 +3,9 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+# Oracle client settings of the native drivers under test (see the sqlnet.ora there);
+# the tests connect by host and port, so no tnsnames of the machine is needed
+export TNS_ADMIN="$SCRIPT_DIR/config/oracle-client"
 C_SRC_DIR="$PROJECT_DIR/kdbc/src/c"
 C_TEST_BIN="$C_SRC_DIR/test/test_kdbc"
 
@@ -118,6 +121,9 @@ Targets:
   linux-arm64 [database] Run Kotlin/Native linuxArm64 tests (via Docker on x64)
   native [database]      Run C native tests
   android                Run Android unit tests (Robolectric, no database needed)
+  probe [database]       Type probe: every declared type read from every column kind,
+                         on JVM and linuxX64; reports failed reads, wrong values and
+                         JVM driver refusals. Run it when a driver or its version changes
   mingw [database]       Cross-compile and test mingwX64 (Wine required for execution)
   examples               Build and run all example projects
   all                    Run everything (JVM + linux + native + examples, all databases)
@@ -434,36 +440,31 @@ run_example_one() {
     echo "Example: $example"
     echo "========================================="
 
-    # Examples default to the last-released stormify version so they build
-    # standalone from Maven Central. When run from inside the parent stormify
-    # checkout (as here), we override that default with the parent's in-dev
-    # version so the example resolves against whatever `publishToMavenLocal`
-    # produced — validating the unreleased code end-to-end.
-    local parent_version
-    parent_version=$(grep -oE 'version = "[^"]+"' "$PROJECT_DIR/build.gradle.kts" \
-        | head -1 | sed -E 's/version = "(.*)"/\1/')
-
+    # Examples carry the parent's version (bump-version.sh moves them together), so
+    # they resolve against whatever `publishToMavenLocal` produced, validating the
+    # unreleased code end-to-end.
     local rc=0
     case "$example" in
         java-pom)
             cd "$example_dir"
-            mvn clean compile exec:java -q -Dstormify.version="$parent_version" 2>&1 || rc=$?
+            mvn clean compile exec:java -q 2>&1 || rc=$?
             ;;
         java-gradle)
             cd "$example_dir"
-            gradle clean run -PstormifyVersion="$parent_version" --console=plain 2>&1 || rc=$?
+            gradle clean run --console=plain 2>&1 || rc=$?
             ;;
         kotlin-jvm)
             cd "$example_dir"
-            gradle clean run -PstormifyVersion="$parent_version" --console=plain 2>&1 || rc=$?
+            # build runs the test task too, which fails if the plugin wires an empty test scope
+            gradle clean build run --console=plain 2>&1 || rc=$?
             ;;
         kotlin-linux)
             cd "$example_dir"
-            gradle clean runDebugExecutableLinuxX64 -PstormifyVersion="$parent_version" --console=plain 2>&1 || rc=$?
+            gradle clean runDebugExecutableLinuxX64 --console=plain 2>&1 || rc=$?
             ;;
         kotlin-multiplatform)
             cd "$example_dir"
-            gradle clean jvmRun -DmainClass=demo.MainKt -PstormifyVersion="$parent_version" --console=plain 2>&1 || rc=$?
+            gradle clean jvmRun -DmainClass=demo.MainKt --console=plain 2>&1 || rc=$?
             ;;
     esac
 
@@ -471,6 +472,40 @@ run_example_one() {
         echo "PASSED: example $example"
     else
         echo "FAILED: example $example (exit code: $rc)"
+    fi
+    echo ""
+    return $rc
+}
+
+# ========================================================================
+# Run the type probe (TypeProbeTest) for one database, on JVM and linuxX64
+# ========================================================================
+
+run_probe_one() {
+    local db="$1"
+    local config_path="$SCRIPT_DIR/config/$db/hikari.properties"
+
+    echo "========================================="
+    echo "Type probe: $db"
+    echo "========================================="
+
+    require_db "$db"
+    build_linux
+
+    local rc=0 out
+    cd "$PROJECT_DIR"
+    local config_args=()
+    [ -f "$config_path" ] && config_args=(-Dstormify.test.config="$config_path" -Dstormify.test.db="$db")
+    out=$(gradle :conformance:jvmTest --tests test.TypeProbeTest -Dstormify.probe=true "${config_args[@]}" \
+        --rerun --console=plain -i 2>&1) || rc=1
+    echo "$out" | grep -o "PROBE|.*" | grep -v "|OK [^;]*$" | sed 's/^/  jvm   /'
+    out=$(STORMIFY_PROBE=1 STORMIFY_TEST_DB="$db" "$LINUX_TEST_BIN" --ktest_filter='test.TypeProbeTest.*' 2>&1) || rc=1
+    echo "$out" | grep -o "PROBE|.*" | grep -v "|OK [^;]*$" | sed 's/^/  native /'
+
+    if [ $rc -eq 0 ]; then
+        echo "PASSED: probe $db"
+    else
+        echo "FAILED: probe $db"
     fi
     echo ""
     return $rc
@@ -595,6 +630,14 @@ case "$TARGET" in
             run_linux_one "$DB"
         else
             run_for_dbs run_linux_one $ALL_DBS
+        fi
+        ;;
+
+    probe)
+        if [ -n "$DB" ]; then
+            run_probe_one "$DB"
+        else
+            run_for_dbs run_probe_one $ALL_DBS
         fi
         ;;
 

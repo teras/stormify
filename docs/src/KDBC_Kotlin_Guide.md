@@ -381,7 +381,7 @@ job.join()
 conn.close()
 ```
 
-On JVM, `cancel()` delegates to `java.sql.Statement.cancel()`. On native, it calls `kdbc_cancel`
+On JVM, `cancel()` calls `java.sql.Statement.cancel()` on the statement running on the connection. On native, it calls `kdbc_cancel`
 which dispatches to the driver's native cancellation primitive.
 
 !!! warning "Cancel vs Close"
