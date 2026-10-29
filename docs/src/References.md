@@ -398,6 +398,15 @@ each access to one of them throws `SQLException("No data found ...")`, so a stal
 dangling reference surfaces loudly without breaking its valid siblings. To have such
 references read as `null` instead, see [Dangling References](#dangling-references).
 
+Children are batched the same way: the first `by lazyDetails()` (Java: `details(...)`)
+read on one row of a result loads the children of up to 32 rows of that result, and
+each of the other rows takes its slice on its first read. A batch reads the database
+once, so a row that reads its children later gets them as they were when the batch
+ran, even if they changed since, also within the same transaction. This is the rule of
+every loaded entity, which holds what the database had when it was read until a
+[refresh](#refresh). Where children must be current on every read, call
+`stormify.getDetails(...)`, which queries each time.
+
 ### Dangling References
 
 A foreign key can point at a row that does not exist, typically in a legacy database
