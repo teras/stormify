@@ -8,6 +8,11 @@ import onl.ycode.stormify.biglist.ReferencePath
  * Gives Java entities the loading of `by lazyDetails()`: through the instance that
  * read the entity, and for every row of the result it came with at once.
  *
+ * A row reads the children as they were when the query of its batch ran, as every
+ * loaded entity holds what the database had when it was read, until a refresh. Where
+ * the children must be current on every read, call `StormifyJ.getDetails(parent, type)`,
+ * which queries each time.
+ *
  * ```java
  * public class Order extends AutoTable {
  *     private List<OrderItem> items;

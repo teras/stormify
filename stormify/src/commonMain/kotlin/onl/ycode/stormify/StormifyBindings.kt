@@ -171,6 +171,12 @@ class db<T>(defaultValue: T) : ReadWriteProperty<Any?, T>, PlatformSerializable 
  * source, even if it has been remapped with `@DbField(name = "…")` to a different
  * column. The value must be a single field identifier, not a dotted traversal path.
  *
+ * The first access on one row of a result loads, in one query, the children of a batch
+ * of rows of that result, and each row keeps its own. A row read later gets them as
+ * they were when that query ran: like every loaded entity, they hold what the database
+ * had when they were read, until a [Stormify.refresh]. Where the children must be
+ * current on every read, call [Stormify.getDetails], which queries each time.
+ *
  * ```kotlin
  * class Order : AutoTable() {
  *     var items: List<OrderItem> by lazyDetails()
